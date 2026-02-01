@@ -13,12 +13,13 @@ export default function Shipments({ shipments, drivers, clients, onAssignDriver,
 
     // Filter Logic
     const filteredShipments = useMemo(() => {
-        return shipments.filter(shipment => {
+        const safeShipments = Array.isArray(shipments) ? shipments : [];
+        return safeShipments.filter(shipment => {
             const matchesSearch =
-                shipment.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                shipment.client.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                shipment.origin.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                shipment.destination.toLowerCase().includes(searchTerm.toLowerCase());
+                (shipment.id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (shipment.client || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (shipment.origin || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (shipment.destination || '').toLowerCase().includes(searchTerm.toLowerCase());
 
             const matchesStatus = statusFilter === 'all' || shipment.status === statusFilter;
 
@@ -36,10 +37,12 @@ export default function Shipments({ shipments, drivers, clients, onAssignDriver,
         const pending = filteredShipments.filter(s => s.status === 'Pendiente').length;
         const transit = filteredShipments.filter(s => s.status === 'En Tránsito').length;
 
+        const safeDrivers = Array.isArray(drivers) ? drivers : [];
+
         // Group by City (Destination)
         const byCity = {};
         filteredShipments.forEach(s => {
-            const city = s.destinationCity || s.destination.split(',')[0].trim(); // Fallback to parsing string if city field missing
+            const city = s.destinationCity || (s.destination ? s.destination.split(',')[0].trim() : 'Desconocido'); // Fallback to parsing string if city field missing
             byCity[city] = (byCity[city] || 0) + 1;
         });
 
@@ -47,7 +50,7 @@ export default function Shipments({ shipments, drivers, clients, onAssignDriver,
         const byDriver = {};
         filteredShipments.forEach(s => {
             if (s.assignedDriverId) {
-                const driver = drivers.find(d => d.id === s.assignedDriverId);
+                const driver = safeDrivers.find(d => d.id === s.assignedDriverId);
                 const name = driver ? driver.name : 'Desconocido';
                 byDriver[name] = (byDriver[name] || 0) + 1;
             } else {
@@ -121,7 +124,7 @@ export default function Shipments({ shipments, drivers, clients, onAssignDriver,
                         >
                             <option value="all">Todos los Conductores</option>
                             <option value="unassigned">Sin Asignar</option>
-                            {drivers.map(d => (
+                            {(drivers || []).map(d => (
                                 <option key={d.id} value={d.id}>{d.name}</option>
                             ))}
                         </select>
@@ -211,7 +214,7 @@ export default function Shipments({ shipments, drivers, clients, onAssignDriver,
                                                     onChange={(e) => onAssignDriver(shipment.id, e.target.value)}
                                                 >
                                                     <option value="">-- Asignar --</option>
-                                                    {drivers.map(driver => (
+                                                    {(drivers || []).map(driver => (
                                                         <option key={driver.id} value={driver.id}>{driver.name}</option>
                                                     ))}
                                                 </select>

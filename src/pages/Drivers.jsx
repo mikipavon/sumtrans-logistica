@@ -1,9 +1,11 @@
 import { User, Phone, Star, Map, Clock, Truck } from 'lucide-react';
 import { useState } from 'react';
 import CreateDriverModal from '../components/drivers/CreateDriverModal';
+import DriverProfileModal from '../components/drivers/DriverProfileModal';
 
-export default function Drivers({ drivers, onAddDriver }) {
+export default function Drivers({ drivers, onAddDriver, shipments, onImpersonate }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [selectedDriver, setSelectedDriver] = useState(null);
 
     return (
         <div className="space-y-6">
@@ -18,12 +20,19 @@ export default function Drivers({ drivers, onAddDriver }) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                {drivers.map((driver) => (
+                {(drivers || []).map((driver) => (
                     <div key={driver.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col gap-4 relative group hover:border-blue-200 transition-colors">
+                        <button
+                            onClick={() => setSelectedDriver(driver)}
+                            className="absolute top-4 right-4 p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors opacity-0 group-hover:opacity-100"
+                            title="Ver Perfil Completo"
+                        >
+                            <User size={18} />
+                        </button>
                         <div className="flex justify-between items-start">
                             <div className="flex items-center gap-4">
                                 <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-xl group-hover:bg-blue-100 group-hover:text-blue-600 transition-colors">
-                                    {driver.name.charAt(0)}
+                                    {(driver.name || '?').charAt(0)}
                                 </div>
                                 <div>
                                     <h3 className="font-bold text-slate-800">{driver.name}</h3>
@@ -59,6 +68,12 @@ export default function Drivers({ drivers, onAddDriver }) {
                             <button className="text-slate-500 hover:text-blue-600 text-sm font-medium flex items-center gap-2 transition-colors">
                                 <Map size={16} /> Localizar
                             </button>
+                            <button
+                                onClick={() => onImpersonate && onImpersonate(driver.id)}
+                                className="text-blue-600 hover:text-blue-800 text-sm font-bold flex items-center gap-2 transition-colors bg-blue-50 px-3 py-1 rounded-lg"
+                            >
+                                <User size={16} /> Entrar
+                            </button>
                         </div>
                     </div>
                 ))}
@@ -68,6 +83,13 @@ export default function Drivers({ drivers, onAddDriver }) {
                 isOpen={isCreateModalOpen}
                 onClose={() => setIsCreateModalOpen(false)}
                 onSave={onAddDriver}
+            />
+
+            <DriverProfileModal
+                isOpen={!!selectedDriver}
+                onClose={() => setSelectedDriver(null)}
+                driver={selectedDriver}
+                shipments={shipments}
             />
         </div>
     );

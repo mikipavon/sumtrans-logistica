@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { X, CheckCircle, PenTool, Camera, Image as ImageIcon, Mic, MicOff, Wallet, MapPin } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 
-export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, shipment, collectionAlert }) {
+export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, shipment, collectionAlert, pendingDebts = [] }) {
     const [mode, setMode] = useState('signature'); // 'signature' or 'photo'
     const sigCanvas = useRef({});
     const [photoPreview, setPhotoPreview] = useState(null);
@@ -13,6 +13,33 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
     const [isListening, setIsListening] = useState(false);
     const [deliveryCoordinates, setDeliveryCoordinates] = useState('');
 
+    // Pending Debts State
+    const [selectedDebts, setSelectedDebts] = useState([]);
+
+    // Auto-select all debts by default? logic
+    useEffect(() => {
+        if (isOpen && pendingDebts.length > 0) {
+            setSelectedDebts(pendingDebts.map(d => d.id)); // Select all by default
+        } else {
+            setSelectedDebts([]);
+        }
+    }, [isOpen, pendingDebts]);
+
+    // Parse helper
+    const parseVal = (val) => {
+        if (typeof val === 'number') return val;
+        if (!val) return 0;
+        return parseFloat(val.replace(/[^0-9.-]+/g, "")) || 0;
+    };
+
+    const currentAmount = parseVal(shipment?.amount);
+    const debtsAmount = pendingDebts
+        .filter(d => selectedDebts.includes(d.id))
+        .reduce((sum, d) => sum + parseVal(d.amount), 0);
+    const totalToCollect = currentAmount + debtsAmount;
+
+
+    // ... (rest of effects unchanged)
     // Auto-capture GPS and Collection Alert when modal opens
     useEffect(() => {
         if (isOpen) {
@@ -29,7 +56,6 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
             // Show Alert if Collection Required
             if (collectionAlert) {
-                // Small delay to allow modal render first
                 setTimeout(() => {
                     alert("⚠️ AVISO IMPORTANTE: COBRO PENDIENTE\n\nEste envío es a PORTES DEBIDOS.\nEl destinatario debe abonar el importe AHORA.\n\nNo entregue sin cobrar.");
                 }, 300);
@@ -39,17 +65,14 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
     if (!isOpen || !shipment) return null;
 
-    // ... (rest of methods unchanged)
-    // Voice Recognition Logic
+    // ... (voice/photo handlers unchanged)
     const handleVoiceInput = () => {
         if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
             alert("Tu navegador no soporta dictado por voz. Intenta usar Chrome o Safari.");
             return;
         }
-
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         const recognition = new SpeechRecognition();
-
         recognition.lang = 'es-ES';
         recognition.interimResults = false;
         recognition.maxAlternatives = 1;
@@ -59,21 +82,18 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             setIsListening(false);
             return;
         }
-
         setIsListening(true);
         recognition.start();
 
         recognition.onresult = (event) => {
             const transcript = event.results[0][0].transcript;
-            setReceiverName(prev => (prev ? prev + ' ' + transcript : transcript)); // Append if exists
+            setReceiverName(prev => (prev ? prev + ' ' + transcript : transcript));
             setIsListening(false);
         };
-
         recognition.onerror = (event) => {
             console.error("Speech recognition error", event.error);
             setIsListening(false);
         };
-
         recognition.onend = () => {
             setIsListening(false);
         };
@@ -121,7 +141,8 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             proofData = { type: 'photo', data: photoPreview, coordinates: deliveryCoordinates };
         }
 
-        onConfirm(shipment.id, proofData, status);
+        // Pass selected debts to confirm
+        onConfirm(shipment.id, proofData, status, selectedDebts);
         onClose();
         // Reset states
         setPhotoPreview(null);
@@ -156,12 +177,48 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                     </div>
                 )}
 
+                {/* Pending Debts Alert/Selection */}
+                {pendingDebts.length > 0 && (
+                    <div className="bg-amber-50 border-b border-amber-100 p-4">
+                        <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center gap-2">
+                            <Wallet size={14} />
+                            Deudas Pendientes ({pendingDebts.length})
+                        </h4>
+                        <div className="max-h-32 overflow-y-auto space-y-2 mb-2 pr-1 custom-scrollbar">
+                            {pendingDebts.map(debt => (
+                                <label key={debt.id} className="flex items-center gap-3 p-2 bg-white rounded-lg border border-amber-100 cursor-pointer hover:bg-amber-50/50">
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedDebts.includes(debt.id)}
+                                        onChange={(e) => {
+                                            if (e.target.checked) setSelectedDebts([...selectedDebts, debt.id]);
+                                            else setSelectedDebts(selectedDebts.filter(id => id !== debt.id));
+                                        }}
+                                        className="w-4 h-4 text-amber-600 rounded focus:ring-amber-500"
+                                    />
+                                    <div className="flex-1">
+                                        <div className="flex justify-between text-xs font-bold text-slate-700">
+                                            <span>{debt.id}</span>
+                                            <span>{debt.amount}</span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 truncate">{debt.origin || debt.address}</p>
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
+                        <div className="flex justify-between items-center pt-2 border-t border-amber-200/50">
+                            <span className="text-xs font-medium text-amber-700">Total a Cobrar (+Deudas):</span>
+                            <span className="text-lg font-bold text-amber-900">€{totalToCollect.toFixed(2)}</span>
+                        </div>
+                    </div>
+                )}
+
                 <div className="p-6 flex-1 overflow-y-auto custom-scrollbar">
+                    {/* ... (Existing Content: GPS, Mode, Canvas) ... */}
                     <p className="text-sm text-slate-500 mb-2">
                         Entrega para: <span className="font-bold text-slate-800">{shipment.client}</span>
                     </p>
 
-                    {/* GPS Status Indicator */}
                     <div className={`flex items-center gap-2 text-xs mb-4 px-3 py-2 rounded-lg ${deliveryCoordinates
                         ? 'bg-emerald-50 text-emerald-700'
                         : 'bg-amber-50 text-amber-700'
@@ -173,7 +230,6 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                         }
                     </div>
 
-                    {/* Mode Toggle */}
                     <div className="flex bg-slate-100 p-1 rounded-xl mb-6">
                         <button
                             onClick={() => setMode('signature')}
@@ -191,7 +247,6 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                         </button>
                     </div>
 
-                    {/* Extra Fields for Signature */}
                     {mode === 'signature' && (
                         <div className="space-y-3 mb-4 animate-in slide-in-from-top-2 duration-200">
                             <div>
@@ -275,7 +330,11 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                         className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 transition-all"
                     >
                         <CheckCircle size={20} />
-                        Confirmar y Finalizar
+                        {selectedDebts.length > 0 ? (
+                            <span>Cobrar Todo (€{totalToCollect.toFixed(2)}) y Finalizar</span>
+                        ) : (
+                            <span>Confirmar y Finalizar</span>
+                        )}
                     </button>
                 </div>
             </div>

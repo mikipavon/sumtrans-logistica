@@ -31,7 +31,7 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
         const matches = clients.filter(c => {
             // Allow searching ALL clients, regardless of type
             if (!value) return true;
-            return c.name.toLowerCase().includes(value.toLowerCase());
+            return (c.name || '').toLowerCase().includes(value.toLowerCase());
         }).sort((a, b) => {
             // Priority 1: Approved users first
             if (a.status === 'approved' && b.status !== 'approved') return -1;

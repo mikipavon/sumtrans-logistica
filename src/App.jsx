@@ -11,6 +11,7 @@ import Articles from './pages/Articles'
 import Tracking from './pages/Tracking'
 import Incidents from './pages/Incidents'
 import ClientValidation from './pages/ClientValidation'
+import PendingCollections from './pages/PendingCollections'
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -91,6 +92,7 @@ function App() {
       type: newShipment.type || 'Entrega', // Default to Entrega
       createdAt: new Date().toISOString(), // Register creation time
       createdBy: creatorName, // Register who created it
+      createdById: userRole === 'driver' ? currentDriverId : null, // ID of creator if driver
 
       // Auto-assign to creator logic REMOVED as per user request (pass to Assignation pool)
       assignedDriverId: newShipment.assignedDriverId
@@ -118,7 +120,7 @@ function App() {
         phone: newShipment.originPhone || '',
         coordinates: newShipment.originCoordinates || '',
         type: 'Remitente',
-        billingType: 'Facturación',
+        billingType: 'Cobro Diario',
         status: 'pending', // Pendiente de validación
         createdFrom: newShipment.type === 'Recogida' ? 'Recogida' : 'Albarán',
         createdBy: creatorName,
@@ -147,14 +149,38 @@ function App() {
     }
   }
 
+  // Handle manual edits to shipment details
+  const handleUpdateShipment = (id, updatedFields) => {
+    setShipments(shipments.map(s =>
+      s.id === id ? { ...s, ...updatedFields } : s
+    ));
+    // Also update client if minimal details changed? Maybe not for now to avoid side effects.
+  };
+
   const handleShipmentStatusChange = (shipmentId, newStatus, deliveryCoordinates = null) => {
     setShipments(shipments.map(s => {
       if (s.id === shipmentId) {
         const updates = { status: newStatus }
-        // If Incidencia, unassign driver to return to pool being 'Pendiente' effectively for assignment
+        // If Incidencia, unassign driver
         if (newStatus === 'Incidencia') {
           updates.assignedDriverId = null
         }
+
+        // LOGIC FOR 'COBRAR MÁS TARDE' (Pendiente Cobro)
+        // If client is 'Cobro Diario' or 'Nuevo' (pending), unassign driver to return to pool
+        if (newStatus === 'Pendiente Cobro') {
+          const receiverName = s.destinationName || '';
+          const receiver = clients.find(c => c.name.toLowerCase() === receiverName.toLowerCase());
+
+          // Check if receiver exists and is 'Cobro Diario' or status 'pending' (New)
+          // If receiver doesn't exist, we treat as New
+          const isDailyOrNew = !receiver || receiver.billingType === 'Cobro Diario' || receiver.status === 'pending';
+
+          if (isDailyOrNew) {
+            updates.assignedDriverId = null;
+          }
+        }
+
         // Store delivery coordinates with the shipment
         if (deliveryCoordinates) {
           updates.deliveryCoordinates = deliveryCoordinates
@@ -256,6 +282,12 @@ function App() {
 
   }
 
+  const handleImpersonate = (driverId) => {
+    setIsAuthenticated(true)
+    setUserRole('driver')
+    setCurrentDriverId(driverId)
+  }
+
   // Driver View
   if (userRole === 'driver') {
     return <DriverDashboard
@@ -267,6 +299,7 @@ function App() {
       clients={clients}
       onCreateShipment={handleAddShipment}
       onStatusChange={handleShipmentStatusChange}
+      onUpdateShipment={handleUpdateShipment}
     />
   }
 
@@ -279,9 +312,10 @@ function App() {
       pendingClientsCount={pendingClientsCount}
     >
       {currentView === 'dashboard' && <Dashboard />}
+      {currentView === 'pending-collections' && <PendingCollections shipments={shipments} drivers={drivers} clients={clients} />}
       {currentView === 'shipments' && <Shipments shipments={shipments} drivers={drivers} clients={clients} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} />}
       {currentView === 'fleet' && <Fleet />}
-      {currentView === 'drivers' && <Drivers drivers={drivers} onAddDriver={handleAddDriver} />}
+      {currentView === 'drivers' && <Drivers drivers={drivers} shipments={shipments} onAddDriver={handleAddDriver} onImpersonate={handleImpersonate} />}
       {currentView === 'tracking' && <Tracking drivers={drivers} />}
       {currentView === 'clients' && <Clients clients={clients} articles={articles} onUpdateClient={handleUpdateClient} onAddClient={handleAddClient} onImportClients={handleImportClients} />}
       {currentView === 'articles' && <Articles articles={articles} onAddArticle={handleAddArticle} onUpdateArticle={handleUpdateArticle} />}

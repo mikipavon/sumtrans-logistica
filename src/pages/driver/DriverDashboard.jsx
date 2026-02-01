@@ -1,11 +1,81 @@
-import { LogOut, FileText, Truck, Map, Package, Plus, Clock, Euro, Wallet, ArrowUpDown, GripVertical, User, CheckCircle, Calculator, Sparkles, BrainCircuit, AlertTriangle, Printer, PackagePlus, Phone } from 'lucide-react';
-import { useState, useRef, useEffect } from 'react';
+﻿import { LogOut, FileText, Truck, Map, Package, Plus, Clock, Euro, Wallet, ArrowUpDown, GripVertical, User, CheckCircle, Calculator, Sparkles, BrainCircuit, AlertTriangle, Printer, PackagePlus, Phone } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import CreateShipmentModal from '../../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../../components/shipments/CreatePickupModal';
 import DeliveryConfirmationModal from '../../components/delivery/DeliveryConfirmationModal';
 import ShipmentDetailsModal from '../../components/shipments/ShipmentDetailsModal';
 
-export default function DriverDashboard({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, onCreateShipment, onStatusChange }) {
+// Error Boundary for debugging
+class ErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null, errorInfo: null };
+    }
+
+    static getDerivedStateFromError(error) {
+        return { hasError: true };
+    }
+
+    componentDidCatch(error, errorInfo) {
+        this.setState({ error, errorInfo });
+        console.error("DriverDashboard Error:", error, errorInfo);
+    }
+
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="p-8 bg-red-50 text-red-900 min-h-screen">
+                    <h1 className="text-2xl font-bold mb-4">Algo salió mal en el Dashboard</h1>
+                    <p className="font-mono text-sm bg-white p-4 rounded border border-red-200 overflow-auto">
+                        {this.state.error && this.state.error.toString()}
+                        <br />
+                        {this.state.errorInfo && this.state.errorInfo.componentStack}
+                    </p>
+                    <button
+                        className="mt-4 px-4 py-2 bg-red-600 text-white rounded"
+                        onClick={() => window.location.reload()}
+                    >
+                        Recargar
+                    </button>
+                </div>
+            );
+        }
+
+        return this.props.children;
+    }
+}
+
+function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, onCreateShipment, onStatusChange, onUpdateShipment }) {
+    console.log('DriverDashboard Render', { currentDriverId, drivers: drivers?.length, shipments: allShipments?.length, clients: clients?.length });
+
+
+    const [activeTab, setActiveTab] = useState('route');
+    const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+    const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
+    const [showFabMenu, setShowFabMenu] = useState(false);
+    const [deliveryModalShipment, setDeliveryModalShipment] = useState(null); // Which shipment is being confirmed
+    const [pickupToConvert, setPickupToConvert] = useState(null); // Pickup being converted to shipment
+    const [selectedShipment, setSelectedShipment] = useState(null);
+    const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+
+    // AI / Smart Features State
+    const [isOptimizing, setIsOptimizing] = useState(false);
+    const [learningMessage, setLearningMessage] = useState(null);
+
+    // Drag & Drop State
+    const dragItem = useRef(null);
+    const dragOverItem = useRef(null);
+
+    // Derived State Logic
+    const [localRoute, setLocalRoute] = useState([]);
+    const [isInitialized, setIsInitialized] = useState(false);
+
+    const [pendingCollections, setPendingCollections] = useState([
+        { id: 'COL-001', client: 'Restaurante El Puerto', sender: 'Distribuciones Garcia', amount: '125.50', type: 'Efectivo', date: '21/01/2024' },
+        { id: 'COL-002', client: 'Talleres Mecánicos', sender: 'Recambios Central', amount: '450.00', type: 'Contra reembolso', date: '21/01/2024' }
+    ]);
+    const [collectedCollections, setCollectedCollections] = useState([]);
+
     // Print Receipt Function
     const handlePrintReceipt = (collection) => {
         const receiptWindow = window.open('', '_blank');
@@ -86,7 +156,7 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
         const portesRows = deliveredShipments.map(s => `
             <tr>
                 <td>${s.client}</td>
-                <td>${s.address.split(',')[0]}</td>
+                <td>${(s.address || '').split(',')[0]}</td>
                 <td style="text-align:right">${s.amount}</td>
             </tr>
         `).join('');
@@ -146,27 +216,7 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
         `);
         portesWindow.document.close();
     };
-    const [activeTab, setActiveTab] = useState('route');
-    const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
-    const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
-    const [showFabMenu, setShowFabMenu] = useState(false);
-    const [deliveryModalShipment, setDeliveryModalShipment] = useState(null); // Which shipment is being confirmed
-    const [pickupToConvert, setPickupToConvert] = useState(null); // Pickup being converted to shipment
-    const [selectedShipment, setSelectedShipment] = useState(null);
-    const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
 
-
-    // AI / Smart Features State
-    const [isOptimizing, setIsOptimizing] = useState(false);
-    const [learningMessage, setLearningMessage] = useState(null);
-
-    // Drag & Drop State
-    const dragItem = useRef(null);
-    const dragOverItem = useRef(null);
-
-    // Derived State Logic
-    const [localRoute, setLocalRoute] = useState([]);
-    const [isInitialized, setIsInitialized] = useState(false);
 
     useEffect(() => {
         if (allShipments && !isInitialized) {
@@ -174,15 +224,15 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
             setLocalRoute(assigned);
             setIsInitialized(true);
         } else if (allShipments) {
-            const assigned = allShipments.filter(s => s.assignedDriverId === currentDriverId && s.status !== 'Entregado');
+            const assigned = allShipments.filter(s => s && s.assignedDriverId === currentDriverId && s.status !== 'Entregado');
             if (assigned.length !== localRoute.length) {
                 setLocalRoute(assigned);
             }
         }
     }, [allShipments, currentDriverId]);
 
-    const deliveredShipments = allShipments ? allShipments.filter(s => s.assignedDriverId === currentDriverId && s.status === 'Entregado') : [];
-    const availableShipments = allShipments ? allShipments.filter(s => !s.assignedDriverId) : [];
+    const deliveredShipments = (allShipments || []).filter(s => s && s.assignedDriverId === currentDriverId && s.status === 'Entregado');
+    const availableShipments = (allShipments || []).filter(s => s && !s.assignedDriverId);
 
     // Smart Sort Algorithm (Mock IA)
     const handleSmartSort = () => {
@@ -252,17 +302,148 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
     // Calculate Daily Totals
     const parseAmount = (amountStr) => {
         if (!amountStr) return 0;
-        return parseFloat(amountStr.replace(/[^0-9.-]+/g, ""));
+        if (typeof amountStr === 'number') return amountStr;
+        try {
+            return parseFloat(amountStr.replace(/[^0-9.-]+/g, "")) || 0;
+        } catch (e) { return 0; }
     };
-    const totalDeliveredValue = deliveredShipments.reduce((sum, s) => sum + parseAmount(s.amount), 0);
-    const totalCash = totalDeliveredValue * 0.8;
-    const totalFees = totalDeliveredValue * 0.2;
 
-    const [pendingCollections, setPendingCollections] = useState([
-        { id: 'COL-001', client: 'Restaurante El Puerto', sender: 'Distribuciones Garcia', amount: '125.50', type: 'Efectivo', date: '21/01/2024' },
-        { id: 'COL-002', client: 'Talleres Mecánicos', sender: 'Recambios Central', amount: '450.00', type: 'Contra reembolso', date: '21/01/2024' }
-    ]);
-    const [collectedCollections, setCollectedCollections] = useState([]);
+    // Helper: Check if client pays cash (Cobro Diario or New Client)
+    const isCashClient = (clientName) => {
+        if (!clients) return true; // Fallback to cash if no client list
+        const c = clients.find(cl => (cl.name || '').toLowerCase() === (clientName || '').toLowerCase());
+        return !c || c.billingType === 'Cobro Diario';
+    };
+
+    // 1. Cobros en Origen (Prepaid at creation) - "Cobrado al crear"
+    // Filtrar envíos creados hoy, pagados, tipo 'Pagado', y cliente contado
+    // 1. Cobros en Origen (Prepaid at creation) - "Cobrado al crear"
+    // Filtrar envíos creados hoy, pagados, tipo 'Pagado', y cliente contado
+    const prepaidCollections = (allShipments || []).filter(s =>
+        s &&
+        (s.assignedDriverId === currentDriverId || !s.assignedDriverId) && // Driver created or assigned
+        s.porteType === 'Pagado' &&
+        s.paymentStatus === 'Paid' &&
+        isCashClient(s.client) &&
+        s.date === new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }) // Matches creation format
+    );
+
+    // 2. Cobros en Destino (Collected at delivery) - "Cobrado al entregar"
+    const deliveredCollections = deliveredShipments.filter(s =>
+        s &&
+        s.porteType === 'Debido' &&
+        isCashClient(s.destinationName || s.client)
+    );
+
+    // Sums
+    const totalPrepaid = prepaidCollections.reduce((sum, s) => sum + parseAmount(s.amount), 0);
+    const totalDeliveredCash = deliveredCollections.reduce((sum, s) => sum + parseAmount(s.amount), 0);
+
+    // Total Cash in Box (Manual Collections + Prepaid + Delivered Cash)
+    // NOTE: collectedCollections are manual reimbursement collections (Reembolsos)
+    const totalReimbursements = collectedCollections.reduce((sum, c) => sum + parseAmount(c.amount), 0);
+
+    const totalCash = totalPrepaid + totalDeliveredCash + totalReimbursements;
+
+    // Total Value Moved (Production) - Keeps existing logic for reference but 'totalCash' is what matters for "Caja"
+    const totalDeliveredValue = deliveredShipments.reduce((sum, s) => sum + parseAmount(s.amount), 0);
+    const totalFees = totalDeliveredValue; // Simplification or logic was 0.2? Keeping aligned with user intent for "Recaudado"
+
+
+
+    // Safe calculations for Modal Props
+    const collectionAlert = useMemo(() => {
+        try {
+            if (!deliveryModalShipment) return false;
+            // Logic: If 'Debido' AND (Receiver is New OR Receiver is Cobro Diario)
+            if (deliveryModalShipment.porteType === 'Debido') {
+                const receiverName = deliveryModalShipment.destinationName || '';
+                const receiver = (clients || []).find(c => (c.name || '').toLowerCase() === receiverName.toLowerCase());
+                // If receiver not found (New) OR receiver is Cobro Diario -> ALERT
+                return !receiver || receiver.billingType === 'Cobro Diario';
+            }
+
+            return false;
+        } catch (e) { console.error('Alert Logic Error', e); return false; }
+    }, [deliveryModalShipment, clients]);
+
+    const pendingDebts = useMemo(() => {
+        try {
+            if (!deliveryModalShipment) return [];
+
+            // 1. Determine who we are interacting with (The Entity)
+            let targetName = '';
+            if (deliveryModalShipment.type === 'Recogida') {
+                targetName = deliveryModalShipment.originName || deliveryModalShipment.client;
+            } else {
+                targetName = deliveryModalShipment.destinationName || deliveryModalShipment.client;
+            }
+
+            if (!targetName) return [];
+
+            // 2. Check if this Entity is 'New' or 'Daily' (Risk)
+            const targetClient = (clients || []).find(c => (c.name || '').toLowerCase() === targetName.toLowerCase());
+            const isRisk = !targetClient || targetClient.billingType === 'Cobro Diario' || targetClient.status === 'pending';
+
+            if (!isRisk) return [];
+
+            // 3. Find other shipments for this Entity that are Pending Cobro
+            return (allShipments || []).filter(s =>
+                s && s.id !== deliveryModalShipment.id && // Exclude current
+                (s.status === 'Pendiente Cobro' || s.paymentStatus === 'Pending') &&
+                (
+                    (s.destinationName && s.destinationName.toLowerCase() === targetName.toLowerCase()) ||
+                    (s.client && s.client.toLowerCase() === targetName.toLowerCase()) ||
+                    (s.originName && s.originName.toLowerCase() === targetName.toLowerCase())
+                )
+            );
+        } catch (e) { console.error('Debts Logic Error', e); return []; }
+    }, [deliveryModalShipment, clients, allShipments]);
+
+    // Helper to Add to Collections
+    const handleDeliveryConfirm = (id, proof, status, extraCollectedIds) => {
+        if (!onStatusChange) return;
+        onStatusChange(id, status, proof?.coordinates || null);
+
+        const addToCollections = (shipment) => {
+            if (!shipment) return;
+            const amountVal = parseAmount(shipment.amount);
+            if (amountVal > 0) {
+                const newCollection = {
+                    id: `COL-${Date.now()}-${shipment.id}`,
+                    client: shipment.client || 'Cliente',
+                    sender: shipment.senderName || shipment.originName || 'N/A',
+                    amount: shipment.amount,
+                    type: shipment.paymentType || 'Efectivo',
+                    date: new Date().toLocaleDateString()
+                };
+                setPendingCollections(prev => [...prev, newCollection]);
+            }
+        };
+
+        if (status === 'Entregado') {
+            addToCollections(deliveryModalShipment);
+        }
+
+        if (extraCollectedIds && extraCollectedIds.length > 0) {
+            extraCollectedIds.forEach(extraId => {
+                onStatusChange(extraId, 'Entregado');
+                const extraShipment = (allShipments || []).find(s => s.id === extraId);
+                if (extraShipment) {
+                    addToCollections(extraShipment);
+                }
+            });
+            alert(`Se han cobrado ${extraCollectedIds.length} deudas adicionales.`);
+        }
+
+        if (status === 'Pendiente Cobro') {
+            setActiveTab('collections');
+        }
+    };
+
+    if (!drivers || !allShipments || !clients) {
+        return <div className="flex h-screen items-center justify-center text-slate-400">Cargando dashboard...</div>;
+    }
 
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -270,6 +451,7 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
                 isOpen={isDetailsModalOpen}
                 onClose={() => setIsDetailsModalOpen(false)}
                 shipment={selectedShipment}
+                onUpdate={onUpdateShipment}
             />
             {/* Header */}
             <header className="bg-slate-900 text-white p-4 sticky top-0 z-50 shadow-md">
@@ -366,7 +548,8 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
                                         style={{
                                             backgroundColor: (() => {
                                                 if (stop.color) return stop.color;
-                                                const client = clients.find(c => c.name === (stop.destinationName || stop.client));
+                                                if (!clients) return '#3b82f6';
+                                                const client = clients.find(c => c && c.name === (stop.destinationName || stop.client));
                                                 return client?.color || '#3b82f6'; // Fallback blue
                                             })()
                                         }}
@@ -479,7 +662,7 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
                                             </span>
                                         ) : (
                                             <span className="text-[10px] font-bold bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-100 block w-fit mb-1">
-                                                ALBARÁN
+                                                ALBARÃN
                                             </span>
                                         )}
                                         <h4 className="font-bold text-slate-800">
@@ -551,10 +734,11 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
                     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                         <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider ml-1">Cobros y Reembolsos Pendientes</h3>
                         {(() => {
-                            const pendingShipments = allShipments ? allShipments.filter(s =>
-                                s.assignedDriverId === currentDriverId &&
+                            const pendingShipments = (allShipments || []).filter(s =>
+                                s &&
+                                (!s.assignedDriverId || s.assignedDriverId === currentDriverId) &&
                                 (s.status === 'Pendiente Cobro' || s.paymentStatus === 'Pending')
-                            ) : [];
+                            );
                             const totalPendingValue = pendingShipments.reduce((sum, s) => sum + parseAmount(s.amount), 0) +
                                 pendingCollections.reduce((sum, c) => sum + parseAmount(c.amount), 0);
                             return (
@@ -573,7 +757,7 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
                                                         </span>
                                                         <h4 className="font-bold text-slate-800">{shipment.client}</h4>
                                                     </div>
-                                                    <span className="font-mono font-bold text-slate-700">{shipment.amount.includes('€') ? shipment.amount : `€${shipment.amount}`}</span>
+                                                    <span className="font-mono font-bold text-slate-700">{(shipment.amount || '').toString().includes('€') ? shipment.amount : `€${shipment.amount}`}</span>
                                                 </div>
                                                 <p className="text-xs text-slate-500 flex items-center gap-1 mb-2">
                                                     <Clock size={12} />
@@ -642,13 +826,13 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
                                 <div className="text-slate-400 mb-1"><Euro size={20} /></div>
                                 <p className="text-xs text-slate-500 uppercase font-bold">Reembolsos</p>
                                 <h4 className="text-xl font-bold text-slate-800">
-                                    €{(totalCash + collectedCollections.reduce((sum, c) => sum + parseAmount(c.amount), 0)).toFixed(2)}
+                                    €{totalReimbursements.toFixed(2)}
                                 </h4>
                             </div>
                             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
                                 <div className="text-slate-400 mb-1"><Truck size={20} /></div>
-                                <p className="text-xs text-slate-500 uppercase font-bold">Portes</p>
-                                <h4 className="text-xl font-bold text-slate-800">€{totalFees.toFixed(2)}</h4>
+                                <p className="text-xs text-slate-500 uppercase font-bold">Portes (Caja)</p>
+                                <h4 className="text-xl font-bold text-slate-800">€{(totalPrepaid + totalDeliveredCash).toFixed(2)}</h4>
                             </div>
                         </div>
                         <div className="bg-slate-900 text-white p-6 rounded-2xl shadow-lg mt-2">
@@ -656,7 +840,7 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
                                 <div>
                                     <p className="text-slate-400 text-sm font-medium">Total Recaudado Hoy</p>
                                     <h2 className="text-3xl font-bold">
-                                        €{(totalDeliveredValue + collectedCollections.reduce((sum, c) => sum + parseAmount(c.amount), 0)).toFixed(2)}
+                                        €{totalCash.toFixed(2)}
                                     </h2>
                                 </div>
                                 <div className="p-3 bg-slate-800 rounded-full">
@@ -665,6 +849,27 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
                             </div>
                         </div>
                         <div className="space-y-4 mt-6">
+                            {/* New Section: Cobros en Origen */}
+                            {(prepaidCollections.length > 0) && (
+                                <div>
+                                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                                        Cobros en Origen (Albaranes)
+                                    </h4>
+                                    <div className="bg-white rounded-xl shadow-sm border border-slate-100 divide-y divide-slate-50">
+                                        {prepaidCollections.map(shipment => (
+                                            <div key={shipment.id} className="p-3 flex justify-between items-center hover:bg-slate-50">
+                                                <div>
+                                                    <p className="text-sm font-bold text-slate-700">{shipment.client}</p>
+                                                    <p className="text-[10px] text-slate-400">Pagado al Crear - {shipment.id}</p>
+                                                </div>
+                                                <span className="font-mono text-sm font-bold text-emerald-600">{shipment.amount}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             <div>
                                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
                                     <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
@@ -693,15 +898,15 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
                             <div>
                                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
                                     <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                                    Detalle Portes
+                                    Cobros en Entrega (Portes)
                                     <button onClick={handlePrintPortes} className="ml-auto p-1.5 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-200 transition-colors" title="Imprimir Resumen Portes">
                                         <Printer size={14} />
                                     </button>
                                 </h4>
                                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 divide-y divide-slate-50">
-                                    {deliveredShipments.length === 0 ? (
-                                        <p className="p-4 text-xs text-slate-400 text-center">No hay portes entregados.</p>
-                                    ) : deliveredShipments.map(shipment => (
+                                    {deliveredCollections.length === 0 ? (
+                                        <p className="p-4 text-xs text-slate-400 text-center">No hay portes cobrados.</p>
+                                    ) : deliveredCollections.map(shipment => (
                                         <div key={shipment.id} className="p-3 flex justify-between items-center hover:bg-slate-50">
                                             <div>
                                                 <p className="text-sm font-bold text-slate-700">{shipment.client}</p>
@@ -783,26 +988,18 @@ export default function DriverDashboard({ onLogout, allShipments, currentDriverI
                 isOpen={!!deliveryModalShipment}
                 onClose={() => setDeliveryModalShipment(null)}
                 shipment={deliveryModalShipment}
-                collectionAlert={(() => {
-                    if (!deliveryModalShipment) return false;
-                    // Logic: If 'Debido' AND (Receiver is New OR Receiver is Cobro Diario)
-                    if (deliveryModalShipment.porteType === 'Debido') {
-                        const receiverName = deliveryModalShipment.destinationName || '';
-                        const receiver = clients.find(c => c.name.toLowerCase() === receiverName.toLowerCase());
-                        // If receiver not found (New) OR receiver is Cobro Diario -> ALERT
-                        return !receiver || receiver.billingType === 'Cobro Diario';
-                    }
-                    return false;
-                })()}
-                onConfirm={(id, proof, status) => {
-                    console.log("Proof of Delivery:", proof, "Status:", status);
-                    // Pass coordinates from proof to update the destination client
-                    onStatusChange(id, status, proof?.coordinates || null);
-                    if (status === 'Pendiente Cobro') {
-                        setActiveTab('collections');
-                    }
-                }}
+                collectionAlert={collectionAlert}
+                pendingDebts={pendingDebts}
+                onConfirm={handleDeliveryConfirm}
             />
         </div>
+    );
+}
+
+export default function DriverDashboard(props) {
+    return (
+        <ErrorBoundary>
+            <DriverDashboardContent {...props} />
+        </ErrorBoundary>
     );
 }

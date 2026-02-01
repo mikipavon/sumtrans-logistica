@@ -1,4 +1,4 @@
-import { LayoutDashboard, Truck, Package, Settings, LogOut, Menu, Users, Map, Database, Tag, FileText, AlertTriangle, UserCheck } from 'lucide-react';
+import { LayoutDashboard, Truck, Package, Settings, LogOut, Menu, Users, Map, Database, Tag, FileText, AlertTriangle, UserCheck, Wallet } from 'lucide-react';
 import { useState } from 'react';
 
 export default function Sidebar({ onLogout, currentView, onNavigate, pendingClientsCount = 0 }) {
@@ -9,6 +9,7 @@ export default function Sidebar({ onLogout, currentView, onNavigate, pendingClie
             title: 'Gestión Central',
             items: [
                 { id: 'dashboard', icon: LayoutDashboard, label: 'Panel Principal' },
+                { id: 'pending-collections', icon: Wallet, label: 'Cobros Pendientes' },
                 { id: 'shipments', icon: Package, label: 'Envíos' },
                 { id: 'incidents', icon: AlertTriangle, label: 'Incidencias' },
                 { id: 'clients', icon: Database, label: 'Clientes / Ubicaciones' },
