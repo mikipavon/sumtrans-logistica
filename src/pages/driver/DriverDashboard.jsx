@@ -45,7 +45,7 @@ class ErrorBoundary extends React.Component {
     }
 }
 
-function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, onCreateShipment, onStatusChange, onUpdateShipment }) {
+function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, onCreateShipment, onStatusChange, onUpdateShipment, tariffs }) {
     console.log('DriverDashboard Render', { currentDriverId, drivers: drivers?.length, shipments: allShipments?.length, clients: clients?.length });
 
 
@@ -975,6 +975,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 drivers={drivers}
                 clients={clients}
                 prefillData={pickupToConvert}
+                tariffs={tariffs}
             />
 
             <CreatePickupModal

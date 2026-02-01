@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { Download, Upload, Trash2, Database } from 'lucide-react'
 import Layout from './components/layout/Layout'
 import Dashboard from './pages/Dashboard'
 import Shipments from './pages/Shipments'
@@ -13,6 +14,25 @@ import Incidents from './pages/Incidents'
 import ClientValidation from './pages/ClientValidation'
 import PendingCollections from './pages/PendingCollections'
 
+// Custom hook for localStorage persistence
+function usePersistentState(key, initialValue) {
+  const [state, setState] = useState(() => {
+    try {
+      const saved = localStorage.getItem(key);
+      return saved !== null ? JSON.parse(saved) : initialValue;
+    } catch (e) {
+      console.error("Storage load error:", e);
+      return initialValue;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem(key, JSON.stringify(state));
+  }, [key, state]);
+
+  return [state, setState];
+}
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [userRole, setUserRole] = useState(null) // 'admin', 'driver', 'client'
@@ -20,7 +40,7 @@ function App() {
   const [currentDriverId, setCurrentDriverId] = useState(null) // ID of the logged in driver
 
   // Lifted state for drivers
-  const [drivers, setDrivers] = useState([
+  const [drivers, setDrivers] = usePersistentState('drivers', [
     { id: 1, name: 'Carlos Ruiz', status: 'En Ruta', vehicle: 'V-8921-GZ', rating: 4.9, phone: '+34 600 000 001', since: '2019' },
     { id: 2, name: 'Ana Garcia', status: 'Descanso', vehicle: 'B-1234-XY', rating: 5.0, phone: '+34 600 000 002', since: '2020' },
     { id: 3, name: 'Miguel Angel', status: 'Vacaciones', vehicle: '-', rating: 4.7, phone: '+34 600 000 003', since: '2018' },
@@ -29,7 +49,7 @@ function App() {
   ])
 
   // Lifted state for shipments
-  const [shipments, setShipments] = useState([
+  const [shipments, setShipments] = usePersistentState('shipments', [
     { id: 'TR-2024001', client: 'Industrias Apex', origin: 'Madrid, ES', destination: 'Paris, FR', status: 'En Tránsito', date: '19 Ene, 2024', amount: '€1,250', assignedDriverId: 1, address: 'Paris, FR' }, // Assigned to Carlos
     { id: 'TR-2024002', client: 'Global Tech SA', origin: 'Valencia, ES', destination: 'Munich, DE', status: 'Pendiente', date: '20 Ene, 2024', amount: '€3,400', assignedDriverId: null, address: 'Munich, DE' },
     { id: 'TR-2024003', client: 'AgroLevante', origin: 'Murcia, ES', destination: 'Barcelona, ES', status: 'Entregado', date: '18 Ene, 2024', amount: '€850', assignedDriverId: 2, address: 'Barcelona, ES' },
@@ -38,7 +58,7 @@ function App() {
   ])
 
   // Lifted state for articles
-  const [articles, setArticles] = useState([
+  const [articles, setArticles] = usePersistentState('articles', [
     { id: 1, name: 'Hora de Espera', description: 'Cargo por hora adicional de espera en carga/descarga', price: '45.00', unit: 'Hora' },
     { id: 2, name: 'Palet Europeo', description: 'Transporte de palet estándar (120x80)', price: '65.00', unit: 'Unidad' },
     { id: 3, name: 'Kilometraje Extra', description: 'Tarifa por km fuera de ruta pactada', price: '1.20', unit: 'Km' },
@@ -74,7 +94,7 @@ function App() {
   }
 
   // Stored Client Locations
-  const [clients, setClients] = useState([
+  const [clients, setClients] = usePersistentState('clients', [
     { id: 101, name: 'Industrias Apex', address: 'Polígono Industrial Sur, Nave 4', city: 'Madrid', zip: '28001', phone: '+34 912 345 678', cif: 'B-12345678', type: 'Remitente', lastInteraction: '2024-01-19', coordinates: '40.4168, -3.7038', color: '#ef4444' }, // Red
     { id: 102, name: 'Global Tech SA', address: 'Av. del Puerto 12', city: 'Valencia', zip: '46024', phone: '+34 960 000 000', cif: 'A-87654321', type: 'Remitente', lastInteraction: '2024-01-20', coordinates: '39.4699, -0.3763', color: '#3b82f6' }, // Blue
   ])
@@ -118,7 +138,7 @@ function App() {
         city: newShipment.originCity || '',
         zip: newShipment.originZip || '',
         phone: newShipment.originPhone || '',
-        coordinates: newShipment.originCoordinates || '',
+        coordinates: newShipment.originCoordinates || '', // Save Origin GPS
         type: 'Remitente',
         billingType: 'Cobro Diario',
         status: 'pending', // Pendiente de validación
@@ -126,27 +146,15 @@ function App() {
         createdBy: creatorName,
         lastInteraction: new Date().toISOString().split('T')[0]
       }]);
+    } else if (senderExists && newShipment.originCoordinates && senderExists.status === 'pending') {
+      // Update pending sender with new coordinates if captured
+      setClients(clients.map(c =>
+        c.id === senderExists.id ? { ...c, coordinates: newShipment.originCoordinates } : c
+      ));
     }
 
-    // Auto-save DESTINATARIO (Receiver) if new
-    const receiverExists = clients.find(c => c.name.toLowerCase() === newShipment.destinationName?.toLowerCase());
-    if (!receiverExists && newShipment.destinationName) {
-      setClients(prev => [...prev, {
-        id: Date.now() + 1,
-        name: newShipment.destinationName,
-        address: newShipment.destinationAddress || '',
-        city: newShipment.destinationCity || '',
-        zip: newShipment.destinationZip || '',
-        phone: newShipment.destinationPhone || '',
-        coordinates: newShipment.destinationCoordinates || '',
-        type: 'Destinatario',
-        billingType: 'Cobro Diario',
-        status: 'pending', // Pendiente de validación
-        createdFrom: newShipment.type === 'Recogida' ? 'Recogida' : 'Albarán',
-        createdBy: creatorName,
-        lastInteraction: new Date().toISOString().split('T')[0]
-      }]);
-    }
+    // Auto-save DESTINATARIO (Receiver) removed here. 
+    // Logic moved to 'handleShipmentStatusChange' (on Delivery) to validate location first.
   }
 
   // Handle manual edits to shipment details
@@ -202,10 +210,12 @@ function App() {
         if (existingClient) {
           // ONLY update coordinates if client is still PENDING (not yet validated)
           // Approved clients have PROTECTED coordinates - only admin can change them
-          if (deliveryCoordinates && existingClient.status === 'pending') {
+          // ONLY update coordinates if client is still PENDING
+          const finalCoords = deliveryCoordinates || shipment.destinationCoordinates;
+          if (finalCoords && existingClient.status === 'pending') {
             setClients(clients.map(c =>
               c.id === existingClient.id
-                ? { ...c, coordinates: deliveryCoordinates, lastInteraction: new Date().toISOString().split('T')[0] }
+                ? { ...c, coordinates: finalCoords, lastInteraction: new Date().toISOString().split('T')[0] }
                 : c
             ));
           }
@@ -218,7 +228,7 @@ function App() {
             city: shipment.destinationCity || '',
             zip: shipment.destinationZip || '',
             phone: shipment.destinationPhone || '',
-            coordinates: deliveryCoordinates || '',
+            coordinates: deliveryCoordinates || shipment.destinationCoordinates || '',
             type: 'Destinatario',
             billingType: 'Cobro Diario',
             status: 'pending',
@@ -261,6 +271,25 @@ function App() {
     setArticles(articles.map(a => a.id === id ? { ...a, ...updatedData } : a));
   }
 
+  // Lifted state for tariffs (Dynamic Pricing)
+  const [tariffs, setTariffs] = usePersistentState('tariffs', [
+    { id: 1, name: 'Córdoba (Provincia)', match: 'Córdoba', zipPrefix: '14', price: '45.00' },
+    { id: 2, name: 'Sevilla', match: 'Sevilla', zipPrefix: '41', price: '65.00' },
+    { id: 3, name: 'Málaga', match: 'Málaga', zipPrefix: '29', price: '75.00' },
+  ])
+
+  const handleAddTariff = (newTariff) => {
+    setTariffs(prev => [...prev, { ...newTariff, id: Date.now() }]);
+  }
+
+  const handleUpdateTariff = (id, updatedData) => {
+    setTariffs(prev => prev.map(t => t.id === id ? { ...t, ...updatedData } : t));
+  }
+
+  const handleDeleteTariff = (id) => {
+    setTariffs(prev => prev.filter(t => t.id !== id));
+  }
+
   const handleValidateClient = (clientId, approved) => {
     if (approved) {
       // Approve: change status to 'approved'
@@ -300,6 +329,7 @@ function App() {
       onCreateShipment={handleAddShipment}
       onStatusChange={handleShipmentStatusChange}
       onUpdateShipment={handleUpdateShipment}
+      tariffs={tariffs}
     />
   }
 
@@ -313,15 +343,103 @@ function App() {
     >
       {currentView === 'dashboard' && <Dashboard />}
       {currentView === 'pending-collections' && <PendingCollections shipments={shipments} drivers={drivers} clients={clients} />}
-      {currentView === 'shipments' && <Shipments shipments={shipments} drivers={drivers} clients={clients} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} />}
+      {currentView === 'shipments' && <Shipments shipments={shipments} drivers={drivers} clients={clients} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} />}
       {currentView === 'fleet' && <Fleet />}
       {currentView === 'drivers' && <Drivers drivers={drivers} shipments={shipments} onAddDriver={handleAddDriver} onImpersonate={handleImpersonate} />}
       {currentView === 'tracking' && <Tracking drivers={drivers} />}
       {currentView === 'clients' && <Clients clients={clients} articles={articles} onUpdateClient={handleUpdateClient} onAddClient={handleAddClient} onImportClients={handleImportClients} />}
-      {currentView === 'articles' && <Articles articles={articles} onAddArticle={handleAddArticle} onUpdateArticle={handleUpdateArticle} />}
+      {currentView === 'articles' && <Articles articles={articles} tariffs={tariffs} onAddArticle={handleAddArticle} onUpdateArticle={handleUpdateArticle} onAddTariff={handleAddTariff} onUpdateTariff={handleUpdateTariff} onDeleteTariff={handleDeleteTariff} />}
       {currentView === 'incidents' && <Incidents shipments={shipments} onUpdateStatus={handleShipmentStatusChange} drivers={drivers} />}
-      {currentView === 'clientValidation' && <ClientValidation clients={clients} onValidateClient={handleValidateClient} />}
-      {currentView === 'settings' && <div className="p-4 bg-white rounded-xl shadow-sm h-96 flex items-center justify-center text-slate-400">Configuración del Sistema</div>}
+      {currentView === 'clientValidation' && <ClientValidation clients={clients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} />}
+      {currentView === 'settings' && (
+        <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
+          <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
+                <Database size={24} />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-800">Copia de Seguridad y Datos</h2>
+                <p className="text-slate-500 text-sm">Gestiona el almacenamiento local y exporta tus datos.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* EXPORT */}
+              <button
+                onClick={() => {
+                  const data = { drivers, shipments, clients, articles, tariffs };
+                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `backup-logistica-${new Date().toISOString().split('T')[0]}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                }}
+                className="flex flex-col items-center justify-center gap-3 p-8 bg-slate-50 border-2 border-slate-200 border-dashed rounded-xl hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700 transition-all group"
+              >
+                <div className="p-4 bg-white rounded-full shadow-sm group-hover:scale-110 transition-transform">
+                  <Download size={32} className="text-slate-400 group-hover:text-blue-600" />
+                </div>
+                <div className="text-center">
+                  <div className="font-bold text-lg">Exportar Copia</div>
+                  <div className="text-xs text-slate-500 mt-1">Descargar archivo .json</div>
+                </div>
+              </button>
+
+              {/* IMPORT */}
+              <div className="relative group">
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={(e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    if (!window.confirm('¿Estás seguro de restaurar? Esto sobrescribirá los datos actuales.')) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                      try {
+                        const data = JSON.parse(event.target.result);
+                        if (data.drivers) setDrivers(data.drivers);
+                        if (data.shipments) setShipments(data.shipments);
+                        if (data.clients) setClients(data.clients);
+                        if (data.articles) setArticles(data.articles);
+                        if (data.tariffs) setTariffs(data.tariffs);
+                        alert('¡Datos restaurados con éxito!');
+                        window.location.reload(); // Reload to ensure state consistency
+                      } catch (err) {
+                        alert('Error: Archivo dañado o formato incorrecto.');
+                      }
+                    };
+                    reader.readAsText(file);
+                  }}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                />
+                <div className="flex flex-col items-center justify-center gap-3 p-8 bg-slate-50 border-2 border-slate-200 border-dashed rounded-xl group-hover:bg-emerald-50 group-hover:border-emerald-200 group-hover:text-emerald-700 transition-all h-full">
+                  <div className="p-4 bg-white rounded-full shadow-sm group-hover:scale-110 transition-transform">
+                    <Upload size={32} className="text-slate-400 group-hover:text-emerald-600" />
+                  </div>
+                  <div className="text-center">
+                    <div className="font-bold text-lg">Restaurar Copia</div>
+                    <div className="text-xs text-slate-500 mt-1">Subir archivo .json</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 p-4 bg-amber-50 rounded-lg flex items-start gap-3 text-amber-800 text-sm">
+              <Database size={16} className="mt-0.5 shrink-0" />
+              <p>
+                <strong>Nota:</strong> Los datos se guardan automáticamente en este navegador.
+                Usa "Exportar Copia" periódicamente para tener una copia de seguridad en tu ordenador.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   )
 }

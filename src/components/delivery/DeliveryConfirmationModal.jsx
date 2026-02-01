@@ -141,6 +141,9 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             proofData = { type: 'photo', data: photoPreview, coordinates: deliveryCoordinates };
         }
 
+        // Just ensure coordinates are part of the payload even if signatures are used
+        proofData.coordinates = deliveryCoordinates;
+
         // Pass selected debts to confirm
         onConfirm(shipment.id, proofData, status, selectedDebts);
         onClose();

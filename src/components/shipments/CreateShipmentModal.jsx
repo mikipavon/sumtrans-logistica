@@ -1,7 +1,7 @@
 import { X, Truck, Package, DollarSign, Map, Building2, FileText, UserPlus, Check, MapPin, Loader2, CheckCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
-export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, clients, prefillData, onAddClient }) {
+export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, clients, prefillData, onAddClient, tariffs }) {
     const [formData, setFormData] = useState({
         // Remitente (Sender)
         clientName: '',
@@ -214,6 +214,42 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             { enableHighAccuracy: true, timeout: 10000 }
         );
     };
+
+    // Auto-Pricing Logic
+    useEffect(() => {
+        if (!tariffs || !isOpen) return;
+
+        const checktariff = () => {
+            // 1. Try Find by City Match
+            const cityMatch = tariffs.find(t =>
+                t.match && formData.destinationCity &&
+                t.match.toLowerCase() === formData.destinationCity.toLowerCase()
+            );
+
+            // 2. Try Find by ZIP Match
+            const zipMatch = tariffs.find(t =>
+                t.zipPrefix && formData.destinationZip &&
+                formData.destinationZip.startsWith(t.zipPrefix)
+            );
+
+            const foundTariff = cityMatch || zipMatch;
+
+            if (foundTariff) {
+                // Only auto-update if empty or previous value was also a tariff value? 
+                // For simplicity, we update if a match is found, but maybe we should be careful not to overwrite manual usage.
+                // Current approach: Just update. User can edit it afterwards if they want special price.
+
+                // Avoid infinite loop or unnecessary renders: only update if different
+                if (formData.amount !== foundTariff.price) {
+                    setFormData(prev => ({ ...prev, amount: foundTariff.price }));
+                }
+            }
+        };
+
+        const timer = setTimeout(checktariff, 500); // Debounce to allow typing
+        return () => clearTimeout(timer);
+
+    }, [formData.destinationCity, formData.destinationZip, tariffs, isOpen]);
 
     const checkPaymentRequirements = (data) => {
         // Check for Daily Payment Alert (Remitente)

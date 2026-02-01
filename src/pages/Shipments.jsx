@@ -2,7 +2,17 @@ import { Search, Filter, Plus, MoreVertical, MapPin, Calendar, Truck, User, BarC
 import { useState, useMemo } from 'react';
 import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 
-export default function Shipments({ shipments, drivers, clients, onAssignDriver, onCreateShipment, onAddClient }) {
+export default function Shipments({ shipments, drivers, clients, onAssignDriver, onCreateShipment, onAddClient, tariffs }) {
+    // ... existing state and logic ...
+    <CreateShipmentModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onSave={onCreateShipment}
+        drivers={drivers}
+        clients={clients}
+        onAddClient={onAddClient}
+        tariffs={tariffs}
+    />
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [viewMode, setViewMode] = useState('list'); // 'list' or 'stats'
 

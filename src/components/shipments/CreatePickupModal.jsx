@@ -1,4 +1,4 @@
-import { X, Building2, Package, FileText } from 'lucide-react';
+import { X, Building2, Package, FileText, MapPin, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) {
@@ -7,8 +7,12 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
         originAddress: '',
         originZip: '',
         originCity: '',
-        observations: ''
+        originCity: '',
+        observations: '',
+        originCoordinates: ''
     });
+
+    const [gettingGps, setGettingGps] = useState(false);
 
     const [filteredClients, setFilteredClients] = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
@@ -20,11 +24,29 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
                 originAddress: '',
                 originZip: '',
                 originCity: '',
-                observations: ''
+                observations: '',
+                originCoordinates: ''
             });
             setShowSuggestions(false);
+        } else {
+            // Try auto-capture on open if supported
+            captureGps();
         }
     }, [isOpen]);
+
+    const captureGps = () => {
+        if (!navigator.geolocation) return;
+        setGettingGps(true);
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const coords = `${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`;
+                setFormData(prev => ({ ...prev, originCoordinates: coords }));
+                setGettingGps(false);
+            },
+            () => setGettingGps(false),
+            { enableHighAccuracy: true, timeout: 5000 }
+        );
+    };
 
     const updateSuggestions = (value) => {
         if (!clients) return;
@@ -57,7 +79,8 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
             clientName: client.name,
             originAddress: client.address,
             originZip: client.zip || '',
-            originCity: client.city || ''
+            originCity: client.city || '',
+            originCoordinates: client.coordinates || ''
         }));
         setShowSuggestions(false);
     };
@@ -78,6 +101,7 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
             originAddress: formData.originAddress,
             originZip: formData.originZip,
             originCity: formData.originCity,
+            originCoordinates: formData.originCoordinates,
 
             // Destination is generic for Pickups until processed
             destination: 'Almacén Central',
@@ -163,6 +187,23 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
                                     onChange={(e) => setFormData({ ...formData, originAddress: e.target.value })}
                                     required
                                 />
+                            </div>
+
+                            {/* GPS Indicator for Origin */}
+                            <div className="flex justify-end -mt-2">
+                                <button
+                                    type="button"
+                                    onClick={captureGps}
+                                    disabled={gettingGps}
+                                    className={`text-xs flex items-center gap-1 transition-colors ${formData.originCoordinates
+                                        ? 'text-emerald-600 font-bold'
+                                        : 'text-slate-400 hover:text-amber-600'
+                                        }`}
+                                    title="Capturar ubicación GPS"
+                                >
+                                    {gettingGps ? <Loader2 size={12} className="animate-spin" /> : <MapPin size={12} />}
+                                    {formData.originCoordinates ? 'Ubicación Capturada' : 'Añadir GPS'}
+                                </button>
                             </div>
 
                             <div className="grid grid-cols-2 gap-3">
