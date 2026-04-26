@@ -10,9 +10,15 @@ export default function Login({ onLogin }) {
     const [isShaking, setIsShaking] = useState(false);
     
     const initializedRef = useRef(false);
+    const activeTabRef = useRef(activeTab);
+
+    // Keep ref in sync
+    useEffect(() => {
+        activeTabRef.current = activeTab;
+    }, [activeTab]);
 
     // Auto-fill on mount
-    useState(() => {
+    useEffect(() => {
         setTimeout(() => {
             // Check for Auto-Login from URL params
             const params = new URLSearchParams(window.location.search);
@@ -22,26 +28,43 @@ export default function Login({ onLogin }) {
             const urlTab = params.get('tab');
 
             if (isAutoLogin && urlUser && urlPass) {
-                if (urlTab) setActiveTab(urlTab);
+                if (urlTab) {
+                    setActiveTab(urlTab);
+                    activeTabRef.current = urlTab; // update ref immediately
+                }
                 if (emailRef.current) emailRef.current.value = urlUser;
                 if (passwordRef.current) passwordRef.current.value = urlPass;
-                // Auto trigger login once DOM is ready
+                // Auto trigger login
                 if (!initializedRef.current) {
                     initializedRef.current = true;
-                    setTimeout(handleLogin, 500); 
+                    // Llamamos a la función asíncrona directamente y pasamos el tab
+                    setTimeout(async () => {
+                        const currentEmail = emailRef.current?.value?.trim() || '';
+                        const currentPassword = passwordRef.current?.value || '';
+                        if (currentEmail && currentPassword) {
+                            try {
+                                const success = await onLogin(activeTabRef.current, currentEmail, currentPassword);
+                                if (success) {
+                                    localStorage.setItem(`lastLoginUser_${activeTabRef.current}`, currentEmail);
+                                } else {
+                                    setError('Credenciales inválidas');
+                                }
+                            } catch (e) {
+                                console.error(e);
+                            }
+                        }
+                    }, 500);
                 }
                 return;
             }
 
             // Normal flow fallback
-            if (activeTab && emailRef.current) {
-                const savedUser = localStorage.getItem(`lastLoginUser_${activeTab}`);
-                if (savedUser) {
-                    emailRef.current.value = savedUser;
-                }
+            if (activeTabRef.current && emailRef.current) {
+                const savedUser = localStorage.getItem(`lastLoginUser_${activeTabRef.current}`);
+                if (savedUser) emailRef.current.value = savedUser;
             }
         }, 100);
-    });
+    }, []);
 
     const handleLogin = async () => {
         setError('');
@@ -57,7 +80,7 @@ export default function Login({ onLogin }) {
         }
 
         try {
-            const success = await onLogin(activeTab, currentEmail, currentPassword);
+            const success = await onLogin(activeTabRef.current, currentEmail, currentPassword);
             if (success) {
                 localStorage.setItem(`lastLoginUser_${activeTab}`, currentEmail);
             } else {
