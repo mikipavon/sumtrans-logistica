@@ -1,16 +1,97 @@
-import { useState } from 'react';
-import { Truck, ArrowRight, Shield, User, Briefcase } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Truck, ArrowRight, Shield, User, Eye, EyeOff } from 'lucide-react';
 
 export default function Login({ onLogin }) {
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [activeTab, setActiveTab] = useState('admin'); // 'admin', 'driver', 'client'
+    const emailRef = useRef(null);
+    const passwordRef = useRef(null);
+    const [showPassword, setShowPassword] = useState(false);
+    const [activeTab, setActiveTab] = useState(() => localStorage.getItem('lastLoginTab') || 'client');
+    const [error, setError] = useState('');
+    const [isShaking, setIsShaking] = useState(false);
+    
+    const initializedRef = useRef(false);
 
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        // Simulate login
-        if (email && password) {
-            onLogin(activeTab);
+    // Auto-fill on mount
+    useState(() => {
+        setTimeout(() => {
+            // Check for Auto-Login from URL params
+            const params = new URLSearchParams(window.location.search);
+            const isAutoLogin = params.get('autoLogin') === 'true';
+            const urlUser = params.get('username');
+            const urlPass = params.get('password');
+            const urlTab = params.get('tab');
+
+            if (isAutoLogin && urlUser && urlPass) {
+                if (urlTab) setActiveTab(urlTab);
+                if (emailRef.current) emailRef.current.value = urlUser;
+                if (passwordRef.current) passwordRef.current.value = urlPass;
+                // Auto trigger login once DOM is ready
+                if (!initializedRef.current) {
+                    initializedRef.current = true;
+                    setTimeout(handleLogin, 500); 
+                }
+                return;
+            }
+
+            // Normal flow fallback
+            if (activeTab && emailRef.current) {
+                const savedUser = localStorage.getItem(`lastLoginUser_${activeTab}`);
+                if (savedUser) {
+                    emailRef.current.value = savedUser;
+                }
+            }
+        }, 100);
+    });
+
+    const handleLogin = async () => {
+        setError('');
+        setIsShaking(false);
+
+        const currentEmail = emailRef.current?.value?.trim() || '';
+        const currentPassword = passwordRef.current?.value || '';
+
+        if (!currentEmail || !currentPassword) {
+            setError('Por favor rellena usuario y contraseña');
+            triggerShake();
+            return;
+        }
+
+        try {
+            const success = await onLogin(activeTab, currentEmail, currentPassword);
+            if (success) {
+                localStorage.setItem(`lastLoginUser_${activeTab}`, currentEmail);
+            } else {
+                setError(activeTab === 'driver' ? 'Usuario o contraseña incorrectos' : 'Credenciales inválidas');
+                triggerShake();
+            }
+        } catch (err) {
+            console.error('Login error:', err);
+            setError('Error al iniciar sesión. Inténtalo de nuevo.');
+            triggerShake();
+        }
+    };
+
+    const triggerShake = () => {
+        setIsShaking(true);
+        setTimeout(() => setIsShaking(false), 500);
+    };
+
+    const handleTabChange = (tab) => {
+        setActiveTab(tab);
+        localStorage.setItem('lastLoginTab', tab);
+        setError('');
+        
+        if (emailRef.current) {
+            const savedUser = localStorage.getItem(`lastLoginUser_${tab}`);
+            if (savedUser) {
+                emailRef.current.value = savedUser;
+            } else {
+                emailRef.current.value = '';
+            }
+        }
+        
+        if (passwordRef.current) {
+            passwordRef.current.value = '';
         }
     };
 
@@ -23,8 +104,8 @@ export default function Login({ onLogin }) {
                     icon: Truck,
                     color: 'bg-amber-500',
                     ring: 'focus:ring-amber-200',
-                    btn: 'hover:bg-amber-600',
-                    btnBg: 'bg-amber-500'
+                    btnClass: 'bg-amber-500 hover:bg-amber-600',
+                    activeColor: 'text-amber-600',
                 };
             case 'client':
                 return {
@@ -33,18 +114,18 @@ export default function Login({ onLogin }) {
                     icon: User,
                     color: 'bg-emerald-500',
                     ring: 'focus:ring-emerald-200',
-                    btn: 'hover:bg-emerald-600',
-                    btnBg: 'bg-emerald-500'
+                    btnClass: 'bg-emerald-500 hover:bg-emerald-600',
+                    activeColor: 'text-emerald-600',
                 };
-            default: // admin
+            default:
                 return {
                     title: 'Administración',
                     subtitle: 'Panel de control de logística.',
                     icon: Shield,
                     color: 'bg-blue-600',
                     ring: 'focus:ring-blue-200',
-                    btn: 'hover:bg-blue-700',
-                    btnBg: 'bg-blue-600'
+                    btnClass: 'bg-blue-600 hover:bg-blue-700',
+                    activeColor: 'text-blue-600',
                 };
         }
     };
@@ -62,7 +143,7 @@ export default function Login({ onLogin }) {
                     <div className="flex justify-center mb-8">
                         <div className="p-4">
                             <img
-                                src="/logo-sum.jpg"
+                                src="/logo-sum.svg"
                                 alt="Transportes SUM"
                                 className="h-24 w-auto object-contain hover:scale-105 transition-transform duration-500"
                             />
@@ -71,68 +152,86 @@ export default function Login({ onLogin }) {
 
                     {/* Tabs */}
                     <div className="flex p-1 bg-slate-100 rounded-lg mb-8">
-                        <button
-                            onClick={() => setActiveTab('admin')}
-                            className={`flex-1 py-2 text-xs font-bold uppercase tracking-wide rounded-md transition-all ${activeTab === 'admin' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                        >
-                            Admin
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('driver')}
-                            className={`flex-1 py-2 text-xs font-bold uppercase tracking-wide rounded-md transition-all ${activeTab === 'driver' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                        >
-                            Repartidor
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('client')}
-                            className={`flex-1 py-2 text-xs font-bold uppercase tracking-wide rounded-md transition-all ${activeTab === 'client' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                        >
-                            Cliente
-                        </button>
+                        {[
+                            { id: 'admin', label: 'Admin', activeColor: 'text-blue-600' },
+                            { id: 'driver', label: 'Repartidor', activeColor: 'text-amber-600' },
+                            { id: 'client', label: 'Cliente', activeColor: 'text-emerald-600' },
+                        ].map(tab => (
+                            <button
+                                key={tab.id}
+                                type="button"
+                                onClick={() => handleTabChange(tab.id)}
+                                className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide rounded-md transition-all ${
+                                    activeTab === tab.id
+                                        ? `bg-white ${tab.activeColor} shadow-sm`
+                                        : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                            >
+                                {tab.label}
+                            </button>
+                        ))}
                     </div>
 
-                    <div className="mb-8">
-                        <div className={`w-12 h-12 ${config.color} rounded-xl flex items-center justify-center text-white mb-4 transition-colors duration-300`}>
+                    <div className="mb-6">
+                        <div className={`w-12 h-12 ${config.color} rounded-xl flex items-center justify-center text-white mb-4`}>
                             <Icon size={24} />
                         </div>
-                        <h1 className="text-3xl font-bold text-slate-900 mb-2 transition-all duration-300">{config.title}</h1>
-                        <p className="text-slate-500 transition-all duration-300">{config.subtitle}</p>
+                        <h1 className="text-3xl font-bold text-slate-900 mb-2">{config.title}</h1>
+                        <p className="text-slate-500">{config.subtitle}</p>
                     </div>
 
-                    <form onSubmit={handleSubmit} className="space-y-6">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-2">
+                    <div className={`space-y-5 ${isShaking ? 'animate-shake' : ''}`}>
+                        {error && (
+                            <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm text-center font-bold border border-red-100">
+                                {error}
+                            </div>
+                        )}
+
+                        <div className="space-y-1.5">
+                            <label className="block text-sm font-bold text-slate-600 ml-1">
                                 {activeTab === 'admin' ? 'Email Corporativo' : activeTab === 'driver' ? 'Usuario / ID' : 'Email de Contacto'}
                             </label>
                             <input
-                                type={activeTab === 'driver' ? 'text' : 'email'}
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                className={`w-full px-4 py-3 rounded-lg border border-slate-200 focus:border-transparent focus:ring-2 ${config.ring} outline-none transition-all`}
-                                placeholder={activeTab === 'admin' ? "usuario@empresa.com" : activeTab === 'driver' ? "CONDUCTOR-ID" : "cliente@email.com"}
-                                required
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-2">Contraseña</label>
-                            <input
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className={`w-full px-4 py-3 rounded-lg border border-slate-200 focus:border-transparent focus:ring-2 ${config.ring} outline-none transition-all`}
-                                placeholder="••••••••"
-                                required
+                                ref={emailRef}
+                                type="text"
+                                autoComplete="username"
+                                className={`w-full px-5 py-3.5 rounded-xl border border-slate-200 focus:border-transparent focus:ring-2 ${config.ring} outline-none transition-all shadow-sm bg-slate-50 focus:bg-white`}
+                                placeholder={activeTab === 'admin' ? 'Tu email' : activeTab === 'driver' ? 'Tu usuario' : 'Tu email'}
+                                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                             />
                         </div>
 
+                        <div className="space-y-1.5">
+                            <label className="block text-sm font-bold text-slate-600 ml-1">Contraseña</label>
+                            <div className="relative">
+                                <input
+                                    ref={passwordRef}
+                                    type={showPassword ? 'text' : 'password'}
+                                    autoComplete="current-password"
+                                    className={`w-full px-5 py-3.5 rounded-xl border border-slate-200 focus:border-transparent focus:ring-2 ${config.ring} outline-none transition-all shadow-sm bg-slate-50 focus:bg-white`}
+                                    placeholder="••••••••"
+                                    onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-1"
+                                    aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                                >
+                                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                                </button>
+                            </div>
+                        </div>
+
                         <button
-                            type="submit"
-                            className={`w-full ${config.btnBg} ${config.btn} text-white font-bold py-3.5 rounded-lg transition-colors flex items-center justify-center gap-2`}
+                            type="button"
+                            onClick={handleLogin}
+                            className={`w-full ${config.btnClass} text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95 hover:shadow-xl`}
                         >
                             Iniciar Sesión
                             <ArrowRight size={20} />
                         </button>
-                    </form>
+                    </div>
 
                     <p className="mt-8 text-center text-sm text-slate-400">
                         © 2024 Logistics Pro Platform
@@ -141,11 +240,11 @@ export default function Login({ onLogin }) {
 
                 {/* Right Side - Image/Decoration */}
                 <div className="hidden md:block w-1/2 bg-slate-900 relative">
-                    <div className={`absolute inset-0 bg-gradient-to-br transition-colors duration-500 z-10 
-                        ${activeTab === 'admin' ? 'from-blue-600/20 to-purple-600/20' :
-                            activeTab === 'driver' ? 'from-amber-600/20 to-orange-600/20' :
-                                'from-emerald-600/20 to-teal-600/20'}`}>
-                    </div>
+                    <div className={`absolute inset-0 bg-gradient-to-br transition-colors duration-500 z-10 ${
+                        activeTab === 'admin' ? 'from-blue-600/20 to-purple-600/20' :
+                        activeTab === 'driver' ? 'from-amber-600/20 to-orange-600/20' :
+                        'from-emerald-600/20 to-teal-600/20'
+                    }`}></div>
                     <img
                         src="https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?ixlib=rb-4.0.3&auto=format&fit=crop&w=2070&q=80"
                         alt="Logistics Warehouse"
