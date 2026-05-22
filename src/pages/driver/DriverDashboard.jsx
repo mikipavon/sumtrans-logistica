@@ -2736,7 +2736,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         return name === target || legal === target;
                     });
                     const bType = String(payingClient?.billingType || '').toLowerCase();
-                    return bType.includes('factur') || bType.includes('presupuesto');
+                    return bType.includes('factur') || bType.includes('presupuesto') || bType.includes('habitual') || bType.includes('diar') || bType.includes('libre') || bType.includes('contado');
                 })()}
             />
 
@@ -3382,7 +3382,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                 
                                                 // Determinar tipo de facturación
                                                 const bType = payingClient?.billingType || (isDebido ? shipment.destinationBillingType : shipment.billingType) || 'Clientes Habituales';
-                                                const isInvoice = String(bType).toLowerCase().includes('factur');
+                                                const bTypeLow = String(bType).toLowerCase();
+                                                const isInvoice = bTypeLow.includes('factur') || bTypeLow.includes('presupuesto') || bTypeLow.includes('habitual') || bTypeLow.includes('diar') || bTypeLow.includes('libre') || bTypeLow.includes('contado');
                                                 
                                                 if (isInvoice) {
                                                     return <span className="text-[10px] text-slate-400 italic font-sans">Enviado</span>;
