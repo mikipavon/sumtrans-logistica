@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Download, Upload, Trash2, Database } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { Download, Upload, Trash2, Database, Shield, Clock, Folder, CheckCircle, AlertCircle, Save, Settings, X, RotateCcw } from 'lucide-react'
 import Layout from './components/layout/Layout'
 import Dashboard from './pages/Dashboard'
 import Shipments from './pages/Shipments'
@@ -10,9 +10,23 @@ import DriverDashboard from './pages/driver/DriverDashboard'
 import Clients from './pages/Clients'
 import Articles from './pages/Articles'
 import Tracking from './pages/Tracking'
+import FuelManagement from './pages/FuelManagement'
+import ClientDashboard from './pages/client/ClientDashboard'
 import Incidents from './pages/Incidents'
 import ClientValidation from './pages/ClientValidation'
 import PendingCollections from './pages/PendingCollections'
+import NotificationCenter from './pages/NotificationCenter'
+import TimeLogsAdmin from './components/TimeLogsAdmin';
+import Shipment from './models/Shipment';
+import { supabase } from './lib/supabase'
+import { initStorageBuckets } from './utils/storage';
+import { getIrregularReasons } from './utils/shipmentUtils';
+import { BAREMO_1_PUEBLOS, BAREMO_2_PUEBLOS } from './data/baremos';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
+import { enqueue, getQueue, dequeue, getQueueLength } from './utils/offlineQueue';
+import { uploadProof } from './utils/storage';
+
+
 
 // Custom hook for localStorage persistence
 function usePersistentState(key, initialValue) {
@@ -33,29 +47,51 @@ function usePersistentState(key, initialValue) {
   return [state, setState];
 }
 
+// Shared Utils
+const normalizeText = (text) => {
+    if (!text) return '';
+    return String(text)
+        .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+de\s+cordoba$/, "")
+        .replace(/\s+de\s+la\s+frontera$/, "")
+        .replace(/\s+de\s+los\s+caballeros$/, "")
+        .replace(/[^a-z0-9\s]/g, "")
+        .replace(/\s+/g, " ");
+};
+
+const normalizeClientName = (name) => {
+    if (!name) return '';
+    return String(name)
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "") // remove accents
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, " "); // collapse multiple spaces
+};
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [userRole, setUserRole] = useState(null) // 'admin', 'driver', 'client'
   const [currentView, setCurrentView] = useState('dashboard')
   const [currentDriverId, setCurrentDriverId] = useState(null) // ID of the logged in driver
+  const [currentClientId, setCurrentClientId] = useState(null) // ID of the logged in client
+  const [shipmentStatusFilter, setShipmentStatusFilter] = useState(null) // Filter passed from Dashboard KPI cards
+
+  // --- OFFLINE / CONNECTIVITY ---
+  const { isOnline, justReconnected } = useOnlineStatus();
+  const [isSyncingQueue, setIsSyncingQueue] = useState(false);
+  const [pendingQueueCount, setPendingQueueCount] = useState(() => getQueueLength());
 
   // Lifted state for drivers
-  const [drivers, setDrivers] = usePersistentState('drivers', [
-    { id: 1, name: 'Carlos Ruiz', status: 'En Ruta', vehicle: 'V-8921-GZ', rating: 4.9, phone: '+34 600 000 001', since: '2019' },
-    { id: 2, name: 'Ana Garcia', status: 'Descanso', vehicle: 'B-1234-XY', rating: 5.0, phone: '+34 600 000 002', since: '2020' },
-    { id: 3, name: 'Miguel Angel', status: 'Vacaciones', vehicle: '-', rating: 4.7, phone: '+34 600 000 003', since: '2018' },
-    { id: 4, name: 'Jose Luis', status: 'En Ruta', vehicle: 'V-9999-BB', rating: 4.8, phone: '+34 600 000 004', since: '2021' },
-    { id: 5, name: 'Elena Torres', status: 'Disponible', vehicle: '-', rating: 4.9, phone: '+34 600 000 005', since: '2022' },
-  ])
+  const [drivers, setDrivers] = useState([])
+  const [isSyncing, setIsSyncing] = useState(true)
 
-  // Lifted state for shipments
-  const [shipments, setShipments] = usePersistentState('shipments', [
-    { id: 'TR-2024001', client: 'Industrias Apex', origin: 'Madrid, ES', destination: 'Paris, FR', status: 'En Tránsito', date: '19 Ene, 2024', amount: '€1,250', assignedDriverId: 1, address: 'Paris, FR' }, // Assigned to Carlos
-    { id: 'TR-2024002', client: 'Global Tech SA', origin: 'Valencia, ES', destination: 'Munich, DE', status: 'Pendiente', date: '20 Ene, 2024', amount: '€3,400', assignedDriverId: null, address: 'Munich, DE' },
-    { id: 'TR-2024003', client: 'AgroLevante', origin: 'Murcia, ES', destination: 'Barcelona, ES', status: 'Entregado', date: '18 Ene, 2024', amount: '€850', assignedDriverId: 2, address: 'Barcelona, ES' },
-    { id: 'TR-2024004', client: 'Decor Home', origin: 'Sevilla, ES', destination: 'Porto, PT', status: 'En Tránsito', date: '21 Ene, 2024', amount: '€1,100', assignedDriverId: null, address: 'Porto, PT' },
-    { id: 'TR-2024005', client: 'Inditex Group', origin: 'Coruña, ES', destination: 'Milan, IT', status: 'Preparando', date: '22 Ene, 2024', amount: '€4,200', assignedDriverId: 1, address: 'Milan, IT' }, // Assigned to Carlos
-  ])
+  const [shipments, setShipments] = useState([])
+
+
 
   // Lifted state for articles
   const [articles, setArticles] = usePersistentState('articles', [
@@ -65,14 +101,889 @@ function App() {
     { id: 4, name: 'Servicio Urgente', description: 'Suplemento por entrega 24h', price: '150.00', unit: 'Servicio' },
   ])
 
-  const handleLogin = (role = 'admin') => {
-    setIsAuthenticated(true)
-    setUserRole(role)
-    // Simulate logging in as Driver ID 1 (Carlos) when 'driver' role is selected
-    if (role === 'driver') {
-      setCurrentDriverId(1)
+  // Lifted state for vehicles (Fleet)
+  const [vehicles, setVehicles] = usePersistentState('vehicles', [
+    { id: 'V-8921-GZ', model: 'Volvo FH16', assignedDriverId: 1, status: 'En Ruta', location: 'A-6 km 45, Madrid', fuel: '78%', maintenance: 'OK', documents: [] },
+    { id: 'B-1234-XY', model: 'Scania R500', assignedDriverId: 2, status: 'Disponible', location: 'Base Central', fuel: '100%', maintenance: 'OK', documents: [] },
+    { id: 'V-9999-BB', model: 'Iveco S-Way', assignedDriverId: 4, status: 'En Ruta', location: 'AP-7, Valencia', fuel: '62%', maintenance: 'OK', documents: [] },
+  ])
+
+  // Lifted state for fuel logs
+  const [fuelLogs, setFuelLogs] = usePersistentState('fuelLogs', [])
+  const [routes, setRoutes] = useState([])
+  const [routeKnowledge, setRouteKnowledge] = useState({}) // { masterByRoute: {routeId: {...}}, byDriver: {driverId: {...}} }
+  
+  // Default COD configuration
+  const [defaultCodFee, setDefaultCodFee] = usePersistentState('defaultCodFee', '3.00')
+
+  // GPS Interval for driver tracking (in minutes)
+  const [gpsIntervalMinutes, setGpsIntervalMinutes] = usePersistentState('gpsIntervalMinutes', 15)
+
+  // Driver Alerts (configurable notifications for drivers)
+  const [driverAlerts, setDriverAlerts] = usePersistentState('driverAlerts', [
+    { id: 'monday_vehicle_check', title: '🔧 Revisión Semanal del Vehículo', message: '¡Buenos días! Es lunes. Antes de salir a ruta, confirma que has revisado los niveles de tu furgoneta:\n\n• Aceite del motor\n• Líquido refrigerante\n• Líquido de frenos\n• Presión de neumáticos\n• Luces y intermitentes', confirmText: '✅ Confirmo que he revisado los niveles', icon: '🚐', dayOfWeek: 1, enabled: true }
+  ])
+
+  // Family Order for articles
+  const [familyOrder, setFamilyOrder] = usePersistentState('familyOrder', [])
+
+  // Driver Manual Order
+  const [driverOrder, setDriverOrder] = usePersistentState('driverOrder', [])
+
+  // Coverage Zones (Baremo 1 & 2)
+  const [coverageZones, setCoverageZones] = usePersistentState('coverageZones', [
+    ...(BAREMO_1_PUEBLOS || []), 
+    ...(BAREMO_2_PUEBLOS || [])
+  ])
+
+
+  // (Ghost Mode logic moved down below state declarations)
+
+  const handleUpdateFamilyOrder = async (newOrder) => {
+    try {
+      const { error } = await supabase.from('settings').upsert({ key: 'familyOrder', value: JSON.stringify(newOrder) });
+      if (error) throw error;
+      setFamilyOrder(newOrder);
+    } catch (e) {
+      alert('Error al actualizar el orden de las familias.');
+      console.error(e);
+    }
+  }
+
+  const handleUpdateDriverOrder = async (newOrder) => {
+    // Optimistic UI update to prevent visual lag during drag and drop
+    const previousOrder = driverOrder;
+    setDriverOrder(newOrder);
+
+    try {
+      const { error } = await supabase.from('settings').upsert({ key: 'driverOrder', value: JSON.stringify(newOrder) });
+      if (error) throw error;
+    } catch (e) {
+      setDriverOrder(previousOrder); // Revert on failure
+      alert('Error al actualizar el orden de los conductores.');
+      console.error(e);
+    }
+  }
+
+  // Stored Client Locations
+  const [clients, setClients] = useState([])
+
+  // ======= LATEST STATE REFS (Avoid stale closures in async handlers) =======
+  const shipmentsRef = useRef(shipments);
+  const driversRef = useRef(drivers);
+  const clientsRef = useRef(clients);
+
+  useEffect(() => { shipmentsRef.current = shipments; }, [shipments]);
+  useEffect(() => { driversRef.current = drivers; }, [drivers]);
+  useEffect(() => { clientsRef.current = clients; }, [clients]);
+  // =========================================================================
+
+  // Admin credentials (loaded from Supabase settings, with secure defaults)
+  const [adminCreds, setAdminCreds] = useState({ user: 'info@sumtransportes.com', pass: '1632' })
+
+  // --- MODO PRUEBAS (Ahora es por cada conductor) ---
+  const activeTestMode = useMemo(() => {
+    if (userRole === 'driver' && currentDriverId) {
+      const driver = drivers.find(d => String(d.id) === String(currentDriverId));
+      return driver?.isTestMode || false;
+    }
+    return false;
+  }, [userRole, currentDriverId, drivers]);
+
+  const handleResetToZero = async (onlyTestData = false) => {
+    const message = onlyTestData 
+      ? "¿Estás seguro de que quieres borrar SOLAMENTE los envíos realizados en MODO PRUEBAS?"
+      : "⚠️ ATENCIÓN: Vas a borrar TODOS los envíos, firmas, fotos y coordenadas GPS de los clientes.\n\nEsto dejará la aplicación limpia para empezar el trabajo real.\n\n¿Estás seguro?";
+    
+    const confirm1 = window.confirm(message);
+    if (!confirm1) return;
+
+    if (!onlyTestData) {
+      const confirm2 = window.prompt("Esta acción es IRREVERSIBLE. Escribe 'BORRAR TODO' para confirmar:");
+      if (confirm2 !== 'BORRAR TODO') return;
+    }
+
+    try {
+      setIsSyncing(true);
+      
+      if (onlyTestData) {
+        // 1. Borrar envíos de prueba
+        const testShipments = shipments.filter(s => s.isTest);
+        const testShipmentIds = testShipments.map(s => s.id);
+        
+        // 2. Borrar clientes de prueba
+        const testClients = clients.filter(c => c.isTest);
+        const testClientIds = testClients.map(c => c.id);
+
+        if (testShipmentIds.length === 0 && testClientIds.length === 0) {
+          alert("No hay datos de prueba (envíos o clientes) para borrar.");
+          return;
+        }
+
+        if (testShipmentIds.length > 0) {
+          const { error: errS } = await supabase.from('shipments').delete().in('id', testShipmentIds);
+          if (errS) throw errS;
+          setShipments(prev => prev.filter(s => !testShipmentIds.includes(s.id)));
+        }
+
+        if (testClientIds.length > 0) {
+          const { error: errC } = await supabase.from('clients').delete().in('id', testClientIds);
+          if (errC) throw errC;
+          setClients(prev => prev.filter(c => !testClientIds.includes(c.id)));
+        }
+
+        alert(`✅ Limpieza completada: Se han borrado ${testShipmentIds.length} envíos y ${testClientIds.length} clientes de prueba.`);
+      } else {
+        // 1. Borrar todos los envíos
+        const { error: err1 } = await supabase.from('shipments').delete().neq('id', 'temp_placeholder');
+        if (err1) throw err1;
+
+        // 2. Limpiar coordenadas de todos los clientes
+        const { data: allCli, error: err2 } = await supabase.from('clients').select('*');
+        if (err2) throw err2;
+
+        for (const cli of (allCli || [])) {
+          const updatedData = { ...cli.data, coordinates: '' };
+          await supabase.from('clients').update({ data: updatedData }).eq('id', cli.id);
+        }
+
+        setShipments([]);
+        setClients(prev => prev.map(c => ({ ...c, coordinates: '' })));
+        alert("✅ Aplicación reseteada a 0. Lista para producción.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error durante el reseteo: " + err.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const [isGhostModeUnlocked, setIsGhostModeUnlocked] = useState(false);
+  const [orphanStartDate, setOrphanStartDate] = useState('');
+  const [orphanEndDate, setOrphanEndDate] = useState('');
+
+  // Alert form state (Settings page)
+  const [showNewAlertForm, setShowNewAlertForm] = useState(false);
+  const [editingAlertId, setEditingAlertId] = useState(null);
+  const [newAlertForm, setNewAlertForm] = useState({ title: '', message: '', icon: '🔔', dayOfWeek: undefined, timeFrom: '', timeTo: '', confirmText: '', targetDriverIds: [] });
+  const [alertHistory, setAlertHistory] = useState([]);
+  const [showAlertHistory, setShowAlertHistory] = useState(false);
+  const [alertHistoryFilter, setAlertHistoryFilter] = useState('all'); // 'all' or driverId
+
+  const handleSecretUnlock = useCallback(() => {
+    if (isGhostModeUnlocked) {
+      setIsGhostModeUnlocked(false);
+      alert("🔒 Modo Seguro Reactivado. Datos confidenciales ocultos.");
     } else {
-      setCurrentDriverId(null)
+      // Pedimos la contraseña (se validará contra la que tenga configurada el admin en ajustes)
+      const pass = prompt("Modo Dev: Introduce la clave de la base de datos para depuración.");
+      if (pass === adminCreds.pass) {
+        setIsGhostModeUnlocked(true);
+        alert("🔓 Desbloqueo Completado: Mostrando registros de Clientes Habituales.");
+      } else if (pass !== null && pass !== '') {
+        alert("❌ Clave de depuración incorrecta.");
+      }
+    }
+  }, [isGhostModeUnlocked, adminCreds.pass]);
+
+  const getSecretShipments = useCallback(() => {
+     return shipments.filter(s => {
+        let isSecret = false;
+        const normalize = (val) => String(val || '').toLowerCase().trim();
+        
+        const sClientNorm = normalize(s.client);
+        const remitente = clients.find(c => normalize(c.name) === sClientNorm || normalize(c.legalName) === sClientNorm);
+        
+        const sDestNorm = normalize(s.destinationName || s.client);
+        const destinatario = clients.find(c => normalize(c.name) === sDestNorm || normalize(c.legalName) === sDestNorm);
+        
+        const destBillingType = normalize(s.destinationBillingType || (destinatario ? destinatario.billingType : ''));
+        const mainBillingType = normalize(s.billingType || (remitente ? remitente.billingType : ''));
+        
+        if (destBillingType.includes('habitual') || destBillingType.includes('diar') || destBillingType.includes('libre') || destBillingType.includes('contado')) isSecret = true;
+        if (mainBillingType.includes('habitual') || mainBillingType.includes('diar') || mainBillingType.includes('libre') || mainBillingType.includes('contado')) isSecret = true;
+
+        if (mainBillingType.includes('presupuesto') || destBillingType.includes('presupuesto')) isSecret = true;
+
+        return isSecret;
+     });
+  }, [shipments, clients]);
+
+  const handleExportSecretsCSV = useCallback(() => {
+    const secrets = getSecretShipments();
+    if (secrets.length === 0) return alert('No hay envíos sensibles que exportar.');
+
+    const escapeCSV = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
+
+    const headers = ['ID', 'Fecha', 'Remitente', 'C.P. Origen', 'Destinatario', 'C.P. Destino', 'Tipo Porte', 'Importe', 'Reembolso', 'Estado', 'Conductor Asignado', 'Observaciones', 'Nombre Receptor', 'DNI/Identidad', 'Firma (URL)', 'Foto Entrega (URL)', 'Foto Mercancía (URL)', 'Coordenadas Entrega'];
+    
+    const rows = secrets.map(s => {
+      const driver = drivers.find(d => d.id === s.assignedDriverId);
+      return [
+        s.id,
+        s.date || s.createdAt || '',
+        s.client || s.originName || '',
+        s.originZip || '',
+        s.destinationName || '',
+        s.destinationZip || '',
+        s.porteType || '',
+        s.amount || '0',
+        s.hasCod ? (s.codAmount || '0') : '0',
+        s.status || '',
+        driver ? driver.name : '',
+        s.observations || '',
+        s.receiverName || '',
+        s.receiverId || '',
+        s.deliverySignature || '',
+        s.deliveryPhoto || '',
+        s.merchandisePhoto || '',
+        s.deliveryCoordinates || ''
+      ].map(escapeCSV).join(';'); // Use semicolon for Excel Spanish locales
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(';'), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `albaranes_confidenciales_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }, [getSecretShipments, drivers]);
+
+  const handleDeleteSecrets = useCallback(async () => {
+    const secrets = getSecretShipments();
+    if (secrets.length === 0) return alert('No hay envíos confidenciales que borrar.');
+
+    const confirm1 = window.confirm(`⚠️ ¡ATENCIÓN EXTREMA!\n\nVas a ELIMINAR PERMANENTEMENTE ${secrets.length} envíos (sus albaranes, justificantes de entrega y firmas).\n\nLos perfiles de Clientes y sus direcciones NO se borrarán, solo el historial de viajes.\n\n¿Estás seguro de que tienes una copia exportada en tu ordenador?`);
+    if (!confirm1) return;
+
+    const confirm2 = window.prompt(`Esta acción es IRREVERSIBLE e impactará a todos los conductores y la Nube.\nEscribe "BORRAR" (en mayúsculas) para confirmar la destrucción de los ${secrets.length} registros:`);
+    if (confirm2 !== "BORRAR") return;
+
+    try {
+      const idsToDelete = secrets.map(s => s.id);
+      
+      const { error } = await supabase.from('shipments').delete().in('id', idsToDelete);
+      if (error) throw error;
+
+      setShipments(prev => prev.filter(s => !idsToDelete.includes(s.id)));
+      
+      alert(`✅ ¡Operación confidencial completada con éxito!\nSe han evaporado ${secrets.length} envíos. El rastro contable de estos portes está limpio.`);
+    } catch (err) {
+      console.error(err);
+      alert('Error crítico intentando borrar en Supabase.');
+    }
+  }, [getSecretShipments]);
+
+  const handleCleanOrphanedFiles = useCallback(async () => {
+    let confirmMessage = "¿Seguro que quieres buscar y eliminar de la nube TODAS las fotos y firmas que ya no tienen un envío asociado en tu panel?";
+    if (orphanStartDate || orphanEndDate) {
+      confirmMessage += `\n\nFiltro de fechas aplicado:\nDesde: ${orphanStartDate || 'El principio'}\nHasta: ${orphanEndDate || 'Hoy'}`;
+    }
+    confirmMessage += "\n\nEsta acción es irreversible y liberará espacio en el servidor.";
+    
+    if (!window.confirm(confirmMessage)) return;
+
+    try {
+      // 1. Recopilar todas las rutas de archivos que SÍ están en uso
+      const activePaths = new Set();
+      shipments.forEach(s => {
+        [s.deliverySignature, s.deliveryPhoto, s.merchandisePhoto, s.incidentPhoto].forEach(url => {
+          if (typeof url === 'string' && url.includes('/storage/v1/object/public/')) {
+            const parts = url.split('/storage/v1/object/public/')[1].split('/');
+            const filePath = decodeURIComponent(parts.slice(1).join('/'));
+            activePaths.add(filePath);
+          }
+        });
+      });
+
+      let totalDeleted = 0;
+      const buckets = ['signatures', 'delivery_photos', 'merchandise_photos'];
+
+      const start = orphanStartDate ? new Date(orphanStartDate).getTime() : 0;
+      const end = orphanEndDate ? new Date(orphanEndDate).getTime() + 86400000 : Infinity; // Add 24h to include end day
+
+      for (const bucket of buckets) {
+        // Listar todos los archivos del bucket
+        const { data: files, error } = await supabase.storage.from(bucket).list('', { limit: 10000 });
+        if (error) {
+          console.error(`Error listando bucket ${bucket}:`, error);
+          continue;
+        }
+
+        if (!files || files.length === 0) continue;
+
+        // Filtrar los que NO están en activePaths Y cumplen el filtro de fechas
+        const orphanedFiles = files
+          .filter(f => {
+             if (f.name === '.emptyFolderPlaceholder') return false;
+             if (activePaths.has(f.name)) return false;
+             
+             // Filtro de fecha usando f.created_at
+             if (f.created_at) {
+               const fileTime = new Date(f.created_at).getTime();
+               if (fileTime < start || fileTime > end) return false;
+             }
+             return true;
+          })
+          .map(f => f.name);
+
+        if (orphanedFiles.length > 0) {
+          // Borrar en lotes de 100
+          const chunkSize = 100;
+          for (let i = 0; i < orphanedFiles.length; i += chunkSize) {
+            const chunk = orphanedFiles.slice(i, i + chunkSize);
+            const { error: delError } = await supabase.storage.from(bucket).remove(chunk);
+            if (delError) {
+              console.error(`Error borrando en ${bucket}:`, delError);
+            } else {
+              totalDeleted += chunk.length;
+            }
+          }
+        }
+      }
+
+      alert(`✅ Limpieza completada con éxito.\n\nSe han borrado definitivamente ${totalDeleted} archivos (fotos/firmas) de la nube.`);
+    } catch (e) {
+      console.error(e);
+      alert("Ocurrió un error al limpiar los archivos sueltos.");
+    }
+  }, [shipments, orphanStartDate, orphanEndDate]);
+
+  // --- PERFORMANCE: CLIENTS CACHE MAP ---
+  const clientsMap = useMemo(() => {
+    const map = new Map();
+    const normalize = (s) => String(s || '').toLowerCase().trim();
+    (clients || []).forEach(c => {
+      const nameNorm = normalize(c.name);
+      const legalNorm = normalize(c.legalName);
+      if (nameNorm) map.set(nameNorm, c);
+      if (legalNorm) map.set(legalNorm, c);
+    });
+    return map;
+  }, [clients]);
+
+  // Si el usuario es admin y el candado está echado, los clientes y envíos habituales dejan de existir de cara a la app
+  const visibleClients = useMemo(() => {
+    if (userRole === 'admin' && !isGhostModeUnlocked) {
+      return clients.filter(c => {
+         const type = String(c.billingType || '').toLowerCase().trim();
+         return !(type.includes('habitual') || type.includes('diar') || type.includes('libre') || type.includes('contado') || type.includes('presupuesto'));
+      });
+    }
+    return clients;
+  }, [clients, userRole, isGhostModeUnlocked]);
+
+  const visibleShipments = useMemo(() => {
+    if (userRole === 'admin' && !isGhostModeUnlocked) {
+      const normalize = (val) => String(val || '').toLowerCase().trim();
+      
+      return shipments.filter(s => {
+        let isSecret = false;
+        
+        // Lookup in Map for O(1)
+        const remitente = clientsMap.get(normalize(s.client));
+        const destinatario = clientsMap.get(normalize(s.destinationName || s.client));
+        
+        // Billing directo del envio o arrastrado del remitente asociado
+        const mainBillingType = normalize(s.billingType || (remitente ? remitente.billingType : ''));
+        if (mainBillingType.includes('habitual') || mainBillingType.includes('diar') || mainBillingType.includes('libre') || mainBillingType.includes('contado') || mainBillingType.includes('presupuesto')) isSecret = true;
+        
+        const destBillingType = normalize(s.destinationBillingType || (destinatario ? destinatario.billingType : ''));
+        if (destBillingType.includes('habitual') || destBillingType.includes('diar') || destBillingType.includes('libre') || destBillingType.includes('contado') || destBillingType.includes('presupuesto')) isSecret = true;
+
+        // Si es de los secretos, lo echamos de la lista renderizada
+        return !isSecret;
+      });
+    }
+    return shipments;
+  }, [shipments, clientsMap, userRole, isGhostModeUnlocked]);
+
+  // Centralized Population List for Autocomplete
+  const allPoblaciones = useMemo(() => {
+    // Solo usamos las poblaciones registradas en el listado de Baremos (coverageZones)
+    const set = new Set();
+    
+    (coverageZones || []).forEach(z => {
+      if (z.name) set.add(z.name.trim());
+    });
+
+    // De-duplicación por si acaso hubiera entradas idénticas
+    const uniqueMap = new Map();
+    set.forEach(poblacion => {
+      const normalized = poblacion.toLowerCase();
+      if (!uniqueMap.has(normalized) && poblacion !== '') {
+        uniqueMap.set(normalized, poblacion);
+      }
+    });
+
+    return Array.from(uniqueMap.values()).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+  }, [coverageZones]);
+
+  // Supabase Data Loading (Carga TOTAL de la nube)
+  useEffect(() => {
+    const isMissingSupabaseKeys = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (isMissingSupabaseKeys) {
+        setIsSyncing(false);
+        return;
+    }
+
+    async function loadData() {
+      setIsSyncing(true)
+      await initStorageBuckets();
+      try {
+
+        const [
+          { data: drv },
+          { data: shp },
+          { data: cli },
+          { data: art },
+          { data: veh },
+          { data: fue },
+          { data: trf },
+          { data: cod },
+          { data: famOrder },
+          { data: drvOrder },
+          { data: covZones },
+          { data: routesData },
+          { data: routeKnowledgeData },
+          { data: gpsIntervalData },
+          { data: driverAlertsData }
+        ] = await Promise.all([
+          supabase.from('drivers').select('*'),
+          supabase.from('shipments').select('*'),
+          supabase.from('clients').select('*'),
+          supabase.from('articles').select('*'),
+          supabase.from('vehicles').select('*'),
+          supabase.from('fuel_logs').select('*'),
+          supabase.from('tariffs').select('*'),
+          supabase.from('settings').select('*').eq('key', 'defaultCodFee'),
+          supabase.from('settings').select('*').eq('key', 'familyOrder'),
+          supabase.from('settings').select('*').eq('key', 'driverOrder'),
+          supabase.from('coverage_zones').select('*'),
+          supabase.from('settings').select('*').eq('key', 'routes'),
+          supabase.from('settings').select('*').eq('key', 'route_knowledge'),
+          supabase.from('settings').select('*').eq('key', 'gpsIntervalMinutes'),
+          supabase.from('settings').select('*').eq('key', 'driverAlerts')
+        ])
+        
+        if (drv) setDrivers(drv.map(d => ({ ...d.data, id: d.id, username: d.username, password: d.password })))
+        if (shp) {
+          let loadedShipments = shp.map(s => ({ ...s.data, id: s.id }));
+          
+          // ── Apply pending queue operations over fresh Supabase data ──
+          // This prevents the "flash" where a queued delivery briefly shows as pending
+          const pendingOps = await getQueue();
+          if (pendingOps.length > 0) {
+            console.log(`[Queue] Applying ${pendingOps.length} pending operations to fresh data...`);
+            for (const op of pendingOps) {
+              if (op.type === 'statusChange' && op.updatedData) {
+                loadedShipments = loadedShipments.map(s => 
+                  s.id === op.shipmentId ? { ...s, ...op.updatedData } : s
+                );
+              } else if (op.type === 'updateShipment' && op.mergedData) {
+                loadedShipments = loadedShipments.map(s => 
+                  s.id === op.shipmentId ? { ...s, ...op.mergedData } : s
+                );
+              }
+            }
+          }
+          
+          setShipments(loadedShipments);
+        }
+        if (cli) setClients(cli.map(c => ({ ...c.data, id: c.id })))
+        if (art) setArticles(art.map(a => ({ ...a.data, id: a.id })))
+        if (veh) setVehicles(veh.map(v => ({ ...v.data, id: v.id })))
+        if (fue) setFuelLogs(fue.map(f => ({ ...f.data, id: f.id })))
+        if (trf) setTariffs(trf.map(t => ({ ...t.data, id: t.id })))
+        if (cod && cod.length > 0) setDefaultCodFee(cod[0].value)
+        if (famOrder && famOrder.length > 0) {
+          try {
+            setFamilyOrder(JSON.parse(famOrder[0].value))
+          } catch (e) {
+            console.error("Error parsing familyOrder:", e)
+          }
+        }
+        
+        if (drvOrder && drvOrder.length > 0) {
+          try {
+            setDriverOrder(JSON.parse(drvOrder[0].value))
+          } catch (e) {
+            console.error("Error parsing driverOrder:", e)
+          }
+        }
+        if (covZones) setCoverageZones(covZones.map(z => ({ ...z.data, id: z.id })))
+        if (routesData && routesData.length > 0) {
+          try { setRoutes(JSON.parse(routesData[0].value)) } catch(e) { console.error('Error parsing routes:', e) }
+        }
+        // Load route knowledge (learning data)
+        if (gpsIntervalData && gpsIntervalData.length > 0) {
+          try { setGpsIntervalMinutes(parseInt(gpsIntervalData[0].value) || 15) } catch(e) { console.error('Error parsing gpsInterval:', e) }
+        }
+        if (driverAlertsData && driverAlertsData.length > 0) {
+          try { setDriverAlerts(JSON.parse(driverAlertsData[0].value)) } catch(e) { console.error('Error parsing driverAlerts:', e) }
+        }
+        if (routeKnowledgeData && routeKnowledgeData.length > 0) {
+          try { setRouteKnowledge(JSON.parse(routeKnowledgeData[0].value)) } catch(e) { console.error('Error parsing route_knowledge:', e) }
+        }
+        
+        // Load Admin Credentials (maybeSingle avoids error when row doesn't exist yet)
+        const { data: adminUser } = await supabase.from('settings').select('value').eq('key', 'admin_user').maybeSingle()
+        const { data: adminPass } = await supabase.from('settings').select('value').eq('key', 'admin_pass').maybeSingle()
+        setAdminCreds({
+          user: adminUser?.value || 'info@sumtransportes.com',
+          pass: adminPass?.value || '1632'
+        })
+
+      } catch (error) {
+        console.error('Error loading Supabase data:', error)
+      } finally {
+        setIsSyncing(false)
+      }
+    }
+    loadData()
+    initStorageBuckets(); // Asegurar buckets de storage
+
+    // ======= SUSCRIPCIÓN EN TIEMPO REAL (Supabase Realtime) =======
+    // Optimizado: Evitamos el select('*') masivo y actualizamos el estado local por piezas
+    const channel = supabase.channel('global-db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shipments' }, (payload) => {
+        console.log("🔄 [Realtime] Cambio en envíos:", payload.eventType);
+        if (!payload.new && payload.eventType !== 'DELETE') return;
+        setShipments(prev => {
+          if (payload.eventType === 'INSERT') {
+            if (!payload.new?.data) { console.warn('[Realtime] INSERT shipment sin data, ignorado'); return prev; }
+            const newItem = { ...payload.new.data, id: payload.new.id };
+            if (prev.find(s => s.id === newItem.id)) return prev;
+            return [newItem, ...prev];
+          }
+          if (payload.eventType === 'UPDATE') {
+            if (!payload.new?.data) {
+              // Realtime parcial: solo actualizar los campos de nivel superior que sí llegaron
+              console.warn('[Realtime] UPDATE shipment parcial (sin data JSONB), merge superficial');
+              const { id, data: _d, ...topLevelFields } = payload.new;
+              return prev.map(s => s.id === id ? { ...s, ...topLevelFields } : s);
+            }
+            const updatedItem = { ...payload.new.data, id: payload.new.id };
+            return prev.map(s => s.id === updatedItem.id ? updatedItem : s);
+          }
+          if (payload.eventType === 'DELETE') {
+            return prev.filter(s => s.id !== payload.old?.id);
+          }
+          return prev;
+        });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, (payload) => {
+        console.log("🔄 [Realtime] Cambio en conductores:", payload.eventType);
+        if (!payload.new && payload.eventType !== 'DELETE') return;
+        setDrivers(prev => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            if (!payload.new?.data) {
+              console.warn('[Realtime] Driver event sin data JSONB, merge superficial');
+              const { id, data: _d, ...topLevelFields } = payload.new || {};
+              if (!id) return prev;
+              const exists = prev.find(d => d.id === id);
+              return exists ? prev.map(d => d.id === id ? { ...d, ...topLevelFields } : d) : prev;
+            }
+            const item = { ...payload.new.data, id: payload.new.id, username: payload.new.username, password: payload.new.password };
+            const exists = prev.find(d => d.id === item.id);
+            if (exists && payload.eventType === 'INSERT') return prev;
+            return exists ? prev.map(d => d.id === item.id ? item : d) : [...prev, item];
+          }
+          if (payload.eventType === 'DELETE') {
+            return prev.filter(d => d.id !== payload.old?.id);
+          }
+          return prev;
+        });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, (payload) => {
+        console.log("🔄 [Realtime] Cambio en clientes:", payload.eventType);
+        if (!payload.new && payload.eventType !== 'DELETE') return;
+        setClients(prev => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            if (!payload.new?.data) {
+              console.warn('[Realtime] Client event sin data JSONB, merge superficial');
+              const { id, data: _d, ...topLevelFields } = payload.new || {};
+              if (!id) return prev;
+              const exists = prev.find(c => c.id === id);
+              return exists ? prev.map(c => c.id === id ? { ...c, ...topLevelFields } : c) : prev;
+            }
+            const item = { ...payload.new.data, id: payload.new.id, name: payload.new.name };
+            const exists = prev.find(c => c.id === item.id);
+            if (exists && payload.eventType === 'INSERT') return prev;
+            return exists ? prev.map(c => c.id === item.id ? item : c) : [...prev, item];
+          }
+          if (payload.eventType === 'DELETE') {
+            return prev.filter(c => c.id !== payload.old?.id);
+          }
+          return prev;
+        });
+      })
+      .subscribe();
+
+    // Limpieza de canales si se desmonta
+    return () => {
+      supabase.removeChannel(channel);
+    }
+  }, [])
+
+  // ======= OFFLINE QUEUE: FLUSH LOGIC (shared) =======
+  const flushQueueRef = useRef(false); // prevent concurrent flushes
+
+  const flushOfflineQueue = useCallback(async () => {
+    if (flushQueueRef.current) return; // Already flushing
+    const queue = await getQueue();
+    if (queue.length === 0) return;
+    if (!navigator.onLine) return; // Don't try if truly offline
+
+    flushQueueRef.current = true;
+    console.log(`[OfflineQueue] Flushing ${queue.length} queued operations...`);
+    setIsSyncingQueue(true);
+    setPendingQueueCount(queue.length);
+
+    for (const op of queue) {
+      try {
+        if (op.type === 'updateShipment') {
+          const { error } = await supabase
+            .from('shipments')
+            .update({
+              status: op.mergedData.status,
+              assignedDriverId: op.mergedData.assignedDriverId,
+              data: op.mergedData
+            })
+            .eq('id', op.shipmentId);
+          if (!error) {
+            await dequeue(op.id);
+            console.log(`[OfflineQueue] Synced updateShipment: ${op.shipmentId}`);
+          } else {
+            console.warn(`[OfflineQueue] Failed to sync updateShipment ${op.shipmentId}:`, error);
+          }
+        } else if (op.type === 'statusChange') {
+          // --- Upload pending offline photos/signatures ---
+          let dataToSave = { ...op.updatedData };
+          const uploads = op.pendingUploads || {};
+
+          // Upload signature if stored as base64 offline
+          if (uploads.signatureData) {
+            try {
+              const uploadedUrl = await uploadProof(op.shipmentId, uploads.signatureData, 'signatures');
+              if (uploadedUrl) dataToSave.deliverySignature = uploadedUrl;
+              console.log(`[OfflineQueue] Uploaded offline signature for ${op.shipmentId}`);
+            } catch (e) { console.warn('[OfflineQueue] Signature upload failed:', e); }
+          }
+          // Upload photo if stored as base64 offline
+          if (uploads.photoData) {
+            try {
+              const uploadedUrl = await uploadProof(op.shipmentId, uploads.photoData, 'delivery_photos');
+              if (uploadedUrl) dataToSave.deliveryPhoto = uploadedUrl;
+              console.log(`[OfflineQueue] Uploaded offline photo for ${op.shipmentId}`);
+            } catch (e) { console.warn('[OfflineQueue] Photo upload failed:', e); }
+          }
+
+          // --- Sync the shipment record to Supabase ---
+          const { error } = await supabase
+            .from('shipments')
+            .update({
+              status: op.finalStatus,
+              assignedDriverId: op.assignedDriverId,
+              data: dataToSave
+            })
+            .eq('id', op.shipmentId);
+          if (!error) {
+            await dequeue(op.id);
+            // Refresh local state with permanent Storage URLs
+            setShipments(prev => prev.map(s => s.id === op.shipmentId ? { ...s, ...dataToSave } : s));
+            console.log(`[OfflineQueue] Synced statusChange: ${op.shipmentId} -> ${op.finalStatus}`);
+          } else {
+            console.warn(`[OfflineQueue] Failed to sync statusChange ${op.shipmentId}:`, error);
+          }
+        }
+      } catch (e) {
+        console.error(`[OfflineQueue] Error processing op ${op.id}:`, e);
+      }
+    }
+    setIsSyncingQueue(false);
+    const newLen = await getQueueLength();
+    setPendingQueueCount(newLen);
+    flushQueueRef.current = false;
+    console.log('[OfflineQueue] Flush complete. Remaining:', newLen);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trigger flush when coming back online
+  useEffect(() => {
+    if (isOnline) flushOfflineQueue();
+  }, [isOnline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Periodic retry: flush every 15 seconds if there are pending operations
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (getQueueLength() > 0 && navigator.onLine) {
+        console.log('[OfflineQueue] Periodic retry triggered...');
+        flushOfflineQueue();
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [flushOfflineQueue]);
+
+  // Warn driver before closing if there are pending queue operations
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (getQueueLength() > 0) {
+        e.preventDefault();
+        e.returnValue = 'Tienes entregas pendientes de sincronizar. Si cierras ahora, se intentarán sincronizar al volver a abrir la app.';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+  // =================================================
+
+  const handleSyncLocalToCloud = async () => {
+    setIsSyncing(true)
+    try {
+      alert('Iniciando migración completa a Supabase...')
+      // Migrate everything
+      const dataToSync = [
+        { table: 'drivers', items: JSON.parse(localStorage.getItem('drivers') || '[]'), idKey: 'id' },
+        { table: 'shipments', items: JSON.parse(localStorage.getItem('shipments') || '[]'), idKey: 'id' },
+        { table: 'clients', items: JSON.parse(localStorage.getItem('clients') || '[]'), idKey: 'id' },
+        { table: 'articles', items: JSON.parse(localStorage.getItem('articles') || '[]'), idKey: 'id' },
+        { table: 'vehicles', items: JSON.parse(localStorage.getItem('vehicles') || '[]'), idKey: 'id' },
+        { table: 'fuel_logs', items: JSON.parse(localStorage.getItem('fuelLogs') || '[]'), idKey: 'id' },
+        { table: 'tariffs', items: JSON.parse(localStorage.getItem('tariffs') || '[]'), idKey: 'id' },
+        { table: 'settings', items: [{ key: 'defaultCodFee', value: localStorage.getItem('defaultCodFee') || '3.00' }], idKey: 'key' }
+      ]
+
+      for (const sync of dataToSync) {
+        if (sync.items.length > 0) {
+          for (const item of sync.items) {
+             const payload = { id: item.id || item.key, data: item };
+             if (sync.table === 'drivers') {
+               payload.username = item.username;
+               payload.password = item.password;
+             }
+             if (sync.table === 'clients') {
+               payload.name = item.name;
+             }
+             if (sync.table === 'settings') {
+               payload.key = item.key;
+               payload.value = item.value;
+               delete payload.data; // Settings table has key/value, not data JSONB
+             }
+             await supabase.from(sync.table).upsert([payload])
+          }
+        }
+      }
+      
+      alert('¡Sincronización completada con éxito!')
+      window.location.reload()
+    } catch (error) {
+      console.error('Sync error:', error)
+      alert('Error en la sincronización.')
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
+  const handleLogin = async (role = 'admin', username = '', password = '') => {
+    if (role === 'driver') {
+      try {
+        const { data: driver, error } = await supabase
+          .from('drivers')
+          .select('*')
+          .eq('username', username)
+          .eq('password', password)
+          .single()
+
+        if (driver) {
+          if (driver.data && driver.data.isActive === false) {
+            alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
+            return;
+          }
+          setIsAuthenticated(true);
+          setUserRole(role);
+          setCurrentDriverId(driver.id);
+          setCurrentClientId(null);
+          
+          // --- TIME TRACKING: Fichaje Automático ---
+          try {
+             const today = new Date().toISOString().split('T')[0];
+             const { data: existingLog } = await supabase
+                .from('time_logs')
+                .select('id, clock_out')
+                .eq('driver_id', driver.id)
+                .eq('date', today)
+                .is('clock_out', null)
+                .maybeSingle();
+
+             if (!existingLog) {
+                await supabase.from('time_logs').insert([{
+                   driver_id: driver.id,
+                   driver_name: driver.data?.name || driver.username || 'Conductor',
+                   date: today
+                }]);
+             }
+          } catch (timeErr) {
+             console.error('Error registrando fichaje:', timeErr);
+          }
+          // -----------------------------------------
+
+          return true;
+        }
+      } catch (err) {
+        console.error('Login error:', err)
+      }
+      return false; // Error en auth
+    } else if (role === 'client') {
+      // SIEMPRE consultar Supabase directamente para evitar race conditions con auto-login
+      let currentClients = clients;
+      try {
+        const { data } = await supabase.from('clients').select('*');
+        if (data && data.length > 0) {
+          currentClients = data.map(c => ({ ...c.data, id: c.id }));
+          setClients(currentClients);
+        }
+      } catch (e) {
+        console.warn('Error fetching clients for login, using cached:', e);
+      }
+      
+      const client = currentClients.find(c => 
+        (c.username === username || c.email === username || (c.name && c.name.toLowerCase().includes(username.toLowerCase()))) 
+        && c.password === password
+      );
+      if (client) {
+        setIsAuthenticated(true);
+        setUserRole(role);
+        setCurrentClientId(client.id);
+        setCurrentDriverId(null);
+        // Notificar a la web padre (iframe) que el login fue exitoso
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: 'SUM_CLIENT_LOGIN_SUCCESS', clientId: client.id }, '*');
+        }
+        return true;
+      }
+      return false;
+    } else {
+      // Admin log in - compare against loaded creds OR hardcoded defaults
+      const DEFAULT_ADMIN_USER = 'info@sumtransportes.com';
+      const DEFAULT_ADMIN_PASS = '1632';
+
+      const isValid = 
+        (username === (adminCreds?.user || DEFAULT_ADMIN_USER) && password === (adminCreds?.pass || DEFAULT_ADMIN_PASS)) ||
+        (username === DEFAULT_ADMIN_USER && password === DEFAULT_ADMIN_PASS);
+
+      if (isValid) {
+        setIsAuthenticated(true);
+        setUserRole(role);
+        setCurrentDriverId(null);
+        setCurrentClientId(null);
+        return true;
+      }
+      return false;
     }
   }
 
@@ -80,230 +991,1354 @@ function App() {
     setIsAuthenticated(false)
     setUserRole(null)
     setCurrentDriverId(null)
+    setCurrentClientId(null)
     setCurrentView('dashboard')
   }
 
-  const handleAddDriver = (newDriver) => {
-    setDrivers([...drivers, newDriver])
+  // Temporary cleanup and data migration
+  useEffect(() => {
+    // 1. Ensure default clients have billingType if missing (Migration)
+    setClients(prev => prev.map(c => {
+      let updated = { ...c };
+      if ((c.name === 'Global Tech SA' || c.name === 'Industrias Apex') && !c.billingType) {
+        updated.billingType = 'Facturación';
+      }
+      // Add credentials to previous local-storage items
+      if (c.name === 'Industrias Apex' && !c.username) {
+        updated.username = 'apex';
+        updated.password = 'password123';
+      }
+      return updated;
+    }));
+  }, []);
+
+  const handleCleanupDriverData = async (pattern = 'miki') => {
+    if (!window.confirm(`¿Seguro que quieres borrar todos los datos que contengan "${pattern}"?`)) return;
+
+    const lowerPattern = pattern.toLowerCase();
+    
+    try {
+      // 1. Identify driver IDs to delete
+      const driversToDelete = drivers.filter(d => 
+        (d.name && d.name.toLowerCase().includes(lowerPattern)) || 
+        (d.username && d.username.toLowerCase().includes(lowerPattern))
+      );
+      const driverIds = driversToDelete.map(d => d.id);
+
+      // 2. Delete drivers from Supabase
+      if (driverIds.length > 0) {
+        await supabase.from('drivers').delete().in('id', driverIds);
+      }
+      setDrivers(prev => prev.filter(d => !driverIds.includes(d.id)));
+
+      // 3. Filter out shipments assigned to or created by these drivers, OR matching client name
+      const shipmentsToDelete = shipments.filter(s => 
+        driverIds.includes(s.assignedDriverId) || 
+        driverIds.includes(s.createdById) ||
+        (s.client && s.client.toLowerCase().includes(lowerPattern)) ||
+        (s.destinationName && s.destinationName.toLowerCase().includes(lowerPattern))
+      ).map(s => s.id);
+
+      if (shipmentsToDelete.length > 0) {
+        await supabase.from('shipments').delete().in('id', shipmentsToDelete);
+      }
+      setShipments(prev => prev.filter(s => !shipmentsToDelete.includes(s.id)));
+
+      // 4. Filter out clients that match the pattern
+      const clientsToDelete = clients.filter(c => c.name.toLowerCase().includes(lowerPattern)).map(c => c.id);
+      if (clientsToDelete.length > 0) {
+        await supabase.from('clients').delete().in('id', clientsToDelete);
+      }
+      setClients(prev => prev.filter(c => !clientsToDelete.includes(c.id)));
+
+      alert(`Limpieza completada: Se han borrado los datos relacionados con "${pattern}".`);
+    } catch (error) {
+      console.error('Error during cleanup:', error);
+      alert('Error al realizar la limpieza de datos.');
+    }
+  };
+
+  const handleAddDriver = async (newDriver) => {
+    try {
+      const { data, error } = await supabase.from('drivers').insert([{ 
+        id: newDriver.id, 
+        username: newDriver.username, 
+        password: newDriver.password, 
+        data: newDriver 
+      }]).select();
+      
+      if (error) {
+        console.error('Supabase Error Details:', error)
+        alert(`Error Supabase al crear Transportista: ${error.message} (${error.code})`)
+        return false
+      }
+      
+      setDrivers(prev => [...prev, { ...data[0].data, id: data[0].id, username: data[0].username, password: data[0].password }])
+      return true
+    } catch (e) { 
+      console.error(e)
+      alert('Se produjo un error crítico al guardar el transportista: ' + e.message)
+      return false
+    }
   }
 
-  const handleAssignDriver = (shipmentId, driverId) => {
-    setShipments(shipments.map(s =>
-      s.id === shipmentId ? { ...s, assignedDriverId: Number(driverId) } : s
-    ))
+  const handleDeleteDriver = async (driverId) => {
+    if (!window.confirm('¿Seguro que quieres borrar este conductor?')) return;
+    try {
+      const { error } = await supabase.from('drivers').delete().eq('id', driverId);
+      if (error) throw error;
+      setDrivers(prev => prev.filter(d => d.id !== driverId));
+    } catch (e) { alert('Error al borrar conductor'); console.error(e); }
   }
 
-  // Stored Client Locations
-  const [clients, setClients] = usePersistentState('clients', [
-    { id: 101, name: 'Industrias Apex', address: 'Polígono Industrial Sur, Nave 4', city: 'Madrid', zip: '28001', phone: '+34 912 345 678', cif: 'B-12345678', type: 'Remitente', lastInteraction: '2024-01-19', coordinates: '40.4168, -3.7038', color: '#ef4444' }, // Red
-    { id: 102, name: 'Global Tech SA', address: 'Av. del Puerto 12', city: 'Valencia', zip: '46024', phone: '+34 960 000 000', cif: 'A-87654321', type: 'Remitente', lastInteraction: '2024-01-20', coordinates: '39.4699, -0.3763', color: '#3b82f6' }, // Blue
-  ])
+  // =====================================================
+  // MODO PRUEBAS SANDBOX: Limpieza automática al desactivar
+  // =====================================================
+  const handleDeactivateTestMode = async (driverId) => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
 
-  const handleAddShipment = (newShipment, originalPickupId = null) => {
+      // 1. Revertir envíos que el conductor tocó hoy:
+      //    - Asignados a él Y cuyo estado haya cambiado (no están en 'Pendiente de asignar' / 'En reparto')
+      const shipmentsToRevert = shipmentsRef.current.filter(s =>
+        String(s.assignedDriverId) === String(driverId) &&
+        s.status !== 'Pendiente de asignar' &&
+        // Solo los modificados hoy
+        (s.updatedAt || s.paidAt || '').startsWith(today)
+      );
+
+      let revertedCount = 0;
+      for (const s of shipmentsToRevert) {
+        const revertedData = {
+          ...s,
+          status: 'En reparto',
+          deliverySignature: null,
+          deliveryPhoto: null,
+          deliveryCoordinates: null,
+          paidAt: null,
+          isPaid: false,
+          isCodPaid: false,
+          porteCollectedById: null,
+          codCollectedById: null,
+          comment: null,
+          updatedAt: new Date().toISOString(),
+        };
+        await supabase.from('shipments').update({
+          status: 'En reparto',
+          data: revertedData
+        }).eq('id', s.id);
+        setShipments(prev => prev.map(item => item.id === s.id ? revertedData : item));
+        revertedCount++;
+      }
+
+      // 2. Borrar clientes creados en modo prueba por este conductor (isTest: true)
+      const testClients = clientsRef.current.filter(c =>
+        c.isTest === true &&
+        (String(c.creatorId) === String(driverId) || String(c.createdById) === String(driverId))
+      );
+      const testClientIds = testClients.map(c => c.id);
+
+      if (testClientIds.length > 0) {
+        await supabase.from('clients').delete().in('id', testClientIds);
+        setClients(prev => prev.filter(c => !testClientIds.includes(c.id)));
+      }
+
+      if (revertedCount > 0 || testClientIds.length > 0) {
+        alert(`✅ Modo Pruebas desactivado.\nSe han revertido ${revertedCount} envíos a "En reparto" y eliminado ${testClientIds.length} clientes de prueba.`);
+      }
+    } catch (e) {
+      console.error('Error en limpieza de modo pruebas:', e);
+    }
+  };
+
+    const handleUpdateRoutes = async (newRoutes) => {
+    try {
+      const { error } = await supabase.from('settings').upsert({ key: 'routes', value: JSON.stringify(newRoutes) });
+      if (error) throw error;
+      setRoutes(newRoutes);
+    } catch(e) { console.error('Error saving routes:', e); alert('Error al guardar rutas'); }
+  }
+
+  const handleUpdateRouteKnowledge = async (newKnowledge) => {
+    try {
+      const { error } = await supabase.from('settings').upsert({ key: 'route_knowledge', value: JSON.stringify(newKnowledge) });
+      if (error) throw error;
+      setRouteKnowledge(newKnowledge);
+    } catch(e) { console.error('Error saving route knowledge:', e); }
+  }
+
+  const handleUpdateDriver = async (driverId, updatedData) => {
+    // Detectar si se está DESACTIVANDO el modo pruebas
+    const previousDriver = driversRef.current.find(d => String(d.id) === String(driverId));
+    const wasTestMode = previousDriver?.isTestMode || false;
+    const isNowTestMode = updatedData.isTestMode || false;
+    const isDeactivating = wasTestMode && !isNowTestMode;
+
+    try {
+      const { data, error } = await supabase.from('drivers').update({ 
+        username: updatedData.username, 
+        password: updatedData.password, 
+        data: updatedData 
+      }).eq('id', driverId).select();
+      if (error) throw error;
+      setDrivers(prev => prev.map(d => d.id === driverId ? { ...data[0].data, id: data[0].id, username: data[0].username, password: data[0].password } : d));
+
+      // Al desactivar el modo pruebas, limpiar todo lo que hizo el conductor
+      if (isDeactivating) {
+        await handleDeactivateTestMode(driverId);
+      }
+    } catch (e) { alert('Error al actualizar transportista'); console.error(e); }
+  }
+
+  const handleAssignDriver = async (shipmentId, driverId, scheduledDate = null) => {
+    const shipment = shipmentsRef.current.find(s => s.id === shipmentId);
+    if (!shipment) return;
+    
+    const isUnassigning = !driverId || driverId === '' || driverId === 'unassigned';
+    const isSendingToAdmin = driverId === 'admin';
+    const updatedShipment = {
+      ...shipment,
+      assignedDriverId: isUnassigning || isSendingToAdmin ? null : Number(driverId),
+      status: isUnassigning ? 'Pendiente de asignar' : (isSendingToAdmin ? 'Administración' : 'En reparto')
+    };
+    
+    if (scheduledDate !== null) {
+      updatedShipment.scheduledDate = scheduledDate;
+    }
+
+
+    if (shipment.isTest || activeTestMode) {
+      console.log('🛡️ [Modo Pruebas] Asignación bloqueada — solo actualización local.');
+      setShipments(prev => prev.map(s => s.id === shipmentId ? updatedShipment : s));
+      return true;
+    }
+
+    try {
+      const { data, error } = await supabase.from('shipments').update({ 
+        status: updatedShipment.status, 
+        assignedDriverId: updatedShipment.assignedDriverId,
+        data: updatedShipment 
+      }).eq('id', shipmentId).select();
+      if (error) throw error;
+      
+      if (!data || data.length === 0) {
+        console.warn(`[Supabase] No se encontró el envío ${shipmentId} para actualizar. Puede que no se haya sincronizado aún.`);
+        // Fallback to local update so the UI doesn't crash and the state is preserved
+        setShipments(prev => prev.map(s => s.id === shipmentId ? updatedShipment : s));
+        return true;
+      }
+      
+      setShipments(prev => prev.map(s => s.id === shipmentId ? { ...data[0].data, id: data[0].id } : s));
+    } catch (e) { alert('Error al asignar conductor: ' + e.message); console.error(e); }
+  }
+
+  const handleAddVehicle = async (newVehicle) => {
+    try {
+      const { data, error } = await supabase.from('vehicles').insert([{ id: newVehicle.id, data: newVehicle }]).select();
+      if (error) throw error;
+      setVehicles(prev => [...prev, { ...data[0].data, id: data[0].id }]);
+    } catch (e) { alert('Error al guardar vehículo'); console.error(e); }
+  }
+
+  const handleUpdateVehicle = async (id, updatedData) => {
+    try {
+      const { data, error } = await supabase.from('vehicles').update({ data: updatedData }).eq('id', id).select();
+      if (error) throw error;
+      setVehicles(prev => prev.map(v => v.id === id ? { ...data[0].data, id: data[0].id } : v));
+    } catch (e) { alert('Error al actualizar vehículo'); console.error(e); }
+  }
+
+  const handleDeleteVehicle = async (id) => {
+    try {
+      const { error } = await supabase.from('vehicles').delete().eq('id', id);
+      if (error) throw error;
+      setVehicles(prev => prev.filter(v => v.id !== id));
+    } catch (e) { alert('Error al borrar vehículo'); console.error(e); }
+  }
+
+  const handleRequestDriverGps = async (driverId) => {
+    const driver = drivers.find(d => String(d.id) === String(driverId));
+    if (!driver) return;
+    
+    // Limpiar campos que son de nivel superior en la BD y no deben ir dentro de `data`
+    const { id, username, password, created_at, ...cleanDriverData } = driver;
+    
+    const updatedData = { 
+      ...cleanDriverData, 
+      locationRequestTrigger: Date.now() 
+    };
+    
+    try {
+      const { error } = await supabase.from('drivers').update({
+        data: updatedData
+      }).eq('id', driverId);
+      
+      if (error) {
+        console.error("Error pidiendo señal GPS:", error);
+        alert(`❌ Error al pedir señal GPS: ${error.message}`);
+      } else {
+        // Actualizar el estado local también para que sea inmediato
+        setDrivers(prev => prev.map(d => 
+          String(d.id) === String(driverId) 
+            ? { ...d, locationRequestTrigger: updatedData.locationRequestTrigger }
+            : d
+        ));
+      }
+    } catch (e) {
+      console.error("Error pidiendo señal GPS:", e);
+      alert("❌ Error de conexión al pedir señal GPS");
+    }
+  }
+
+
+  const handleAddShipment = async (newShipment, originalPickupId = null) => {
     // Determine creator
     let creatorName = 'Administrador';
+    let creatorId = null;
+
     if (userRole === 'driver') {
       const driver = drivers.find(d => d.id === currentDriverId);
-      creatorName = driver ? `Cond. ${driver.name}` : 'Conductor';
+      creatorName = driver ? `Cond.${driver.name} ` : 'Conductor';
+      creatorId = currentDriverId;
+    } else if (userRole === 'client') {
+      const client = clients.find(c => c.id === currentClientId);
+      creatorName = client ? `ClienteWeb: ${client.name}` : 'Portal Cliente';
+      creatorId = currentClientId;
     }
 
-    const shipmentWithMeta = {
+    // Usar el modelo para normalizar los datos
+    const shipmentModel = new Shipment({
       ...newShipment,
-      type: newShipment.type || 'Entrega', // Default to Entrega
-      createdAt: new Date().toISOString(), // Register creation time
-      createdBy: creatorName, // Register who created it
-      createdById: userRole === 'driver' ? currentDriverId : null, // ID of creator if driver
+      type: newShipment.type || 'Entrega',
+      createdAt: new Date().toISOString(),
+      createdBy: creatorName,
+      createdById: creatorId,
+      assignedDriverId: newShipment.assignedDriverId,
+      isTest: activeTestMode
+    });
 
-      // Auto-assign to creator logic REMOVED as per user request (pass to Assignation pool)
-      assignedDriverId: newShipment.assignedDriverId
-    };
+    const shipmentWithMeta = shipmentModel.toJSON();
 
-    // If converting a pickup, remove the original pickup
-    if (originalPickupId) {
-      setShipments(prev => {
-        const filtered = prev.filter(s => s.id !== originalPickupId);
-        return [...filtered, shipmentWithMeta];
-      });
-    } else {
-      setShipments(prev => [...prev, shipmentWithMeta]);
+    // ============================================================
+    // MODO PRUEBAS SANDBOX: Si el conductor está en modo prueba,
+    // solo actualizamos el estado local. NADA va a Supabase.
+    // ============================================================
+    if (activeTestMode) {
+      console.log('🛡️ [Modo Pruebas] Envío bloqueado — solo actualización local.');
+      const localShipment = { ...shipmentWithMeta, id: shipmentWithMeta.id };
+      if (originalPickupId) {
+        setShipments(prev => [localShipment, ...prev.filter(s => s.id !== originalPickupId)]);
+      } else {
+        setShipments(prev => [localShipment, ...prev]);
+      }
+      return true;
     }
+    // ============================================================
 
-    // Auto-save REMITENTE (Sender) if new
-    const senderExists = clients.find(c => c.name.toLowerCase() === newShipment.client?.toLowerCase());
-    if (!senderExists && newShipment.client) {
-      setClients(prev => [...prev, {
-        id: Date.now(),
-        name: newShipment.client,
-        address: newShipment.originAddress || newShipment.origin || '',
-        city: newShipment.originCity || '',
-        zip: newShipment.originZip || '',
-        phone: newShipment.originPhone || '',
-        coordinates: newShipment.originCoordinates || '', // Save Origin GPS
-        type: 'Remitente',
-        billingType: 'Cobro Diario',
-        status: 'pending', // Pendiente de validación
-        createdFrom: newShipment.type === 'Recogida' ? 'Recogida' : 'Albarán',
-        createdBy: creatorName,
-        lastInteraction: new Date().toISOString().split('T')[0]
-      }]);
-    } else if (senderExists && newShipment.originCoordinates && senderExists.status === 'pending') {
-      // Update pending sender with new coordinates if captured
-      setClients(clients.map(c =>
-        c.id === senderExists.id ? { ...c, coordinates: newShipment.originCoordinates } : c
-      ));
+    try {
+      // 1. If replacing an existing pickup, delete it FIRST to avoid Primary Key collisions
+      if (originalPickupId) {
+        const { error: delErr } = await supabase.from('shipments').delete().eq('id', originalPickupId);
+        if (delErr) console.warn("Could not delete original pickup (might be same ID):", delErr);
+      }
+
+      // 2. Save new shipment to Supabase (using upsert for resilience)
+      const { data, error } = await supabase.from('shipments').upsert([{
+        id: shipmentWithMeta.id,
+        status: shipmentWithMeta.status,
+        assignedDriverId: shipmentWithMeta.assignedDriverId || null,
+        data: shipmentWithMeta 
+      }]).select();
+      
+      if (error) {
+        console.error('Supabase Error Details:', error)
+        alert(`Error Supabase: ${error.message} (${error.code})`)
+        return false
+      }
+
+      const newShipmentFromDB = { ...data[0].data, id: data[0].id };
+
+      // 2. Update local state
+      if (originalPickupId) {
+        await supabase.from('shipments').delete().eq('id', originalPickupId);
+        setShipments(prev => {
+          const filtered = prev.filter(s => s.id !== originalPickupId);
+          return [...filtered, newShipmentFromDB];
+        });
+      } else {
+        setShipments(prev => [newShipmentFromDB, ...prev]);
+      }
+
+      // 3. Auto-save Clients (Supabase)
+      const isActuallyTest = false; // Ya no llegamos aquí en modo prueba
+
+      // Auto-save REMITENTE (Sender) if new
+      const normalizedNewSender = normalizeClientName(newShipment.client);
+      const senderExists = clients.find(c => normalizeClientName(c.name) === normalizedNewSender || normalizeClientName(c.legalName) === normalizedNewSender);
+      if (!senderExists && newShipment.client) {
+        const newClientData = {
+          id: Date.now(),
+          name: newShipment.client,
+          legalName: '',
+          address: newShipment.originAddress || newShipment.origin || '',
+          city: newShipment.originCity || '',
+          zip: newShipment.originZip || '',
+          phone: newShipment.originPhone || '',
+          coordinates: newShipment.originCoordinates || '',
+          type: 'Remitente',
+          billingType: 'Clientes Habituales',
+          status: 'pending',
+          createdFrom: newShipment.type === 'Recogida' ? 'Recogida' : 'Albarán',
+          createdBy: creatorName,
+          lastInteraction: new Date().toISOString().split('T')[0],
+          creatorId: creatorId,
+          isTest: isActuallyTest
+        };
+        await handleAddClient(newClientData);
+      }
+
+
+
+      // Check sender as well if it already exists but has no coordinates
+      if (senderExists && !senderExists.coordinates && newShipment.originCoordinates && senderExists.status === 'pending') {
+         console.log("Auto-filling missing GPS for existing sender:", senderExists.name);
+         await handleUpdateClient(senderExists.id, { coordinates: newShipment.originCoordinates });
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error adding shipment to Supabase:', error)
+      alert('Error al guardar el envío en la nube.')
+      return false
     }
-
-    // Auto-save DESTINATARIO (Receiver) removed here. 
-    // Logic moved to 'handleShipmentStatusChange' (on Delivery) to validate location first.
   }
 
   // Handle manual edits to shipment details
-  const handleUpdateShipment = (id, updatedFields) => {
-    setShipments(shipments.map(s =>
-      s.id === id ? { ...s, ...updatedFields } : s
-    ));
-    // Also update client if minimal details changed? Maybe not for now to avoid side effects.
-  };
+  const handleUpdateShipment = async (idOrObject, maybeUpdates) => {
+    let id, updates;
+    if (typeof idOrObject === 'object' && !maybeUpdates) {
+      id = idOrObject.id;
+      updates = idOrObject;
+    } else {
+      id = idOrObject;
+      updates = maybeUpdates;
+    }
 
-  const handleShipmentStatusChange = (shipmentId, newStatus, deliveryCoordinates = null) => {
-    setShipments(shipments.map(s => {
-      if (s.id === shipmentId) {
-        const updates = { status: newStatus }
-        // If Incidencia, unassign driver
-        if (newStatus === 'Incidencia') {
-          updates.assignedDriverId = null
+    if (!id) return false;
+
+    const currentShipment = shipmentsRef.current.find(s => s.id === id);
+    if (!currentShipment) {
+        console.error("Shipment not found for update (using ref):", id);
+        return false;
+    }
+
+    const mergedData = { ...currentShipment, ...updates };
+
+    // Optimistic Update — always applied immediately
+    setShipments(prev => prev.map(s => s.id === id ? mergedData : s));
+
+    // --- OFFLINE or FAIL: enqueue for retry ---
+    const enqueueUpdateOp = () => {
+      const opId = `updateShipment_${id}`;
+      enqueue({ id: opId, type: 'updateShipment', shipmentId: id, mergedData, queuedAt: new Date().toISOString() });
+      setPendingQueueCount(getQueueLength());
+      console.log(`[Queue] Enqueued updateShipment for ${id}`);
+    };
+
+    if (!navigator.onLine) {
+      enqueueUpdateOp();
+      return true;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('shipments')
+        .update({
+          status: mergedData.status,
+          assignedDriverId: mergedData.assignedDriverId,
+          data: mergedData
+        })
+        .eq('id', id)
+        .select();
+      
+      if (error) {
+        // Supabase write failed — enqueue for retry instead of reverting
+        console.warn(`[Queue] Supabase write failed for ${id}, enqueuing for retry:`, error);
+        enqueueUpdateOp();
+        return true; // Keep optimistic update, will sync later
+      }
+      
+      if (!data || data.length === 0) {
+        console.warn(`[Supabase] No se encontró el envío ${id} para actualizar. Puede estar en modo prueba o no sincronizado.`);
+        return true; // Ya se hizo la actualización optimista localmente
+      }
+      
+      const savedShipment = { ...data[0].data, id: data[0].id };
+      setShipments(prev => prev.map(s => s.id === id ? savedShipment : s));
+      return true;
+    } catch (error) {
+       // Network error — enqueue for retry
+       console.warn(`[Queue] Network error updating ${id}, enqueuing for retry:`, error);
+       enqueueUpdateOp();
+       return true; // Keep optimistic update
+    }
+  }
+
+  const handleDeleteShipment = async (shipmentId) => {
+    try {
+      const shipmentToDelete = shipmentsRef.current.find(s => s.id === shipmentId);
+      
+      // REVERSIÓN DE PRESUPUESTOS
+      if (shipmentToDelete && shipmentToDelete.type === 'Recibo') {
+          const linkedShipments = shipmentsRef.current.filter(s => s.linkedReceiptId === shipmentId);
+          if (linkedShipments.length > 0) {
+              if (window.confirm(`Este recibo está vinculado a ${linkedShipments.length} presupuestos.\nSi lo borras, esos presupuestos volverán a estar pendientes de cierre mensual.\n\n¿Deseas continuar y revertir el cierre?`)) {
+                  const updatesArray = linkedShipments.map(s => ({
+                      id: s.id,
+                      updates: { budgetLiquidated: false, linkedReceiptId: null }
+                  }));
+                  // Ejecutar actualización múltiple local y en la nube
+                  await handleUpdateMultipleShipments(updatesArray);
+              } else {
+                  return; // Cancelar borrado
+              }
+          }
+      }
+
+      const { error } = await supabase.from('shipments').delete().eq('id', shipmentId);
+      if (error) throw error;
+      setShipments(prev => prev.filter(s => s.id !== shipmentId));
+    } catch (e) {
+      alert('Error al borrar el envío');
+      console.error(e);
+    }
+  }
+
+  const handleDeleteMultipleShipments = async (shipmentIds) => {
+    try {
+      const { error } = await supabase.from('shipments').delete().in('id', shipmentIds);
+      if (error) throw error;
+      setShipments(prev => prev.filter(s => !shipmentIds.includes(s.id)));
+    } catch (e) {
+      alert('Error al borrar los envíos');
+      console.error(e);
+    }
+  }
+
+  const handleUpdateMultipleShipments = async (updatesArray) => {
+    // updatesArray format: [{ id: 'TR-1', updates: { budgetLiquidated: true } }, ...]
+    if (!updatesArray || updatesArray.length === 0) return true;
+
+    // 1. Prepare local optimistic update and Supabase payloads
+    const supabasePayloads = [];
+    const localUpdatesMap = new Map();
+
+    updatesArray.forEach(({ id, updates }) => {
+      const currentShipment = shipmentsRef.current.find(s => s.id === id);
+      if (currentShipment) {
+        const mergedData = { ...currentShipment, ...updates };
+        localUpdatesMap.set(id, mergedData);
+        supabasePayloads.push({
+          id,
+          status: mergedData.status,
+          assignedDriverId: mergedData.assignedDriverId,
+          data: mergedData
+        });
+      }
+    });
+
+    if (supabasePayloads.length === 0) return true;
+
+    // 2. Optimistic local update
+    setShipments(prev => prev.map(s => localUpdatesMap.has(s.id) ? localUpdatesMap.get(s.id) : s));
+
+    // 3. Update Supabase
+    if (navigator.onLine) {
+      try {
+        const { error } = await supabase.from('shipments').upsert(supabasePayloads);
+        if (error) {
+          console.error("Supabase bulk update failed:", error);
+          alert("Error al actualizar envíos múltiples en la base de datos.");
+          return false;
         }
+      } catch (err) {
+        console.error("Network error on bulk update:", err);
+        return false;
+      }
+    } else {
+      alert("Estás desconectado. La actualización múltiple no se ha guardado en la nube.");
+      return false; // For simplicity, we don't enqueue bulk updates
+    }
+    return true;
+  }
 
-        // LOGIC FOR 'COBRAR MÁS TARDE' (Pendiente Cobro)
-        // If client is 'Cobro Diario' or 'Nuevo' (pending), unassign driver to return to pool
-        if (newStatus === 'Pendiente Cobro') {
-          const receiverName = s.destinationName || '';
-          const receiver = clients.find(c => c.name.toLowerCase() === receiverName.toLowerCase());
+  const handleShipmentStatusChange = async (shipmentId, newStatus, deliveryCoordinates = null, comment = null, photo = null, proof = null, extraData = {}, pendingUploads = {}) => {
+    // 1. Encontrar el envío original en el estado local (usando REF para evitar cierres obsoletos)
+    const s = shipmentsRef.current.find(item => item.id === shipmentId);
+    if (!s) {
+        console.error("handleShipmentStatusChange: Shipment not found in ref", shipmentId);
+        return;
+    }
 
-          // Check if receiver exists and is 'Cobro Diario' or status 'pending' (New)
-          // If receiver doesn't exist, we treat as New
-          const isDailyOrNew = !receiver || receiver.billingType === 'Cobro Diario' || receiver.status === 'pending';
+    // ============================================================
+    // MODO PRUEBAS SANDBOX: Si el conductor que opera está en modo
+    // prueba, solo actualizamos el estado local. NADA va a Supabase.
+    // ============================================================
+    const operatingDriverForCheck = driversRef.current.find(d => String(d.id) === String(s.assignedDriverId));
+    if (operatingDriverForCheck?.isTestMode) {
+      console.log('🛡️ [Modo Pruebas] Cambio de estado bloqueado — solo actualización local.');
+      const shipmentModel = new Shipment({ ...s, ...extraData });
+      shipmentModel.updateStatus(newStatus, comment, photo, proof);
+      if (deliveryCoordinates) shipmentModel.deliveryCoordinates = deliveryCoordinates;
+      const localUpdatedData = { ...s, ...shipmentModel.toJSON(), updatedAt: new Date().toISOString() };
+      setShipments(prev => prev.map(item => item.id === shipmentId ? localUpdatedData : item));
+      return; // 🛑 FIN — no se escribe nada a Supabase ni a clientes
+    }
+    // ============================================================
+    
+    // 2. Usar el modelo para procesar la lógica de negocio (status, comment, etc)
+    // FUSIONAR extraData (flags de pago) ANTES de crear el modelo para que updateStatus use los valores actualizados
+    const shipmentModel = new Shipment({ ...s, ...extraData });
+    shipmentModel.updateStatus(newStatus, comment, photo, proof);
+    if (deliveryCoordinates) shipmentModel.deliveryCoordinates = deliveryCoordinates;
 
-          if (isDailyOrNew) {
-            updates.assignedDriverId = null;
+    // 3. Obtener el objeto plano para guardar como JSONB en Supabase
+    const updatedData = {
+      ...s,
+      ...shipmentModel.toJSON(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // Aseguramos que el ID y el Status de primer nivel de la tabla coincidan
+    const finalStatus = shipmentModel.status;
+
+    // Optimistic UI Update
+    setShipments(prev => prev.map(item => item.id === shipmentId ? updatedData : item));
+
+    // --- OFFLINE: enqueue and skip Supabase ---
+    if (!navigator.onLine) {
+      const opId = `statusChange_${shipmentId}_${newStatus}`;
+      const qLen = await enqueue({
+        id: opId,
+        type: 'statusChange',
+        shipmentId,
+        finalStatus,
+        assignedDriverId: s.assignedDriverId,
+        updatedData,
+        pendingUploads, // base64 images to upload to Storage when back online
+        queuedAt: new Date().toISOString()
+      });
+      setPendingQueueCount(qLen);
+      console.log(`[Offline] Queued statusChange for ${shipmentId} -> ${finalStatus}`, pendingUploads);
+      return;
+    }
+    // ------------------------------------------
+
+    // Helper: enqueue this status change for later retry
+    const enqueueStatusOp = async () => {
+      const opId = `statusChange_${shipmentId}_${newStatus}`;
+      const qLen = await enqueue({
+        id: opId,
+        type: 'statusChange',
+        shipmentId,
+        finalStatus,
+        assignedDriverId: s.assignedDriverId,
+        updatedData,
+        pendingUploads,
+        queuedAt: new Date().toISOString()
+      });
+      setPendingQueueCount(qLen);
+      console.log(`[Queue] Enqueued statusChange for ${shipmentId} -> ${finalStatus}`);
+    };
+
+    try {
+      // 4. Actualización Atómica en Supabase
+      const { data, error } = await supabase.from('shipments').update({ 
+        status: finalStatus, 
+        assignedDriverId: s.assignedDriverId,
+        data: updatedData 
+      }).eq('id', shipmentId).select();
+      
+      if (error) {
+        // Supabase write failed — enqueue for retry, keep optimistic update
+        console.warn(`[Queue] Supabase statusChange failed for ${shipmentId}, enqueuing:`, error);
+        enqueueStatusOp();
+        // Don't revert — the queue will sync it later
+      } else if (!data || data.length === 0) {
+        console.warn(`[Queue] No data returned for ${shipmentId}, enqueuing for retry`);
+        enqueueStatusOp();
+      } else {
+        // 5. Sincronizar con el dato real de la base de datos
+        setShipments(prev => prev.map(item => item.id === shipmentId ? { ...data[0].data, id: data[0].id } : item));
+
+        // Actualizar posición del conductor con las coordenadas de entrega
+        if (deliveryCoordinates && s.assignedDriverId) {
+          const [lat, lng] = String(deliveryCoordinates).split(',').map(c => parseFloat(c.trim()));
+          if (!isNaN(lat) && !isNaN(lng)) {
+            const driver = driversRef.current.find(d => String(d.id) === String(s.assignedDriverId));
+            if (driver) {
+              const updatedDriverData = { 
+                ...driver, 
+                currentLat: lat, 
+                currentLng: lng, 
+                lastGpsUpdate: new Date().toISOString() 
+              };
+              await supabase.from('drivers').update({ data: updatedDriverData }).eq('id', s.assignedDriverId);
+            }
           }
         }
-
-        // Store delivery coordinates with the shipment
-        if (deliveryCoordinates) {
-          updates.deliveryCoordinates = deliveryCoordinates
-        }
-        return { ...s, ...updates }
       }
-      return s
-    }))
+    } catch (e) { 
+      // Network error — enqueue for retry, keep optimistic update
+      console.warn(`[Queue] Network error on statusChange ${shipmentId}, enqueuing:`, e);
+      enqueueStatusOp();
+    }
 
-    // Auto-save/update Receiver Location on Delivery with GPS coordinates
-    if (newStatus === 'Entregado' || newStatus === 'Pendiente Cobro') {
-      const shipment = shipments.find(s => s.id === shipmentId);
+    // Solo actualizamos clientes si el conductor NO está en modo prueba
+    // (El guard al inicio de la función ya lo garantiza, pero lo dejamos explícito)
+    if (newStatus === 'Entregado' || newStatus === 'Entrega aplazada' || newStatus === 'Pendiente Cobro') {
+      const shipment = shipmentsRef.current.find(s => s.id === shipmentId);
       if (shipment && shipment.destinationName) {
         // Find existing client (destinatario)
-        const existingClient = clients.find(c =>
+        const existingClient = clientsRef.current.find(c =>
           c.name.toLowerCase() === shipment.destinationName.toLowerCase()
         );
 
         if (existingClient) {
           // ONLY update coordinates if client is still PENDING (not yet validated)
-          // Approved clients have PROTECTED coordinates - only admin can change them
-          // ONLY update coordinates if client is still PENDING
           const finalCoords = deliveryCoordinates || shipment.destinationCoordinates;
           if (finalCoords && existingClient.status === 'pending') {
-            setClients(clients.map(c =>
-              c.id === existingClient.id
-                ? { ...c, coordinates: finalCoords, lastInteraction: new Date().toISOString().split('T')[0] }
-                : c
-            ));
+            await handleUpdateClient(existingClient.id, { coordinates: finalCoords, lastInteraction: new Date().toISOString().split('T')[0] });
           }
         } else {
           // Create new client with coordinates
-          setClients(prev => [...prev, {
+          const newClientData = {
             id: Date.now(),
             name: shipment.destinationName,
+            legalName: '',
             address: shipment.destinationAddress || shipment.destination || '',
             city: shipment.destinationCity || '',
             zip: shipment.destinationZip || '',
-            phone: shipment.destinationPhone || '',
+            phone: shipment.phone || '',
             coordinates: deliveryCoordinates || shipment.destinationCoordinates || '',
             type: 'Destinatario',
-            billingType: 'Cobro Diario',
+            billingType: 'Clientes Habituales',
             status: 'pending',
             createdFrom: 'Entrega',
-            lastInteraction: new Date().toISOString().split('T')[0]
-          }]);
+            lastInteraction: new Date().toISOString().split('T')[0],
+            isTest: false
+          };
+          await handleAddClient(newClientData);
         }
       }
     }
+  };
+
+  const handleResolveIncident = async (id) => {
+    const s = shipments.find(item => item.id === id);
+    if (!s) return;
+    const updated = { ...s, incidentStatus: 'resolved' };
+    try {
+      const { data, error } = await supabase.from('shipments').update({ data: updated }).eq('id', id).select();
+      if (error) throw error;
+      setShipments(prev => prev.map(item => item.id === id ? { ...data[0].data, id: data[0].id } : item));
+    } catch (e) { alert('Error al resolver incidencia'); console.error(e); }
+  };
+
+  const handleIncidentReply = async (id, reply) => {
+    const s = shipmentsRef.current.find(item => item.id === id);
+    if (!s) return;
+    const updated = { ...s, incidentReply: reply };
+    try {
+      const { data, error } = await supabase.from('shipments').update({ data: updated }).eq('id', id).select();
+      if (error) throw error;
+      setShipments(prev => prev.map(item => item.id === id ? { ...data[0].data, id: data[0].id } : item));
+    } catch (e) { alert('Error al añadir respuesta a incidencia'); console.error(e); }
+  };
+
+  const handleUpdateClient = async (clientId, updatedData) => {
+    const c = clientsRef.current.find(item => item.id === clientId);
+    const updated = { ...c, ...updatedData, lastInteraction: new Date().toISOString().split('T')[0] };
+    try {
+      const { data, error } = await supabase.from('clients').update({ name: updated.name, data: updated }).eq('id', clientId).select();
+      if (error) throw error;
+      setClients(prev => prev.map(item => item.id === clientId ? { ...data[0].data, id: data[0].id } : item));
+    } catch (e) { alert('Error al actualizar cliente'); console.error(e); }
   }
 
-  const handleUpdateClient = (clientId, updatedData) => {
-    setClients(clients.map(c =>
-      c.id === clientId ? {
-        ...c,
-        ...updatedData, // Merge new data (address, color, coordinates, tariff, etc.)
-        lastInteraction: new Date().toISOString().split('T')[0]
-      } : c
-    ));
+  const getClientPrefix = (billingType) => {
+    if (billingType === 'Presupuesto') return 'P-';
+    if (billingType === 'Clientes Habituales') return 'CH-';
+    return '';
+  };
+
+  const getNextClientNumber = (allClients, prefix) => {
+    const usedNumbers = new Set();
+    allClients.forEach(c => {
+      const str = String(c.clientNumber || '').trim();
+      if (prefix) {
+        if (str.startsWith(prefix)) {
+          const num = parseInt(str.substring(prefix.length), 10);
+          if (!isNaN(num) && num > 0) usedNumbers.add(num);
+        }
+      } else {
+        // Only accept pure numbers for normal sequence
+        if (/^\d+$/.test(str)) {
+          const num = parseInt(str, 10);
+          if (!isNaN(num) && num > 0) usedNumbers.add(num);
+        }
+      }
+    });
+    let next = 1;
+    while (usedNumbers.has(next)) {
+      next++;
+    }
+    return `${prefix}${next}`;
+  };
+
+  const handleAddClient = async (newClient) => {
+    const prefix = getClientPrefix(newClient.billingType);
+    const nextNum = getNextClientNumber(clientsRef.current, prefix);
+    const clientWithMeta = { 
+        ...newClient, 
+        id: newClient.id || Date.now(), 
+        clientNumber: newClient.clientNumber || nextNum,
+        lastInteraction: new Date().toISOString().split('T')[0] 
+    };
+    try {
+      const { data, error } = await supabase.from('clients').insert([{ id: clientWithMeta.id, name: clientWithMeta.name, data: clientWithMeta }]).select();
+      if (error) throw error;
+      setClients(prev => [...prev, { ...data[0].data, id: data[0].id }]);
+    } catch (e) { alert('Error al guardar cliente'); console.error(e); }
   }
 
-  const handleAddClient = (newClient) => {
-    setClients(prev => [...prev, { ...newClient, id: Date.now(), lastInteraction: new Date().toISOString().split('T')[0] }])
+  const handleDeleteClient = async (clientId) => {
+    if (!window.confirm("¿Estás seguro de que quieres eliminar este cliente permanentemente?")) return;
+    try {
+      const { error } = await supabase.from('clients').delete().eq('id', clientId);
+      if (error) throw error;
+      setClients(prev => prev.filter(c => c.id !== clientId));
+    } catch (e) { alert('Error al borrar cliente'); console.error(e); }
   }
 
-  const handleImportClients = (newClients) => {
-    const clientsWithIds = newClients.map((c, index) => ({
-      ...c,
-      id: Date.now() + index,
-      lastInteraction: new Date().toISOString().split('T')[0]
-    }));
-    setClients(prev => [...prev, ...clientsWithIds]);
-  }
+  const handleImportClients = async (newClients) => {
+    try {
+      let currentClients = [...clientsRef.current];
+      const clientsToInsert = newClients.map((c, index) => {
+        const prefix = getClientPrefix(c.billingType);
+        let assignedNum = c.clientNumber;
+        if (!assignedNum || String(assignedNum).trim() === '') {
+          assignedNum = getNextClientNumber(currentClients, prefix);
+        }
+        
+        const clientData = { 
+            ...c, 
+            id: c.id || Date.now() + index, 
+            clientNumber: assignedNum,
+            lastInteraction: new Date().toISOString().split('T')[0] 
+        };
+        currentClients.push(clientData); // Add for next iterations
 
-  const handleAddArticle = (newArticle) => {
-    setArticles([...articles, newArticle]);
-  }
-
-  const handleUpdateArticle = (id, updatedData) => {
-    setArticles(articles.map(a => a.id === id ? { ...a, ...updatedData } : a));
-  }
-
-  // Lifted state for tariffs (Dynamic Pricing)
-  const [tariffs, setTariffs] = usePersistentState('tariffs', [
-    { id: 1, name: 'Córdoba (Provincia)', match: 'Córdoba', zipPrefix: '14', price: '45.00' },
-    { id: 2, name: 'Sevilla', match: 'Sevilla', zipPrefix: '41', price: '65.00' },
-    { id: 3, name: 'Málaga', match: 'Málaga', zipPrefix: '29', price: '75.00' },
-  ])
-
-  const handleAddTariff = (newTariff) => {
-    setTariffs(prev => [...prev, { ...newTariff, id: Date.now() }]);
-  }
-
-  const handleUpdateTariff = (id, updatedData) => {
-    setTariffs(prev => prev.map(t => t.id === id ? { ...t, ...updatedData } : t));
-  }
-
-  const handleDeleteTariff = (id) => {
-    setTariffs(prev => prev.filter(t => t.id !== id));
-  }
-
-  const handleValidateClient = (clientId, approved) => {
-    if (approved) {
-      // Approve: change status to 'approved'
-      setClients(clients.map(c =>
-        c.id === clientId ? { ...c, status: 'approved' } : c
-      ));
-    } else {
-      // Reject: remove client
-      setClients(clients.filter(c => c.id !== clientId));
+        return {
+          id: clientData.id,
+          name: clientData.name,
+          data: clientData
+        };
+      });
+      const { data, error } = await supabase.from('clients').insert(clientsToInsert).select();
+      if (error) throw error;
+      setClients(prev => [...prev, ...data.map(c => ({ ...c.data, id: c.id }))]);
+      alert('Clientes importados con éxito!');
+    } catch (e) {
+      alert('Error al importar clientes.');
+      console.error(e);
     }
   }
 
-  // Count pending clients for badge
-  const pendingClientsCount = clients.filter(c => c.status === 'pending').length;
+  const handleAddArticle = async (newArticle) => {
+    try {
+      const articleWithId = { ...newArticle, id: newArticle.id || Date.now() + Math.floor(Math.random() * 1000) };
+      const { data, error } = await supabase.from('articles').insert([{ 
+        id: articleWithId.id, 
+        data: articleWithId 
+      }]).select();
+      if (error) throw error;
+      setArticles(prev => [...prev, { ...data[0].data, id: data[0].id }]);
+      return true;
+    } catch (e) { 
+      alert('Error al guardar artículo'); 
+      console.error(e); 
+      return false;
+    }
+  }
+
+  const handleImportArticles = async (newArticles) => {
+    try {
+      const articlesToInsert = newArticles.map((a, index) => ({
+        id: a.id || Date.now() + index,
+        data: { ...a, id: a.id || Date.now() + index, lastInteraction: new Date().toISOString() }
+      }));
+      
+      const { data, error } = await supabase.from('articles').insert(articlesToInsert).select();
+      if (error) throw error;
+      
+      setArticles(prev => [...prev, ...data.map(a => ({ ...a.data, id: a.id }))]);
+      return true;
+    } catch (e) {
+      alert('Error al importar artículos.');
+      console.error(e);
+      return false;
+    }
+  }
+
+  const handleUpdateArticle = async (id, updatedData) => {
+    try {
+      const { data, error } = await supabase.from('articles').update({ data: updatedData }).eq('id', id).select();
+      if (error) throw error;
+      setArticles(prev => prev.map(a => a.id === id ? { ...data[0].data, id: data[0].id } : a));
+    } catch (e) { alert('Error al actualizar artículo'); console.error(e); }
+  }
+
+  const handleDeleteArticle = async (id) => {
+    try {
+      if (!window.confirm('¿Estás seguro de que quieres eliminar este artículo?')) return;
+      const { error } = await supabase.from('articles').delete().eq('id', id);
+      if (error) throw error;
+      setArticles(prev => prev.filter(a => a.id !== id));
+    } catch (e) {
+      alert('Error al borrar artículo');
+      console.error(e);
+    }
+  }
+
+  const handleRenameCategory = async (oldName, newName) => {
+    if (!newName || oldName === newName) return;
+    
+    try {
+      // 1. Update all articles with this category in Supabase
+      const articlesToUpdate = articles.filter(a => a.category === oldName);
+      if (articlesToUpdate.length > 0) {
+        const updatePromises = articlesToUpdate.map(article => {
+          const updatedArticle = { ...article, category: newName };
+          return supabase.from('articles').update({ data: updatedArticle }).eq('id', article.id);
+        });
+        await Promise.all(updatePromises);
+      }
+
+      // 2. Update local state
+      setArticles(prev => prev.map(a => a.category === oldName ? { ...a, category: newName } : a));
+
+      // 3. Update familyOrder if it exists
+      if (familyOrder.includes(oldName)) {
+        const newOrder = familyOrder.map(f => f === oldName ? newName : f);
+        handleUpdateFamilyOrder(newOrder);
+      }
+      
+      alert(`Familia "${oldName}" renombrada a "${newName}" con éxito.`);
+    } catch (e) {
+      alert('Error al renombrar la familia.');
+      console.error(e);
+    }
+  }
+
+  const handleDeleteAllArticles = async () => {
+    try {
+      if (!window.confirm('¿ESTÁS TOTALMENTE SEGURO? Esta acción borrará TODO el catálogo de artículos y servicios. No se puede deshacer.')) return;
+      
+      const { error } = await supabase.from('articles').delete().gt('id', 0); // Delete all
+      if (error) throw error;
+      
+      setArticles([]);
+      alert('Catálogo vaciado con éxito.');
+    } catch (e) {
+      alert('Error al vaciar el catálogo.');
+      console.error(e);
+    }
+  }
+
+  // Lifted state for tariffs (Dynamic Pricing)
+  const [tariffs, setTariffs] = useState([])
+
+  const handleAddTariff = async (newTariff) => {
+    try {
+      const tariffWithId = { ...newTariff, id: newTariff.id || Date.now() };
+      const { data, error } = await supabase.from('tariffs').insert([{ id: tariffWithId.id, data: tariffWithId }]).select();
+      if (error) throw error;
+      setTariffs(prev => [...prev, { ...data[0].data, id: data[0].id }]);
+    } catch (e) { alert('Error al guardar tarifa'); console.error(e); }
+  }
+
+  const handleUpdateTariff = async (id, updatedData) => {
+    try {
+      const { data, error } = await supabase.from('tariffs').update({ data: updatedData }).eq('id', id).select();
+      if (error) throw error;
+      setTariffs(prev => prev.map(t => t.id === id ? { ...data[0].data, id: data[0].id } : t));
+    } catch (e) { alert('Error al actualizar tarifa'); console.error(e); }
+  }
+
+  const handleDeleteTariff = async (id) => {
+    try {
+      const { error } = await supabase.from('tariffs').delete().eq('id', id);
+      if (error) throw error;
+      setTariffs(prev => prev.filter(t => t.id !== id));
+    } catch (e) { alert('Error al borrar tarifa'); console.error(e); }
+  }
+
+  const handleImportTariffs = async (newTariffs) => {
+    try {
+      const timestamp = Date.now();
+      const tariffsToInsert = newTariffs.map((t, index) => {
+        const id = t.id || (timestamp + index);
+        const data = { ...t, id };
+        return { id, data };
+      });
+      
+      const { data, error } = await supabase.from('tariffs').insert(tariffsToInsert).select();
+      if (error) throw error;
+      
+      setTariffs(prev => [...prev, ...data.map(t => ({ ...t.data, id: t.id }))]);
+      return true;
+    } catch (e) {
+      alert('Error al importar tarifas.');
+      console.error(e);
+      return false;
+    }
+  }
+
+  const handleAddCoverageZone = async (newZone) => {
+    try {
+      const zoneWithId = { ...newZone, id: newZone.id || Date.now() };
+      const { data, error } = await supabase.from('coverage_zones').insert([{ id: zoneWithId.id, data: zoneWithId }]).select();
+      if (error) throw error;
+      setCoverageZones(prev => [...prev, { ...data[0].data, id: data[0].id }]);
+    } catch (e) { alert('Error al guardar zona de cobertura'); console.error(e); }
+  }
+
+  const handleUpdateCoverageZone = async (id, updatedData) => {
+    try {
+      const { error } = await supabase.from('coverage_zones').update({ data: updatedData }).eq('id', id);
+      if (error) throw error;
+      setCoverageZones(prev => prev.map(z => z.id === id ? { ...updatedData, id } : z));
+      return true;
+    } catch (e) {
+      console.error(e);
+      alert('Error al actualizar zona de cobertura.');
+      return false;
+    }
+  };
+
+  const handleImportCoverageZones = async (zones) => {
+    try {
+      const timestamp = Date.now();
+      const zonesToInsert = zones.map((z, index) => {
+        const id = z.id || (timestamp + index);
+        const data = { ...z, id };
+        return { id, data };
+      });
+      
+      const { data, error } = await supabase.from('coverage_zones').insert(zonesToInsert).select();
+      if (error) throw error;
+      
+      setCoverageZones(prev => [...prev, ...data.map(z => ({ ...z.data, id: z.id }))]);
+      return true;
+    } catch (e) {
+      alert('Error al importar zonas de cobertura.');
+      console.error(e);
+      return false;
+    }
+  }
+
+  const handleDeleteCoverageZone = async (id) => {
+    try {
+      const { error } = await supabase.from('coverage_zones').delete().eq('id', id);
+      if (error) throw error;
+      setCoverageZones(prev => prev.filter(z => z.id !== id));
+    } catch (e) { alert('Error al borrar zona de cobertura'); console.error(e); }
+  }
+
+  const handleNormalizeAllClients = async () => {
+    if (!window.confirm('¿Deseas normalizar las ciudades de todos los clientes? Esto cambiará nombres como "MONTALBAN" por "Montalbán de Córdoba" si se encuentra una coincidencia en tu lista de bultos.')) return;
+    
+    try {
+      let updatedCount = 0;
+      const zones = coverageZones || [];
+      const updatedClients = [...clients];
+
+      for (let i = 0; i < updatedClients.length; i++) {
+        const client = updatedClients[i];
+        const clientCityNorm = normalizeText(client.city);
+        if (!clientCityNorm) continue;
+
+        const match = zones.find(z => normalizeText(z.name) === clientCityNorm);
+        
+        if (match && match.name !== client.city) {
+          const { error } = await supabase.from('clients').update({ city: match.name }).eq('id', client.id);
+          if (error) throw error;
+          updatedClients[i] = { ...client, city: match.name };
+          updatedCount++;
+        }
+      }
+
+      setClients(updatedClients);
+      alert(`Limpieza completada: Se han corregido ${updatedCount} clientes.`);
+      return true;
+    } catch (e) {
+      alert('Error durante la normalización de clientes.');
+      console.error(e);
+      return false;
+    }
+  }
+
+  const handleAddFuelLog = async (log) => {
+    const logWithId = { ...log, id: log.id || Date.now() };
+    try {
+       const { data, error } = await supabase.from('fuel_logs').insert([{ id: logWithId.id, data: logWithId }]).select();
+       if (error) throw error;
+       setFuelLogs(prev => [...prev, { ...data[0].data, id: data[0].id }]);
+    } catch (e) { alert('Error al guardar combustible'); console.error(e); }
+  }
+
+  const handleUpdateDefaultCodFee = async (newFee) => {
+    try {
+      const { error } = await supabase.from('settings').upsert({ key: 'defaultCodFee', value: newFee });
+      if (error) throw error;
+      setDefaultCodFee(newFee);
+    } catch (e) {
+      alert('Error al actualizar la tarifa COD por defecto.');
+      console.error(e);
+    }
+  }
+
+  const handleValidateClient = async (clientId, approved) => {
+    if (approved) {
+      await handleUpdateClient(clientId, { status: 'approved' });
+    } else {
+      try {
+        const { error } = await supabase.from('clients').delete().eq('id', clientId);
+        if (error) throw error;
+        setClients(prev => prev.filter(c => c.id !== clientId));
+      } catch (e) { alert('Error al rechazar cliente'); console.error(e); }
+    }
+  }
+
+  // --- NUEVOS ESTADOS PARA COPIA DE SEGURIDAD (Movid@s tras TODAS las declaraciones de estado) ---
+  const [backupDirHandle, setBackupDirHandle] = useState(null)
+  const [autoBackupInterval, setAutoBackupInterval] = usePersistentState('autoBackupInterval', '0') // '0' = desactivado, '15', '60', '360', '1440' (minutos)
+  const [lastBackupTime, setLastBackupTime] = usePersistentState('lastBackupTime', null)
+  const [backupStatus, setBackupStatus] = useState('idle') // 'idle', 'success', 'error'
+
+  const [showRestoreModal, setShowRestoreModal] = useState(false)
+  const [pendingRestoreData, setPendingRestoreData] = useState(null)
+  const [restoreOptions, setRestoreOptions] = useState({ drivers: true, shipments: false, clients: true, articles: true, tariffs: true, vehicles: true, fuelLogs: true })
+
+  // Persistir handle de carpeta en IndexedDB (necesario ya que localStorage no admite objetos complejos como Handles)
+  useEffect(() => {
+    async function loadHandle() {
+      try {
+        const db = await openDB();
+        const handle = await getVal(db, 'backupDirHandle');
+        if (handle) setBackupDirHandle(handle);
+      } catch (err) { console.error("Error cargando carpeta de backup:", err); }
+    }
+    loadHandle();
+  }, []);
+
+  const openDB = () => {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open('LogisticaBackupDB', 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('settings');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  };
+
+  const setVal = (db, key, val) => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('settings', 'readwrite');
+      tx.objectStore('settings').put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  };
+
+  const getVal = (db, key) => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('settings', 'readonly');
+      const req = tx.objectStore('settings').get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  };
+
+  const handleSelectBackupDir = async () => {
+    try {
+      const handle = await window.showDirectoryPicker();
+      setBackupDirHandle(handle);
+      const db = await openDB();
+      await setVal(db, 'backupDirHandle', handle);
+      alert('Carpeta de copias de seguridad seleccionada correctamente.');
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error(err);
+        alert('Error al seleccionar la carpeta. Asegúrate de usar un navegador compatible (Chrome/Edge).');
+      }
+    }
+  };
+
+  const executeBackup = useCallback(async (isAuto = false) => {
+    if (!backupDirHandle) {
+      if (!isAuto) alert('Primero debes seleccionar una carpeta de destino en Ajustes.');
+      return;
+    }
+
+    try {
+      // Verificar permisos (el navegador suele pedirlos tras recargar)
+      const options = { mode: 'readwrite' };
+      if ((await backupDirHandle.queryPermission(options)) !== 'granted') {
+        if ((await backupDirHandle.requestPermission(options)) !== 'granted') {
+          throw new Error('Permiso denegado por el usuario');
+        }
+      }
+
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0];
+      const timeStr = now.getHours().toString().padStart(2, '0') + '-' + now.getMinutes().toString().padStart(2, '0');
+      const fileName = `copia_logistica_${dateStr}_${timeStr}.json`;
+
+      const fileHandle = await backupDirHandle.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      
+      const data = { 
+        drivers, shipments, clients, articles, tariffs, vehicles, fuelLogs, defaultCodFee, familyOrder,
+        backupInfo: { timestamp: now.toISOString(), type: isAuto ? 'auto' : 'manual' }
+      };
+
+      await writable.write(JSON.stringify(data, null, 2));
+      await writable.close();
+
+      setLastBackupTime(now.toISOString());
+      setBackupStatus('success');
+      setTimeout(() => setBackupStatus('idle'), 3000);
+      
+      if (!isAuto) console.log(`Copia guardada: ${fileName}`);
+    } catch (err) {
+      console.error("Error en backup:", err);
+      setBackupStatus('error');
+      setTimeout(() => setBackupStatus('idle'), 3000);
+      if (!isAuto) alert('Error al guardar la copia: ' + err.message);
+    }
+  }, [backupDirHandle, drivers, shipments, clients, articles, tariffs, vehicles, fuelLogs, defaultCodFee, familyOrder]);
+
+  // Temporizador de Auto-guardado (Intervalos)
+  useEffect(() => {
+    if (!backupDirHandle || ['0', 'open', 'close', 'both'].includes(autoBackupInterval)) return;
+
+    const intervalMs = parseInt(autoBackupInterval) * 60 * 1000;
+    const timer = setInterval(() => {
+      console.log("Iniciando auto-guardado programado...");
+      executeBackup(true);
+    }, intervalMs);
+
+    return () => clearInterval(timer);
+  }, [autoBackupInterval, backupDirHandle, executeBackup]);
+
+  // Auto-guardado al entrar (Al cargar el handle)
+  useEffect(() => {
+    if ((autoBackupInterval === 'open' || autoBackupInterval === 'both') && backupDirHandle) {
+      executeBackup(true);
+    }
+  }, [backupDirHandle]); // Solo una vez cuando el handle esté listo
+
+  // Auto-guardado al cerrar (Aviso: Best-effort)
+  useEffect(() => {
+    if (!['close', 'both'].includes(autoBackupInterval) || !backupDirHandle) return;
+
+    const handleBeforeUnload = () => {
+      // Intentamos disparar el backup. 
+      // Al ser asíncrono, los navegadores pueden interrumpirlo, pero es lo máximo posible.
+      executeBackup(true);
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [autoBackupInterval, backupDirHandle, executeBackup]);
+
+
+  // Count pending items for badges
+  const pendingClientsCount = visibleClients.filter(c => c.status === 'pending').length;
+  const pendingIncidentsCount = shipments.filter(s => s.incidentStatus === 'active' || s.status === 'Incidencia').length;
+  const irregularCount = visibleShipments.filter(s => getIrregularReasons(s).length > 0).length;
+
+  const handleConfirmRestore = async () => {
+    if (!pendingRestoreData) return;
+    
+    try {
+      const data = pendingRestoreData;
+      const upsertPromises = [];
+
+      if (restoreOptions.drivers && data.drivers) {
+        upsertPromises.push(supabase.from('drivers').upsert(data.drivers.map(d => ({ id: d.id, username: d.username, password: d.password, data: d }))));
+      }
+      if (restoreOptions.shipments && data.shipments) {
+        upsertPromises.push(supabase.from('shipments').upsert(data.shipments.map(s => ({ id: s.id, status: s.status, assignedDriverId: s.assignedDriverId, data: s }))));
+      }
+      if (restoreOptions.clients && data.clients) {
+        upsertPromises.push(supabase.from('clients').upsert(data.clients.map(c => ({ id: c.id, name: c.name, data: c }))));
+      }
+      if (restoreOptions.articles && data.articles) {
+        upsertPromises.push(supabase.from('articles').upsert(data.articles.map(a => ({ id: a.id, data: a }))));
+      }
+      if (restoreOptions.tariffs) {
+        if (data.tariffs) upsertPromises.push(supabase.from('tariffs').upsert(data.tariffs.map(t => ({ id: t.id, data: t }))));
+        if (data.defaultCodFee) upsertPromises.push(supabase.from('settings').upsert({ key: 'defaultCodFee', value: data.defaultCodFee }));
+        if (data.familyOrder) upsertPromises.push(supabase.from('settings').upsert({ key: 'familyOrder', value: JSON.stringify(data.familyOrder) }));
+      }
+      if (restoreOptions.vehicles && data.vehicles) {
+        upsertPromises.push(supabase.from('vehicles').upsert(data.vehicles.map(v => ({ id: v.id, data: v }))));
+      }
+      if (restoreOptions.fuelLogs && data.fuelLogs) {
+        upsertPromises.push(supabase.from('fuel_logs').upsert(data.fuelLogs.map(f => ({ id: f.id, data: f }))));
+      }
+
+      await Promise.all(upsertPromises);
+      alert('¡Datos seleccionados restaurados y sincronizados con éxito!');
+      window.location.reload(); 
+    } catch (err) {
+      alert('Error crítico durante la restauración en Supabase.');
+      console.error(err);
+    }
+  };
+
+  // --- CRITICAL CONFIGURATION CHECK ---
+  const isMissingSupabaseKeys = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
+  if (isMissingSupabaseKeys) {
+    return (
+      <div className="flex flex-col h-screen items-center justify-center bg-slate-50 p-6 text-center">
+        <div className="max-w-md bg-amber-50 border border-amber-200 p-8 rounded-xl shadow-lg animate-in fade-in zoom-in duration-300">
+          <Shield className="w-16 h-16 text-amber-500 mx-auto mb-4" />
+          <h1 className="text-xl font-bold text-amber-800 mb-2">⚠️ Configuración de Vercel Incompleta</h1>
+          <p className="text-amber-700 mb-6 font-medium">
+            La aplicación no puede conectar con la base de datos porque las "llaves" de Supabase no están configuradas en el panel de Vercel.
+          </p>
+          <div className="text-left space-y-4 bg-white p-5 rounded-lg border border-amber-100 text-sm shadow-inner overflow-hidden">
+            <p className="font-semibold text-amber-900">Pasos para solucionar:</p>
+            <ol className="list-decimal list-inside space-y-2 text-slate-600">
+              <li>Ve al panel de <strong>Vercel &gt; Settings &gt; Environment Variables</strong>.</li>
+              <li>Añade <span className="bg-slate-100 px-1 rounded font-mono">VITE_SUPABASE_URL</span></li>
+              <li>Añade <span className="bg-slate-100 px-1 rounded font-mono">VITE_SUPABASE_ANON_KEY</span></li>
+            </ol>
+            <p className="text-xs text-amber-600 italic">No olvides marcar 'Production' y darle a 'Save'.</p>
+          </div>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-8 w-full bg-amber-600 text-white font-bold py-3 rounded-xl hover:bg-amber-700 transition-all shadow-md active:scale-95"
+          >
+            Ya las he puesto, Recargar Página
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
     return <Login onLogin={handleLogin} />
@@ -317,42 +2352,468 @@ function App() {
     setCurrentDriverId(driverId)
   }
 
+  // Client View
+  if (userRole === 'client') {
+    return <ClientDashboard 
+        client={clients.find(c => c.id === currentClientId)}
+        onLogout={handleLogout}
+        allShipments={shipments}
+        drivers={drivers}
+        allClients={clients}
+        articles={articles}
+        tariffs={tariffs}
+        coverageZones={coverageZones}
+        onCreateShipment={handleAddShipment}
+        onUpdateClient={handleUpdateClient}
+        onDeleteShipment={handleDeleteShipment}
+    />
+  }
+
   // Driver View
   if (userRole === 'driver') {
     return <DriverDashboard
       onLogout={handleLogout}
       allShipments={shipments}
       currentDriverId={currentDriverId}
+      routes={routes}
+      routeKnowledge={routeKnowledge}
+      onUpdateRouteKnowledge={handleUpdateRouteKnowledge}
       onAssignShipment={handleAssignDriver}
       drivers={drivers}
       clients={clients}
+      allPoblaciones={allPoblaciones}
       onCreateShipment={handleAddShipment}
       onStatusChange={handleShipmentStatusChange}
       onUpdateShipment={handleUpdateShipment}
+      onUpdateClient={handleUpdateClient}
+      onAddClient={handleAddClient}
       tariffs={tariffs}
+      articles={articles}
+      familyOrder={familyOrder}
+      coverageZones={coverageZones}
+      defaultCodFee={defaultCodFee}
+      gpsIntervalMinutes={gpsIntervalMinutes}
+      driverAlerts={driverAlerts}
+      isInitialLoading={isSyncing}
     />
   }
 
   // Admin View (Default)
   return (
-    <Layout
+  <Layout
       onLogout={handleLogout}
       currentView={currentView}
       onNavigate={setCurrentView}
-      pendingClientsCount={pendingClientsCount}
+      pendingClientsCount={pendingClientsCount} 
+      pendingIncidentsCount={visibleShipments.filter(s => s.incidentStatus === 'active' || s.status === 'Incidencia').length}
+      irregularCount={irregularCount}
+      shipments={visibleShipments}
+      vehicles={vehicles}
+      onSecretUnlock={handleSecretUnlock}
+      isTestMode={activeTestMode}
+      onResetToZero={handleResetToZero}
+      isOnline={isOnline}
+      justReconnected={justReconnected}
+      pendingQueueCount={pendingQueueCount}
+      isSyncingQueue={isSyncingQueue}
     >
-      {currentView === 'dashboard' && <Dashboard />}
-      {currentView === 'pending-collections' && <PendingCollections shipments={shipments} drivers={drivers} clients={clients} />}
-      {currentView === 'shipments' && <Shipments shipments={shipments} drivers={drivers} clients={clients} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} />}
-      {currentView === 'fleet' && <Fleet />}
-      {currentView === 'drivers' && <Drivers drivers={drivers} shipments={shipments} onAddDriver={handleAddDriver} onImpersonate={handleImpersonate} />}
-      {currentView === 'tracking' && <Tracking drivers={drivers} />}
-      {currentView === 'clients' && <Clients clients={clients} articles={articles} onUpdateClient={handleUpdateClient} onAddClient={handleAddClient} onImportClients={handleImportClients} />}
-      {currentView === 'articles' && <Articles articles={articles} tariffs={tariffs} onAddArticle={handleAddArticle} onUpdateArticle={handleUpdateArticle} onAddTariff={handleAddTariff} onUpdateTariff={handleUpdateTariff} onDeleteTariff={handleDeleteTariff} />}
-      {currentView === 'incidents' && <Incidents shipments={shipments} onUpdateStatus={handleShipmentStatusChange} drivers={drivers} />}
-      {currentView === 'clientValidation' && <ClientValidation clients={clients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} />}
+                {currentView === 'dashboard' && (
+                    <div className="animate-in fade-in duration-500">
+                        <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
+                    </div>
+                )}
+      {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} />}
+      {currentView === 'shipments' && <Shipments shipments={visibleShipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} />}
+      {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
+      {currentView === 'fuel' && <FuelManagement fuelLogs={fuelLogs} onAddFuelLog={handleAddFuelLog} drivers={drivers} shipments={visibleShipments} />}
+      {currentView === 'drivers' && <Drivers routes={routes} onUpdateRoutes={handleUpdateRoutes} routeKnowledge={routeKnowledge} onUpdateRouteKnowledge={handleUpdateRouteKnowledge} drivers={drivers} shipments={visibleShipments} clients={visibleClients} onAddDriver={handleAddDriver} onUpdateDriver={handleUpdateDriver} onDeleteDriver={handleDeleteDriver} onImpersonate={handleImpersonate} onNavigate={setCurrentView} articles={articles} defaultCodFee={defaultCodFee} isGhostModeUnlocked={isGhostModeUnlocked} driverOrder={driverOrder} onUpdateDriverOrder={handleUpdateDriverOrder} />}
+      {currentView === 'tracking' && <Tracking drivers={drivers} shipments={visibleShipments} onRequestGps={handleRequestDriverGps} />}
+      {currentView === 'clients' && <Clients clients={visibleClients} allPoblaciones={allPoblaciones} articles={articles} onUpdateClient={handleUpdateClient} onAddClient={handleAddClient} onImportClients={handleImportClients} onDeleteClient={handleDeleteClient} tariffs={tariffs} isGhostModeUnlocked={isGhostModeUnlocked} />}
+      {currentView === 'articles' && <Articles 
+        articles={articles} 
+        tariffs={tariffs} 
+        coverageZones={coverageZones} 
+        onAddCoverageZone={handleAddCoverageZone} 
+        onUpdateCoverageZone={handleUpdateCoverageZone}
+        onImportCoverageZones={handleImportCoverageZones} 
+        onDeleteCoverageZone={handleDeleteCoverageZone} 
+        onNormalizeClients={handleNormalizeAllClients}
+        onAddArticle={handleAddArticle} 
+        onUpdateArticle={handleUpdateArticle} 
+        onDeleteArticle={handleDeleteArticle} 
+        onDeleteAllArticles={handleDeleteAllArticles} 
+        onImportArticles={handleImportArticles} 
+        onAddTariff={handleAddTariff} 
+        onUpdateTariff={handleUpdateTariff} 
+        onDeleteTariff={handleDeleteTariff} 
+        onImportTariffs={handleImportTariffs} 
+        defaultCodFee={defaultCodFee} 
+        onUpdateDefaultCodFee={handleUpdateDefaultCodFee} 
+        familyOrder={familyOrder} 
+        onUpdateFamilyOrder={handleUpdateFamilyOrder} 
+        onRenameCategory={handleRenameCategory} 
+      />}
+      {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onReply={handleIncidentReply} drivers={drivers} />}
+      {currentView === 'notifications' && <NotificationCenter shipments={visibleShipments} drivers={drivers} clients={visibleClients} onUpdateShipment={handleUpdateShipment} articles={articles} tariffs={tariffs} defaultCodFee={defaultCodFee} familyOrder={familyOrder} coverageZones={coverageZones} />}
+      {currentView === 'clientValidation' && <ClientValidation clients={visibleClients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} />}
       {currentView === 'settings' && (
         <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
+
+          {/* ══════ CONTROL HORARIO ══════ */}
+          <TimeLogsAdmin />
+
+          {/* ══════ GPS & ALERTAS ══════ */}
+          <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg">
+                <Settings size={24} />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-800">GPS y Alertas de Conductores</h2>
+                <p className="text-slate-500 text-sm">Configura la frecuencia de rastreo GPS y las notificaciones obligatorias.</p>
+              </div>
+            </div>
+
+            {/* GPS Interval */}
+            <div className="bg-slate-50 border border-slate-200 p-6 rounded-xl mb-6">
+              <h3 className="font-bold text-slate-700 text-sm mb-3 flex items-center gap-2">
+                📍 Intervalo de Señal GPS Automática
+              </h3>
+              <p className="text-xs text-slate-500 mb-4">
+                Cada cuánto tiempo el móvil del conductor envía su ubicación automáticamente a la oficina. Menos minutos = posición más fresca al pulsar ⚡, pero más consumo de batería.
+              </p>
+              <div className="flex items-center gap-4">
+                <select
+                  value={gpsIntervalMinutes}
+                  onChange={async (e) => {
+                    const val = parseInt(e.target.value);
+                    setGpsIntervalMinutes(val);
+                    try {
+                      await supabase.from('settings').upsert({ key: 'gpsIntervalMinutes', value: String(val) });
+                    } catch(err) { console.error('Error saving gpsInterval:', err); }
+                  }}
+                  className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  <option value="5">Cada 5 minutos</option>
+                  <option value="10">Cada 10 minutos</option>
+                  <option value="15">Cada 15 minutos (Recomendado)</option>
+                  <option value="30">Cada 30 minutos</option>
+                  <option value="60">Cada 1 hora</option>
+                </select>
+                <div className="text-xs text-slate-400 font-bold whitespace-nowrap">
+                  Actual: {gpsIntervalMinutes} min
+                </div>
+              </div>
+            </div>
+
+            {/* Driver Alerts */}
+            <div className="bg-slate-50 border border-slate-200 p-6 rounded-xl">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-slate-700 text-sm flex items-center gap-2">
+                  🔔 Alertas Obligatorias para Conductores
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      try {
+                        const { data } = await supabase.from('settings').select('value').eq('key', 'alert_acknowledgments').maybeSingle();
+                        if (data?.value) { setAlertHistory(JSON.parse(data.value)); } else { setAlertHistory([]); }
+                      } catch(e) { console.error(e); setAlertHistory([]); }
+                      setAlertHistoryFilter('all');
+                      setShowAlertHistory(true);
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-2 bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
+                  >
+                    📋 Historial
+                  </button>
+                  <button
+                    onClick={() => setShowNewAlertForm(prev => !prev)}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-2 ${
+                      showNewAlertForm 
+                        ? 'bg-slate-200 text-slate-600' 
+                        : 'bg-blue-600 text-white shadow-lg shadow-blue-500/20 hover:bg-blue-700'
+                    }`}
+                  >
+                    {showNewAlertForm ? '✕ Cancelar' : '+ Nueva Alerta'}
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 mb-4">
+                Notificaciones que aparecen al abrir la app. El conductor debe confirmar antes de continuar.
+              </p>
+
+              {/* ─── FORMULARIO NUEVA ALERTA ─── */}
+              {showNewAlertForm && (
+                <div className="bg-white border-2 border-blue-200 rounded-xl p-5 mb-5 space-y-4 animate-in slide-in-from-top-2 duration-200">
+                  <h4 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
+                    {editingAlertId ? '✏️ Editar Alerta' : '✨ Crear Nueva Alerta'}
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Título</label>
+                      <input
+                        type="text"
+                        placeholder="Ej: Revisión del vehículo"
+                        value={newAlertForm.title}
+                        onChange={e => setNewAlertForm(p => ({...p, title: e.target.value}))}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Icono (emoji)</label>
+                      <input
+                        type="text"
+                        placeholder="🔧"
+                        value={newAlertForm.icon}
+                        onChange={e => setNewAlertForm(p => ({...p, icon: e.target.value}))}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                        maxLength={4}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mensaje</label>
+                    <textarea
+                      placeholder="Escribe el mensaje que verá el conductor..."
+                      value={newAlertForm.message}
+                      onChange={e => setNewAlertForm(p => ({...p, message: e.target.value}))}
+                      rows={4}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 outline-none resize-none"
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Día de la semana</label>
+                      <select
+                        value={newAlertForm.dayOfWeek}
+                        onChange={e => setNewAlertForm(p => ({...p, dayOfWeek: e.target.value === 'todos' ? undefined : parseInt(e.target.value)}))}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      >
+                        <option value="todos">Todos los días</option>
+                        <option value="1">Lunes</option>
+                        <option value="2">Martes</option>
+                        <option value="3">Miércoles</option>
+                        <option value="4">Jueves</option>
+                        <option value="5">Viernes</option>
+                        <option value="6">Sábado</option>
+                        <option value="0">Domingo</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Hora desde</label>
+                      <input
+                        type="time"
+                        value={newAlertForm.timeFrom || ''}
+                        onChange={e => setNewAlertForm(p => ({...p, timeFrom: e.target.value}))}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      />
+                      <p className="text-[9px] text-slate-400 mt-1">Vacío = al abrir la app</p>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Hora hasta</label>
+                      <input
+                        type="time"
+                        value={newAlertForm.timeTo || ''}
+                        onChange={e => setNewAlertForm(p => ({...p, timeTo: e.target.value}))}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      />
+                      <p className="text-[9px] text-slate-400 mt-1">Vacío = todo el día</p>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Texto del botón de confirmar</label>
+                    <input
+                      type="text"
+                      placeholder="Ej: ✅ Confirmo que lo he revisado"
+                      value={newAlertForm.confirmText}
+                      onChange={e => setNewAlertForm(p => ({...p, confirmText: e.target.value}))}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                    />
+                  </div>
+                  {/* Conductores destinatarios */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Dirigida a</label>
+                    <div className="bg-white border border-slate-200 rounded-lg p-3 max-h-36 overflow-y-auto space-y-1">
+                      <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!newAlertForm.targetDriverIds || newAlertForm.targetDriverIds.length === 0}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setNewAlertForm(p => ({...p, targetDriverIds: []}));
+                            }
+                          }}
+                          className="w-4 h-4 rounded text-blue-600"
+                        />
+                        <span className="text-sm font-bold text-slate-700">👥 Todos los conductores</span>
+                      </label>
+                      {(drivers || []).map(d => (
+                        <label key={d.id} className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Array.isArray(newAlertForm.targetDriverIds) && newAlertForm.targetDriverIds.includes(d.id)}
+                            onChange={(e) => {
+                              setNewAlertForm(p => {
+                                let ids = Array.isArray(p.targetDriverIds) ? [...p.targetDriverIds] : [];
+                                if (e.target.checked) {
+                                  ids.push(d.id);
+                                } else {
+                                  ids = ids.filter(id => id !== d.id);
+                                }
+                                return {...p, targetDriverIds: ids};
+                              });
+                            }}
+                            className="w-4 h-4 rounded text-blue-600"
+                          />
+                          <span className="text-sm text-slate-600">🚛 {d.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-slate-400 mt-1">Vacío = todos los conductores</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!newAlertForm.title.trim()) return alert('El título es obligatorio');
+                      if (!newAlertForm.message.trim()) return alert('El mensaje es obligatorio');
+                      const alertObj = {
+                        id: editingAlertId || `alert_${Date.now()}`,
+                        title: newAlertForm.title.trim(),
+                        message: newAlertForm.message.trim(),
+                        icon: newAlertForm.icon || '🔔',
+                        dayOfWeek: newAlertForm.dayOfWeek,
+                        timeFrom: newAlertForm.timeFrom || null,
+                        timeTo: newAlertForm.timeTo || null,
+                        confirmText: newAlertForm.confirmText.trim() || '✅ Entendido, continuar',
+                        targetDriverIds: (newAlertForm.targetDriverIds && newAlertForm.targetDriverIds.length > 0) ? newAlertForm.targetDriverIds : null,
+                        enabled: true
+                      };
+                      let updated;
+                      if (editingAlertId) {
+                        updated = driverAlerts.map(a => a.id === editingAlertId ? alertObj : a);
+                      } else {
+                        updated = [...(driverAlerts || []), alertObj];
+                      }
+                      setDriverAlerts(updated);
+                      try {
+                        await supabase.from('settings').upsert({ key: 'driverAlerts', value: JSON.stringify(updated) });
+                      } catch(err) { console.error('Error saving alerts:', err); }
+                      setNewAlertForm({ title: '', message: '', icon: '🔔', dayOfWeek: undefined, timeFrom: '', timeTo: '', confirmText: '', targetDriverIds: [] });
+                      setEditingAlertId(null);
+                      setShowNewAlertForm(false);
+                    }}
+                    disabled={!newAlertForm.title.trim() || !newAlertForm.message.trim()}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all active:scale-[0.98] shadow-lg shadow-blue-500/20 disabled:opacity-50 disabled:shadow-none"
+                  >
+                    {editingAlertId ? '💾 Guardar Cambios' : '➕ Crear Alerta'}
+                  </button>
+                </div>
+              )}
+
+              {/* ─── LISTA DE ALERTAS EXISTENTES ─── */}
+              <div className="space-y-3">
+                {(driverAlerts || []).length === 0 && (
+                  <div className="text-center py-8 text-slate-400">
+                    <p className="text-3xl mb-2">🔕</p>
+                    <p className="text-sm font-medium">No hay alertas configuradas</p>
+                    <p className="text-xs mt-1">Pulsa "Nueva Alerta" para crear una</p>
+                  </div>
+                )}
+                {(driverAlerts || []).map((alert, idx) => (
+                  <div key={alert.id} className={`bg-white border rounded-xl p-4 transition-all ${alert.enabled !== false ? 'border-slate-200' : 'border-slate-100 opacity-60'}`}>
+                    <div className="flex items-start gap-3">
+                      <div className="text-2xl mt-0.5">{alert.icon || '🔔'}</div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-bold text-slate-700 text-sm">{alert.title}</h4>
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                          <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
+                            {alert.dayOfWeek === 0 ? '🗓 Dom' : alert.dayOfWeek === 1 ? '🗓 Lun' : alert.dayOfWeek === 2 ? '🗓 Mar' : alert.dayOfWeek === 3 ? '🗓 Mié' : alert.dayOfWeek === 4 ? '🗓 Jue' : alert.dayOfWeek === 5 ? '🗓 Vie' : alert.dayOfWeek === 6 ? '🗓 Sáb' : '🗓 Todos'}
+                          </span>
+                          {(alert.timeFrom || alert.timeTo) && (
+                            <span className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
+                              🕐 {alert.timeFrom || '00:00'} - {alert.timeTo || '23:59'}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1 line-clamp-2">{alert.message}</p>
+                        {alert.targetDriverIds && alert.targetDriverIds.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {alert.targetDriverIds.map(tid => {
+                              const drv = drivers.find(d => d.id === tid);
+                              return drv ? (
+                                <span key={tid} className="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full">
+                                  {drv.name}
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                        )}
+                        {(!alert.targetDriverIds || alert.targetDriverIds.length === 0) && (
+                          <span className="text-[9px] font-bold text-slate-400 mt-1 block">👥 Todos los conductores</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Editar */}
+                        <button
+                          onClick={() => {
+                            setNewAlertForm({
+                              title: alert.title,
+                              message: alert.message,
+                              icon: alert.icon || '🔔',
+                              dayOfWeek: alert.dayOfWeek,
+                              timeFrom: alert.timeFrom || '',
+                              timeTo: alert.timeTo || '',
+                              confirmText: alert.confirmText || '',
+                              targetDriverIds: alert.targetDriverIds || []
+                            });
+                            setEditingAlertId(alert.id);
+                            setShowNewAlertForm(true);
+                          }}
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Editar"
+                        >
+                          <Settings size={14} />
+                        </button>
+                        {/* Eliminar */}
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`¿Eliminar la alerta "${alert.title}"?`)) return;
+                            const updated = driverAlerts.filter(a => a.id !== alert.id);
+                            setDriverAlerts(updated);
+                            try {
+                              await supabase.from('settings').upsert({ key: 'driverAlerts', value: JSON.stringify(updated) });
+                            } catch(err) { console.error('Error deleting alert:', err); }
+                          }}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Eliminar"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        {/* Toggle */}
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={alert.enabled !== false}
+                            onChange={async (e) => {
+                              const updated = [...driverAlerts];
+                              updated[idx] = { ...updated[idx], enabled: e.target.checked };
+                              setDriverAlerts(updated);
+                              try {
+                                await supabase.from('settings').upsert({ key: 'driverAlerts', value: JSON.stringify(updated) });
+                              } catch(err) { console.error('Error saving alerts:', err); }
+                            }}
+                            className="sr-only peer"
+                          />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ══════ BACKUP & DATA (existing) ══════ */}
           <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100">
             <div className="flex items-center gap-3 mb-6">
               <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
@@ -364,57 +2825,136 @@ function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* EXPORT */}
-              <button
-                onClick={() => {
-                  const data = { drivers, shipments, clients, articles, tariffs };
-                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `backup-logistica-${new Date().toISOString().split('T')[0]}.json`;
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                }}
-                className="flex flex-col items-center justify-center gap-3 p-8 bg-slate-50 border-2 border-slate-200 border-dashed rounded-xl hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700 transition-all group"
-              >
-                <div className="p-4 bg-white rounded-full shadow-sm group-hover:scale-110 transition-transform">
-                  <Download size={32} className="text-slate-400 group-hover:text-blue-600" />
-                </div>
-                <div className="text-center">
-                  <div className="font-bold text-lg">Exportar Copia</div>
-                  <div className="text-xs text-slate-500 mt-1">Descargar archivo .json</div>
-                </div>
-              </button>
+            <div className="mt-8 border-t border-slate-100 pt-8"> {/* NUEVA SECCIÓN DE COPIA AVANZADA */}
+              <div className="md:col-span-2 space-y-4">
+                <div className="flex flex-col md:flex-row gap-4">
+                  {/* SELECT DIRECTORY */}
+                  <div className="flex-1 bg-slate-50 border border-slate-200 p-6 rounded-xl flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 font-bold text-slate-700">
+                        <Folder className="text-blue-600" size={20} />
+                        Destino de Copias
+                      </div>
+                      {backupDirHandle ? (
+                        <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">CONFIGURADO</span>
+                      ) : (
+                        <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">PENDIENTE</span>
+                      )}
+                    </div>
+                    
+                    <div className="text-xs text-slate-500 bg-white p-3 rounded-lg border border-slate-100 min-h-[40px] flex items-center italic">
+                      {backupDirHandle ? `Carpeta: ${backupDirHandle.name}` : 'Ninguna carpeta seleccionada. Las copias se pedirán descargar manualmente.'}
+                    </div>
 
+                    <div className="flex gap-2">
+                       <button
+                        onClick={handleSelectBackupDir}
+                        className="flex-1 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-4 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
+                      >
+                        <Settings size={18} />
+                        Examinar...
+                      </button>
+                      <button
+                        onClick={() => executeBackup()}
+                        disabled={!backupDirHandle}
+                        className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-95 ${
+                          backupStatus === 'success' ? 'bg-emerald-500 text-white' : 
+                          backupStatus === 'error' ? 'bg-red-500 text-white' :
+                          'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20 disabled:opacity-50 disabled:shadow-none'
+                        }`}
+                      >
+                        {backupStatus === 'success' ? <CheckCircle size={18} /> : 
+                         backupStatus === 'error' ? <AlertCircle size={18} /> : 
+                         <Save size={18} />}
+                        {backupStatus === 'success' ? '¡Guardado!' : 
+                         backupStatus === 'error' ? 'Error' : 
+                         'Guardar Ahora'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* AUTO-BACKUP SETTINGS */}
+                  <div className="flex-1 bg-slate-50 border border-slate-200 p-6 rounded-xl flex flex-col gap-4">
+                    <div className="flex items-center gap-2 font-bold text-slate-700">
+                      <Clock className="text-indigo-600" size={20} />
+                      Auto-guardado
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Intervalo</label>
+                      <select 
+                        value={autoBackupInterval}
+                        onChange={(e) => setAutoBackupInterval(e.target.value)}
+                        className="w-full px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      >
+                        <option value="0">Desactivado</option>
+                        <option value="both">Al entrar y al cerrar</option>
+                        <option value="open">Al entrar</option>
+                        <option value="close">Al cerrar</option>
+                        <option value="15">Cada 15 minutos</option>
+                        <option value="60">Cada hora</option>
+                        <option value="360">Cada 6 horas</option>
+                        <option value="1440">Una vez al día</option>
+                      </select>
+                    </div>
+
+                    <div className="mt-auto pt-2 flex items-center justify-between text-[10px] text-slate-400 font-bold uppercase">
+                      <span>Última copia:</span>
+                      <span className="text-slate-600">
+                        {lastBackupTime ? new Date(lastBackupTime).toLocaleString() : 'Nunca'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* BOTÓN MANUAL CLÁSICO (Como apoyo) */}
+                <button
+                  onClick={() => {
+                    if (backupDirHandle) {
+                      executeBackup();
+                    } else {
+                      const data = { drivers, shipments, clients, articles, tariffs, vehicles, fuelLogs, defaultCodFee, familyOrder };
+                      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `copia_sin_carpeta_logistica_${new Date().toISOString().split('T')[0]}.json`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                    }
+                  }}
+                  className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border border-slate-200"
+                >
+                  <Download size={14} />
+                  Descargar Copia Manual
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-8 grid grid-cols-1 gap-4">
               {/* IMPORT */}
               <div className="relative group">
                 <input
                   type="file"
                   accept=".json"
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const file = e.target.files[0];
                     if (!file) return;
-                    if (!window.confirm('¿Estás seguro de restaurar? Esto sobrescribirá los datos actuales.')) return;
-
+                    
                     const reader = new FileReader();
-                    reader.onload = (event) => {
+                    reader.onload = async (event) => {
                       try {
                         const data = JSON.parse(event.target.result);
-                        if (data.drivers) setDrivers(data.drivers);
-                        if (data.shipments) setShipments(data.shipments);
-                        if (data.clients) setClients(data.clients);
-                        if (data.articles) setArticles(data.articles);
-                        if (data.tariffs) setTariffs(data.tariffs);
-                        alert('¡Datos restaurados con éxito!');
-                        window.location.reload(); // Reload to ensure state consistency
+                        setPendingRestoreData(data);
+                        setShowRestoreModal(true);
                       } catch (err) {
-                        alert('Error: Archivo dañado o formato incorrecto.');
+                        alert('Error: Archivo dañado o no es un JSON válido de Sumtrans.');
+                        console.error(err);
                       }
                     };
                     reader.readAsText(file);
+                    e.target.value = ''; // Reset file input
                   }}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
@@ -430,16 +2970,334 @@ function App() {
               </div>
             </div>
 
+            {/* ADMIN PASSWORD MANAGEMENT */}
+            <div className="mt-8 pt-8 border-t border-slate-100">
+               <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
+                 <Shield size={18} className="text-blue-600" />
+                 Acceso de Gestión (Administrador)
+               </h3>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-6 rounded-xl border border-slate-200">
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Usuario / Email Administrador</label>
+                      <input 
+                        type="text" 
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                        value={adminCreds.user}
+                        onChange={(e) => setAdminCreds(prev => ({ ...prev, user: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Nueva Contraseña Administración</label>
+                      <input 
+                        type="password" 
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                        value={adminCreds.pass}
+                        onChange={(e) => setAdminCreds(prev => ({ ...prev, pass: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-col justify-end">
+                    <button
+                      onClick={async () => {
+                        try {
+                          await supabase.from('settings').upsert([
+                            { key: 'admin_user', value: adminCreds.user },
+                            { key: 'admin_pass', value: adminCreds.pass }
+                          ]);
+                          alert('¡Credenciales de Administrador actualizadas con éxito!');
+                        } catch (err) {
+                          alert('Error al guardar credenciales.');
+                        }
+                      }}
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-blue-500/20 active:scale-95"
+                    >
+                      Guardar Nuevas Credenciales
+                    </button>
+                    <p className="text-[10px] text-slate-400 mt-2 italic px-2">
+                       Ten cuidado: si cambias estos datos, tendrás que usarlos la próxima vez que inicies sesión.
+                    </p>
+                  </div>
+               </div>
+            </div>
+
+            {/* MIKI CLEANUP ZONE */}
+            <div className="mt-8 pt-8 border-t border-slate-100">
+               <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Zona de Desarrollo / Pruebas</h3>
+               <button
+                 onClick={() => handleCleanupDriverData('miki')}
+                 className="w-full flex items-center justify-center gap-3 p-4 bg-red-50 text-red-700 border border-red-100 rounded-xl hover:bg-red-100 transition-colors font-bold"
+               >
+                 <Trash2 size={20} />
+                 Borrar todos los datos de "Miki"
+               </button>
+               <p className="text-[11px] text-slate-400 mt-2 text-center">
+                 Esta acción borrará conductores, clientes y envíos que contengan el nombre "miki". No se puede deshacer.
+               </p>
+            </div>
+
+            {/* SECRET HIGH PRIVACY PANEL - ONLY VISIBLE IF GHOST MODE IS UNLOCKED */}
+            {isGhostModeUnlocked && (
+              <div className="mt-8 pt-8 border-t-2 border-slate-800 bg-slate-900 -mx-8 px-8 pb-8 rounded-b-xl animate-in slide-in-from-bottom-5 duration-500">
+                <div className="flex items-center gap-3 mb-6 pt-4">
+                  <div className="p-3 bg-red-500/20 text-red-500 rounded-lg">
+                    <Shield size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-white">Panel de Alta Privacidad</h2>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* BOTÓN EXPORTAR EXCEL */}
+                  <button
+                    onClick={handleExportSecretsCSV}
+                    className="w-full bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-500/50 p-6 rounded-xl text-lg font-bold flex items-center justify-center gap-3 transition-all active:scale-95 shadow-lg shadow-emerald-900/20"
+                  >
+                    <Download size={24} />
+                    Descargar Excel
+                  </button>
+
+                  {/* ESPACIO NUCLEAR DE DESTRUCCIÓN */}
+                  <div className="relative overflow-hidden rounded-xl">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-red-600/10 blur-3xl rounded-full pointer-events-none"></div>
+                    <button
+                      onClick={handleDeleteSecrets}
+                      className="w-full relative z-10 bg-red-600 hover:bg-red-700 text-white p-6 rounded-xl text-lg font-bold flex items-center justify-center gap-3 transition-all active:scale-95 shadow-lg shadow-red-900/50 border border-red-500"
+                    >
+                      <Trash2 size={24} />
+                      Eliminar
+                    </button>
+                  </div>
+
+                  {/* ESPACIO LIMPIEZA DE ARCHIVOS HUÉRFANOS */}
+                  <div className="md:col-span-2 bg-slate-800 border border-slate-700 rounded-xl p-4 mt-2">
+                    <h3 className="text-sm font-bold text-slate-300 mb-3 flex items-center gap-2">
+                      <Database size={16} />
+                      Limpieza Selectiva de Archivos en la Nube
+                    </h3>
+                    <p className="text-xs text-slate-400 mb-4">Borra permanentemente fotos y firmas que ya no tienen un envío asociado en tu panel. Puedes filtrar por la fecha en la que se subió la foto.</p>
+                    <div className="flex flex-col md:flex-row gap-4 mb-4">
+                      <div className="flex-1">
+                        <label className="block text-xs font-bold text-slate-400 mb-1">Desde la fecha (Opcional)</label>
+                        <input
+                          type="date"
+                          value={orphanStartDate}
+                          onChange={(e) => setOrphanStartDate(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 text-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 outline-none [color-scheme:dark]"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="block text-xs font-bold text-slate-400 mb-1">Hasta la fecha (Opcional)</label>
+                        <input
+                          type="date"
+                          value={orphanEndDate}
+                          onChange={(e) => setOrphanEndDate(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 text-slate-300 rounded-lg p-2 text-sm focus:border-blue-500 outline-none [color-scheme:dark]"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleCleanOrphanedFiles}
+                      className="w-full relative z-10 bg-red-900/50 hover:bg-red-800/80 text-red-200 border border-red-700/50 p-3 rounded-xl text-sm font-bold flex items-center justify-center gap-3 transition-all active:scale-95"
+                    >
+                      <Trash2 size={18} />
+                      Liberar Espacio: Borrar Archivos Huérfanos
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="mt-6 p-4 bg-amber-50 rounded-lg flex items-start gap-3 text-amber-800 text-sm">
               <Database size={16} className="mt-0.5 shrink-0" />
               <p>
-                <strong>Nota:</strong> Los datos se guardan automáticamente en este navegador.
-                Usa "Exportar Copia" periódicamente para tener una copia de seguridad en tu ordenador.
+                <strong>Nota:</strong> Los datos se guardan automáticamente en este navegador o en la nube (si están sincronizados).
               </p>
             </div>
           </div>
         </div>
       )}
+
+      {/* MODAL DE RESTAURACIÓN INTELIGENTE */}
+      {showRestoreModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
+                  <Database size={20} />
+                </div>
+                <h3 className="text-lg font-bold text-slate-800">Caja Fuerte / Restauración</h3>
+              </div>
+              <button onClick={() => setShowRestoreModal(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                 <X size={24} />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
+              <p className="text-sm text-slate-600 mb-4">
+                Has cargado un archivo de copia de seguridad. Selecciona qué áreas de Sumtrans deseas restaurar. 
+                Tus datos actuales en la Nube se empalmarán, sin borrar lo más nuevo.
+              </p>
+
+              <div className="space-y-3">
+                 <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors">
+                   <input type="checkbox" checked={restoreOptions.articles} onChange={(e) => setRestoreOptions(p => ({...p, articles: e.target.checked}))} className="mt-1 w-5 h-5 text-indigo-600 rounded" />
+                   <div>
+                     <div className="font-bold text-slate-700 text-sm">Catálogo de Artículos y Servicios</div>
+                     <div className="text-xs text-slate-500">Recuperar artículos, precios base e IDs borrados.</div>
+                   </div>
+                 </label>
+
+                 <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors">
+                   <input type="checkbox" checked={restoreOptions.clients} onChange={(e) => setRestoreOptions(p => ({...p, clients: e.target.checked}))} className="mt-1 w-5 h-5 text-indigo-600 rounded" />
+                   <div>
+                     <div className="font-bold text-slate-700 text-sm">Cartera Inmensa de Clientes</div>
+                     <div className="text-xs text-slate-500">Recuperar cuentas de cliente y validaciones.</div>
+                   </div>
+                 </label>
+
+                 <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors">
+                   <input type="checkbox" checked={restoreOptions.tariffs} onChange={(e) => setRestoreOptions(p => ({...p, tariffs: e.target.checked}))} className="mt-1 w-5 h-5 text-indigo-600 rounded" />
+                   <div>
+                     <div className="font-bold text-slate-700 text-sm">Tarifas Pre-asignadas y Clasificación</div>
+                     <div className="text-xs text-slate-500">Recuperar los precios fijos del catálogo para los B2B.</div>
+                   </div>
+                 </label>
+
+                 <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors">
+                   <input type="checkbox" checked={restoreOptions.drivers} onChange={(e) => setRestoreOptions(p => ({...p, drivers: e.target.checked}))} className="mt-1 w-5 h-5 text-indigo-600 rounded" />
+                   <div>
+                     <div className="font-bold text-slate-700 text-sm">Conductores y Permisos</div>
+                     <div className="text-xs text-slate-500">Restaura los carnets, contraseñas y accesos.</div>
+                   </div>
+                 </label>
+                 
+                 <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors">
+                   <input type="checkbox" checked={restoreOptions.vehicles} onChange={(e) => setRestoreOptions(p => ({...p, vehicles: e.target.checked}))} className="mt-1 w-5 h-5 text-indigo-600 rounded" />
+                   <div>
+                     <div className="font-bold text-slate-700 text-sm">Registro de Vehículos (Flota)</div>
+                     <div className="text-xs text-slate-500">Seguros, ITV y control de la flota.</div>
+                   </div>
+                 </label>
+
+                 <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${restoreOptions.shipments ? 'bg-red-50 border-red-200' : 'border-slate-200 hover:bg-slate-50'}`}>
+                   <input type="checkbox" checked={restoreOptions.shipments} onChange={(e) => setRestoreOptions(p => ({...p, shipments: e.target.checked}))} className={`mt-1 w-5 h-5 rounded ${restoreOptions.shipments ? 'text-red-600' : 'text-slate-400'}`} />
+                   <div>
+                     <div className={`font-bold text-sm ${restoreOptions.shipments ? 'text-red-700' : 'text-slate-700'}`}>Viajes y Entregas Diarias (¡PELIGRO TÉRMICO!)</div>
+                     <div className={`text-xs ${restoreOptions.shipments ? 'text-red-600' : 'text-slate-500'}`}>Si marcas esto, desharás todo el trabajo en la carretera realizado desde que se hizo esta copia... <strong>Eliminarás las entregas de hoy y firmas.</strong></div>
+                   </div>
+                 </label>
+              </div>
+            </div>
+
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
+              <button 
+                onClick={() => setShowRestoreModal(false)}
+                className="flex-[1] py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={handleConfirmRestore}
+                disabled={!restoreOptions.articles && !restoreOptions.clients && !restoreOptions.tariffs && !restoreOptions.drivers && !restoreOptions.vehicles && !restoreOptions.shipments && !restoreOptions.fuelLogs}
+                className="flex-[2] py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20 disabled:opacity-50 flex justify-center items-center gap-2"
+              >
+                <RotateCcw size={18} />
+                Confirmar Restauración (Fusión Nube)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE HISTORIAL DE ALERTAS CONFIRMADAS */}
+      {showAlertHistory && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200 max-h-[85vh] flex flex-col">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
+                  <Clock size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">Historial de Confirmaciones</h3>
+                  <p className="text-xs text-slate-500">{alertHistory.length} registro{alertHistory.length !== 1 ? 's' : ''} guardado{alertHistory.length !== 1 ? 's' : ''}</p>
+                </div>
+              </div>
+              <button onClick={() => setShowAlertHistory(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Filter */}
+            <div className="px-6 py-3 border-b border-slate-100 shrink-0">
+              <select
+                value={alertHistoryFilter}
+                onChange={(e) => setAlertHistoryFilter(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              >
+                <option value="all">👥 Todos los conductores</option>
+                {[...new Map(alertHistory.map(h => [h.driverId, h.driverName])).entries()].map(([id, name]) => (
+                  <option key={id} value={id}>🚛 {name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {alertHistory.length === 0 ? (
+                <div className="text-center py-12 text-slate-400">
+                  <p className="text-4xl mb-3">📭</p>
+                  <p className="font-medium">No hay confirmaciones registradas</p>
+                  <p className="text-xs mt-1">Las confirmaciones aparecerán aquí cuando los conductores acepten las alertas</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {alertHistory
+                    .filter(h => alertHistoryFilter === 'all' || String(h.driverId) === String(alertHistoryFilter))
+                    .map((h, idx) => {
+                      const date = new Date(h.timestamp);
+                      const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+                      const dayName = dayNames[date.getDay()];
+                      const dateStr = `${dayName} ${String(date.getDate()).padStart(2,'0')}/${String(date.getMonth()+1).padStart(2,'0')}/${date.getFullYear()}`;
+                      const timeStr = `${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
+                      return (
+                        <div key={idx} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors">
+                          <div className="text-xl shrink-0">{h.alertIcon || '🔔'}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-slate-700 truncate">{h.driverName}</span>
+                              <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full shrink-0">✓ Confirmado</span>
+                            </div>
+                            <p className="text-xs text-slate-500 truncate">{h.alertTitle}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-xs font-bold text-slate-600">{dateStr}</p>
+                            <p className="text-[10px] text-slate-400 font-bold">{timeStr}h</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-100 shrink-0">
+              <button
+                onClick={() => setShowAlertHistory(false)}
+                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-colors text-sm"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </Layout>
   )
 }

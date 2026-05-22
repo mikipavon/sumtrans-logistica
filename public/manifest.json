@@ -1,0 +1,32 @@
+{
+  "name": "SUMTRANS LOGISTICA",
+  "short_name": "SumTrans",
+  "description": "Gestión logística de recogidas y entregas de mercancía en ruta.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/logo-sum.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+       "src": "/logo-sum.jpg",
+       "sizes": "192x192",
+       "type": "image/jpeg",
+       "purpose": "any"
+    },
+    {
+       "src": "/logo-sum.jpg",
+       "sizes": "512x512",
+       "type": "image/jpeg",
+       "purpose": "maskable"
+    }
+  ]
+}

@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, X, Save } from 'lucide-react';
 
 export default function ClientValidation({ clients, onValidateClient, onUpdateClient }) {
-    // Filter only pending clients
-    const pendingClients = clients.filter(c => c.status === 'pending');
+    // Filter only pending clients — exclude test-mode clients (isTest: true)
+    const pendingClients = clients.filter(c => c.status === 'pending' && !c.isTest);
 
     // Edit modal state
     const [editingClient, setEditingClient] = useState(null);
@@ -15,7 +15,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
         phone: '',
         coordinates: '',
         type: 'Destinatario',
-        billingType: 'Cobro Diario'
+        billingType: 'Clientes Habituales'
     });
 
     const openEditModal = (client) => {
@@ -27,7 +27,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
             phone: client.phone || '',
             coordinates: client.coordinates || '',
             type: client.type || 'Destinatario',
-            billingType: client.billingType || 'Cobro Diario'
+            billingType: client.billingType || 'Clientes Habituales'
         });
         setEditingClient(client);
     };
@@ -275,7 +275,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                         onChange={(e) => setEditForm({ ...editForm, billingType: e.target.value })}
                                     >
                                         <option value="Facturación">Facturación</option>
-                                        <option value="Cobro Diario">Cobro Diario</option>
+                                        <option value="Clientes Habituales">Clientes Habituales</option>
                                     </select>
                                 </div>
                             </div>

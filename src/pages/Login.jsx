@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Truck, ArrowRight, Shield, User, Eye, EyeOff } from 'lucide-react';
 
 export default function Login({ onLogin }) {
@@ -8,6 +8,7 @@ export default function Login({ onLogin }) {
     const [activeTab, setActiveTab] = useState(() => localStorage.getItem('lastLoginTab') || 'client');
     const [error, setError] = useState('');
     const [isShaking, setIsShaking] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
     
     const initializedRef = useRef(false);
     const activeTabRef = useRef(activeTab);
@@ -34,26 +35,45 @@ export default function Login({ onLogin }) {
                 }
                 if (emailRef.current) emailRef.current.value = urlUser;
                 if (passwordRef.current) passwordRef.current.value = urlPass;
-                // Auto trigger login
+                // Auto trigger login con reintentos
                 if (!initializedRef.current) {
                     initializedRef.current = true;
-                    // Llamamos a la función asíncrona directamente y pasamos el tab
-                    setTimeout(async () => {
+                    // Función de reintento: espera a que la base de datos esté lista
+                    const attemptAutoLogin = async (maxRetries = 8, delayMs = 3000) => {
                         const currentEmail = emailRef.current?.value?.trim() || '';
                         const currentPassword = passwordRef.current?.value || '';
-                        if (currentEmail && currentPassword) {
+                        if (!currentEmail || !currentPassword) return;
+                        
+                        setIsLoading(true);
+                        for (let attempt = 1; attempt <= maxRetries; attempt++) {
                             try {
+                                console.log(`[AutoLogin] Intento ${attempt}/${maxRetries}...`);
                                 const success = await onLogin(activeTabRef.current, currentEmail, currentPassword);
                                 if (success) {
+                                    console.log(`[AutoLogin] ✅ Login exitoso en intento ${attempt}`);
                                     localStorage.setItem(`lastLoginUser_${activeTabRef.current}`, currentEmail);
-                                } else {
-                                    setError('Credenciales inválidas');
+                                    setIsLoading(false);
+                                    return;
                                 }
                             } catch (e) {
-                                console.error(e);
+                                console.warn(`[AutoLogin] Error en intento ${attempt}:`, e);
+                            }
+                            // Si no es el último intento, esperar antes de reintentar
+                            if (attempt < maxRetries) {
+                                await new Promise(r => setTimeout(r, delayMs));
                             }
                         }
-                    }, 500);
+                        // Todos los intentos fallaron
+                        console.error('[AutoLogin] ❌ Todos los intentos fallaron');
+                        setError('No se pudo conectar. Inténtalo de nuevo.');
+                        setIsLoading(false);
+                        // Notificar a la web padre que el login definitivamente falló
+                        if (window.parent !== window) {
+                            window.parent.postMessage({ type: 'SUM_CLIENT_LOGIN_FAILED' }, '*');
+                        }
+                    };
+                    // Esperar un poco más antes del primer intento (dar tiempo a Supabase)
+                    setTimeout(() => attemptAutoLogin(), 1500);
                 }
                 return;
             }
@@ -69,6 +89,7 @@ export default function Login({ onLogin }) {
     const handleLogin = async () => {
         setError('');
         setIsShaking(false);
+        setIsLoading(true);
 
         const currentEmail = emailRef.current?.value?.trim() || '';
         const currentPassword = passwordRef.current?.value || '';
@@ -76,6 +97,7 @@ export default function Login({ onLogin }) {
         if (!currentEmail || !currentPassword) {
             setError('Por favor rellena usuario y contraseña');
             triggerShake();
+            setIsLoading(false);
             return;
         }
 
@@ -91,6 +113,8 @@ export default function Login({ onLogin }) {
             console.error('Login error:', err);
             setError('Error al iniciar sesión. Inténtalo de nuevo.');
             triggerShake();
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -249,10 +273,11 @@ export default function Login({ onLogin }) {
                         <button
                             type="button"
                             onClick={handleLogin}
-                            className={`w-full ${config.btnClass} text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95 hover:shadow-xl`}
+                            disabled={isLoading}
+                            className={`w-full ${config.btnClass} text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95 hover:shadow-xl ${isLoading ? 'opacity-75 cursor-wait' : ''}`}
                         >
-                            Iniciar Sesión
-                            <ArrowRight size={20} />
+                            {isLoading ? 'Comprobando...' : 'Iniciar Sesión'}
+                            {!isLoading && <ArrowRight size={20} />}
                         </button>
                     </div>
 

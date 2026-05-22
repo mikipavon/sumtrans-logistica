@@ -1,12 +1,11 @@
-import { X, Building2, Package, FileText, MapPin, Loader2 } from 'lucide-react';
+import { X, Building2, Package, FileText, MapPin, Loader2, Mic, MicOff } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
-export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) {
+export default function CreatePickupModal({ isOpen, onClose, onSave, clients, allPoblaciones, allShipments }) {
     const [formData, setFormData] = useState({
         clientName: '',
         originAddress: '',
         originZip: '',
-        originCity: '',
         originCity: '',
         observations: '',
         originCoordinates: ''
@@ -16,6 +15,47 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
 
     const [filteredClients, setFilteredClients] = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
+    const [listeningField, setListeningField] = useState(null);
+
+    const startListening = (field, targetKey) => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            alert("Tu navegador no soporta el reconocimiento de voz.");
+            return;
+        }
+
+        try {
+            const recognition = new SpeechRecognition();
+            recognition.lang = 'es-ES';
+            recognition.continuous = false;
+            recognition.interimResults = false;
+
+            recognition.onstart = () => setListeningField(field);
+            recognition.onend = () => setListeningField(null);
+            recognition.onerror = () => setListeningField(null);
+            
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript.replace(/[.,;:]$/, '').trim();
+                setFormData(prev => {
+                    const newValue = prev[targetKey] ? `${prev[targetKey]} ${transcript}` : transcript;
+                    
+                    if (targetKey === 'clientName') {
+                        setTimeout(() => updateSuggestions(newValue), 50);
+                    }
+                    
+                    return {
+                        ...prev,
+                        [targetKey]: newValue
+                    };
+                });
+            };
+
+            recognition.start();
+        } catch (error) {
+            console.error("Speech Recognition Error:", error);
+            setListeningField(null);
+        }
+    };
 
     useEffect(() => {
         if (!isOpen) {
@@ -48,18 +88,32 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
         );
     };
 
+    // Helper para limpiar el texto de la voz (ignora puntuación y siglas legales)
+    const normalizeForSearch = (text) => {
+        if (!text) return '';
+        return String(text)
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "") // Sin acentos
+            .replace(/[.,;:]/g, "") // Sin puntuación
+            .replace(/\b(s\.?l\.?u?|s\.?a\.?|sociedad limitada|sociedad anonima)\b/g, "") // Ignorar S.L. S.A.
+            .replace(/\s+/g, " ")
+            .trim();
+    };
+
     const updateSuggestions = (value) => {
         if (!clients) return;
+        const search = normalizeForSearch(value);
         const matches = clients.filter(c => {
             // Allow searching ALL clients, regardless of type
-            if (!value) return true;
-            return (c.name || '').toLowerCase().includes(value.toLowerCase());
+            if (!search) return true;
+            return normalizeForSearch(c.name).includes(search);
         }).sort((a, b) => {
             // Priority 1: Approved users first
             if (a.status === 'approved' && b.status !== 'approved') return -1;
             if (a.status !== 'approved' && b.status === 'approved') return 1;
             // Priority 2: Alphabetical
-            return a.name.localeCompare(b.name);
+            return (a.name || '').localeCompare(b.name || '');
         });
         setFilteredClients(matches);
         setShowSuggestions(matches.length > 0);
@@ -91,8 +145,13 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
         // For Pickups, origin is the relevant address
         const fullOrigin = `${formData.originAddress}, ${formData.originZip} ${formData.originCity}`.trim();
 
+        const maxId = (allShipments || []).reduce((max, s) => {
+            const num = parseInt(String(s.id || '').replace(/\D/g, ''), 10);
+            return (!isNaN(num) && num < 100000 && num > max) ? num : max;
+        }, 0);
+
         const newPickup = {
-            id: `PU-${new Date().getFullYear()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
+            id: `PU-${maxId + 1}`,
             type: 'Recogida', // Essential tag
             client: formData.clientName,
 
@@ -107,7 +166,7 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
             destination: 'Almacén Central',
 
             address: fullOrigin, // Main display address for functionality
-            status: 'Pendiente', // Initial status
+            status: 'Pendiente de asignar', // Initial status
             date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }),
             amount: 'Por valorar',
             observations: formData.observations,
@@ -150,7 +209,17 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
 
                         <div className="space-y-3">
                             <div className="relative">
-                                <label className={labelClass}>Remitente / Empresa</label>
+                                <div className="flex justify-between items-center mb-1">
+                                    <label className={labelClass + " mb-0"}>Remitente / Empresa</label>
+                                    <button
+                                        type="button"
+                                        onClick={() => startListening('sender', 'clientName')}
+                                        className={`p-1 rounded-md transition-colors ${listeningField === 'sender' ? 'bg-red-100 text-red-600 animate-pulse' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
+                                        title="Hablar para escribir"
+                                    >
+                                        {listeningField === 'sender' ? <MicOff size={14} /> : <Mic size={14} />}
+                                    </button>
+                                </div>
                                 <input
                                     type="text"
                                     placeholder="Buscar cliente..."
@@ -178,19 +247,28 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
                             </div>
 
                             <div>
-                                <label className={labelClass}>Dirección de Recogida</label>
+                                <div className="flex justify-between items-center mb-1">
+                                    <label className={labelClass + " mb-0"}>Dirección de Recogida</label>
+                                    <button
+                                        type="button"
+                                        onClick={() => startListening('address', 'originAddress')}
+                                        className={`p-1 rounded-md transition-colors ${listeningField === 'address' ? 'bg-red-100 text-red-600 animate-pulse' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
+                                        title="Hablar para escribir"
+                                    >
+                                        {listeningField === 'address' ? <MicOff size={14} /> : <Mic size={14} />}
+                                    </button>
+                                </div>
                                 <input
                                     type="text"
                                     placeholder="Dirección completa"
                                     className={inputClass}
                                     value={formData.originAddress}
                                     onChange={(e) => setFormData({ ...formData, originAddress: e.target.value })}
-                                    required
                                 />
                             </div>
 
                             {/* GPS Indicator for Origin */}
-                            <div className="flex justify-end -mt-2">
+                            <div className="hidden justify-end -mt-2">
                                 <button
                                     type="button"
                                     onClick={captureGps}
@@ -214,6 +292,7 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
                                         className={inputClass}
                                         value={formData.originCity}
                                         onChange={(e) => setFormData({ ...formData, originCity: e.target.value })}
+                                        list="poblaciones-list"
                                         required
                                     />
                                 </div>
@@ -224,16 +303,25 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
                                         className={inputClass}
                                         value={formData.originZip}
                                         onChange={(e) => setFormData({ ...formData, originZip: e.target.value })}
-                                        required
                                     />
                                 </div>
                             </div>
                         </div>
 
                         <div className="flex flex-col">
-                            <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 flex items-center gap-2">
-                                <FileText size={14} /> Observaciones
-                            </h4>
+                            <div className="flex justify-between items-center mb-1">
+                                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
+                                    <FileText size={14} /> Observaciones
+                                </h4>
+                                <button
+                                    type="button"
+                                    onClick={() => startListening('observations', 'observations')}
+                                    className={`p-1 rounded-md transition-colors ${listeningField === 'observations' ? 'bg-red-100 text-red-600 animate-pulse' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
+                                    title="Hablar para escribir"
+                                >
+                                    {listeningField === 'observations' ? <MicOff size={14} /> : <Mic size={14} />}
+                                </button>
+                            </div>
                             <textarea
                                 className="flex-1 w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 resize-none h-24"
                                 placeholder="Horario preferente, bultos, peso aproximado..."
@@ -261,6 +349,12 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients }) 
                     </form>
                 </div>
             </div>
+
+            <datalist id="poblaciones-list">
+                {(allPoblaciones || []).map((poblacion, idx) => (
+                    <option key={`${idx}-${poblacion}`} value={poblacion} />
+                ))}
+            </datalist>
         </div>
     );
 }

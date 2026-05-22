@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Justificante de Reembolso</title>
+        <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+        <style>
+            body { 
+                font-family: 'Arial', sans-serif; 
+                padding: 40px; 
+                width: 800px; 
+                height: 1131px; /* A4 Ratio */
+                background: white;
+                margin: 0;
+                box-sizing: border-box;
+            }
+            .header { text-align: center; border-bottom: 3px solid #333; padding-bottom: 20px; margin-bottom: 40px; }
+            .title { font-size: 32px; font-weight: bold; margin: 0; }
+            .subtitle { font-size: 20px; color: #666; margin-top: 10px; }
+            .details { margin-bottom: 40px; font-size: 18px; }
+            .row { display: flex; justify-content: space-between; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+            .label { font-weight: bold; color: #444; }
+            .amount { font-size: 28px; font-weight: bold; text-align: right; margin-top: 30px; border-top: 2px dashed #ccc; padding-top: 20px; color: #b91c1c; }
+            .qr-section { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 100px; }
+            .signature-box { flex: 1; border-top: 2px solid #000; padding-top: 10px; text-align: center; font-size: 16px; margin-right: 50px; }
+            .qr-box { text-align: center; border: 1px solid #eee; padding: 10px; background: #fafafa; border-radius: 8px; }
+            .qr-box p { font-size: 14px; color: #666; margin: 10px 0 0 0; font-family: monospace; font-weight: bold; }
+            .footer { margin-top: 80px; font-size: 14px; text-align: center; color: #888; border-top: 1px solid #eee; padding-top: 20px; }
+            
+            /* Simular arrugas o ruido de escaneo para que sea REALISTA */
+            .scan-noise {
+                position: absolute;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background-image: url('data:image/svg+xml;utf8,<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><filter id="noiseFilter"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(%23noiseFilter)" opacity="0.05"/></svg>');
+                pointer-events: none;
+                mix-blend-mode: multiply;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="scan-noise"></div>
+        <div class="header">
+            <h1 class="title">SUMTRANS LOGISTICA</h1>
+            <p class="subtitle">Justificante de Reembolso / Entrega de Fondos</p>
+        </div>
+        
+        <div class="details">
+            <div class="row">
+                <span class="label">Fecha de Recaudación:</span>
+                <span>13/05/2026 16:15</span>
+            </div>
+             <div class="row">
+                <span class="label">ID de Envío (Referencia):</span>
+                <span style="font-family: monospace; font-weight: bold;">TR-9999</span>
+            </div>
+            <div class="row">
+                <span class="label">Cliente Remitente:</span>
+                <span>EMPRESA INVENTADA S.L.</span>
+            </div>
+            <div class="row">
+                <span class="label">Destinatario (Pagador):</span>
+                <span>CASA MISTERIOSA S.A.</span>
+            </div>
+            <div class="row">
+                <span class="label">Concepto:</span>
+                <span>Cobro de mercancía fantasma</span>
+            </div>
+            
+            <div class="amount">
+                TOTAL RECAUDADO: 150.00 €
+            </div>
+        </div>
+
+        <div style="margin-top: 40px; font-size: 14px; color: #555; line-height: 1.6;">
+            Mediante la firma del presente documento, el cliente remitente declara haber recibido de SUMTRANS LOGISTICA la cantidad arriba indicada, en concepto de liquidación del reembolso asociado al envío TR-9999.
+        </div>
+
+        <div class="qr-section">
+            <div class="signature-box">
+                Firma y Sello del Cliente (Remitente)<br>
+                <span style="color: #999; font-size: 12px; font-style: italic;">(Firmado digitalmente o sello físico)</span>
+            </div>
+            <div class="qr-box">
+                <div id="qrcode"></div>
+                <p>COD:TR-9999</p>
+            </div>
+        </div>
+        
+        <div class="footer">
+            Documento generado automáticamente por el sistema de gestión de Sumtrans Logistica.<br>
+            Guarde este recibo como comprobante de entrega de fondos.
+        </div>
+
+        <script>
+            window.onload = function() { 
+                var qr = qrcode(0, 'M');
+                qr.addData('COD:TR-9999');
+                qr.make();
+                document.getElementById('qrcode').innerHTML = qr.createImgTag(4, 10);
+                document.title = "READY";
+            }
+        </script>
+    </body>
+</html>

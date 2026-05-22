@@ -4,11 +4,13 @@ import { useState } from 'react';
 export default function CreateDriverModal({ isOpen, onClose, onSave }) {
     const [formData, setFormData] = useState({
         name: '',
+        alias: '',
         phone: '',
         vehicle: '',
         status: 'Disponible',
         username: '',
-        password: ''
+        password: '',
+        isTestMode: true
     });
 
     if (!isOpen) return null;
@@ -21,7 +23,7 @@ export default function CreateDriverModal({ isOpen, onClose, onSave }) {
             rating: 5.0, // Default rating
             since: new Date().getFullYear().toString()
         });
-        setFormData({ name: '', phone: '', vehicle: '', status: 'Disponible', username: '', password: '' });
+        setFormData({ name: '', alias: '', phone: '', vehicle: '', status: 'Disponible', username: '', password: '', isTestMode: true });
         onClose();
     };
 
@@ -48,6 +50,17 @@ export default function CreateDriverModal({ isOpen, onClose, onSave }) {
                                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 text-sm"
                                 value={formData.name}
                                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                            />
+                        </div>
+
+                        <div className="relative">
+                            <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                            <input
+                                type="text"
+                                placeholder="Alias (Opcional)"
+                                className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 text-sm"
+                                value={formData.alias}
+                                onChange={(e) => setFormData({ ...formData, alias: e.target.value })}
                             />
                         </div>
 
@@ -98,6 +111,23 @@ export default function CreateDriverModal({ isOpen, onClose, onSave }) {
                                 value={formData.password}
                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                             />
+                        </div>
+
+                        <div className="pt-2">
+                             <label className="flex items-center gap-3 cursor-pointer p-3 bg-amber-50 border border-amber-100 rounded-xl">
+                                <input
+                                    type="checkbox"
+                                    checked={formData.isTestMode}
+                                    onChange={(e) => setFormData({ ...formData, isTestMode: e.target.checked })}
+                                    className="w-4 h-4 text-amber-600 border-amber-300 rounded focus:ring-amber-500"
+                                />
+                                <div>
+                                    <span className="text-sm font-bold text-amber-800">Activar Modo Pruebas</span>
+                                    <p className="text-[10px] text-amber-600/80 leading-tight">
+                                        Recomendado para conductores nuevos. Captura su GPS pero no altera los datos maestros del cliente.
+                                    </p>
+                                </div>
+                            </label>
                         </div>
                     </div>
 

@@ -1,0 +1,18 @@
+﻿
+[1m[46m RUN [49m[22m [36mv4.1.0 [39m[90mC:/Users/sumtr/OneDrive - SUMTRANS LOGISTICA S.L. CIF B56131717/SUM MIGUEL/miguel/miaplicacionlogistica[39m
+
+ [31mÔØ»[39m src/utils/businessCases.test.js [2m([22m[2m8 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 18[2mms[22m[39m
+     [32mÔ£ô[39m CASO 1: Facturaci├│n + Porte Pagado + Sin Reembolso -> Nada en caja[32m 11[2mms[22m[39m
+     [32mÔ£ô[39m CASO 2: Cobro Diario + Porte Pagado + Sin Reembolso -> Porte en caja (al crear)[32m 0[2mms[22m[39m
+     [32mÔ£ô[39m CASO 3: Porte Debido + Cobro Diario -> Porte en caja (al entregar)[32m 0[2mms[22m[39m
+     [32mÔ£ô[39m CASO 4: Facturaci├│n + Porte Pagado + Reembolso -> Solo Reembolso en caja[32m 0[2mms[22m[39m
+     [32mÔ£ô[39m CASO 5: Cobro Diario + Porte Pagado + Reembolso -> Ambos en caja[32m 0[2mms[22m[39m
+     [32mÔ£ô[39m CASO 6: Destinatario Cobro Diario + Porte Debido + Reembolso -> Ambos en caja (al entregar)[32m 0[2mms[22m[39m
+     [32mÔ£ô[39m CASO 7: Facturaci├│n + Debido + Reembolso -> Solo Reembolso en caja[32m 0[2mms[22m[39m
+[31m     [31m├ù[31m should show correct manual collections when confirmed[39m[32m 4[2mms[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m7 passed[39m[22m[90m (8)[39m
+[2m   Start at [22m 19:37:44
+[2m   Duration [22m 1.05s[2m (transform 27ms, setup 81ms, import 25ms, tests 18ms, environment 768ms)[22m
+
