@@ -1,5 +1,6 @@
-import { User, Phone, Star, Map as MapIcon, Clock, Truck, Trash2, CheckCircle, Route } from 'lucide-react';
+import { User, Phone, Star, Map as MapIcon, Clock, Truck, Trash2, CheckCircle, Route, Settings } from 'lucide-react';
 import { useState, useMemo } from 'react';
+import { supabase } from '../lib/supabase';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, rectSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
@@ -8,6 +9,7 @@ import CreateDriverModal from '../components/drivers/CreateDriverModal';
 import DriverProfileModal from '../components/drivers/DriverProfileModal';
 import RoutesManagerModal from '../components/drivers/RoutesManagerModal';
 import PayrollUploadModal from '../components/drivers/PayrollUploadModal';
+import GpsAlertsModal from '../components/drivers/GpsAlertsModal';
 import { FileText } from 'lucide-react';
 
 function SortableDriverCard({ id, children, isManualSort }) {
@@ -36,13 +38,22 @@ function SortableDriverCard({ id, children, isManualSort }) {
     );
 }
 
-export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDeleteDriver, shipments, clients, onImpersonate, onNavigate, isGhostModeUnlocked, routes = [], onUpdateRoutes, routeKnowledge = {}, onUpdateRouteKnowledge, driverOrder = [], onUpdateDriverOrder }) {
+export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDeleteDriver, shipments, clients, onImpersonate, onNavigate, isGhostModeUnlocked, routes = [], onUpdateRoutes, routeKnowledge = {}, onUpdateRouteKnowledge, driverOrder = [], onUpdateDriverOrder, gpsIntervalMinutes, setGpsIntervalMinutes, driverAlerts, setDriverAlerts }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isRoutesModalOpen, setIsRoutesModalOpen] = useState(false);
     const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
     const [selectedDriver, setSelectedDriver] = useState(null);
     const [sortConfig, setSortConfig] = useState({ key: 'manual', direction: 'asc' });
     const [showInactive, setShowInactive] = useState(false);
+  // Alert form state (Settings page)
+  const [showNewAlertForm, setShowNewAlertForm] = useState(false);
+  const [editingAlertId, setEditingAlertId] = useState(null);
+  const [newAlertForm, setNewAlertForm] = useState({ title: '', message: '', icon: '🔔', dayOfWeek: undefined, timeFrom: '', timeTo: '', confirmText: '', targetDriverIds: [] });
+  const [alertHistory, setAlertHistory] = useState([]);
+  const [showAlertHistory, setShowAlertHistory] = useState(false);
+  const [alertHistoryFilter, setAlertHistoryFilter] = useState('all'); // 'all' or driverId
+    const [isGpsAlertsModalOpen, setIsGpsAlertsModalOpen] = useState(false);
+
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -164,7 +175,14 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                     >
                         <FileText size={16} /> Subir Nóminas
                     </button>
-                    <button
+                                        <button
+                        onClick={() => setIsGpsAlertsModalOpen(true)}
+                        className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-indigo-100 transition-colors flex items-center gap-2"
+                        title="Configurar GPS y Alertas"
+                    >
+                        <Settings size={16} /> GPS / Alertas
+                    </button>
+<button
                         onClick={() => setIsRoutesModalOpen(true)}
                         className="bg-slate-100 text-slate-700 border border-slate-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-200 transition-colors flex items-center gap-2"
                         title="Administrar Rutas Maestras"
