@@ -624,11 +624,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
 
     const [activeTab, setActiveTab] = useState('route');
+    const hasClockedInRef = useRef(false);
 
     // === FICHAJE AUTOMÁTICO AL ENTRAR ===
     useEffect(() => {
         const autoClockIn = async () => {
-            if (!currentDriverId) return;
+            if (!currentDriverId || !drivers || drivers.length === 0) return;
+            if (hasClockedInRef.current) return;
+            hasClockedInRef.current = true;
             try {
                 const today = new Date().toISOString().split('T')[0];
                 const { data, error } = await supabase
