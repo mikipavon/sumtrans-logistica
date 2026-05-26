@@ -619,8 +619,193 @@ const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety })
     );
 };
 
-function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, gpsIntervalMinutes, driverAlerts }) {
+// ─── DRIVER TIME LOGS HISTORY (Legal compliance) ───
+const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
+    const [logs, setLogs] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isVisible, setIsVisible] = useState(false);
+    const [isConfirmed, setIsConfirmed] = useState(false);
+    const [confirmedAt, setConfirmedAt] = useState(null);
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const confirmKey = `timelog_confirm_${currentDriverId}_${currentMonth}`;
+
+    useEffect(() => {
+        if (!currentDriverId) return;
+        const fetchData = async () => {
+            setIsLoading(true);
+            try {
+                const startOfMonth = `${currentMonth}-01`;
+                const endOfMonth = new Date(new Date(startOfMonth).getFullYear(), new Date(startOfMonth).getMonth() + 1, 0).toISOString().split('T')[0];
+                
+                const [logsResult, confirmResult, visibilityResult] = await Promise.all([
+                    supabase.from('time_logs')
+                        .select('*')
+                        .eq('driver_id', currentDriverId)
+                        .gte('date', startOfMonth)
+                        .lte('date', endOfMonth)
+                        .order('date', { ascending: true })
+                        .order('clock_in', { ascending: true }),
+                    supabase.from('settings')
+                        .select('value')
+                        .eq('key', 'timelog_confirmations')
+                        .maybeSingle(),
+                    supabase.from('settings')
+                        .select('value')
+                        .eq('key', 'showTimeLogsToDrivers')
+                        .maybeSingle()
+                ]);
+
+                setLogs(logsResult.data || []);
+
+                // Check visibility setting
+                setIsVisible(visibilityResult.data?.value === 'true');
+
+                // Check if this driver+month is confirmed
+                if (confirmResult.data?.value) {
+                    try {
+                        const confirmations = JSON.parse(confirmResult.data.value);
+                        const found = confirmations.find(c => c.key === confirmKey);
+                        if (found) {
+                            setIsConfirmed(true);
+                            setConfirmedAt(found.timestamp);
+                        }
+                    } catch(e) {}
+                }
+            } catch (e) {
+                console.error('Error fetching driver time logs:', e);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchData();
+    }, [currentDriverId, currentMonth]);
+
+    const handleConfirm = async () => {
+        if (!window.confirm('Al confirmar, aceptas que las horas mostradas son correctas. ¿Confirmar?')) return;
+        try {
+            const { data: existing } = await supabase.from('settings').select('value').eq('key', 'timelog_confirmations').maybeSingle();
+            let confirmations = [];
+            if (existing?.value) { try { confirmations = JSON.parse(existing.value); } catch(e) {} }
+            const now = new Date().toISOString();
+            confirmations.push({
+                key: confirmKey,
+                driverId: currentDriverId,
+                driverName: driverName || 'Conductor',
+                month: currentMonth,
+                timestamp: now,
+                totalHours: totalHours.toFixed(2),
+                totalDays: logs.length
+            });
+            await supabase.from('settings').upsert({ key: 'timelog_confirmations', value: JSON.stringify(confirmations) });
+            setIsConfirmed(true);
+            setConfirmedAt(now);
+        } catch(e) {
+            console.error('Error confirming time logs:', e);
+            alert('Error al confirmar. Inténtalo de nuevo.');
+        }
+    };
+
+    const formatTime = (iso) => {
+        if (!iso) return '--:--';
+        return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+
+    const totalHours = logs.reduce((sum, log) => {
+        if (!log.clock_in || !log.clock_out) return sum;
+        return sum + (new Date(log.clock_out) - new Date(log.clock_in)) / (1000 * 60 * 60);
+    }, 0);
+
+    const monthLabel = new Date(currentMonth + '-01').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+
+    if (isLoading) {
+        return <div className="p-6 text-center text-slate-400 text-sm animate-pulse">Cargando fichajes...</div>;
+    }
+
+    if (!isVisible) {
+        return null;
+    }
+
+    return (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="p-4 bg-indigo-50 border-b border-indigo-100">
+                <h3 className="font-bold text-indigo-800 text-sm flex items-center gap-2">
+                    <Clock size={16} /> Mis Fichajes del Mes
+                </h3>
+                <p className="text-[10px] text-indigo-500 mt-0.5">Registro de jornada según art. 34.9 ET (RDL 8/2019)</p>
+            </div>
+        <div className="divide-y divide-slate-100">
+            {/* Summary */}
+            <div className="p-4 flex items-center justify-between bg-slate-50">
+                <div>
+                    <span className="text-xs font-bold text-slate-500 uppercase">{monthLabel}</span>
+                    <p className="text-lg font-extrabold text-slate-800">{totalHours.toFixed(1)}h <span className="text-xs font-bold text-slate-400">en {logs.length} días</span></p>
+                </div>
+                {isConfirmed ? (
+                    <div className="flex flex-col items-end">
+                        <span className="text-[10px] font-bold bg-green-100 text-green-700 px-3 py-1 rounded-full flex items-center gap-1">
+                            <CheckCircle size={12} /> Confirmado
+                        </span>
+                        {confirmedAt && <span className="text-[9px] text-slate-400 mt-1">{new Date(confirmedAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>}
+                    </div>
+                ) : (
+                    <button
+                        onClick={handleConfirm}
+                        disabled={logs.length === 0}
+                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all disabled:opacity-40 disabled:shadow-none flex items-center gap-1.5"
+                    >
+                        <CheckCircle size={14} /> Confirmar Horas
+                    </button>
+                )}
+            </div>
+
+            {/* Log list */}
+            {logs.length === 0 ? (
+                <div className="p-6 text-center text-slate-400">
+                    <p className="text-2xl mb-1">📭</p>
+                    <p className="text-xs font-medium">No hay fichajes este mes</p>
+                </div>
+            ) : (
+                <div className="max-h-64 overflow-y-auto">
+                    {logs.map(log => {
+                        const hrs = log.clock_in && log.clock_out ? ((new Date(log.clock_out) - new Date(log.clock_in)) / (1000 * 60 * 60)).toFixed(1) : '-';
+                        const dayName = new Date(log.date).toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' });
+                        return (
+                            <div key={log.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors">
+                                <span className="text-xs font-medium text-slate-600 capitalize w-24">{dayName}</span>
+                                <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">{formatTime(log.clock_in)}</span>
+                                <span className="text-slate-300 text-xs">→</span>
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded ${log.clock_out ? 'text-red-600 bg-red-50' : 'text-amber-500 bg-amber-50 italic'}`}>
+                                    {log.clock_out ? formatTime(log.clock_out) : 'Activo'}
+                                </span>
+                                <span className="text-xs font-extrabold text-slate-700 w-12 text-right">{hrs}h</span>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* Legal footer */}
+            <div className="p-3 bg-slate-50">
+                <p className="text-[9px] text-slate-400 text-center leading-relaxed">
+                    Al pulsar "Confirmar Horas" declaras que los registros mostrados son correctos, conforme al art. 34.9 del Estatuto de los Trabajadores.
+                </p>
+            </div>
+            </div>
+        </div>
+    );
+};
+
+function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both' }) {
     console.log('DriverDashboard Render', { currentDriverId, drivers: drivers?.length, shipments: allShipments?.length, clients: clients?.length });
+
+    const getDriverDisplayName = (driver) => {
+        if (!driver) return '';
+        const name = driver.name || '';
+        const alias = driver.alias || '';
+        if (driverNamePreference === 'alias' && alias) return alias;
+        if (driverNamePreference === 'name') return name;
+        return alias ? `${name} (${alias})` : name;
+    };
 
 
     const [activeTab, setActiveTab] = useState('route');
@@ -797,12 +982,36 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         let acked = [];
         try { acked = JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch(e) {}
 
+        // Combinar confirmaciones persistidas en la base de datos de Supabase para hoy
+        if (Array.isArray(alertAcknowledgements)) {
+            alertAcknowledgements.forEach(ack => {
+                if (String(ack.driverId) === String(currentDriverId)) {
+                    try {
+                        const ackDate = new Date(ack.timestamp);
+                        const ackDateKey = `${ackDate.getFullYear()}-${String(ackDate.getMonth()+1).padStart(2,'0')}-${String(ackDate.getDate()).padStart(2,'0')}`;
+                        if (ackDateKey === todayKey) {
+                            if (!acked.includes(ack.alertId)) {
+                                acked.push(ack.alertId);
+                            }
+                        }
+                    } catch (err) {
+                        console.error('Error al procesar timestamp de confirmación:', err);
+                    }
+                }
+            });
+        }
+
+        // Leer alertas descartadas permanentemente
+        const permStorageKey = `drv_alerts_perm_ack_${currentDriverId}`;
+        let permAcked = [];
+        try { permAcked = JSON.parse(localStorage.getItem(permStorageKey) || '[]'); } catch(e) {}
+
         const alertsToShow = [];
 
         // Alertas configuradas desde la oficina
         const currentTimeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
         (driverAlerts || []).forEach(alert => {
-            if (acked.includes(alert.id)) return; // Ya la aceptó hoy
+            if (acked.includes(alert.id)) return; // Ya la aceptó hoy o ya está registrada hoy en BD
             // Comprobar si aplica hoy (día de la semana)
             if (alert.dayOfWeek !== undefined && alert.dayOfWeek !== dayOfWeek) return;
             if (alert.enabled === false) return;
@@ -816,8 +1025,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             alertsToShow.push(alert);
         });
 
-        // Alerta por defecto: Lunes - Revisión de niveles de furgoneta
-        if (dayOfWeek === 1 && !acked.includes('monday_vehicle_check')) {
+        // Alerta por defecto: Lunes - Revisión de niveles de furgoneta (solo si no hay una configuración personalizada)
+        const hasCustomVehicleCheck = (driverAlerts || []).some(a => a.id === 'monday_vehicle_check');
+        if (!hasCustomVehicleCheck && dayOfWeek === 1 && !acked.includes('monday_vehicle_check') && !permAcked.includes('monday_vehicle_check')) {
             const alreadyFromConfig = alertsToShow.find(a => a.id === 'monday_vehicle_check');
             if (!alreadyFromConfig) {
                 alertsToShow.push({
@@ -833,8 +1043,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         if (alertsToShow.length > 0) {
             setPendingAlerts(alertsToShow);
             setShowAlertModal(true);
+        } else {
+            setPendingAlerts([]);
+            setShowAlertModal(false);
         }
-    }, [currentDriverId, driverAlerts]);
+    }, [currentDriverId, driverAlerts, alertAcknowledgements]);
 
     const handleAcknowledgeAlert = async (alertId) => {
         const now = new Date();
@@ -844,6 +1057,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         try { acked = JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch(e) {}
         acked.push(alertId);
         try { localStorage.setItem(storageKey, JSON.stringify(acked)); } catch(e) {}
+
+        // Si es la alerta de revisión semanal o de configuración global, guardarla permanentemente si el usuario lo desea
+        // En este caso el usuario pidió que la de revisión no vuelva a salir una vez confirmada.
+        if (alertId === 'monday_vehicle_check') {
+            const permStorageKey = `drv_alerts_perm_ack_${currentDriverId}`;
+            let permAcked = [];
+            try { permAcked = JSON.parse(localStorage.getItem(permStorageKey) || '[]'); } catch(e) {}
+            if (!permAcked.includes(alertId)) {
+                permAcked.push(alertId);
+                try { localStorage.setItem(permStorageKey, JSON.stringify(permAcked)); } catch(e) {}
+            }
+        }
 
         // Guardar confirmación en Supabase para historial de oficina
         const alertObj = pendingAlerts.find(a => a.id === alertId);
@@ -2524,9 +2749,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     finalProofForCurrent.photoUrl = proof.photoData;         // base64 válido para <img>
                     pendingUploads.photoData = proof.photoData;              // para el flush al reconectar
                 }
+                if (proof.photoData2) {
+                    finalProofForCurrent.photoUrl2 = proof.photoData2;       // base64 válido para <img>
+                    pendingUploads.photoData2 = proof.photoData2;            // para el flush al reconectar
+                }
                 delete finalProofForCurrent.signatureData;
                 delete finalProofForCurrent.photoData;
-                console.log('[Offline] Firma/foto guardadas como base64 local para', id);
+                delete finalProofForCurrent.photoData2;
+                console.log('[Offline] Firma/fotos guardadas como base64 local para', id);
             } else {
                 // ---- MODO ONLINE: subir a Supabase Storage normalmente ----
                 try {
@@ -2536,8 +2766,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     if (proof.photoData) {
                         finalProofForCurrent.photoUrl = await uploadProof(id, proof.photoData, 'delivery_photos');
                     }
+                    if (proof.photoData2) {
+                        finalProofForCurrent.photoUrl2 = await uploadProof(id, proof.photoData2, 'delivery_photos');
+                    }
                     delete finalProofForCurrent.signatureData;
                     delete finalProofForCurrent.photoData;
+                    delete finalProofForCurrent.photoData2;
                 } catch (err) { console.error("Proof upload error:", err); }
             } // end isOnline else
 
@@ -3263,14 +3497,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                             <>
                                                                 <option value="admin">Administración</option>
                                                                 {drivers && drivers.filter(d => d && String(d.name || '').toLowerCase().includes('pavon') && d.isActive !== false).map(d => (
-                                                                    <option key={d.id} value={d.id}>{d.name}</option>
+                                                                    <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
                                                                 ))}
                                                             </>
                                                         ) : (
                                                             <>
                                                                 <option value={currentDriverId}>A Mí</option>
                                                                 {drivers && drivers.filter(d => d && d.id !== currentDriverId && d.isActive !== false).map(d => (
-                                                                    <option key={d.id} value={d.id}>{d.name}</option>
+                                                                    <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
                                                                 ))}
                                                             </>
                                                         )}
@@ -3380,13 +3614,27 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                 const isDebido = shipment.porteType === 'Debido';
                                                 
                                                 // Identificar quién paga el porte
-                                                const payingName = normalize(isDebido ? (shipment.destinationName || shipment.client) : (shipment.originName || shipment.client));
-                                                const payingClient = clients?.find(c => normalize(c.name) === payingName || normalize(c.legalName) === payingName);
+                                                const payingName = isDebido ? (shipment.destinationName || shipment.client) : (shipment.originName || shipment.client);
                                                 
+                                                let payingClient = null;
+                                                if (clients) {
+                                                    const cName = normalize(payingName);
+                                                    payingClient = clients.find(c => normalize(c.name) === cName || normalize(c.legalName) === cName);
+                                                    if (payingClient) {
+                                                        const rawNum = payingClient.clientNumber || '';
+                                                        const matchSuffix = String(rawNum).match(/^(.*?\d)[-_ ]?[a-zA-Z]{1,2}$/);
+                                                        if (matchSuffix) {
+                                                            const baseNumber = matchSuffix[1];
+                                                            const parentClient = clients.find(c => String(c.clientNumber || '') === baseNumber);
+                                                            if (parentClient) payingClient = parentClient;
+                                                        }
+                                                    }
+                                                }
+
                                                 // Determinar tipo de facturación
-                                                const bType = payingClient?.billingType || (isDebido ? shipment.destinationBillingType : shipment.billingType) || 'Clientes Habituales';
+                                                const bType = payingClient?.billingType || (isDebido ? shipment.destinationBillingType : shipment.billingType) || '';
                                                 const bTypeLow = String(bType).toLowerCase();
-                                                const isInvoice = bTypeLow.includes('factur') || bTypeLow.includes('presupuesto') || bTypeLow.includes('habitual') || bTypeLow.includes('diar') || bTypeLow.includes('libre') || bTypeLow.includes('contado');
+                                                const isInvoice = bTypeLow.includes('factur') || bTypeLow.includes('presupuesto');
                                                 
                                                 if (isInvoice) {
                                                     return <span className="text-[10px] text-slate-400 italic font-sans">Enviado</span>;
@@ -4017,6 +4265,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                 </button>
                             </div>
                         </div>
+
+                        {/* Mis Fichajes del Mes - Cumplimiento Legal RDL 8/2019 */}
+                        <DriverTimeLogsHistory currentDriverId={currentDriverId} driverName={drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name} />
 
                         {/* Modal: Mis Nóminas */}
                         {showPayrollsModal && (

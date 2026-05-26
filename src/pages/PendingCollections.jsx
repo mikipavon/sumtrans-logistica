@@ -4,7 +4,15 @@ import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { utils, writeFile } from 'xlsx';
 import Shipment from '../models/Shipment';
 
-export default function PendingCollections({ shipments, drivers, clients, onAssignDriver }) {
+export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, driverNamePreference = 'both' }) {
+    const getDriverDisplayName = (driver) => {
+        if (!driver) return '';
+        const name = driver.name || '';
+        const alias = driver.alias || '';
+        if (driverNamePreference === 'alias' && alias) return alias;
+        if (driverNamePreference === 'name') return name;
+        return alias ? `${name} (${alias})` : name;
+    };
     const [filterType, setFilterType] = useState('all'); // 'all', 'shipping_fee', 'reimbursement'
     const [filterDriver, setFilterDriver] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
@@ -240,7 +248,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                     'Pagador': t.payerName,
                     'Concepto': t.type,
                     'Importe': typeof t.amountDisplay !== 'undefined' ? t.amountDisplay : t.amount,
-                    'Conductor': driver ? driver.name : 'Sin Asignar',
+                    'Conductor': driver ? getDriverDisplayName(driver) : 'Sin Asignar',
                     'Estado Envío': item.status
                 };
             });
@@ -316,7 +324,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                     >
                         <option value="all">Todos los Repartidores</option>
                         {Array.isArray(drivers) && drivers.filter(d => d.isActive !== false).map(d => (
-                            <option key={d.id} value={d.id}>{d.name}</option>
+                            <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
                         ))}
                     </select>
                 </div>
@@ -451,7 +459,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                                                     >
                                                         <option value="">Sin Asignar</option>
                                                         {Array.isArray(drivers) && drivers.filter(d => d.isActive !== false || d.id === item.assignedDriverId).map(d => (
-                                                            <option key={d.id} value={d.id}>{d.name}</option>
+                                                            <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
                                                         ))}
                                                     </select>
                                                     <button
@@ -479,10 +487,12 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                                                                 {driver ? (
                                                                     <>
                                                                         <div className="w-5 h-5 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-600 shrink-0">
-                                                                            {driver.name ? driver.name.substring(0, 2).toUpperCase() : '??'}
+                                                                            {driver.alias && driverNamePreference === 'alias'
+                                                                                ? driver.alias.substring(0, 2).toUpperCase()
+                                                                                : driver.name ? driver.name.substring(0, 2).toUpperCase() : '??'}
                                                                         </div>
-                                                                        <span className="text-xs text-slate-600 truncate max-w-[80px]" title={driver.name}>
-                                                                            {driver.name || 'Desc.'}
+                                                                        <span className="text-xs text-slate-600 truncate max-w-[80px]" title={getDriverDisplayName(driver)}>
+                                                                            {getDriverDisplayName(driver)}
                                                                         </span>
                                                                     </>
                                                                 ) : (

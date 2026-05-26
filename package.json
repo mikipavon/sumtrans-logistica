@@ -1,7 +1,9 @@
 {
-  "name": "mi-aplicacion-logistica",
+  "name": "sumtrans-logistica",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "Plataforma de gestión logística de Sumtrans: envíos, rutas, conductores y clientes.",
+  "author": "Miguel Ángel Pavón Maíz",
   "type": "module",
   "scripts": {
     "dev": "vite --host",

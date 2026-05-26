@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Download, Upload, Trash2, Database, Shield, Clock, Folder, CheckCircle, AlertCircle, Save, Settings, X, RotateCcw } from 'lucide-react'
+import { Download, Upload, Trash2, Database, Shield, Clock, Folder, CheckCircle, AlertCircle, Save, Settings, X, RotateCcw, User } from 'lucide-react'
 import Layout from './components/layout/Layout'
 import Dashboard from './pages/Dashboard'
 import Shipments from './pages/Shipments'

@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 
 import { AlertTriangle, Calendar, Truck, MapPin, CheckCircle, Search, Filter, MessageSquare, Send, User, Package, Euro, Clock } from 'lucide-react';
 
-export default function Incidents({ shipments, onUpdateStatus, onResolve, onReply, drivers }) {
+export default function Incidents({ shipments, onUpdateStatus, onResolve, onReply, drivers, driverNamePreference = 'both' }) {
     const [filterDriver, setFilterDriver] = useState('');
     const [filterDate, setFilterDate] = useState('');
     const [replyState, setReplyState] = useState({}); // Local text for inputs
@@ -46,7 +46,12 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
 
     const getDriverName = (id) => {
         const driver = drivers.find(d => d.id === id);
-        return driver ? driver.name : 'Sin Asignar';
+        if (!driver) return 'Sin Asignar';
+        const name = driver.name || '';
+        const alias = driver.alias || '';
+        if (driverNamePreference === 'alias' && alias) return alias;
+        if (driverNamePreference === 'name') return name;
+        return alias ? `${name} (${alias})` : name;
     };
 
     return (
@@ -63,7 +68,7 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
 
                 <div className="flex gap-2 w-full md:w-auto">
                     <div className="relative">
-                        <UserFilter drivers={drivers} value={filterDriver} onChange={setFilterDriver} />
+                        <UserFilter drivers={drivers} value={filterDriver} onChange={setFilterDriver} driverNamePreference={driverNamePreference} />
                     </div>
                     <input
                         type="date"
@@ -230,7 +235,7 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
     );
 }
 
-function UserFilter({ drivers, value, onChange }) {
+function UserFilter({ drivers, value, onChange, driverNamePreference = 'both' }) {
     return (
         <select
             value={value}
@@ -239,7 +244,15 @@ function UserFilter({ drivers, value, onChange }) {
         >
             <option value="">Todos los Conductores</option>
             {drivers.filter(d => d.isActive !== false).map(d => (
-                <option key={d.id} value={d.id}>{d.name}</option>
+                <option key={d.id} value={d.id}>
+                    {(() => {
+                        const name = d.name || '';
+                        const alias = d.alias || '';
+                        if (driverNamePreference === 'alias' && alias) return alias;
+                        if (driverNamePreference === 'name') return name;
+                        return alias ? `${name} (${alias})` : name;
+                    })()}
+                </option>
             ))}
         </select>
     );

@@ -10,6 +10,7 @@ import DriverProfileModal from '../components/drivers/DriverProfileModal';
 import RoutesManagerModal from '../components/drivers/RoutesManagerModal';
 import PayrollUploadModal from '../components/drivers/PayrollUploadModal';
 import GpsAlertsModal from '../components/drivers/GpsAlertsModal';
+import TimeLogsModal from '../components/drivers/TimeLogsModal';
 import { FileText } from 'lucide-react';
 
 function SortableDriverCard({ id, children, isManualSort }) {
@@ -38,7 +39,7 @@ function SortableDriverCard({ id, children, isManualSort }) {
     );
 }
 
-export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDeleteDriver, shipments, clients, onImpersonate, onNavigate, isGhostModeUnlocked, routes = [], onUpdateRoutes, routeKnowledge = {}, onUpdateRouteKnowledge, driverOrder = [], onUpdateDriverOrder, gpsIntervalMinutes, setGpsIntervalMinutes, driverAlerts, setDriverAlerts }) {
+export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDeleteDriver, shipments, clients, onImpersonate, onNavigate, isGhostModeUnlocked, routes = [], onUpdateRoutes, routeKnowledge = {}, onUpdateRouteKnowledge, driverOrder = [], onUpdateDriverOrder, gpsIntervalMinutes, setGpsIntervalMinutes, driverAlerts, setDriverAlerts, driverNamePreference = 'both', onUpdateDriverNamePreference }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isRoutesModalOpen, setIsRoutesModalOpen] = useState(false);
     const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
@@ -53,6 +54,7 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
   const [showAlertHistory, setShowAlertHistory] = useState(false);
   const [alertHistoryFilter, setAlertHistoryFilter] = useState('all'); // 'all' or driverId
     const [isGpsAlertsModalOpen, setIsGpsAlertsModalOpen] = useState(false);
+    const [isTimeLogsModalOpen, setIsTimeLogsModalOpen] = useState(false);
 
 
     const sensors = useSensors(
@@ -148,6 +150,18 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                     </label>
                 </div>
                 <div className="flex gap-2">
+                    {onUpdateDriverNamePreference && (
+                        <select
+                            className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 font-semibold text-slate-600"
+                            value={driverNamePreference}
+                            onChange={(e) => onUpdateDriverNamePreference(e.target.value)}
+                            title="Formato de visualización de nombres"
+                        >
+                            <option value="both">Nombres: Ambos</option>
+                            <option value="name">Nombres: Solo Nombre</option>
+                            <option value="alias">Nombres: Solo Alias</option>
+                        </select>
+                    )}
                     <select
                         className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
                         value={`${sortConfig.key}-${sortConfig.direction}`}
@@ -181,6 +195,13 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                         title="Configurar GPS y Alertas"
                     >
                         <Settings size={16} /> GPS / Alertas
+                    </button>
+                    <button
+                        onClick={() => setIsTimeLogsModalOpen(true)}
+                        className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-emerald-100 transition-colors flex items-center gap-2"
+                        title="Ver fichajes de conductores"
+                    >
+                        <Clock size={16} /> Control Horario
                     </button>
 <button
                         onClick={() => setIsRoutesModalOpen(true)}
@@ -225,7 +246,13 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                                 </div>
                                 <div>
                                     <h3 className="font-bold text-slate-800">
-                                        {driver.name} {driver.alias && <span className="text-slate-400 font-medium">({driver.alias})</span>}
+                                        {(() => {
+                                            const name = driver.name || '';
+                                            const alias = driver.alias || '';
+                                            if (driverNamePreference === 'alias' && alias) return alias;
+                                            if (driverNamePreference === 'name') return name;
+                                            return alias ? `${name} (${alias})` : name;
+                                        })()}
                                     </h3>
                                     <div className="flex items-center gap-1 text-amber-500 text-sm">
                                         <Star size={14} fill="currentColor" />
@@ -342,6 +369,33 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                 onClose={() => setIsPayrollModalOpen(false)}
                 drivers={drivers}
                 onUpdateDriver={onUpdateDriver}
+            />
+
+            <GpsAlertsModal
+                isOpen={isGpsAlertsModalOpen}
+                onClose={() => setIsGpsAlertsModalOpen(false)}
+                drivers={drivers}
+                gpsIntervalMinutes={gpsIntervalMinutes}
+                setGpsIntervalMinutes={setGpsIntervalMinutes}
+                driverAlerts={driverAlerts}
+                setDriverAlerts={setDriverAlerts}
+                showNewAlertForm={showNewAlertForm}
+                setShowNewAlertForm={setShowNewAlertForm}
+                editingAlertId={editingAlertId}
+                setEditingAlertId={setEditingAlertId}
+                newAlertForm={newAlertForm}
+                setNewAlertForm={setNewAlertForm}
+                alertHistory={alertHistory}
+                setAlertHistory={setAlertHistory}
+                showAlertHistory={showAlertHistory}
+                setShowAlertHistory={setShowAlertHistory}
+                alertHistoryFilter={alertHistoryFilter}
+                setAlertHistoryFilter={setAlertHistoryFilter}
+            />
+
+            <TimeLogsModal
+                isOpen={isTimeLogsModalOpen}
+                onClose={() => setIsTimeLogsModalOpen(false)}
             />
         </div>
     );

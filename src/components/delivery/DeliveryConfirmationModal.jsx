@@ -11,6 +11,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
     const [isSignatureCaptured, setIsSignatureCaptured] = useState(false);
     const sigCanvas = useRef({});
     const [photoPreview, setPhotoPreview] = useState(null);
+    const [photoPreview2, setPhotoPreview2] = useState(null);
 
     const [receiverName, setReceiverName] = useState('');
     const [receiverId, setReceiverId] = useState('');
@@ -148,6 +149,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             setReceiverId('');
             setReceiverId('');
             setPhotoPreview(null);
+            setPhotoPreview2(null);
             setShowReturnPrompt(false);
             setInitialReturnAlert(false);
             setInitialSignatureAlert(false);
@@ -170,6 +172,10 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
     if (!isOpen || !shipment) return null;
 
+    const rules = shipment.deliveryRules || {};
+    const requiresPhoto1 = !!(rules.requirePhoto || shipment.needsSignatureReturn);
+    const requiresPhoto2 = !!(rules.requirePhoto && shipment.needsSignatureReturn);
+
     const handleVoiceInput = () => {
         if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
             alert('El reconocimiento de voz no está soportado en tu navegador.');
@@ -190,7 +196,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
         recognition.start();
     };
 
-    const handlePhotoUpload = async (e) => {
+    const handlePhotoUpload = async (e, photoIndex = 1) => {
         const file = e.target.files[0];
         if (file) {
             const reader = new FileReader();
@@ -199,10 +205,18 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                 try {
                     // Compress immediately to save memory and ensure successful upload later
                     const compressed = await compressImage(base64);
-                    setPhotoPreview(compressed);
+                    if (photoIndex === 1) {
+                        setPhotoPreview(compressed);
+                    } else {
+                        setPhotoPreview2(compressed);
+                    }
                 } catch (err) {
                     console.error("Compression error:", err);
-                    setPhotoPreview(base64); // Fallback to original if compression fails
+                    if (photoIndex === 1) {
+                        setPhotoPreview(base64); // Fallback to original if compression fails
+                    } else {
+                        setPhotoPreview2(base64);
+                    }
                 }
             };
             reader.readAsDataURL(file);
@@ -216,8 +230,12 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
         }
     };
 
-    const handleClearPhoto = () => {
-        setPhotoPreview(null);
+    const handleClearPhoto = (photoIndex = 1) => {
+        if (photoIndex === 1) {
+            setPhotoPreview(null);
+        } else {
+            setPhotoPreview2(null);
+        }
     };
 
     const handleConfirm = async (status, skipCurrentDebts = false) => {
@@ -227,7 +245,8 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             name: receiverName,
             id: receiverId,
             signatureData: null,
-            photoData: photoPreview
+            photoData: photoPreview,
+            photoData2: photoPreview2
         };
 
         // Capture Signature if not empty
@@ -255,8 +274,15 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                 hasError = true;
             }
             
-            // Check required Photo
-            if (rules.requirePhoto && !proofData.photoData) {
+            // Check required Photos (If needsSignatureReturn is true, we require at least 1 photo.
+            // If rules.requirePhoto is also true, we require 2 photos).
+            const requiresPhoto1 = rules.requirePhoto || shipment.needsSignatureReturn;
+            const requiresPhoto2 = rules.requirePhoto && shipment.needsSignatureReturn;
+
+            if (requiresPhoto1 && !proofData.photoData) {
+                hasError = true;
+            }
+            if (requiresPhoto2 && !proofData.photoData2) {
                 hasError = true;
             }
             
@@ -277,8 +303,12 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                 // Show specific error for the first failing rule
                 if (rules.requireDNI && !receiverId?.trim()) {
                     alert("🪪 DNI OBLIGATORIO\n\nEste cliente exige que el receptor identifique su DNI/NIE antes de entregar.");
-                } else if (rules.requirePhoto && !proofData.photoData) {
-                    alert("📸 FOTO OBLIGATORIA\n\nEste cliente exige una foto del sello/albarán para completar la entrega.");
+                } else if (requiresPhoto1 && !proofData.photoData) {
+                    alert(shipment.needsSignatureReturn
+                        ? "📸 FOTO 1 OBLIGATORIA\n\nEs obligatorio tomar una foto del albarán de la agencia."
+                        : "📸 FOTO OBLIGATORIA\n\nEste cliente exige una foto para completar la entrega.");
+                } else if (requiresPhoto2 && !proofData.photoData2) {
+                    alert("📄 FOTO 2 OBLIGATORIA\n\nDebes tomar una foto del albarán de contenido firmado (Documentación de vuelta).");
                 } else if (rules.requireSignature !== false && !proofData.signatureData) {
                     alert("✍️ FIRMA OBLIGATORIA\n\nEste cliente exige una firma real del receptor. No se puede dejar en blanco.");
                 } else if (!receiverName && !receiverId) {
@@ -490,24 +520,34 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                     {shipment?.type !== 'Recogida' && (
                     <div className="space-y-6">
                         {/* Client Rules Banner */}
-                        {shipment.deliveryRules && (shipment.deliveryRules.requireDNI || shipment.deliveryRules.requirePhoto || (shipment.deliveryRules.requireSignature !== false)) && (
+                        {(rules.requireDNI || requiresPhoto1 || (rules.requireSignature !== false)) && (
                             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1">
                                 <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest flex items-center gap-1.5">
                                     <ShieldCheck size={13} className="text-amber-600" />
                                     Exigencias del Cliente
                                 </p>
                                 <div className="flex flex-wrap gap-1.5">
-                                    {shipment.deliveryRules.requireDNI && (
+                                    {rules.requireDNI && (
                                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${receiverId?.trim() ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
                                             🪪 DNI {receiverId?.trim() ? '✓' : 'Obligatorio'}
                                         </span>
                                     )}
-                                    {shipment.deliveryRules.requirePhoto && (
+                                    {requiresPhoto1 && !requiresPhoto2 && (
                                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${photoPreview ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
                                             📸 Foto {photoPreview ? '✓' : 'Obligatoria'}
                                         </span>
                                     )}
-                                    {shipment.deliveryRules.requireSignature !== false && (
+                                    {requiresPhoto2 && (
+                                        <>
+                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${photoPreview ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
+                                                📸 Foto 1: Agencia {photoPreview ? '✓' : 'Obligatoria'}
+                                            </span>
+                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${photoPreview2 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
+                                                📄 Foto 2: Doc. Firmado {photoPreview2 ? '✓' : 'Obligatoria'}
+                                            </span>
+                                        </>
+                                    )}
+                                    {rules.requireSignature !== false && (
                                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${isSignatureCaptured ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
                                             ✍️ Firma {isSignatureCaptured ? '✓' : 'Obligatoria'}
                                         </span>
@@ -580,30 +620,91 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                         </div>
 
                         {/* 3. Photo Section */}
-                        <div className="space-y-2">
-                            <div className="flex justify-between items-end">
-                                <label className={labelClass}>Foto del Sello / Albarán / Documento {shipment.deliveryRules?.requirePhoto && <span className="text-red-500">*</span>}</label>
-                                {photoPreview && (
-                                    <button onClick={handleClearPhoto} className="text-[10px] text-red-500 font-bold uppercase hover:underline mb-1">
-                                        Quitar
-                                    </button>
-                                )}
-                            </div>
-                            <div className={`bg-slate-50 border-2 border-dashed rounded-2xl min-h-[160px] flex flex-col items-center justify-center relative overflow-hidden ${validationFailed && shipment.deliveryRules?.requirePhoto && !photoPreview ? 'border-red-500 ring-2 ring-red-500/30 animate-pulse' : 'border-slate-300'}`}>
-                                {photoPreview ? (
-                                    <img src={photoPreview} alt="Proof" className="w-full h-full object-contain" />
-                                ) : (
-                                    <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-6">
-                                        <div className="p-4 bg-white rounded-full shadow-sm mb-2 text-blue-500">
-                                            <Camera size={32} />
+                        {requiresPhoto1 && (
+                            <div className="space-y-4">
+                                {requiresPhoto2 ? (
+                                    <div className="grid grid-cols-2 gap-4">
+                                        {/* Photo 1: Agency Proof */}
+                                        <div className="space-y-2">
+                                            <div className="flex justify-between items-end">
+                                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">📸 Foto 1: Agencia <span className="text-red-500">*</span></label>
+                                                {photoPreview && (
+                                                    <button onClick={() => handleClearPhoto(1)} className="text-[10px] text-red-500 font-bold uppercase hover:underline mb-0.5">
+                                                        Quitar
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <div className={`bg-slate-50 border-2 border-dashed rounded-2xl h-[130px] flex flex-col items-center justify-center relative overflow-hidden ${validationFailed && !photoPreview ? 'border-red-500 ring-2 ring-red-500/30 animate-pulse' : 'border-slate-300'}`}>
+                                                {photoPreview ? (
+                                                    <img src={photoPreview} alt="Agencia Proof" className="w-full h-full object-contain" />
+                                                ) : (
+                                                    <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-2 text-center">
+                                                        <div className="p-2 bg-white rounded-full shadow-sm mb-1 text-blue-500">
+                                                            <Camera size={20} />
+                                                        </div>
+                                                        <span className="text-[10px] text-slate-500 font-black uppercase tracking-tight">Foto Agencia</span>
+                                                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handlePhotoUpload(e, 1)} />
+                                                    </label>
+                                                )}
+                                            </div>
                                         </div>
-                                        <span className="text-sm text-slate-500 font-bold uppercase tracking-tight">Tomar Foto del Sello</span>
-                                        <span className="text-xs text-slate-400">Captura la evidencia visual</span>
-                                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhotoUpload} />
-                                    </label>
+
+                                        {/* Photo 2: Content Signature Return Proof */}
+                                        <div className="space-y-2">
+                                            <div className="flex justify-between items-end">
+                                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">📄 Foto 2: Doc. Firmado <span className="text-red-500">*</span></label>
+                                                {photoPreview2 && (
+                                                    <button onClick={() => handleClearPhoto(2)} className="text-[10px] text-red-500 font-bold uppercase hover:underline mb-0.5">
+                                                        Quitar
+                                                    </button>
+                                                )}
+                                            </div>
+                                            <div className={`bg-slate-50 border-2 border-dashed rounded-2xl h-[130px] flex flex-col items-center justify-center relative overflow-hidden ${validationFailed && !photoPreview2 ? 'border-red-500 ring-2 ring-red-500/30 animate-pulse' : 'border-slate-300'}`}>
+                                                {photoPreview2 ? (
+                                                    <img src={photoPreview2} alt="Document Proof" className="w-full h-full object-contain" />
+                                                ) : (
+                                                    <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-2 text-center">
+                                                        <div className="p-2 bg-white rounded-full shadow-sm mb-1 text-emerald-500">
+                                                            <FileText size={20} />
+                                                        </div>
+                                                        <span className="text-[10px] text-slate-500 font-black uppercase tracking-tight">Doc. Firmado</span>
+                                                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handlePhotoUpload(e, 2)} />
+                                                    </label>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    /* Single Photo Capture */
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between items-end">
+                                            <label className={labelClass}>Foto del Sello / Albarán / Documento {requiresPhoto1 && <span className="text-red-500">*</span>}</label>
+                                            {photoPreview && (
+                                                <button onClick={() => handleClearPhoto(1)} className="text-[10px] text-red-500 font-bold uppercase hover:underline mb-1">
+                                                    Quitar
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div className={`bg-slate-50 border-2 border-dashed rounded-2xl min-h-[160px] flex flex-col items-center justify-center relative overflow-hidden ${validationFailed && requiresPhoto1 && !photoPreview ? 'border-red-500 ring-2 ring-red-500/30 animate-pulse' : 'border-slate-300'}`}>
+                                            {photoPreview ? (
+                                                <img src={photoPreview} alt="Proof" className="w-full h-full object-contain" />
+                                            ) : (
+                                                <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-6">
+                                                    <div className="p-4 bg-white rounded-full shadow-sm mb-2 text-blue-500">
+                                                        <Camera size={32} />
+                                                    </div>
+                                                    <span className="text-sm text-slate-500 font-bold uppercase tracking-tight">
+                                                        {shipment.needsSignatureReturn ? "Tomar Foto del Doc. Firmado" : "Tomar Foto del Sello"}
+                                                    </span>
+                                                    <span className="text-xs text-slate-400">Captura la evidencia visual</span>
+                                                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handlePhotoUpload(e, 1)} />
+                                                </label>
+                                            )}
+                                        </div>
+                                    </div>
                                 )}
                             </div>
-                        </div>
+                        )}
                     </div>
                     )}
                 </div>

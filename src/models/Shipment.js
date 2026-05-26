@@ -68,6 +68,7 @@ export default class Shipment {
     // Entrega (Pruebas)
     this.deliverySignature = data.deliverySignature || null; // URL de la firma
     this.deliveryPhoto = data.deliveryPhoto || null; // URL de la foto del sello/mercancía
+    this.deliveryPhoto2 = data.deliveryPhoto2 || null; // URL de la segunda foto (para documentación firmada)
     this.receiverName = data.receiverName || '';
     this.receiverId = data.receiverId || '';
     this.merchandisePhoto = data.merchandisePhoto || null; // Foto tomada al crear el albarán
@@ -256,6 +257,7 @@ export default class Shipment {
       if (proof) {
         if (proof.signatureUrl) this.deliverySignature = proof.signatureUrl;
         if (proof.photoUrl) this.deliveryPhoto = proof.photoUrl;
+        if (proof.photoUrl2) this.deliveryPhoto2 = proof.photoUrl2;
         
         // Datos del receptor
         if (proof.name) this.receiverName = proof.name;

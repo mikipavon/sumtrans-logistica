@@ -1,43 +1,34 @@
 import { useState } from 'react';
-import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, X, Save } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit } from 'lucide-react';
+import CreateClientModal from '../components/clients/CreateClientModal';
 
-export default function ClientValidation({ clients, onValidateClient, onUpdateClient }) {
+export default function ClientValidation({ clients, onValidateClient, onUpdateClient, articles, tariffs, allPoblaciones }) {
     // Filter only pending clients — exclude test-mode clients (isTest: true)
     const pendingClients = clients.filter(c => c.status === 'pending' && !c.isTest);
 
     // Edit modal state
     const [editingClient, setEditingClient] = useState(null);
-    const [editForm, setEditForm] = useState({
-        name: '',
-        address: '',
-        city: '',
-        zip: '',
-        phone: '',
-        coordinates: '',
-        type: 'Destinatario',
-        billingType: 'Clientes Habituales'
-    });
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
     const openEditModal = (client) => {
-        setEditForm({
-            name: client.name || '',
-            address: client.address || '',
-            city: client.city || '',
-            zip: client.zip || '',
-            phone: client.phone || '',
-            coordinates: client.coordinates || '',
-            type: client.type || 'Destinatario',
-            billingType: client.billingType || 'Clientes Habituales'
-        });
         setEditingClient(client);
+        setIsEditModalOpen(true);
     };
 
-    const handleSaveAndApprove = () => {
+    const handleSaveAndApprove = (clientData) => {
         if (onUpdateClient && editingClient) {
-            // Update client data then approve
-            onUpdateClient(editingClient.id, editForm);
+            // Update client data with everything from the full form
+            const { id, ...dataWithoutId } = clientData;
+            onUpdateClient(editingClient.id, dataWithoutId);
         }
+        // Auto-approve after editing
         onValidateClient(editingClient.id, true);
+        setEditingClient(null);
+        setIsEditModalOpen(false);
+    };
+
+    const handleModalClose = () => {
+        setIsEditModalOpen(false);
         setEditingClient(null);
     };
 
@@ -48,9 +39,6 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
     const handleReject = (clientId) => {
         onValidateClient(clientId, false);
     };
-
-    const inputClass = "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm";
-    const labelClass = "block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1";
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
@@ -182,123 +170,18 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                 </div>
             )}
 
-            {/* Edit Modal */}
-            {editingClient && (
-                <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden">
-                        <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                            <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                                <Edit size={18} className="text-blue-600" />
-                                Editar Cliente
-                            </h3>
-                            <button onClick={() => setEditingClient(null)} className="text-slate-400 hover:text-slate-600">
-                                <X size={20} />
-                            </button>
-                        </div>
-
-                        <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
-                            <div>
-                                <label className={labelClass}>Nombre / Empresa</label>
-                                <input
-                                    type="text"
-                                    className={inputClass}
-                                    value={editForm.name}
-                                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                                />
-                            </div>
-                            <div>
-                                <label className={labelClass}>Dirección</label>
-                                <input
-                                    type="text"
-                                    className={inputClass}
-                                    value={editForm.address}
-                                    onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
-                                />
-                            </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className={labelClass}>Ciudad / Población</label>
-                                    <input
-                                        type="text"
-                                        className={inputClass}
-                                        value={editForm.city}
-                                        onChange={(e) => setEditForm({ ...editForm, city: e.target.value })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Código Postal</label>
-                                    <input
-                                        type="text"
-                                        className={inputClass}
-                                        value={editForm.zip}
-                                        onChange={(e) => setEditForm({ ...editForm, zip: e.target.value })}
-                                    />
-                                </div>
-                            </div>
-                            <div>
-                                <label className={labelClass}>Teléfono</label>
-                                <input
-                                    type="tel"
-                                    className={inputClass}
-                                    value={editForm.phone}
-                                    onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                                />
-                            </div>
-                            <div>
-                                <label className={labelClass}>Coordenadas GPS</label>
-                                <input
-                                    type="text"
-                                    className={`${inputClass} font-mono text-xs`}
-                                    value={editForm.coordinates}
-                                    onChange={(e) => setEditForm({ ...editForm, coordinates: e.target.value })}
-                                    placeholder="40.4168, -3.7038"
-                                />
-                            </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className={labelClass}>Tipo</label>
-                                    <select
-                                        className={inputClass}
-                                        value={editForm.type}
-                                        onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
-                                    >
-                                        <option value="Remitente">Remitente</option>
-                                        <option value="Destinatario">Destinatario</option>
-                                        <option value="Ambos">Ambos</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className={labelClass}>Facturación</label>
-                                    <select
-                                        className={inputClass}
-                                        value={editForm.billingType}
-                                        onChange={(e) => setEditForm({ ...editForm, billingType: e.target.value })}
-                                    >
-                                        <option value="Facturación">Facturación</option>
-                                        <option value="Clientes Habituales">Clientes Habituales</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="p-4 border-t border-slate-100 bg-slate-50 flex gap-3">
-                            <button
-                                onClick={() => setEditingClient(null)}
-                                className="flex-1 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl transition-colors"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                onClick={handleSaveAndApprove}
-                                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
-                            >
-                                <Save size={18} />
-                                Guardar y Aprobar
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            {/* Full Edit Modal — Same as Create Client */}
+            <CreateClientModal
+                isOpen={isEditModalOpen}
+                onClose={handleModalClose}
+                onSave={handleSaveAndApprove}
+                articles={articles}
+                tariffs={tariffs}
+                allPoblaciones={allPoblaciones}
+                initialData={editingClient}
+                allClients={clients}
+            />
         </div>
     );
 }
+

@@ -8,7 +8,7 @@ import { getPackagesCount } from '../../utils/shipmentUtils';
 
 
 import { Trash2, Plus } from 'lucide-react';
-export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false }) {
+export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, driverNamePreference = 'both' }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -201,7 +201,12 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
     const resolveDriver = (driverId) => {
         if (!driverId) return null;
         const d = (drivers || []).find(dr => String(dr.id) === String(driverId));
-        return d ? d.name : `Conductor #${driverId}`;
+        if (!d) return `Conductor #${driverId}`;
+        const name = d.name || '';
+        const alias = d.alias || '';
+        if (driverNamePreference === 'alias' && alias) return alias;
+        if (driverNamePreference === 'name') return name;
+        return alias ? `${name} (${alias})` : name;
     };
 
     // Format ISO date to readable string
@@ -1032,7 +1037,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                         <option value="">Sin Asignar</option>
                                         {drivers.filter(d => d.isActive !== false || d.id === formData.assignedDriverId).map(d => (
                                             <option key={d.id} value={d.id}>
-                                                {d.name} {d.isActive === false ? '(Baja)' : ''}
+                                                {resolveDriver(d.id)} {d.isActive === false ? '(Baja)' : ''}
                                             </option>
                                         ))}
                                     </select>
@@ -1137,7 +1142,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                 </div>
 
                                 {/* Photos Section */}
-                                <div className={`grid ${shipment.hasCod ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-2'} gap-4`}>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                                     {/* Merchandise Photo (Carga) */}
                                     <div className="space-y-3">
                                         <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase">
@@ -1195,6 +1200,37 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             </div>
                                         )}
                                     </div>
+
+                                    {/* Delivery Photo 2 (Documentación de vuelta) */}
+                                    {(shipment.deliveryPhoto2 || shipment.needsSignatureReturn) && (
+                                        <div className="space-y-3">
+                                            <div className="flex items-center gap-2 text-[10px] font-bold text-emerald-500 uppercase">
+                                                <FileText size={12} /> Foto 2: Doc. Firmado
+                                            </div>
+                                            {shipment.deliveryPhoto2 ? (
+                                                <div className="relative group bg-slate-100 border border-slate-200 rounded-xl overflow-hidden aspect-square flex items-center justify-center shadow-inner">
+                                                    <img 
+                                                        src={shipment.deliveryPhoto2} 
+                                                        alt="Doc. Firmado" 
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                    <a 
+                                                        href={shipment.deliveryPhoto2} 
+                                                        target="_blank" 
+                                                        rel="noopener noreferrer"
+                                                        className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2 text-[10px] font-bold backdrop-blur-[1px]"
+                                                    >
+                                                        <ExternalLink size={12} /> Ver Original
+                                                    </a>
+                                                </div>
+                                            ) : (
+                                                <div className="aspect-square bg-slate-50 rounded-xl border border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 gap-1">
+                                                    <FileText size={16} className="opacity-20" />
+                                                    <span className="text-[10px] uppercase font-bold">Sin foto de doc.</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
 
                                     {/* COD Receipt Photo (Justificante de Reembolso) */}
                                     {shipment.hasCod && (
