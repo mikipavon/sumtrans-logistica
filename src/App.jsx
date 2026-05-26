@@ -16,7 +16,6 @@ import Incidents from './pages/Incidents'
 import ClientValidation from './pages/ClientValidation'
 import PendingCollections from './pages/PendingCollections'
 import NotificationCenter from './pages/NotificationCenter'
-import TimeLogsAdmin from './components/TimeLogsAdmin';
 import Shipment from './models/Shipment';
 import { supabase } from './lib/supabase'
 import { initStorageBuckets } from './utils/storage';
@@ -2580,9 +2579,6 @@ function App() {
       {currentView === 'clientValidation' && <ClientValidation clients={visibleClients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
       {currentView === 'settings' && (
         <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
-
-          {/* ══════ CONTROL HORARIO ══════ */}
-          <TimeLogsAdmin />
 
           {/* ══════ BACKUP & DATA (existing) ══════ */}
           <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100">
