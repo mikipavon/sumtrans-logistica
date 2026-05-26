@@ -12,7 +12,16 @@ import { Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 const { utils, writeFile } = XLSX;
 
-export default function Shipments({ shipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter }) {
+export default function Shipments({ shipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both' }) {
+    const getDriverDisplayName = (driver) => {
+        if (!driver) return '';
+        const name = driver.name || '';
+        const alias = driver.alias || '';
+        if (driverNamePreference === 'alias' && alias) return alias;
+        if (driverNamePreference === 'name') return name;
+        return alias ? `${name} (${alias})` : name;
+    };
+
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -556,7 +565,7 @@ export default function Shipments({ shipments, drivers, clients, allPoblaciones,
                             <option value="all">Todos los Conductores</option>
                             <option value="unassigned">Sin Asignar</option>
                             {(drivers || []).map(d => (
-                                <option key={d.id} value={d.id}>{d.name}</option>
+                                <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
                             ))}
                         </select>
 
@@ -756,7 +765,7 @@ export default function Shipments({ shipments, drivers, clients, allPoblaciones,
                                                 }}
                                             />
                                         </td>
-                                        <td className="px-4 py-3 min-w-[180px]">
+                                        <td className="px-4 py-3 whitespace-nowrap">
                                             <div className="flex items-center gap-2">
                                                 <span className="font-bold text-slate-900 tracking-tight">{shipment.id}</span>
                                                 {shipment.exportedAt && (
@@ -776,7 +785,7 @@ export default function Shipments({ shipments, drivers, clients, allPoblaciones,
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 min-w-[200px]">
+                                        <td className="px-4 py-3 min-w-[150px] max-w-[220px]">
                                             {shipment.porteType === 'Debido' ? (
                                                 <div className="flex flex-col">
                                                     <span className="text-slate-500 font-medium block text-[11px] flex items-center gap-1 mb-0.5">
@@ -797,7 +806,7 @@ export default function Shipments({ shipments, drivers, clients, allPoblaciones,
                                                 </div>
                                             )}
                                         </td>
-                                        <td className="px-4 py-3 min-w-[200px]">
+                                        <td className="px-4 py-3 min-w-[150px] max-w-[220px]">
                                             <div className="flex flex-col gap-1">
                                                 <div className="flex items-center gap-1.5 text-xs text-slate-500">
                                                     <div className="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
@@ -815,7 +824,7 @@ export default function Shipments({ shipments, drivers, clients, allPoblaciones,
                                                 {shipment.date}
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 min-w-[200px]">
+                                        <td className="px-4 py-3 min-w-[160px]">
                                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border
                                                 ${isProgrammed ? 'bg-indigo-50 text-indigo-700 border-indigo-100' :
                                                 shipment.status === 'En reparto' ? 'bg-blue-50 text-blue-700 border-blue-100' :
@@ -838,7 +847,7 @@ export default function Shipments({ shipments, drivers, clients, allPoblaciones,
                                                 {isProgrammed ? `Prog: ${programmedStr}` : shipment.status}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3 min-w-[200px]">
+                                        <td className="px-4 py-3 min-w-[160px] max-w-[220px]">
                                             <div className="flex items-center gap-2">
                                                 <User size={14} className="text-slate-400" />
                                                 <select
@@ -864,13 +873,27 @@ export default function Shipments({ shipments, drivers, clients, allPoblaciones,
                                                 >
                                                     <option value="">-- Asignar --</option>
                                                     {(drivers || []).map(driver => (
-                                                        <option key={driver.id} value={driver.id}>{driver.name}</option>
+                                                        <option key={driver.id} value={driver.id}>{getDriverDisplayName(driver)}</option>
                                                     ))}
                                                 </select>
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-bold text-slate-700">
-                                            {shipment.amount}
+                                        <td className="px-4 py-3 whitespace-nowrap text-right">
+                                            <div className="flex flex-col items-end gap-0.5">
+                                                <span className="text-sm font-bold text-slate-700">{shipment.amount}</span>
+                                                {shipment.hasCod && parseFloat(shipment.codAmount || 0) > 0 && (
+                                                    <span
+                                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                                            shipment.codPaid
+                                                                ? 'bg-emerald-100 text-emerald-700'
+                                                                : 'bg-amber-100 text-amber-800'
+                                                        }`}
+                                                        title={shipment.codPaid ? 'Reembolso cobrado' : 'Reembolso pendiente de cobro'}
+                                                    >
+                                                        💰 {parseFloat(shipment.codAmount).toFixed(2)} €
+                                                    </span>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="px-4 py-3 whitespace-nowrap text-center">
                                             <div className="flex items-center justify-center gap-1">
@@ -1041,6 +1064,7 @@ export default function Shipments({ shipments, drivers, clients, allPoblaciones,
                 articles={articles}
                 tariffs={tariffs}
                 familyOrder={[]}
+                driverNamePreference={driverNamePreference}
             />
 
             <CreateShipmentModal
@@ -1077,7 +1101,10 @@ export default function Shipments({ shipments, drivers, clients, allPoblaciones,
                                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Conductor Seleccionado</label>
                                 <div className="text-sm font-semibold text-slate-800 p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-2">
                                     <User size={16} className="text-slate-400" />
-                                    {drivers.find(d => String(d.id) === String(assignmentModal.driverId))?.name || 'Conductor'}
+                                     {(() => {
+                                         const drv = drivers.find(d => String(d.id) === String(assignmentModal.driverId));
+                                         return drv ? getDriverDisplayName(drv) : 'Conductor';
+                                     })()}
                                 </div>
                             </div>
                             <div className="space-y-2">

@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { LogOut, Package, Plus, MapPin, Truck, CheckCircle, Clock, FileText, Download, Printer, Settings as SettingsIcon, Upload, Trash2 } from 'lucide-react';
+import { LogOut, Package, Plus, MapPin, Truck, CheckCircle, Clock, FileText, Download, Printer, Settings as SettingsIcon, Upload, Trash2, Tag } from 'lucide-react';
 import ShipmentDetailsModal from '../../components/shipments/ShipmentDetailsModal';
 import { printShipmentTicket } from '../../utils/printShipment';
 import { generateDeliveryPDF } from '../../utils/deliveryPdf';
+import LabelPrintModal from '../../components/clients/LabelPrintModal';
 
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { getPackagesCount } from '../../utils/shipmentUtils';
@@ -23,6 +24,7 @@ export default function ClientDashboard({
 }) {
     const [activeTab, setActiveTab] = useState('shipments'); // 'shipments', 'create'
     const [selectedShipment, setSelectedShipment] = useState(null);
+    const [labelPrintShipment, setLabelPrintShipment] = useState(null);
 
     // Notificar a la web padre que el dashboard del cliente está listo y renderizado
     useEffect(() => {
@@ -315,6 +317,7 @@ export default function ClientDashboard({
         setCodAmount('');
     };
 
+    // Replaced by LabelPrintModal — keeping stub for safety
     const handlePrintLabel = (shipment) => {
         const clientLogo = client.agencyLogoUrl || client.customLogo;
         const mainLogoSrc = clientLogo || "/logo-sum.svg";
@@ -449,14 +452,27 @@ export default function ClientDashboard({
             {/* Header */}
             <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
                 <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                        <img src={client.customLogo || "/logo-sum.svg"} alt="Logo" className="h-8 object-contain" />
-                        <div className="h-6 w-px bg-slate-200 mx-2"></div>
+                    <div className="flex items-center gap-3">
+                        {/* Logo SUM — siempre visible */}
+                        <img src="/logo-sum.svg" alt="Sumtrans" className="h-8 object-contain" />
+                        {/* Logo del cliente — junto al SUM si existe */}
+                        {client.customLogo && (
+                            <img
+                                src={client.customLogo}
+                                alt={client.name}
+                                className="h-8 object-contain rounded"
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                        )}
+                        <div className="h-6 w-px bg-slate-200 mx-1"></div>
                         <div>
                             <h1 className="font-bold text-slate-800 text-lg leading-tight">{client.name}</h1>
                             <p className="text-xs text-slate-500">Portal de Cliente</p>
                         </div>
                     </div>
+
+
+
                     {/* Ocultar botón Salir si estamos dentro del iframe de la web */}
                     {window.parent === window && (
                     <button 
@@ -595,10 +611,23 @@ export default function ClientDashboard({
                                                 <td className="px-6 py-4 font-medium text-slate-700">{s.destinationName || 'Destinatario'}</td>
                                                 <td className="px-6 py-4 text-slate-500">{s.destinationCity || s.destination || '-'}</td>
                                                 <td className="px-6 py-4">
-                                                    <div className="flex items-center gap-2">
+                                                    <div className="flex flex-wrap items-center gap-2">
                                                         <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getStatusColor(s.status)}`}>
                                                             {s.status}
                                                         </span>
+                                                        {s.hasCod && parseFloat(s.codAmount || 0) > 0 && (
+                                                            <span
+                                                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border ${
+                                                                    s.codPaid
+                                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                                        : 'bg-amber-50 text-amber-800 border-amber-200'
+                                                                }`}
+                                                                title={s.codPaid ? 'Reembolso cobrado' : 'Reembolso pendiente de cobro al destinatario'}
+                                                            >
+                                                                💰 {parseFloat(s.codAmount).toFixed(2)} €
+                                                                {!s.codPaid && <span className="text-[9px] font-black ml-0.5">PDTE</span>}
+                                                            </span>
+                                                        )}
                                                         {s.incidentStatus === 'active' && (
                                                             <button 
                                                                 onClick={() => setSelectedShipment(s)}
@@ -619,6 +648,7 @@ export default function ClientDashboard({
                                                         )}
                                                     </div>
                                                 </td>
+
                                                 <td className="px-6 py-4 text-right">
                                                     <div className="flex justify-end gap-2">
                                                         {s.status === 'Pendiente de asignar' && (
@@ -658,7 +688,7 @@ export default function ClientDashboard({
                                                         )}
 
                                                         <button 
-                                                            onClick={() => handlePrintLabel(s)}
+                                                            onClick={() => setLabelPrintShipment(s)}
                                                             className="p-2 text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
                                                             title="Imprimir Etiqueta"
                                                         >
@@ -888,7 +918,8 @@ export default function ClientDashboard({
                     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 max-w-3xl animate-in fade-in slide-in-from-bottom-4">
                         <h2 className="text-xl font-bold text-slate-800 mb-6">Configuración de Cliente</h2>
                         
-                        <div className="space-y-6">
+                        <div className="space-y-8">
+                            {/* Logo corporativo */}
                             <div>
                                 <h3 className="text-sm font-bold text-slate-800 mb-2">Mi Logo Corporativo</h3>
                                 <p className="text-sm text-slate-500 mb-4">
@@ -942,6 +973,59 @@ export default function ClientDashboard({
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Preferencias de impresión */}
+                            <div className="border-t border-slate-100 pt-6">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <Tag size={16} className="text-slate-500" />
+                                    <h3 className="text-sm font-bold text-slate-800">Preferencias de Impresión de Etiquetas</h3>
+                                </div>
+                                <p className="text-sm text-slate-500 mb-4">
+                                    Elige el modo que se pre-seleccionará por defecto al imprimir una etiqueta.
+                                </p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                                        (client.labelPrintMode === 'a6' || !client.labelPrintMode)
+                                            ? 'border-blue-500 bg-blue-50'
+                                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                                    }`}>
+                                        <input
+                                            type="radio"
+                                            name="labelPrintMode"
+                                            value="a6"
+                                            checked={client.labelPrintMode === 'a6' || !client.labelPrintMode}
+                                            onChange={() => onUpdateClient && onUpdateClient(client.id, { labelPrintMode: 'a6' })}
+                                            className="mt-0.5 text-blue-600 border-slate-300 focus:ring-blue-500"
+                                        />
+                                        <div>
+                                            <p className="font-bold text-slate-800 text-sm">🖨️ Etiquetadora A6</p>
+                                            <p className="text-xs text-slate-500 mt-0.5 leading-snug">Impresión directa en tamaño A6 (105×148mm). Para impresoras térmicas o configuradas en A6.</p>
+                                        </div>
+                                    </label>
+                                    <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                                        client.labelPrintMode === 'a4'
+                                            ? 'border-emerald-500 bg-emerald-50'
+                                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                                    }`}>
+                                        <input
+                                            type="radio"
+                                            name="labelPrintMode"
+                                            value="a4"
+                                            checked={client.labelPrintMode === 'a4'}
+                                            onChange={() => onUpdateClient && onUpdateClient(client.id, { labelPrintMode: 'a4' })}
+                                            className="mt-0.5 text-emerald-600 border-slate-300 focus:ring-emerald-500"
+                                        />
+                                        <div>
+                                            <p className="font-bold text-slate-800 text-sm">📄 Folio A4 (4 posiciones)</p>
+                                            <p className="text-xs text-slate-500 mt-0.5 leading-snug">Divide el folio A4 en 4 etiquetas A6 (2×2). La app recuerda qué posición usaste para aprovechar el papel.</p>
+                                        </div>
+                                    </label>
+                                </div>
+                                <p className="text-xs text-slate-400 mt-3 flex items-center gap-1">
+                                    <span>ℹ️</span>
+                                    Puedes cambiar el modo en cualquier momento desde el modal de impresión.
+                                </p>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -962,6 +1046,14 @@ export default function ClientDashboard({
                     isClientView={true}
                 />
             )}
+
+            <LabelPrintModal
+                isOpen={!!labelPrintShipment}
+                onClose={() => setLabelPrintShipment(null)}
+                shipment={labelPrintShipment}
+                client={client}
+                onUpdateClient={onUpdateClient}
+            />
         </div>
     );
 }

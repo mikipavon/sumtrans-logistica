@@ -124,11 +124,17 @@ function App() {
     { id: 'monday_vehicle_check', title: '🔧 Revisión Semanal del Vehículo', message: '¡Buenos días! Es lunes. Antes de salir a ruta, confirma que has revisado los niveles de tu furgoneta:\n\n• Aceite del motor\n• Líquido refrigerante\n• Líquido de frenos\n• Presión de neumáticos\n• Luces y intermitentes', confirmText: '✅ Confirmo que he revisado los niveles', icon: '🚐', dayOfWeek: 1, enabled: true }
   ])
 
+  // Driver Alert acknowledgements history
+  const [alertAcknowledgements, setAlertAcknowledgements] = useState([])
+
   // Family Order for articles
   const [familyOrder, setFamilyOrder] = usePersistentState('familyOrder', [])
 
   // Driver Manual Order
   const [driverOrder, setDriverOrder] = usePersistentState('driverOrder', [])
+
+  // Driver name rendering preference ('both', 'name', 'alias')
+  const [driverNamePreference, setDriverNamePreference] = usePersistentState('driverNamePreference', 'both')
 
   // Coverage Zones (Baremo 1 & 2)
   const [coverageZones, setCoverageZones] = usePersistentState('coverageZones', [
@@ -161,6 +167,17 @@ function App() {
     } catch (e) {
       setDriverOrder(previousOrder); // Revert on failure
       alert('Error al actualizar el orden de los conductores.');
+      console.error(e);
+    }
+  }
+
+  const handleUpdateDriverNamePreference = async (preference) => {
+    setDriverNamePreference(preference);
+    try {
+      const { error } = await supabase.from('settings').upsert({ key: 'driverNamePreference', value: preference });
+      if (error) throw error;
+    } catch (e) {
+      alert('Error al actualizar la preferencia de nombres de conductores.');
       console.error(e);
     }
   }
@@ -516,7 +533,7 @@ function App() {
     return Array.from(uniqueMap.values()).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
   }, [coverageZones]);
 
-  // Supabase Data Loading (Carga TOTAL de la nube)
+  // Supabase Data Loading (Carga OPTIMIZADA de la nube)
   useEffect(() => {
     const isMissingSupabaseKeys = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
     if (isMissingSupabaseKeys) {
@@ -524,51 +541,91 @@ function App() {
         return;
     }
 
+    // Non-blocking: init storage buckets in parallel (don't block data loading)
+    initStorageBuckets().catch(e => console.warn('initStorageBuckets background error:', e));
+
+    let retryCount = 0;
+    const MAX_RETRIES = 2;
+
     async function loadData() {
       setIsSyncing(true)
-      await initStorageBuckets();
       try {
 
-        const [
-          { data: drv },
-          { data: shp },
-          { data: cli },
-          { data: art },
-          { data: veh },
-          { data: fue },
-          { data: trf },
-          { data: cod },
-          { data: famOrder },
-          { data: drvOrder },
-          { data: covZones },
-          { data: routesData },
-          { data: routeKnowledgeData },
-          { data: gpsIntervalData },
-          { data: driverAlertsData }
-        ] = await Promise.all([
-          supabase.from('drivers').select('*'),
-          supabase.from('shipments').select('*'),
-          supabase.from('clients').select('*'),
-          supabase.from('articles').select('*'),
-          supabase.from('vehicles').select('*'),
-          supabase.from('fuel_logs').select('*'),
-          supabase.from('tariffs').select('*'),
-          supabase.from('settings').select('*').eq('key', 'defaultCodFee'),
-          supabase.from('settings').select('*').eq('key', 'familyOrder'),
-          supabase.from('settings').select('*').eq('key', 'driverOrder'),
-          supabase.from('coverage_zones').select('*'),
-          supabase.from('settings').select('*').eq('key', 'routes'),
-          supabase.from('settings').select('*').eq('key', 'route_knowledge'),
-          supabase.from('settings').select('*').eq('key', 'gpsIntervalMinutes'),
-          supabase.from('settings').select('*').eq('key', 'driverAlerts')
-        ])
+        // ── Date threshold: only load finished shipments from the last 90 days ──
+        const ninetyDaysAgo = new Date();
+        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+        const cutoffISO = ninetyDaysAgo.toISOString();
+
+        // ── OPTIMIZED QUERIES ──
+        // 1. Select ONLY the columns we actually use (not select('*'))
+        // 2. ALL settings in ONE query instead of 8+2 separate queries
+        // 3. Shipments split: active (all) + finished (last 90 days only)
+        const queryNames = [
+          'drivers', 'shipments_active', 'shipments_finished', 'clients',
+          'articles', 'vehicles', 'fuel_logs', 'tariffs',
+          'settings', 'coverage_zones'
+        ];
+
+        const results = await Promise.allSettled([
+          supabase.from('drivers').select('id, data, username, password'),                    // 0
+          supabase.from('shipments').select('id, data')                                       // 1 - active
+            .not('status', 'in', '("Entregado","Anulado")'),
+          supabase.from('shipments').select('id, data')                                       // 2 - finished recent
+            .in('status', ['Entregado', 'Anulado'])
+            .gte('data->>createdAt', cutoffISO),
+          supabase.from('clients').select('id, data'),                                        // 3
+          supabase.from('articles').select('id, data'),                                       // 4
+          supabase.from('vehicles').select('id, data'),                                       // 5
+          supabase.from('fuel_logs').select('id, data'),                                      // 6
+          supabase.from('tariffs').select('id, data'),                                        // 7
+          supabase.from('settings').select('key, value'),                                     // 8 - ALL settings in 1 query
+          supabase.from('coverage_zones').select('id, data'),                                 // 9
+        ]);
+
+        // Helper to safely extract data from settled results
+        const getData = (index) => {
+          const result = results[index];
+          if (result.status === 'rejected') {
+            console.error(`[LoadData] Query '${queryNames[index]}' rejected:`, result.reason);
+            return null;
+          }
+          const { data, error } = result.value || {};
+          if (error) {
+            console.error(`[LoadData] Query '${queryNames[index]}' error:`, error.message);
+            return null;
+          }
+          return data;
+        };
+
+        const drv = getData(0);
+        const shpActive = getData(1);
+        const shpFinished = getData(2);
+        const cli = getData(3);
+        const art = getData(4);
+        const veh = getData(5);
+        const fue = getData(6);
+        const trf = getData(7);
+        const allSettings = getData(8);
+        const covZones = getData(9);
+
+        // ── Helper to get a setting value by key from the single settings query ──
+        const getSetting = (key) => {
+          if (!allSettings) return null;
+          const found = allSettings.find(s => s.key === key);
+          return found ? found.value : null;
+        };
+
+        // Track how many critical queries succeeded
+        const criticalLoaded = [drv, (shpActive || shpFinished), cli].filter(Boolean).length;
         
         if (drv) setDrivers(drv.map(d => ({ ...d.data, id: d.id, username: d.username, password: d.password })))
-        if (shp) {
-          let loadedShipments = shp.map(s => ({ ...s.data, id: s.id }));
+        
+        // ── Merge active + recent finished shipments ──
+        if (shpActive || shpFinished) {
+          const allShp = [...(shpActive || []), ...(shpFinished || [])];
+          let loadedShipments = allShp.map(s => ({ ...s.data, id: s.id }));
           
           // ── Apply pending queue operations over fresh Supabase data ──
-          // This prevents the "flash" where a queued delivery briefly shows as pending
           const pendingOps = await getQueue();
           if (pendingOps.length > 0) {
             console.log(`[Queue] Applying ${pendingOps.length} pending operations to fresh data...`);
@@ -586,59 +643,87 @@ function App() {
           }
           
           setShipments(loadedShipments);
+          console.log(`[LoadData] Loaded ${(shpActive||[]).length} active + ${(shpFinished||[]).length} recent shipments (90 days)`);
         }
         if (cli) setClients(cli.map(c => ({ ...c.data, id: c.id })))
         if (art) setArticles(art.map(a => ({ ...a.data, id: a.id })))
         if (veh) setVehicles(veh.map(v => ({ ...v.data, id: v.id })))
         if (fue) setFuelLogs(fue.map(f => ({ ...f.data, id: f.id })))
         if (trf) setTariffs(trf.map(t => ({ ...t.data, id: t.id })))
-        if (cod && cod.length > 0) setDefaultCodFee(cod[0].value)
-        if (famOrder && famOrder.length > 0) {
-          try {
-            setFamilyOrder(JSON.parse(famOrder[0].value))
-          } catch (e) {
-            console.error("Error parsing familyOrder:", e)
-          }
-        }
-        
-        if (drvOrder && drvOrder.length > 0) {
-          try {
-            setDriverOrder(JSON.parse(drvOrder[0].value))
-          } catch (e) {
-            console.error("Error parsing driverOrder:", e)
-          }
-        }
         if (covZones) setCoverageZones(covZones.map(z => ({ ...z.data, id: z.id })))
-        if (routesData && routesData.length > 0) {
-          try { setRoutes(JSON.parse(routesData[0].value)) } catch(e) { console.error('Error parsing routes:', e) }
-        }
-        // Load route knowledge (learning data)
-        if (gpsIntervalData && gpsIntervalData.length > 0) {
-          try { setGpsIntervalMinutes(parseInt(gpsIntervalData[0].value) || 15) } catch(e) { console.error('Error parsing gpsInterval:', e) }
-        }
-        if (driverAlertsData && driverAlertsData.length > 0) {
-          try { setDriverAlerts(JSON.parse(driverAlertsData[0].value)) } catch(e) { console.error('Error parsing driverAlerts:', e) }
-        }
-        if (routeKnowledgeData && routeKnowledgeData.length > 0) {
-          try { setRouteKnowledge(JSON.parse(routeKnowledgeData[0].value)) } catch(e) { console.error('Error parsing route_knowledge:', e) }
+
+        // ── Process ALL settings from the single query ──
+        const codValue = getSetting('defaultCodFee');
+        if (codValue) setDefaultCodFee(codValue);
+
+        const famOrderValue = getSetting('familyOrder');
+        if (famOrderValue) {
+          try { setFamilyOrder(JSON.parse(famOrderValue)) } catch (e) { console.error("Error parsing familyOrder:", e) }
         }
         
-        // Load Admin Credentials (maybeSingle avoids error when row doesn't exist yet)
-        const { data: adminUser } = await supabase.from('settings').select('value').eq('key', 'admin_user').maybeSingle()
-        const { data: adminPass } = await supabase.from('settings').select('value').eq('key', 'admin_pass').maybeSingle()
+        const drvOrderValue = getSetting('driverOrder');
+        if (drvOrderValue) {
+          try { setDriverOrder(JSON.parse(drvOrderValue)) } catch (e) { console.error("Error parsing driverOrder:", e) }
+        }
+
+        const drvNamePrefValue = getSetting('driverNamePreference');
+        if (drvNamePrefValue) {
+          setDriverNamePreference(drvNamePrefValue);
+        }
+
+        const routesValue = getSetting('routes');
+        if (routesValue) {
+          try { setRoutes(JSON.parse(routesValue)) } catch(e) { console.error('Error parsing routes:', e) }
+        }
+
+        const gpsValue = getSetting('gpsIntervalMinutes');
+        if (gpsValue) {
+          try { setGpsIntervalMinutes(parseInt(gpsValue) || 15) } catch(e) { console.error('Error parsing gpsInterval:', e) }
+        }
+
+        const alertsValue = getSetting('driverAlerts');
+        if (alertsValue) {
+          try { setDriverAlerts(JSON.parse(alertsValue)) } catch(e) { console.error('Error parsing driverAlerts:', e) }
+        }
+
+        const ackValue = getSetting('alert_acknowledgments');
+        if (ackValue) {
+          try { setAlertAcknowledgements(JSON.parse(ackValue)) } catch(e) { console.error('Error parsing alert acknowledgements:', e) }
+        }
+
+        const rkValue = getSetting('route_knowledge');
+        if (rkValue) {
+          try { setRouteKnowledge(JSON.parse(rkValue)) } catch(e) { console.error('Error parsing route_knowledge:', e) }
+        }
+        
+        // Admin credentials (from the same single settings query — no extra network calls)
         setAdminCreds({
-          user: adminUser?.value || 'info@sumtransportes.com',
-          pass: adminPass?.value || '1632'
+          user: getSetting('admin_user') || 'info@sumtransportes.com',
+          pass: getSetting('admin_pass') || '1632'
         })
+
+        // If critical data failed to load, retry automatically
+        if (criticalLoaded < 3 && retryCount < MAX_RETRIES) {
+          retryCount++;
+          console.warn(`[LoadData] Only ${criticalLoaded}/3 critical tables loaded. Auto-retrying in 3s... (attempt ${retryCount}/${MAX_RETRIES})`);
+          setTimeout(() => loadData(), 3000);
+          return; // Don't set isSyncing=false yet, we're retrying
+        }
 
       } catch (error) {
         console.error('Error loading Supabase data:', error)
+        // Auto-retry on total failure
+        if (retryCount < MAX_RETRIES) {
+          retryCount++;
+          console.warn(`[LoadData] Total failure. Auto-retrying in 3s... (attempt ${retryCount}/${MAX_RETRIES})`);
+          setTimeout(() => loadData(), 3000);
+          return;
+        }
       } finally {
         setIsSyncing(false)
       }
     }
     loadData()
-    initStorageBuckets(); // Asegurar buckets de storage
 
     // ======= SUSCRIPCIÓN EN TIEMPO REAL (Supabase Realtime) =======
     // Optimizado: Evitamos el select('*') masivo y actualizamos el estado local por piezas
@@ -715,6 +800,23 @@ function App() {
           return prev;
         });
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (payload) => {
+        console.log("🔄 [Realtime] Cambio en ajustes:", payload.eventType);
+        if (payload.new && payload.new.key === 'alert_acknowledgments') {
+          try {
+            setAlertAcknowledgements(JSON.parse(payload.new.value));
+          } catch(e) {
+            console.error('Error parseando alert acknowledgments en tiempo real:', e);
+          }
+        }
+        if (payload.new && payload.new.key === 'driverAlerts') {
+          try {
+            setDriverAlerts(JSON.parse(payload.new.value));
+          } catch(e) {
+            console.error('Error parseando driverAlerts en tiempo real:', e);
+          }
+        }
+      })
       .subscribe();
 
     // Limpieza de canales si se desmonta
@@ -774,6 +876,14 @@ function App() {
               if (uploadedUrl) dataToSave.deliveryPhoto = uploadedUrl;
               console.log(`[OfflineQueue] Uploaded offline photo for ${op.shipmentId}`);
             } catch (e) { console.warn('[OfflineQueue] Photo upload failed:', e); }
+          }
+          // Upload photo 2 if stored as base64 offline
+          if (uploads.photoData2) {
+            try {
+              const uploadedUrl = await uploadProof(op.shipmentId, uploads.photoData2, 'delivery_photos');
+              if (uploadedUrl) dataToSave.deliveryPhoto2 = uploadedUrl;
+              console.log(`[OfflineQueue] Uploaded offline photo 2 for ${op.shipmentId}`);
+            } catch (e) { console.warn('[OfflineQueue] Photo 2 upload failed:', e); }
           }
 
           // --- Sync the shipment record to Supabase ---
@@ -884,64 +994,80 @@ function App() {
 
   const handleLogin = async (role = 'admin', username = '', password = '') => {
     if (role === 'driver') {
-      try {
-        const { data: driver, error } = await supabase
-          .from('drivers')
-          .select('*')
-          .eq('username', username)
-          .eq('password', password)
-          .single()
+      // ── 1. Autenticación: usar caché local primero (evita round-trip de red) ──
+      let driverFound = drivers.find(
+        d => d.username === username && d.password === password
+      );
 
-        if (driver) {
-          if (driver.data && driver.data.isActive === false) {
-            alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
-            return;
+      // Fallback a Supabase solo si la caché está vacía (arranque frío)
+      if (!driverFound && (!drivers || drivers.length === 0)) {
+        try {
+          const { data: remoteDriver } = await supabase
+            .from('drivers')
+            .select('*')
+            .eq('username', username)
+            .eq('password', password)
+            .single();
+          if (remoteDriver) {
+            driverFound = { ...remoteDriver.data, id: remoteDriver.id, username: remoteDriver.username, password: remoteDriver.password };
           }
-          setIsAuthenticated(true);
-          setUserRole(role);
-          setCurrentDriverId(driver.id);
-          setCurrentClientId(null);
-          
-          // --- TIME TRACKING: Fichaje Automático ---
-          try {
-             const today = new Date().toISOString().split('T')[0];
-             const { data: existingLog } = await supabase
-                .from('time_logs')
-                .select('id, clock_out')
-                .eq('driver_id', driver.id)
-                .eq('date', today)
-                .is('clock_out', null)
-                .maybeSingle();
-
-             if (!existingLog) {
-                await supabase.from('time_logs').insert([{
-                   driver_id: driver.id,
-                   driver_name: driver.data?.name || driver.username || 'Conductor',
-                   date: today
-                }]);
-             }
-          } catch (timeErr) {
-             console.error('Error registrando fichaje:', timeErr);
-          }
-          // -----------------------------------------
-
-          return true;
+        } catch (err) {
+          console.error('Login error (fallback Supabase):', err);
         }
-      } catch (err) {
-        console.error('Login error:', err)
       }
-      return false; // Error en auth
-    } else if (role === 'client') {
-      // SIEMPRE consultar Supabase directamente para evitar race conditions con auto-login
-      let currentClients = clients;
-      try {
-        const { data } = await supabase.from('clients').select('*');
-        if (data && data.length > 0) {
-          currentClients = data.map(c => ({ ...c.data, id: c.id }));
-          setClients(currentClients);
+
+      if (driverFound) {
+        if (driverFound.isActive === false) {
+          alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
+          return false;
         }
-      } catch (e) {
-        console.warn('Error fetching clients for login, using cached:', e);
+
+        // ── 2. Login inmediato — entrar sin esperar el fichaje ──
+        setIsAuthenticated(true);
+        setUserRole(role);
+        setCurrentDriverId(driverFound.id);
+        setCurrentClientId(null);
+
+        // ── 3. Fichaje automático en segundo plano (fire-and-forget) ──
+        const driverId   = driverFound.id;
+        const driverName = driverFound.name || driverFound.username || 'Conductor';
+        const today      = new Date().toISOString().split('T')[0];
+        supabase
+          .from('time_logs')
+          .select('id')
+          .eq('driver_id', driverId)
+          .eq('date', today)
+          .is('clock_out', null)
+          .maybeSingle()
+          .then(({ data: existingLog }) => {
+            if (!existingLog) {
+              return supabase.from('time_logs').insert([{
+                driver_id:   driverId,
+                driver_name: driverName,
+                date:        today,
+              }]);
+            }
+          })
+          .catch(err => console.error('Error registrando fichaje (background):', err));
+
+        return true;
+      }
+      return false; // Credenciales incorrectas
+
+    } else if (role === 'client') {
+      // Usar datos en memoria si ya están cargados — evita round-trip de red innecesario
+      let currentClients = clients;
+      if (!currentClients || currentClients.length === 0) {
+        // Solo consultar Supabase si la caché local está vacía (arranque frío)
+        try {
+          const { data } = await supabase.from('clients').select('*');
+          if (data && data.length > 0) {
+            currentClients = data.map(c => ({ ...c.data, id: c.id }));
+            setClients(currentClients);
+          }
+        } catch (e) {
+          console.warn('Error fetching clients for login:', e);
+        }
       }
       
       const client = currentClients.find(c => 
@@ -960,6 +1086,7 @@ function App() {
         return true;
       }
       return false;
+
     } else {
       // Admin log in - compare against loaded creds OR hardcoded defaults
       const DEFAULT_ADMIN_USER = 'info@sumtransportes.com';
@@ -2387,7 +2514,9 @@ function App() {
       defaultCodFee={defaultCodFee}
       gpsIntervalMinutes={gpsIntervalMinutes}
       driverAlerts={driverAlerts}
+      alertAcknowledgements={alertAcknowledgements}
       isInitialLoading={isSyncing}
+      driverNamePreference={driverNamePreference}
     />
   }
 
@@ -2415,11 +2544,11 @@ function App() {
                         <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
                     </div>
                 )}
-      {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} />}
-      {currentView === 'shipments' && <Shipments shipments={visibleShipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} />}
+      {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} driverNamePreference={driverNamePreference} />}
+      {currentView === 'shipments' && <Shipments shipments={visibleShipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} />}
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
       {currentView === 'fuel' && <FuelManagement fuelLogs={fuelLogs} onAddFuelLog={handleAddFuelLog} drivers={drivers} shipments={visibleShipments} />}
-      {currentView === 'drivers' && <Drivers routes={routes} onUpdateRoutes={handleUpdateRoutes} routeKnowledge={routeKnowledge} onUpdateRouteKnowledge={handleUpdateRouteKnowledge} drivers={drivers} shipments={visibleShipments} clients={visibleClients} onAddDriver={handleAddDriver} onUpdateDriver={handleUpdateDriver} onDeleteDriver={handleDeleteDriver} onImpersonate={handleImpersonate} onNavigate={setCurrentView} articles={articles} defaultCodFee={defaultCodFee} isGhostModeUnlocked={isGhostModeUnlocked} driverOrder={driverOrder} onUpdateDriverOrder={handleUpdateDriverOrder} gpsIntervalMinutes={gpsIntervalMinutes} setGpsIntervalMinutes={setGpsIntervalMinutes} driverAlerts={driverAlerts} setDriverAlerts={setDriverAlerts} />}
+      {currentView === 'drivers' && <Drivers routes={routes} onUpdateRoutes={handleUpdateRoutes} routeKnowledge={routeKnowledge} onUpdateRouteKnowledge={handleUpdateRouteKnowledge} drivers={drivers} shipments={visibleShipments} clients={visibleClients} onAddDriver={handleAddDriver} onUpdateDriver={handleUpdateDriver} onDeleteDriver={handleDeleteDriver} onImpersonate={handleImpersonate} onNavigate={setCurrentView} articles={articles} defaultCodFee={defaultCodFee} isGhostModeUnlocked={isGhostModeUnlocked} driverOrder={driverOrder} onUpdateDriverOrder={handleUpdateDriverOrder} gpsIntervalMinutes={gpsIntervalMinutes} setGpsIntervalMinutes={setGpsIntervalMinutes} driverAlerts={driverAlerts} setDriverAlerts={setDriverAlerts} driverNamePreference={driverNamePreference} onUpdateDriverNamePreference={handleUpdateDriverNamePreference} />}
       {currentView === 'tracking' && <Tracking drivers={drivers} shipments={visibleShipments} onRequestGps={handleRequestDriverGps} />}
       {currentView === 'clients' && <Clients clients={visibleClients} allPoblaciones={allPoblaciones} articles={articles} onUpdateClient={handleUpdateClient} onAddClient={handleAddClient} onImportClients={handleImportClients} onDeleteClient={handleDeleteClient} tariffs={tariffs} isGhostModeUnlocked={isGhostModeUnlocked} />}
       {currentView === 'articles' && <Articles 
@@ -2446,9 +2575,9 @@ function App() {
         onUpdateFamilyOrder={handleUpdateFamilyOrder} 
         onRenameCategory={handleRenameCategory} 
       />}
-      {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onReply={handleIncidentReply} drivers={drivers} />}
+      {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onReply={handleIncidentReply} drivers={drivers} driverNamePreference={driverNamePreference} />}
       {currentView === 'notifications' && <NotificationCenter shipments={visibleShipments} drivers={drivers} clients={visibleClients} onUpdateShipment={handleUpdateShipment} articles={articles} tariffs={tariffs} defaultCodFee={defaultCodFee} familyOrder={familyOrder} coverageZones={coverageZones} />}
-      {currentView === 'clientValidation' && <ClientValidation clients={visibleClients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} />}
+      {currentView === 'clientValidation' && <ClientValidation clients={visibleClients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
       {currentView === 'settings' && (
         <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
 
@@ -2757,6 +2886,96 @@ function App() {
                 <strong>Nota:</strong> Los datos se guardan automáticamente en este navegador o en la nube (si están sincronizados).
               </p>
             </div>
+
+            {/* ══════ PREFERENCIA DE NOMBRES DE CONDUCTORES ══════ */}
+            <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100 mt-6">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
+                  <User size={24} />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800">Visualización de Conductores</h2>
+                  <p className="text-slate-500 text-sm">Elige cómo deseas que se muestren los nombres de tus repartidores en listados y modales.</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <button
+                  type="button"
+                  onClick={() => handleUpdateDriverNamePreference('both')}
+                  className={`p-4 rounded-xl border-2 text-left transition-all hover:scale-[1.01] active:scale-95 duration-200 ${
+                    driverNamePreference === 'both'
+                      ? 'border-blue-600 bg-blue-50/50 shadow-sm'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Ambos</span>
+                  <span className="text-sm font-bold text-slate-800">Nombre (Alias)</span>
+                  <p className="text-xs text-slate-500 mt-2">Muestra el nombre completo y su alias entre paréntesis.</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleUpdateDriverNamePreference('name')}
+                  className={`p-4 rounded-xl border-2 text-left transition-all hover:scale-[1.01] active:scale-95 duration-200 ${
+                    driverNamePreference === 'name'
+                      ? 'border-blue-600 bg-blue-50/50 shadow-sm'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Nombre Únicamente</span>
+                  <span className="text-sm font-bold text-slate-800">Solo Nombre</span>
+                  <p className="text-xs text-slate-500 mt-2">Muestra solo el nombre completo del conductor.</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleUpdateDriverNamePreference('alias')}
+                  className={`p-4 rounded-xl border-2 text-left transition-all hover:scale-[1.01] active:scale-95 duration-200 ${
+                    driverNamePreference === 'alias'
+                      ? 'border-blue-600 bg-blue-50/50 shadow-sm'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Alias Únicamente</span>
+                  <span className="text-sm font-bold text-slate-800">Solo Alias</span>
+                  <p className="text-xs text-slate-500 mt-2">Muestra solo su alias (si no tiene, se usará el nombre).</p>
+                </button>
+              </div>
+            </div>
+
+            {/* ACERCA DE */}
+            <div className="mt-8 pt-8 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+                    <span className="text-white font-black text-lg">S</span>
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-800">Sumtrans Logística</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Versión 1.0.0</p>
+                  </div>
+                </div>
+                <span className="text-[10px] bg-blue-50 text-blue-600 px-3 py-1 rounded-full font-bold border border-blue-100">
+                  Producción
+                </span>
+              </div>
+              <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Desarrollado por</span>
+                    <p className="text-slate-700 font-semibold mt-0.5">Miguel Ángel Pavón Maíz</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Año</span>
+                    <p className="text-slate-700 font-semibold mt-0.5">{new Date().getFullYear()}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-200">
+                  © {new Date().getFullYear()} Sumtrans Logística — Todos los derechos reservados.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -2853,93 +3072,6 @@ function App() {
           </div>
         </div>
       )}
-
-      {/* MODAL DE HISTORIAL DE ALERTAS CONFIRMADAS */}
-      {showAlertHistory && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200 max-h-[85vh] flex flex-col">
-            {/* Header */}
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
-                  <Clock size={20} />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-slate-800">Historial de Confirmaciones</h3>
-                  <p className="text-xs text-slate-500">{alertHistory.length} registro{alertHistory.length !== 1 ? 's' : ''} guardado{alertHistory.length !== 1 ? 's' : ''}</p>
-                </div>
-              </div>
-              <button onClick={() => setShowAlertHistory(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
-                <X size={24} />
-              </button>
-            </div>
-
-            {/* Filter */}
-            <div className="px-6 py-3 border-b border-slate-100 shrink-0">
-              <select
-                value={alertHistoryFilter}
-                onChange={(e) => setAlertHistoryFilter(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              >
-                <option value="all">👥 Todos los conductores</option>
-                {[...new Map(alertHistory.map(h => [h.driverId, h.driverName])).entries()].map(([id, name]) => (
-                  <option key={id} value={id}>🚛 {name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* List */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {alertHistory.length === 0 ? (
-                <div className="text-center py-12 text-slate-400">
-                  <p className="text-4xl mb-3">📭</p>
-                  <p className="font-medium">No hay confirmaciones registradas</p>
-                  <p className="text-xs mt-1">Las confirmaciones aparecerán aquí cuando los conductores acepten las alertas</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {alertHistory
-                    .filter(h => alertHistoryFilter === 'all' || String(h.driverId) === String(alertHistoryFilter))
-                    .map((h, idx) => {
-                      const date = new Date(h.timestamp);
-                      const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-                      const dayName = dayNames[date.getDay()];
-                      const dateStr = `${dayName} ${String(date.getDate()).padStart(2,'0')}/${String(date.getMonth()+1).padStart(2,'0')}/${date.getFullYear()}`;
-                      const timeStr = `${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
-                      return (
-                        <div key={idx} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors">
-                          <div className="text-xl shrink-0">{h.alertIcon || '🔔'}</div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-sm text-slate-700 truncate">{h.driverName}</span>
-                              <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full shrink-0">✓ Confirmado</span>
-                            </div>
-                            <p className="text-xs text-slate-500 truncate">{h.alertTitle}</p>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <p className="text-xs font-bold text-slate-600">{dateStr}</p>
-                            <p className="text-[10px] text-slate-400 font-bold">{timeStr}h</p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="p-4 border-t border-slate-100 shrink-0">
-              <button
-                onClick={() => setShowAlertHistory(false)}
-                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-colors text-sm"
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
     </Layout>
   )
 }

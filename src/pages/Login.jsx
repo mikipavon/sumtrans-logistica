@@ -39,7 +39,7 @@ export default function Login({ onLogin }) {
                 if (!initializedRef.current) {
                     initializedRef.current = true;
                     // Función de reintento: espera a que la base de datos esté lista
-                    const attemptAutoLogin = async (maxRetries = 8, delayMs = 3000) => {
+                    const attemptAutoLogin = async (maxRetries = 8, delayMs = 800) => {
                         const currentEmail = emailRef.current?.value?.trim() || '';
                         const currentPassword = passwordRef.current?.value || '';
                         if (!currentEmail || !currentPassword) return;
@@ -72,8 +72,9 @@ export default function Login({ onLogin }) {
                             window.parent.postMessage({ type: 'SUM_CLIENT_LOGIN_FAILED' }, '*');
                         }
                     };
-                    // Esperar un poco más antes del primer intento (dar tiempo a Supabase)
-                    setTimeout(() => attemptAutoLogin(), 1500);
+                    // Esperar un poco antes del primer intento (dar tiempo al arranque inicial)
+                    setTimeout(() => attemptAutoLogin(), 300);
+
                 }
                 return;
             }
@@ -282,7 +283,7 @@ export default function Login({ onLogin }) {
                     </div>
 
                     <p className="mt-8 text-center text-sm text-slate-400">
-                        © 2024 Logistics Pro Platform
+                        © {new Date().getFullYear()} Sumtrans Logística — Todos los derechos reservados
                     </p>
                 </div>
 
