@@ -1,0 +1,20 @@
+{
+  "localPort": 9100,
+  "supabaseUrl": "https://mottccbalzdzrgqzfkdl.supabase.co",
+  "supabaseKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vdHRjY2JhbHpkenJncXpma2RsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNzg3OTMsImV4cCI6MjA4OTg1NDc5M30.k4xkllpQfQcGXGD_qr-1Sr2aYvkx8Pj_Mzxw8su_zVY",
+  "sensitiveKeywords": [
+    "nomina",
+    "recibo de salarios",
+    "liquido a percibir",
+    "salario base",
+    "retencion irpf",
+    "historial medico",
+    "declaracion de la renta",
+    "factura de la luz"
+  ],
+  "forwarding": {
+    "enabled": false,
+    "printerIp": "192.168.1.100",
+    "printerPort": 9100
+  }
+}

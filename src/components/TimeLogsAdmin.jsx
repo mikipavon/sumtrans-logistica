@@ -75,6 +75,27 @@ export default function TimeLogsAdmin() {
             };
             
             await supabase.from('time_logs').update(updates).eq('id', id);
+            
+            // Add an alert for the driver
+            const log = logs.find(l => l.id === id);
+            if (log) {
+                const { data: existing } = await supabase.from('settings').select('value').eq('key', 'pending_timelog_alerts').maybeSingle();
+                let alerts = [];
+                if (existing?.value) { try { alerts = JSON.parse(existing.value); } catch(e) {} }
+                
+                // Add the new alert
+                alerts.push({
+                    id: Date.now().toString(),
+                    logId: id,
+                    driverId: log.driver_id,
+                    date: log.date,
+                    clock_in: updates.clock_in,
+                    clock_out: updates.clock_out,
+                    timestamp: new Date().toISOString()
+                });
+                await supabase.from('settings').upsert({ key: 'pending_timelog_alerts', value: JSON.stringify(alerts) });
+            }
+
             setEditingLogId(null);
             fetchLogs();
         } catch (e) {

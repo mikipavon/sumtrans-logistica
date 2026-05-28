@@ -1,0 +1,7 @@
+﻿  // Alert form state (Settings page)
+  const [showNewAlertForm, setShowNewAlertForm] = useState(false);
+  const [editingAlertId, setEditingAlertId] = useState(null);
+  const [newAlertForm, setNewAlertForm] = useState({ title: '', message: '', icon: 'ðŸ””', dayOfWeek: undefined, timeFrom: '', timeTo: '', confirmText: '', targetDriverIds: [] });
+  const [alertHistory, setAlertHistory] = useState([]);
+  const [showAlertHistory, setShowAlertHistory] = useState(false);
+  const [alertHistoryFilter, setAlertHistoryFilter] = useState('all'); // 'all' or driverId

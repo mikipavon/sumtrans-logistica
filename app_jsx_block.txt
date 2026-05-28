@@ -1,0 +1,351 @@
+﻿          {/* â•â•â•â•â•â• GPS & ALERTAS â•â•â•â•â•â• */}
+          <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-100">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg">
+                <Settings size={24} />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-800">GPS y Alertas de Conductores</h2>
+                <p className="text-slate-500 text-sm">Configura la frecuencia de rastreo GPS y las notificaciones obligatorias.</p>
+              </div>
+            </div>
+
+            {/* GPS Interval */}
+            <div className="bg-slate-50 border border-slate-200 p-6 rounded-xl mb-6">
+              <h3 className="font-bold text-slate-700 text-sm mb-3 flex items-center gap-2">
+                ðŸ“ Intervalo de SeÃ±al GPS AutomÃ¡tica
+              </h3>
+              <p className="text-xs text-slate-500 mb-4">
+                Cada cuÃ¡nto tiempo el mÃ³vil del conductor envÃ­a su ubicaciÃ³n automÃ¡ticamente a la oficina. Menos minutos = posiciÃ³n mÃ¡s fresca al pulsar âš¡, pero mÃ¡s consumo de baterÃ­a.
+              </p>
+              <div className="flex items-center gap-4">
+                <select
+                  value={gpsIntervalMinutes}
+                  onChange={async (e) => {
+                    const val = parseInt(e.target.value);
+                    setGpsIntervalMinutes(val);
+                    try {
+                      await supabase.from('settings').upsert({ key: 'gpsIntervalMinutes', value: String(val) });
+                    } catch(err) { console.error('Error saving gpsInterval:', err); }
+                  }}
+                  className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  <option value="5">Cada 5 minutos</option>
+                  <option value="10">Cada 10 minutos</option>
+                  <option value="15">Cada 15 minutos (Recomendado)</option>
+                  <option value="30">Cada 30 minutos</option>
+                  <option value="60">Cada 1 hora</option>
+                </select>
+                <div className="text-xs text-slate-400 font-bold whitespace-nowrap">
+                  Actual: {gpsIntervalMinutes} min
+                </div>
+              </div>
+            </div>
+
+            {/* Driver Alerts */}
+            <div className="bg-slate-50 border border-slate-200 p-6 rounded-xl">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-slate-700 text-sm flex items-center gap-2">
+                  ðŸ”” Alertas Obligatorias para Conductores
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      try {
+                        const { data } = await supabase.from('settings').select('value').eq('key', 'alert_acknowledgments').maybeSingle();
+                        if (data?.value) { setAlertHistory(JSON.parse(data.value)); } else { setAlertHistory([]); }
+                      } catch(e) { console.error(e); setAlertHistory([]); }
+                      setAlertHistoryFilter('all');
+                      setShowAlertHistory(true);
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-2 bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
+                  >
+                    ðŸ“‹ Historial
+                  </button>
+                  <button
+                    onClick={() => setShowNewAlertForm(prev => !prev)}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center gap-2 ${
+                      showNewAlertForm 
+                        ? 'bg-slate-200 text-slate-600' 
+                        : 'bg-blue-600 text-white shadow-lg shadow-blue-500/20 hover:bg-blue-700'
+                    }`}
+                  >
+                    {showNewAlertForm ? 'âœ• Cancelar' : '+ Nueva Alerta'}
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 mb-4">
+                Notificaciones que aparecen al abrir la app. El conductor debe confirmar antes de continuar.
+              </p>
+
+              {/* â”€â”€â”€ FORMULARIO NUEVA ALERTA â”€â”€â”€ */}
+              {showNewAlertForm && (
+                <div className="bg-white border-2 border-blue-200 rounded-xl p-5 mb-5 space-y-4 animate-in slide-in-from-top-2 duration-200">
+                  <h4 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
+                    {editingAlertId ? 'âœï¸ Editar Alerta' : 'âœ¨ Crear Nueva Alerta'}
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">TÃ­tulo</label>
+                      <input
+                        type="text"
+                        placeholder="Ej: RevisiÃ³n del vehÃ­culo"
+                        value={newAlertForm.title}
+                        onChange={e => setNewAlertForm(p => ({...p, title: e.target.value}))}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Icono (emoji)</label>
+                      <input
+                        type="text"
+                        placeholder="ðŸ”§"
+                        value={newAlertForm.icon}
+                        onChange={e => setNewAlertForm(p => ({...p, icon: e.target.value}))}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                        maxLength={4}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mensaje</label>
+                    <textarea
+                      placeholder="Escribe el mensaje que verÃ¡ el conductor..."
+                      value={newAlertForm.message}
+                      onChange={e => setNewAlertForm(p => ({...p, message: e.target.value}))}
+                      rows={4}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 outline-none resize-none"
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">DÃ­a de la semana</label>
+                      <select
+                        value={newAlertForm.dayOfWeek}
+                        onChange={e => setNewAlertForm(p => ({...p, dayOfWeek: e.target.value === 'todos' ? undefined : parseInt(e.target.value)}))}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      >
+                        <option value="todos">Todos los dÃ­as</option>
+                        <option value="1">Lunes</option>
+                        <option value="2">Martes</option>
+                        <option value="3">MiÃ©rcoles</option>
+                        <option value="4">Jueves</option>
+                        <option value="5">Viernes</option>
+                        <option value="6">SÃ¡bado</option>
+                        <option value="0">Domingo</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Hora desde</label>
+                      <input
+                        type="time"
+                        value={newAlertForm.timeFrom || ''}
+                        onChange={e => setNewAlertForm(p => ({...p, timeFrom: e.target.value}))}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      />
+                      <p className="text-[9px] text-slate-400 mt-1">VacÃ­o = al abrir la app</p>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Hora hasta</label>
+                      <input
+                        type="time"
+                        value={newAlertForm.timeTo || ''}
+                        onChange={e => setNewAlertForm(p => ({...p, timeTo: e.target.value}))}
+                        className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500/20 outline-none"
+                      />
+                      <p className="text-[9px] text-slate-400 mt-1">VacÃ­o = todo el dÃ­a</p>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Texto del botÃ³n de confirmar</label>
+                    <input
+                      type="text"
+                      placeholder="Ej: âœ… Confirmo que lo he revisado"
+                      value={newAlertForm.confirmText}
+                      onChange={e => setNewAlertForm(p => ({...p, confirmText: e.target.value}))}
+                      className="w-full px-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                    />
+                  </div>
+                  {/* Conductores destinatarios */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Dirigida a</label>
+                    <div className="bg-white border border-slate-200 rounded-lg p-3 max-h-36 overflow-y-auto space-y-1">
+                      <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!newAlertForm.targetDriverIds || newAlertForm.targetDriverIds.length === 0}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setNewAlertForm(p => ({...p, targetDriverIds: []}));
+                            }
+                          }}
+                          className="w-4 h-4 rounded text-blue-600"
+                        />
+                        <span className="text-sm font-bold text-slate-700">ðŸ‘¥ Todos los conductores</span>
+                      </label>
+                      {(drivers || []).map(d => (
+                        <label key={d.id} className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Array.isArray(newAlertForm.targetDriverIds) && newAlertForm.targetDriverIds.includes(d.id)}
+                            onChange={(e) => {
+                              setNewAlertForm(p => {
+                                let ids = Array.isArray(p.targetDriverIds) ? [...p.targetDriverIds] : [];
+                                if (e.target.checked) {
+                                  ids.push(d.id);
+                                } else {
+                                  ids = ids.filter(id => id !== d.id);
+                                }
+                                return {...p, targetDriverIds: ids};
+                              });
+                            }}
+                            className="w-4 h-4 rounded text-blue-600"
+                          />
+                          <span className="text-sm text-slate-600">ðŸš› {d.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-slate-400 mt-1">VacÃ­o = todos los conductores</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!newAlertForm.title.trim()) return alert('El tÃ­tulo es obligatorio');
+                      if (!newAlertForm.message.trim()) return alert('El mensaje es obligatorio');
+                      const alertObj = {
+                        id: editingAlertId || `alert_${Date.now()}`,
+                        title: newAlertForm.title.trim(),
+                        message: newAlertForm.message.trim(),
+                        icon: newAlertForm.icon || 'ðŸ””',
+                        dayOfWeek: newAlertForm.dayOfWeek,
+                        timeFrom: newAlertForm.timeFrom || null,
+                        timeTo: newAlertForm.timeTo || null,
+                        confirmText: newAlertForm.confirmText.trim() || 'âœ… Entendido, continuar',
+                        targetDriverIds: (newAlertForm.targetDriverIds && newAlertForm.targetDriverIds.length > 0) ? newAlertForm.targetDriverIds : null,
+                        enabled: true
+                      };
+                      let updated;
+                      if (editingAlertId) {
+                        updated = driverAlerts.map(a => a.id === editingAlertId ? alertObj : a);
+                      } else {
+                        updated = [...(driverAlerts || []), alertObj];
+                      }
+                      setDriverAlerts(updated);
+                      try {
+                        await supabase.from('settings').upsert({ key: 'driverAlerts', value: JSON.stringify(updated) });
+                      } catch(err) { console.error('Error saving alerts:', err); }
+                      setNewAlertForm({ title: '', message: '', icon: 'ðŸ””', dayOfWeek: undefined, timeFrom: '', timeTo: '', confirmText: '', targetDriverIds: [] });
+                      setEditingAlertId(null);
+                      setShowNewAlertForm(false);
+                    }}
+                    disabled={!newAlertForm.title.trim() || !newAlertForm.message.trim()}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all active:scale-[0.98] shadow-lg shadow-blue-500/20 disabled:opacity-50 disabled:shadow-none"
+                  >
+                    {editingAlertId ? 'ðŸ’¾ Guardar Cambios' : 'âž• Crear Alerta'}
+                  </button>
+                </div>
+              )}
+
+              {/* â”€â”€â”€ LISTA DE ALERTAS EXISTENTES â”€â”€â”€ */}
+              <div className="space-y-3">
+                {(driverAlerts || []).length === 0 && (
+                  <div className="text-center py-8 text-slate-400">
+                    <p className="text-3xl mb-2">ðŸ”•</p>
+                    <p className="text-sm font-medium">No hay alertas configuradas</p>
+                    <p className="text-xs mt-1">Pulsa "Nueva Alerta" para crear una</p>
+                  </div>
+                )}
+                {(driverAlerts || []).map((alert, idx) => (
+                  <div key={alert.id} className={`bg-white border rounded-xl p-4 transition-all ${alert.enabled !== false ? 'border-slate-200' : 'border-slate-100 opacity-60'}`}>
+                    <div className="flex items-start gap-3">
+                      <div className="text-2xl mt-0.5">{alert.icon || 'ðŸ””'}</div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-bold text-slate-700 text-sm">{alert.title}</h4>
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                          <span className="text-[10px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
+                            {alert.dayOfWeek === 0 ? 'ðŸ—“ Dom' : alert.dayOfWeek === 1 ? 'ðŸ—“ Lun' : alert.dayOfWeek === 2 ? 'ðŸ—“ Mar' : alert.dayOfWeek === 3 ? 'ðŸ—“ MiÃ©' : alert.dayOfWeek === 4 ? 'ðŸ—“ Jue' : alert.dayOfWeek === 5 ? 'ðŸ—“ Vie' : alert.dayOfWeek === 6 ? 'ðŸ—“ SÃ¡b' : 'ðŸ—“ Todos'}
+                          </span>
+                          {(alert.timeFrom || alert.timeTo) && (
+                            <span className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
+                              ðŸ• {alert.timeFrom || '00:00'} - {alert.timeTo || '23:59'}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1 line-clamp-2">{alert.message}</p>
+                        {alert.targetDriverIds && alert.targetDriverIds.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {alert.targetDriverIds.map(tid => {
+                              const drv = drivers.find(d => d.id === tid);
+                              return drv ? (
+                                <span key={tid} className="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-full">
+                                  {drv.name}
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                        )}
+                        {(!alert.targetDriverIds || alert.targetDriverIds.length === 0) && (
+                          <span className="text-[9px] font-bold text-slate-400 mt-1 block">ðŸ‘¥ Todos los conductores</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Editar */}
+                        <button
+                          onClick={() => {
+                            setNewAlertForm({
+                              title: alert.title,
+                              message: alert.message,
+                              icon: alert.icon || 'ðŸ””',
+                              dayOfWeek: alert.dayOfWeek,
+                              timeFrom: alert.timeFrom || '',
+                              timeTo: alert.timeTo || '',
+                              confirmText: alert.confirmText || '',
+                              targetDriverIds: alert.targetDriverIds || []
+                            });
+                            setEditingAlertId(alert.id);
+                            setShowNewAlertForm(true);
+                          }}
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Editar"
+                        >
+                          <Settings size={14} />
+                        </button>
+                        {/* Eliminar */}
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`Â¿Eliminar la alerta "${alert.title}"?`)) return;
+                            const updated = driverAlerts.filter(a => a.id !== alert.id);
+                            setDriverAlerts(updated);
+                            try {
+                              await supabase.from('settings').upsert({ key: 'driverAlerts', value: JSON.stringify(updated) });
+                            } catch(err) { console.error('Error deleting alert:', err); }
+                          }}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Eliminar"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        {/* Toggle */}
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={alert.enabled !== false}
+                            onChange={async (e) => {
+                              const updated = [...driverAlerts];
+                              updated[idx] = { ...updated[idx], enabled: e.target.checked };
+                              setDriverAlerts(updated);
+                              try {
+                                await supabase.from('settings').upsert({ key: 'driverAlerts', value: JSON.stringify(updated) });
+                              } catch(err) { console.error('Error saving alerts:', err); }
+                            }}
+                            className="sr-only peer"
+                          />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+

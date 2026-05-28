@@ -15,6 +15,7 @@
  */
 export default class Shipment {
   constructor(data = {}) {
+    // El prefijo del ID se asigna al crear desde el modal; aquí es solo el fallback de emergencia
     this.id = data.id || `SUM-${new Date().getFullYear().toString().slice(-2)}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
     this.client = data.client || '';
     this.type = data.type || 'Entrega';

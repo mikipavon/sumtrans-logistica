@@ -103,6 +103,7 @@ export default function ClientDashboard({
     const [newDestinationName, setNewDestinationName] = useState('');
     const [selectedArticleId, setSelectedArticleId] = useState('');
     const [observations, setObservations] = useState('');
+    const [clientReference, setClientReference] = useState('');
     const [porteType, setPorteType] = useState('Pagado');
     const [codAmount, setCodAmount] = useState('');
     const [showDestSuggestions, setShowDestSuggestions] = useState(false);
@@ -196,10 +197,19 @@ export default function ClientDashboard({
     const handleCreateSubmit = (e) => {
         e.preventDefault();
         
+        // Prefijo según tipo de cliente: HAB- para habituales/presupuesto, SUM- para el resto
+        const clientBillingType = String(client.billingType || '').toLowerCase();
+        const isHabClient = clientBillingType.includes('habitual') || clientBillingType.includes('diar') || 
+                            clientBillingType.includes('libre') || clientBillingType.includes('contado') || 
+                            clientBillingType.includes('presupuesto');
+        const clientPrefix = isHabClient ? 'HAB' : 'SUM';
         const maxId = (allShipments || []).reduce((max, s) => {
-            const num = parseInt(String(s.id || '').replace(/\D/g, ''), 10);
+            const sId = String(s.id || '');
+            if (!sId.toUpperCase().startsWith(clientPrefix + '-')) return max;
+            const num = parseInt(sId.replace(/\D/g, ''), 10);
             return (!isNaN(num) && num < 100000 && num > max) ? num : max;
         }, 0);
+
 
         const selectedArticle = availableArticles.find(a => String(a.id) === String(selectedArticleId));
         let numPackages = 1;
@@ -266,7 +276,7 @@ export default function ClientDashboard({
         const finalAmount = unitPrice; // No sumamos comisión de COD aquí según petición
 
         const shipmentData = {
-            id: `SUM-${maxId + 1}`,
+            id: `${clientPrefix}-${maxId + 1}`,
             type: 'Entrega',
             client: client.name,
             clientId: client.id,
@@ -285,6 +295,7 @@ export default function ClientDashboard({
             status: 'Pendiente de asignar',
             packages: numPackages,
             observations: observations,
+            clientReference: clientReference ? clientReference.trim() : null,
             articles: selectedArticle ? [{
                 ...selectedArticle,
                 uniqueId: Date.now(),
@@ -313,6 +324,7 @@ export default function ClientDashboard({
         setNewOriginCity(client.city || '');
         setSelectedArticleId('');
         setObservations('');
+        setClientReference('');
         setPorteType('Pagado');
         setCodAmount('');
     };
@@ -363,16 +375,20 @@ export default function ClientDashboard({
                         <p class="text-bold">${shipment.destinationName || 'Destinatario'}</p>
                         <p class="text-normal">${shipment.destinationAddress || shipment.destination || 'Dirección destino'}</p>
                         <p class="text-normal">${shipment.destinationCity || 'Ciudad destino'}</p>
-                    </div>
-
-                    <div class="details">
-                        <div>
-                            <p class="section-title">Bultos / Palets</p>
-                            <p class="text-bold">${packagesCount > 1 ? `${i} / ${packagesCount}` : (shipment.articles && shipment.articles.length > 0 ? shipment.articles.map(a => a.name).join(', ') : (shipment.packages || 1))}</p>
-                        </div>
-                        <div>
-                            <p class="section-title">Observaciones</p>
-                            <p class="text-bold" style="font-size: 12px; max-width: 150px;">${shipment.observations || '-'}</p>
+                        <div class="details">
+                            <div>
+                                <p class="section-title">Bultos / Palets</p>
+                                <p class="text-bold">${packagesCount > 1 ? `${i} / ${packagesCount}` : (shipment.articles && shipment.articles.length > 0 ? shipment.articles.map(a => a.name).join(', ') : (shipment.packages || 1))}</p>
+                            </div>
+                            <div>
+                                <p class="section-title">Observaciones</p>
+                                <p class="text-bold" style="font-size: 12px; max-width: 150px;">${shipment.observations || '-'}</p>
+                            </div>
+                            ${shipment.clientReference ? `
+                            <div>
+                                <p class="section-title">Ref. Cliente</p>
+                                <p class="text-bold" style="font-size: 11px; font-family: monospace; max-width: 150px;">${shipment.clientReference}</p>
+                            </div>` : ''}
                         </div>
                     </div>
 
@@ -584,6 +600,9 @@ export default function ClientDashboard({
                                         <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('date')}>
                                             Fecha {sortConfig.key === 'date' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
+                                        <th className="px-4 py-4 text-slate-500">
+                                            🔖 Referencia
+                                        </th>
                                         <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destinationName')}>
                                             Destinatario {sortConfig.key === 'destinationName' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
@@ -599,7 +618,7 @@ export default function ClientDashboard({
                                 <tbody>
                                     {clientShipments.length === 0 ? (
                                         <tr>
-                                            <td colSpan="6" className="px-6 py-8 text-center text-slate-500">
+                                            <td colSpan="7" className="px-6 py-8 text-center text-slate-500">
                                                 No tienes historial de envíos.
                                             </td>
                                         </tr>
@@ -608,6 +627,12 @@ export default function ClientDashboard({
                                             <tr key={s.id} className="border-t border-slate-100 hover:bg-slate-50">
                                                 <td className="px-6 py-4 font-bold text-slate-800">{s.id}</td>
                                                 <td className="px-6 py-4 text-slate-600">{new Date(s.createdAt || s.date).toLocaleDateString('es-ES')}</td>
+                                                <td className="px-4 py-4">
+                                                    {s.clientReference
+                                                        ? <span className="font-mono text-xs bg-violet-50 text-violet-700 border border-violet-200 px-2 py-1 rounded-lg">{s.clientReference}</span>
+                                                        : <span className="text-slate-300 text-xs">—</span>
+                                                    }
+                                                </td>
                                                 <td className="px-6 py-4 font-medium text-slate-700">{s.destinationName || 'Destinatario'}</td>
                                                 <td className="px-6 py-4 text-slate-500">{s.destinationCity || s.destination || '-'}</td>
                                                 <td className="px-6 py-4">
@@ -877,6 +902,21 @@ export default function ClientDashboard({
                                                 <span className="text-[12px] font-bold uppercase transition-all text-center">DEBIDO<br/><span className="font-normal text-[10px] opacity-70">(Cobro en Destino)</span></span>
                                             </label>
                                         </div>
+                                    </div>
+                                    <div className="w-full">
+                                        <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                                            <Tag size={14} className="text-slate-400" />
+                                            Referencia / Código de Mercancía
+                                            <span className="text-[10px] font-normal text-slate-400 ml-1">(Opcional)</span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={clientReference}
+                                            onChange={e => setClientReference(e.target.value)}
+                                            placeholder="Nº pedido, referencia interna, código de barras, SSCC..."
+                                            className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-violet-500 focus:border-violet-500 outline-none transition-all font-mono text-sm"
+                                        />
+                                        <p className="text-[10px] text-slate-400 mt-1 pl-1">Identifica tu mercancía o pedido. Aparecerá en el albarán y en la etiqueta.</p>
                                     </div>
                                     <div className="w-full">
                                         <label className="block text-sm font-medium text-slate-700 mb-1">Observaciones (Opcional)</label>

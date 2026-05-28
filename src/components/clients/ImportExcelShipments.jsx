@@ -162,19 +162,30 @@ export default function ImportExcelShipments({ client, onCreateShipment, allShip
         if (validRows.length === 0) return;
         setImporting(true);
 
-        // Calcular maxId local
+        // Determinar prefijo de serie según tipo de cliente
+        const clientBt = String(effectiveClient.billingType || '').toLowerCase();
+        const isHabClient = clientBt.includes('habitual') || clientBt.includes('diar') ||
+                            clientBt.includes('libre') || clientBt.includes('contado') ||
+                            clientBt.includes('presupuesto');
+        const prefix = isHabClient ? 'HAB' : 'SUM';
+
+        // Calcular maxId local solo dentro de la serie correcta
         let localMaxId = (allShipments || []).reduce((max, s) => {
-            const num = parseInt(String(s.id || '').replace(/\D/g, ''), 10);
+            const sId = String(s.id || '');
+            if (!sId.toUpperCase().startsWith(prefix + '-')) return max;
+            const num = parseInt(sId.replace(/\D/g, ''), 10);
             return (!isNaN(num) && num < 100000 && num > max) ? num : max;
         }, 0);
 
-        // Consultar Supabase para obtener el ID real más alto
+        // Consultar Supabase para obtener el ID real más alto de esta serie
         let dbMaxId = 0;
         try {
             const { data: allIds } = await supabase.from('shipments').select('id');
             if (allIds) {
                 dbMaxId = allIds.reduce((max, row) => {
-                    const num = parseInt(String(row.id || '').replace(/\D/g, ''), 10);
+                    const sId = String(row.id || '');
+                    if (!sId.toUpperCase().startsWith(prefix + '-')) return max;
+                    const num = parseInt(sId.replace(/\D/g, ''), 10);
                     return (!isNaN(num) && num < 100000 && num > max) ? num : max;
                 }, 0);
             }
@@ -213,7 +224,7 @@ export default function ImportExcelShipments({ client, onCreateShipment, allShip
                 const codFee = codAmt > 0 ? parseFloat(effectiveClient.codFee || 3) : 0;
 
                 const shipmentData = {
-                    id: `SUM-${maxId}`,
+                    id: `${prefix}-${maxId}`,
                     type: 'Entrega',
                     client: effectiveClient.name,
                     clientId: effectiveClient.id,

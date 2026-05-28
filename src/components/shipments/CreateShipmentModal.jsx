@@ -3,9 +3,10 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import Shipment from '../../models/Shipment';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { uploadProof } from '../../utils/storage';
+import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 
-export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, clients, allPoblaciones, prefillData, onAddClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
+export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, clients, allPoblaciones, prefillData, onAddClient, onUpdateClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
     const [formData, setFormData] = useState({
         // Remitente (Sender)
         clientName: '',
@@ -46,7 +47,20 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     const [selectedDebtIds, setSelectedDebtIds] = useState([]); // Deudas seleccionadas para cobrar
     const [showSuccessFeedback, setShowSuccessFeedback] = useState(false);
 
-
+    // ── GPS silencioso: captura la ubicación del dispositivo al abrir el modal ──
+    const capturedGpsRef = useRef('');
+    useEffect(() => {
+        if (isOpen && navigator.geolocation) {
+            capturedGpsRef.current = '';
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    capturedGpsRef.current = `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`;
+                },
+                () => { /* Sin GPS disponible — silencioso */ },
+                { timeout: 10000, maximumAge: 60000 }
+            );
+        }
+    }, [isOpen]);
 
     const startListening = (field, targetKey) => {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -486,6 +500,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                 destinationCoordinates: branch.coordinates || item.coordinates || '',
                 destinationBranchId: branch.id,
                 _destParentClientId: item.id.split('_')[0],
+                selectedDestBillingType: item.billingType || null,
             }));
         } else {
             setFormData(prev => ({
@@ -498,6 +513,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                 destinationCoordinates: item.coordinates || '',
                 destinationBranchId: null,
                 _destParentClientId: null,
+                selectedDestBillingType: item.billingType || null,
             }));
         }
         setShowDestSuggestions(false);
@@ -761,12 +777,19 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     const handlePhotoChange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        if (file.size > 5 * 1024 * 1024) {
-            alert("La imagen es demasiado grande. Máximo 5MB.");
+        if (file.size > 20 * 1024 * 1024) {
+            alert("La imagen es demasiado grande. Máximo 20MB.");
             return;
         }
         const reader = new FileReader();
-        reader.onloadend = () => setMerchandisePhoto(reader.result);
+        reader.onloadend = async () => {
+            try {
+                const compressed = await compressImage(reader.result, 1200, 1200, 0.75);
+                setMerchandisePhoto(compressed);
+            } catch {
+                setMerchandisePhoto(reader.result); // Fallback sin compresión
+            }
+        };
         reader.readAsDataURL(file);
     };
 
@@ -793,11 +816,48 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
         setIsUploadingPhoto(true);
 
+        // Determinar el prefijo según QUIÉN PAGA el porte:
+        // - Porte Pagado → paga el REMITENTE → usar su billingType
+        // - Porte Debido → paga el DESTINATARIO → usar su billingType
+        // HAB- → el pagador es habitual / presupuesto (serie confidencial)
+        // SUM- → el pagador es de facturación / empresa (serie visible)
+        const isHabitual = (() => {
+            const normalize = (val) => String(val || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
+            const lookupBilling = (name) => {
+                const n = normalize(name);
+                const found = clients?.find(c => normalize(c.name) === n || normalize(c.legalName) === n);
+                if (found) return found.billingType || 'Clientes Habituales';
+                for (const c of (clients || [])) {
+                    if (Array.isArray(c.branches)) {
+                        for (const b of c.branches) {
+                            if (normalize(b.name) === n) return c.billingType || 'Clientes Habituales';
+                        }
+                    }
+                }
+                // Cliente sin ficha en la BD → se considera Habitual por defecto
+                // (misma regla que aplica el resto del sistema al calcular cobros)
+                return 'Clientes Habituales';
+            };
+            let billingType = '';
+            if (formData.porteType === 'Debido') {
+                // Paga el DESTINATARIO
+                billingType = formData.selectedDestBillingType || lookupBilling(formData.destinationName);
+            } else {
+                // Paga el REMITENTE (Pagado)
+                billingType = formData.selectedClientBillingType || lookupBilling(formData.clientName);
+            }
+            const t = normalize(billingType);
+            return t.includes('habitual') || t.includes('diar') || t.includes('libre') || t.includes('contado') || t.includes('presupuesto');
+        })();
+        const prefix = isHabitual ? 'HAB' : 'SUM';
+        // Calcular el siguiente número correlativo dentro de la misma serie (SUM o HAB)
         const maxId = (allShipments || []).reduce((max, s) => {
-            const num = parseInt(String(s.id || '').replace(/\D/g, ''), 10);
+            const sId = String(s.id || '');
+            if (!sId.toUpperCase().startsWith(prefix + '-')) return max;
+            const num = parseInt(sId.replace(/\D/g, ''), 10);
             return (!isNaN(num) && num < 100000 && num > max) ? num : max;
         }, 0);
-        const shipmentId = `SUM-${maxId + 1}`;
+        const shipmentId = `${prefix}-${maxId + 1}`;
         let photoUrl = null;
 
         try {
@@ -853,7 +913,10 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                         }
                     }
                 }
-                return 'Clientes Habituales'; // Por seguridad, si el cliente es desconocido (ej. pendiente de validación), asumimos pago al contado
+                // Cliente desconocido (no está en BD) → tratarlo como Clientes Habituales
+                // para que salte el modal de cobro. La visibilidad en el panel admin
+                // la gestiona visibleShipments (muestra siempre si el cliente no está en BD).
+                return 'Clientes Habituales';
             })(),
             porteType: formData.porteType,
             assignedDriverId: formData.assignedDriverId ? Number(formData.assignedDriverId) : null,
@@ -930,7 +993,24 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         }
 
         setSelectedDebtIds([]);
-        onSave(finalData);
+
+        // ── Auto-aprendizaje de coordenadas del REMITENTE ──
+        // Solo guardamos las coords del remitente al crear el albarán (estamos en su ubicación).
+        // Las del destinatario se guardan en la entrega (handleDeliveryConfirm).
+        const gps = capturedGpsRef.current;
+        if (gps && onUpdateClient && clients) {
+            const normalize = (s) => String(s || '').toLowerCase().trim().replace(/\s+/g, ' ');
+            const senderClient = clients.find(c =>
+                normalize(c.name) === normalize(finalData.client) ||
+                normalize(c.legalName) === normalize(finalData.client)
+            );
+            if (senderClient && !(senderClient.coordinates && String(senderClient.coordinates).trim().length > 0)) {
+                onUpdateClient(senderClient.id, { coordinates: gps });
+                console.log(`[AutoCoords] Remitente "${finalData.client}" → ${gps}`);
+            }
+        }
+
+        onSave({ ...finalData, _capturedGps: capturedGpsRef.current });
         setShowPaymentAlert(false);
         
         if (keepOrigin) {
@@ -1148,7 +1228,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                                 zip: formData.destinationZip || '',
                                                                 phone: formData.destinationPhone || '',
                                                                 type: 'Destinatario',
-                                                                billingType: 'Clientes Habituales'
+                                                                billingType: 'Facturación'
                                                             });
                                                             setSavedDestClient(true);
                                                         }}

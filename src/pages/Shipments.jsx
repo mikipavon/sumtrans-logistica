@@ -12,7 +12,7 @@ import { Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 const { utils, writeFile } = XLSX;
 
-export default function Shipments({ shipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both' }) {
+export default function Shipments({ shipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, onUpdateClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both' }) {
     const getDriverDisplayName = (driver) => {
         if (!driver) return '';
         const name = driver.name || '';
@@ -1075,6 +1075,7 @@ export default function Shipments({ shipments, drivers, clients, allPoblaciones,
                 clients={clients}
                 allPoblaciones={allPoblaciones}
                 onAddClient={onAddClient}
+                onUpdateClient={onUpdateClient}
                 tariffs={tariffs}
                 articles={articles}
                 defaultCodFee={defaultCodFee}

@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { X, Upload, Camera, CheckCircle, AlertTriangle, Loader2, FileText, Trash2, FolderOpen, Image as ImageIcon, Search, Euro } from 'lucide-react';
 import jsQR from 'jsqr';
 import { uploadProof } from '../../utils/storage';
+import { compressImage } from '../../utils/imageCompression';
 
 /**
  * Modal for managing and uploading COD receipt photos.
@@ -72,16 +73,24 @@ export default function CodReceiptUploadModal({ isOpen, onClose, shipments = [],
     const handleIndividualPhoto = (shipmentId, e) => {
         const file = e.target.files[0];
         if (!file) return;
-        if (file.size > 5 * 1024 * 1024) {
-            alert('La imagen es demasiado grande. Máximo 5MB.');
+        if (file.size > 20 * 1024 * 1024) {
+            alert('La imagen es demasiado grande. Máximo 20MB.');
             return;
         }
         const reader = new FileReader();
-        reader.onloadend = () => {
-            setPendingPhotos(prev => ({
-                ...prev,
-                [shipmentId]: { preview: reader.result, file, status: 'ready' }
-            }));
+        reader.onloadend = async () => {
+            try {
+                const compressed = await compressImage(reader.result, 1200, 1200, 0.8);
+                setPendingPhotos(prev => ({
+                    ...prev,
+                    [shipmentId]: { preview: compressed, file, status: 'ready' }
+                }));
+            } catch {
+                setPendingPhotos(prev => ({
+                    ...prev,
+                    [shipmentId]: { preview: reader.result, file, status: 'ready' }
+                }));
+            }
         };
         reader.readAsDataURL(file);
     };

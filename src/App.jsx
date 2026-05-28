@@ -486,30 +486,32 @@ function App() {
     return clients;
   }, [clients, userRole, isGhostModeUnlocked]);
 
+
   const visibleShipments = useMemo(() => {
     if (userRole === 'admin' && !isGhostModeUnlocked) {
       const normalize = (val) => String(val || '').toLowerCase().trim();
       
       return shipments.filter(s => {
-        let isSecret = false;
-        
-        // Lookup in Map for O(1)
-        const remitente = clientsMap.get(normalize(s.client));
-        const destinatario = clientsMap.get(normalize(s.destinationName || s.client));
-        
-        // Billing directo del envio o arrastrado del remitente asociado
-        const mainBillingType = normalize(s.billingType || (remitente ? remitente.billingType : ''));
-        if (mainBillingType.includes('habitual') || mainBillingType.includes('diar') || mainBillingType.includes('libre') || mainBillingType.includes('contado') || mainBillingType.includes('presupuesto')) isSecret = true;
-        
-        const destBillingType = normalize(s.destinationBillingType || (destinatario ? destinatario.billingType : ''));
-        if (destBillingType.includes('habitual') || destBillingType.includes('diar') || destBillingType.includes('libre') || destBillingType.includes('contado') || destBillingType.includes('presupuesto')) isSecret = true;
+        const esPagado = s.porteType !== 'Debido';
 
-        // Si es de los secretos, lo echamos de la lista renderizada
-        return !isSecret;
+        if (esPagado) {
+          // Priorizar la ficha actual del cliente (puede haber cambiado su tipo de cobro)
+          const remitente = clientsMap.get(normalize(s.client));
+          const billingType = normalize(remitente ? remitente.billingType : (s.billingType || ''));
+          if (billingType.includes('habitual') || billingType.includes('presupuesto')) return false;
+        } else {
+          const destinatario = clientsMap.get(normalize(s.destinationName || s.client));
+          const billingType = normalize(destinatario ? destinatario.billingType : (s.destinationBillingType || s.billingType || ''));
+          if (billingType.includes('habitual') || billingType.includes('presupuesto')) return false;
+        }
+
+        return true;
       });
     }
     return shipments;
   }, [shipments, clientsMap, userRole, isGhostModeUnlocked]);
+
+
 
   // Centralized Population List for Autocomplete
   const allPoblaciones = useMemo(() => {
@@ -544,7 +546,7 @@ function App() {
     initStorageBuckets().catch(e => console.warn('initStorageBuckets background error:', e));
 
     let retryCount = 0;
-    const MAX_RETRIES = 2;
+    const MAX_RETRIES = 3;
 
     async function loadData() {
       setIsSyncing(true)
@@ -616,6 +618,7 @@ function App() {
 
         // Track how many critical queries succeeded
         const criticalLoaded = [drv, (shpActive || shpFinished), cli].filter(Boolean).length;
+        const activeShipmentsTimedOut = !shpActive && shpFinished; // timeout en activos pero no en terminados
         
         if (drv) setDrivers(drv.map(d => ({ ...d.data, id: d.id, username: d.username, password: d.password })))
         
@@ -701,11 +704,12 @@ function App() {
           pass: getSetting('admin_pass') || '1632'
         })
 
-        // If critical data failed to load, retry automatically
-        if (criticalLoaded < 3 && retryCount < MAX_RETRIES) {
+        // If critical data failed to load OR active shipments timed out, retry automatically
+        if ((criticalLoaded < 3 || activeShipmentsTimedOut) && retryCount < MAX_RETRIES) {
           retryCount++;
-          console.warn(`[LoadData] Only ${criticalLoaded}/3 critical tables loaded. Auto-retrying in 3s... (attempt ${retryCount}/${MAX_RETRIES})`);
-          setTimeout(() => loadData(), 3000);
+          const delay = retryCount === 1 ? 3000 : 8000; // 3s primer reintento, 8s segundo
+          console.warn(`[LoadData] ${activeShipmentsTimedOut ? 'Active shipments timed out' : `Only ${criticalLoaded}/3 critical tables loaded`}. Auto-retrying in ${delay/1000}s... (attempt ${retryCount}/${MAX_RETRIES})`);
+          setTimeout(() => loadData(), delay);
           return; // Don't set isSyncing=false yet, we're retrying
         }
 
@@ -725,7 +729,6 @@ function App() {
     loadData()
 
     // ======= SUSCRIPCIÓN EN TIEMPO REAL (Supabase Realtime) =======
-    // Optimizado: Evitamos el select('*') masivo y actualizamos el estado local por piezas
     const channel = supabase.channel('global-db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shipments' }, (payload) => {
         console.log("🔄 [Realtime] Cambio en envíos:", payload.eventType);
@@ -739,7 +742,6 @@ function App() {
           }
           if (payload.eventType === 'UPDATE') {
             if (!payload.new?.data) {
-              // Realtime parcial: solo actualizar los campos de nivel superior que sí llegaron
               console.warn('[Realtime] UPDATE shipment parcial (sin data JSONB), merge superficial');
               const { id, data: _d, ...topLevelFields } = payload.new;
               return prev.map(s => s.id === id ? { ...s, ...topLevelFields } : s);
@@ -802,18 +804,10 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (payload) => {
         console.log("🔄 [Realtime] Cambio en ajustes:", payload.eventType);
         if (payload.new && payload.new.key === 'alert_acknowledgments') {
-          try {
-            setAlertAcknowledgements(JSON.parse(payload.new.value));
-          } catch(e) {
-            console.error('Error parseando alert acknowledgments en tiempo real:', e);
-          }
+          try { setAlertAcknowledgements(JSON.parse(payload.new.value)); } catch(e) {}
         }
         if (payload.new && payload.new.key === 'driverAlerts') {
-          try {
-            setDriverAlerts(JSON.parse(payload.new.value));
-          } catch(e) {
-            console.error('Error parseando driverAlerts en tiempo real:', e);
-          }
+          try { setDriverAlerts(JSON.parse(payload.new.value)); } catch(e) {}
         }
       })
       .subscribe();
@@ -823,6 +817,38 @@ function App() {
       supabase.removeChannel(channel);
     }
   }, [])
+
+  // ======= REFRESCO PERIÓDICO DE ENVÍOS ACTIVOS (cada 90s, silencioso) =======
+  // Red de seguridad: si el Realtime falla o está throttleado por cuota,
+  // los envíos activos se recargan solos sin que el admin tenga que hacer nada.
+  useEffect(() => {
+    const isMissingSupabaseKeys = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (isMissingSupabaseKeys) return;
+    if (userRole !== 'admin') return; // Solo para admin
+
+    const refreshActiveShipments = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('shipments')
+          .select('id, data')
+          .not('status', 'in', '("Entregado","Anulado")');
+        if (error || !data) return;
+        const fresh = data.map(s => ({ ...s.data, id: s.id }));
+        setShipments(prev => {
+          // Merge: actualizar/añadir activos, conservar los terminados ya en estado
+          const finishedInState = prev.filter(s => s.status === 'Entregado' || s.status === 'Anulado');
+          const freshIds = new Set(fresh.map(s => s.id));
+          const stillFinished = finishedInState.filter(s => !freshIds.has(s.id));
+          return [...fresh, ...stillFinished];
+        });
+      } catch (e) {
+        // Silencioso — no mostrar errores al usuario en el refresco de fondo
+      }
+    };
+
+    const interval = setInterval(refreshActiveShipments, 60000); // cada 60 segundos
+    return () => clearInterval(interval);
+  }, [userRole]);
 
   // ======= OFFLINE QUEUE: FLUSH LOGIC (shared) =======
   const flushQueueRef = useRef(false); // prevent concurrent flushes
@@ -1916,6 +1942,19 @@ function App() {
   };
 
   const handleAddClient = async (newClient) => {
+    // ── Anti-duplicados ──
+    // Si ya existe un cliente con el mismo nombre (activo o pendiente de validar),
+    // no crear otro. Evita duplicados cuando el conductor entrega varias veces
+    // al mismo destinatario desconocido.
+    const normalize = (s) => String(s || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    const alreadyExists = (clientsRef.current || []).some(
+      c => normalize(c.name) === normalize(newClient.name)
+    );
+    if (alreadyExists) {
+      console.log(`[AddClient] Omitido duplicado: "${newClient.name}" ya existe en la BD.`);
+      return;
+    }
+
     const prefix = getClientPrefix(newClient.billingType);
     const nextNum = getNextClientNumber(clientsRef.current, prefix);
     const clientWithMeta = { 
@@ -2329,6 +2368,12 @@ function App() {
       
       const data = { 
         drivers, shipments, clients, articles, tariffs, vehicles, fuelLogs, defaultCodFee, familyOrder,
+        // Configuración operativa (antes no se incluía)
+        routes,
+        routeKnowledge,
+        coverageZones,
+        gpsIntervalMinutes,
+        driverAlerts,
         backupInfo: { timestamp: now.toISOString(), type: isAuto ? 'auto' : 'manual' }
       };
 
@@ -2346,7 +2391,7 @@ function App() {
       setTimeout(() => setBackupStatus('idle'), 3000);
       if (!isAuto) alert('Error al guardar la copia: ' + err.message);
     }
-  }, [backupDirHandle, drivers, shipments, clients, articles, tariffs, vehicles, fuelLogs, defaultCodFee, familyOrder]);
+  }, [backupDirHandle, drivers, shipments, clients, articles, tariffs, vehicles, fuelLogs, defaultCodFee, familyOrder, routes, routeKnowledge, coverageZones, gpsIntervalMinutes, driverAlerts]);
 
   // Temporizador de Auto-guardado (Intervalos)
   useEffect(() => {
@@ -2415,6 +2460,12 @@ function App() {
       if (restoreOptions.vehicles && data.vehicles) {
         upsertPromises.push(supabase.from('vehicles').upsert(data.vehicles.map(v => ({ id: v.id, data: v }))));
       }
+      // Configuración operativa
+      if (data.routes)           upsertPromises.push(supabase.from('settings').upsert({ key: 'routes',               value: JSON.stringify(data.routes) }));
+      if (data.routeKnowledge)   upsertPromises.push(supabase.from('settings').upsert({ key: 'route_knowledge',      value: JSON.stringify(data.routeKnowledge) }));
+      if (data.coverageZones)    upsertPromises.push(supabase.from('settings').upsert({ key: 'coverageZones',        value: JSON.stringify(data.coverageZones) }));
+      if (data.gpsIntervalMinutes !== undefined) upsertPromises.push(supabase.from('settings').upsert({ key: 'gpsIntervalMinutes', value: String(data.gpsIntervalMinutes) }));
+      if (data.driverAlerts)     upsertPromises.push(supabase.from('settings').upsert({ key: 'driverAlerts',         value: JSON.stringify(data.driverAlerts) }));
       if (restoreOptions.fuelLogs && data.fuelLogs) {
         upsertPromises.push(supabase.from('fuel_logs').upsert(data.fuelLogs.map(f => ({ id: f.id, data: f }))));
       }
@@ -2544,7 +2595,7 @@ function App() {
                     </div>
                 )}
       {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} driverNamePreference={driverNamePreference} />}
-      {currentView === 'shipments' && <Shipments shipments={visibleShipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} />}
+      {currentView === 'shipments' && <Shipments shipments={visibleShipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} />}
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
       {currentView === 'fuel' && <FuelManagement fuelLogs={fuelLogs} onAddFuelLog={handleAddFuelLog} drivers={drivers} shipments={visibleShipments} />}
       {currentView === 'drivers' && <Drivers routes={routes} onUpdateRoutes={handleUpdateRoutes} routeKnowledge={routeKnowledge} onUpdateRouteKnowledge={handleUpdateRouteKnowledge} drivers={drivers} shipments={visibleShipments} clients={visibleClients} onAddDriver={handleAddDriver} onUpdateDriver={handleUpdateDriver} onDeleteDriver={handleDeleteDriver} onImpersonate={handleImpersonate} onNavigate={setCurrentView} articles={articles} defaultCodFee={defaultCodFee} isGhostModeUnlocked={isGhostModeUnlocked} driverOrder={driverOrder} onUpdateDriverOrder={handleUpdateDriverOrder} gpsIntervalMinutes={gpsIntervalMinutes} setGpsIntervalMinutes={setGpsIntervalMinutes} driverAlerts={driverAlerts} setDriverAlerts={setDriverAlerts} driverNamePreference={driverNamePreference} onUpdateDriverNamePreference={handleUpdateDriverNamePreference} />}
@@ -2680,7 +2731,7 @@ function App() {
                     if (backupDirHandle) {
                       executeBackup();
                     } else {
-                      const data = { drivers, shipments, clients, articles, tariffs, vehicles, fuelLogs, defaultCodFee, familyOrder };
+                      const data = { drivers, shipments, clients, articles, tariffs, vehicles, fuelLogs, defaultCodFee, familyOrder, routes, routeKnowledge, coverageZones, gpsIntervalMinutes, driverAlerts };
                       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');

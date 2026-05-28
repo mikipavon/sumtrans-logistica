@@ -37,6 +37,7 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { getPackagesCount } from '../../utils/shipmentUtils';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
+import RouteMapModal from '../../components/driver/RouteMapModal';
 
 const normalizeClientName = (name) => {
     if (!name) return '';
@@ -257,18 +258,39 @@ const ShipmentCardUI = React.memo(({
                                 <h4 className="font-bold text-slate-800 truncate">{stop.destinationName || stop.client}</h4>
                             </div>
                             <div className="absolute right-4 top-2 flex flex-row-reverse gap-1.5 z-20">
-                                <a
-                                    href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
-                                        stop.type === 'Recogida'
-                                            ? (stop.originCoordinates || `${stop.originAddress || ''}, ${stop.originCity || ''}`)
-                                            : (stop.destinationCoordinates || `${stop.destinationAddress || stop.address || ''}, ${stop.destinationCity || ''}`)
-                                    )}`}
-                                    target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
-                                    className="p-2.5 bg-white text-blue-600 rounded-xl shadow-md border border-blue-100 hover:bg-blue-50 transition-all active:scale-95 flex items-center justify-center font-bold gap-2 text-xs"
-                                    title="Calcular Ruta"
-                                >
-                                    <MapPin size={20} />
-                                </a>
+                                {(() => {
+                                    const isPickup = stop.type === 'Recogida';
+                                    const coords = isPickup ? stop.originCoordinates : stop.destinationCoordinates;
+                                    const street = isPickup ? stop.originAddress : stop.destinationAddress;
+                                    const city   = isPickup ? stop.originCity    : stop.destinationCity;
+                                    const zip    = isPickup ? stop.originZip     : stop.destinationZip;
+
+                                    const hasCoords = !!(coords && String(coords).trim());
+                                    const hasStreet = !!(street && String(street).trim());
+                                    if (!hasCoords && !hasStreet) return null;
+
+                                    // Si tenemos coordenadas exactas → ruta directa (más preciso)
+                                    // Si solo tenemos texto → usamos Maps Search (?q=) con calle+CP+ciudad+España
+                                    // El parámetro 'q' tiene autocorrección ortográfica; el CP ancla la búsqueda
+                                    // al municipio correcto aunque la calle tenga alguna errata.
+                                    const mapsHref = hasCoords
+                                        ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(String(coords).trim())}`
+                                        : (() => {
+                                            const parts = [street, zip, city, 'España'].filter(Boolean).map(s => String(s).trim()).filter(Boolean);
+                                            return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(parts.join(', '))}`;
+                                          })();
+
+                                    return (
+                                        <a
+                                            href={mapsHref}
+                                            target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+                                            className="p-2.5 bg-white text-blue-600 rounded-xl shadow-md border border-blue-100 hover:bg-blue-50 transition-all active:scale-95 flex items-center justify-center font-bold gap-2 text-xs"
+                                            title={hasCoords ? 'Calcular Ruta (GPS exacto)' : 'Buscar dirección en Maps'}
+                                        >
+                                            <MapPin size={20} />
+                                        </a>
+                                    );
+                                })()}
                                 {(stop.type === 'Recogida' ? stop.originPhone : stop.destinationPhone) && (
                                     <a
                                         href={`tel:${stop.type === 'Recogida' ? stop.originPhone : stop.destinationPhone}`}
@@ -795,6 +817,77 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
     );
 };
 
+const DriverTimeLogAlerts = ({ currentDriverId }) => {
+    const [alerts, setAlerts] = useState([]);
+
+    useEffect(() => {
+        if (!currentDriverId) return;
+        const fetchAlerts = async () => {
+            const { data } = await supabase.from('settings').select('value').eq('key', 'pending_timelog_alerts').maybeSingle();
+            if (data?.value) {
+                try {
+                    const parsed = JSON.parse(data.value);
+                    const myAlerts = parsed.filter(a => String(a.driverId) === String(currentDriverId));
+                    setAlerts(myAlerts);
+                } catch(e) {}
+            }
+        };
+        fetchAlerts();
+    }, [currentDriverId]);
+
+    const handleAccept = async (alertId) => {
+        try {
+            const { data } = await supabase.from('settings').select('value').eq('key', 'pending_timelog_alerts').maybeSingle();
+            if (data?.value) {
+                let parsed = JSON.parse(data.value);
+                parsed = parsed.filter(a => a.id !== alertId);
+                await supabase.from('settings').upsert({ key: 'pending_timelog_alerts', value: JSON.stringify(parsed) });
+                setAlerts(prev => prev.filter(a => a.id !== alertId));
+            }
+        } catch (e) {
+            console.error('Error accepting alert', e);
+        }
+    };
+
+    if (alerts.length === 0) return null;
+
+    const formatTime = (iso) => {
+        if (!iso) return '--:--';
+        return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+    const formatDate = (dateString) => {
+        return new Date(dateString).toLocaleDateString('es-ES', { weekday: 'long', day: '2-digit', month: 'long' });
+    };
+
+    return (
+        <div className="mx-4 mt-4 space-y-3">
+            {alerts.map(alert => (
+                <div key={alert.id} className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-r-xl shadow-md">
+                    <div className="flex items-start gap-3">
+                        <AlertTriangle className="text-yellow-600 shrink-0 mt-0.5" size={20} />
+                        <div className="flex-1">
+                            <h4 className="font-bold text-yellow-800 text-sm mb-1">¡Aviso de modificación de horario!</h4>
+                            <p className="text-xs text-yellow-900 mb-2">
+                                La oficina ha modificado tu fichaje del <strong>{formatDate(alert.date)}</strong>.
+                            </p>
+                            <div className="bg-white/60 p-2 rounded text-xs font-mono text-slate-700 mb-3 border border-yellow-200">
+                                Entrada: {formatTime(alert.clock_in)}<br />
+                                Salida: {formatTime(alert.clock_out)}
+                            </div>
+                            <button
+                                onClick={() => handleAccept(alert.id)}
+                                className="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 rounded-lg text-xs shadow-sm transition-colors"
+                            >
+                                Aceptar y Confirmar Horario
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+};
+
 function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both' }) {
     console.log('DriverDashboard Render', { currentDriverId, drivers: drivers?.length, shipments: allShipments?.length, clients: clients?.length });
 
@@ -1149,6 +1242,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
     const [isReadOnlyModal, setIsReadOnlyModal] = useState(false);
     const [isScannerModalOpen, setIsScannerModalOpen] = useState(false);
+    const [unregisteredSscc, setUnregisteredSscc] = useState(null); // Capa 2: SSCC escaneado no registrado
+    const [ssccPrefill, setSsccPrefill] = useState(null);           // Capa 2: SSCC pre-rellenado en modal de creación
     const [dashboardCustomAmounts, setDashboardCustomAmounts] = useState({});
     const [processingIds, setProcessingIds] = useState(new Set());
     const [pendingCollections, setPendingCollections] = useState([]);
@@ -1305,6 +1400,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
     // AI / Smart Features State
     const [isOptimizing, setIsOptimizing] = useState(false);
+    const [showRouteMap, setShowRouteMap] = useState(false);
+    const [routeOptimized, setRouteOptimized] = useState(false);
     const [learningMessage, setLearningMessage] = useState(null);
 
     // Tracks which collection items are being processed (Optimistic UI)
@@ -2424,6 +2521,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     const townCount = [...townBuckets.keys()].length;
                     const orphanCount = orphanInsertions.reduce((s, g) => s + g.items.length, 0);
                     const learnedTowns = Object.keys(positionLearning).length;
+                    setRouteOptimized(true);
                     setLearningMessage(
                         `Ruta v4 (${shiftLabel}): ${townCount} pueblo${townCount !== 1 ? 's' : ''} en ruta` +
                         (orphanCount > 0 ? ` + ${orphanCount} extra${orphanCount !== 1 ? 's' : ''}` : '') +
@@ -2774,32 +2872,40 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     delete finalProofForCurrent.photoData2;
                 } catch (err) { console.error("Proof upload error:", err); }
             } // end isOnline else
+        } // end if (status === 'Entregado' && proof?.type === 'multi')
 
-            // Auto-learn Coordinates and Auto-create Destination Client
-            if (proof?.coordinates && currentShip) {
-                const isPickup = currentShip.type === 'Recogida';
-                const clientName = isPickup ? currentShip.client : (currentShip.destinationName || currentShip.client);
-                
-                if (clientName) {
-                    const client = clientsMap.get(normalizeClientName(clientName));
-                    if (client && !(client?.coordinates && String(client.coordinates).trim().length > 0)) {
-                        if (onUpdateClient) onUpdateClient(client.id, { coordinates: proof.coordinates });
-                    } else if (!client && !isPickup && onAddClient) {
-                        // Create DESTINATION client that doesn't exist, assigning the driver's GPS
-                        onAddClient({
-                            name: currentShip.destinationName,
-                            address: currentShip.destinationAddress || currentShip.address || '',
-                            city: currentShip.destinationCity || '',
-                            zip: currentShip.destinationZip || '',
-                            phone: currentShip.destinationPhone || '',
-                            coordinates: proof.coordinates,
-                            type: 'Destinatario',
-                            billingType: 'Clientes Habituales',
-                            status: 'pending',
-                            createdFrom: 'Reparto (Driver)',
-                            createdBy: currentDriver?.name || 'Driver',
-                        });
-                    }
+        // ── Auto-aprendizaje de coords del DESTINATARIO en la entrega ──
+        // Se ejecuta SIEMPRE que se entrega (independientemente del tipo de proof).
+        // La ubicación capturada en el modal de entrega (proof.coordinates) se guarda
+        // en la ficha del destinatario si aún no tiene coordenadas.
+        if (status === 'Entregado' && proof?.coordinates && currentShip && onUpdateClient) {
+            const isPickupType = currentShip.type === 'Recogida';
+            const clientName = isPickupType
+                ? currentShip.client
+                : (currentShip.destinationName || currentShip.client);
+
+            if (clientName) {
+                const destClient = clientsMap.get(normalizeClientName(clientName));
+                if (destClient && !(destClient.coordinates && String(destClient.coordinates).trim().length > 0)) {
+                    onUpdateClient(destClient.id, { coordinates: proof.coordinates });
+                    console.log(`[AutoCoords] Destinatario "${clientName}" → ${proof.coordinates}`);
+                } else if (!destClient && !isPickupType && onAddClient) {
+                    // Destinatario no existe en BD → crear ficha pendiente de validar con GPS incluido
+                    onAddClient({
+                        name: currentShip.destinationName,
+                        address: currentShip.destinationAddress || currentShip.address || '',
+                        city: currentShip.destinationCity || '',
+                        zip: currentShip.destinationZip || '',
+                        phone: currentShip.destinationPhone || '',
+                        coordinates: proof.coordinates,
+                        type: 'Destinatario',
+                        // 'Facturación' para que el albarán no desaparezca en modo oculto
+                        // mientras espera validación. El admin asignará el tipo correcto al validar.
+                        billingType: 'Facturación',
+                        status: 'pending',
+                        createdFrom: 'Reparto (Driver)',
+                        createdBy: currentDriver?.name || 'Driver',
+                    });
                 }
             }
         }
@@ -3121,6 +3227,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             </header>
 
             <main className="flex-1 p-0 sm:p-4 max-w-lg mx-auto w-full pb-24 relative">
+                
+                <DriverTimeLogAlerts currentDriverId={currentDriverId} />
 
                 {/* AI Notification Toast */}
                 {learningMessage && (
@@ -3179,21 +3287,32 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                 <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Pendientes</h3>
                                 <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">{localRoute.length} Envíos</span>
                             </div>
-                            <button
-                                onClick={handleSmartSort}
-                                disabled={isOptimizing}
-                                className={`flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shadow-sm
-                                    ${isOptimizing ? 'bg-purple-100 text-purple-400' : 'bg-purple-600 text-white hover:bg-purple-700 shadow-purple-500/30'}`}
-                            >
-                                {isOptimizing ? (
-                                    <>Calculando...</>
-                                ) : (
-                                    <>
-                                        <Sparkles size={14} />
-                                        Optimizar Ruta (v4)
-                                    </>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={handleSmartSort}
+                                    disabled={isOptimizing}
+                                    className={`flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shadow-sm
+                                        ${isOptimizing ? 'bg-purple-100 text-purple-400' : 'bg-purple-600 text-white hover:bg-purple-700 shadow-purple-500/30'}`}
+                                >
+                                    {isOptimizing ? (
+                                        <>Calculando...</>
+                                    ) : (
+                                        <>
+                                            <Sparkles size={14} />
+                                            Optimizar Ruta (v4)
+                                        </>
+                                    )}
+                                </button>
+                                {routeOptimized && !isOptimizing && (
+                                    <button
+                                        onClick={() => setShowRouteMap(true)}
+                                        className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-500/30"
+                                    >
+                                        <MapIcon size={14} />
+                                        Ver Mapa
+                                    </button>
                                 )}
-                            </button>
+                            </div>
                         </div>
 
                         <div className="space-y-3 lista-repartos">
@@ -4369,15 +4488,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 onClose={() => {
                     setIsNoteModalOpen(false);
                     setPickupToConvert(null);
+                    setSsccPrefill(null);
                 }}
                 onSave={(data) => {
                     onCreateShipment(data, pickupToConvert ? pickupToConvert.id : null);
+                    // Nota: el auto-aprendizaje de coords del remitente lo maneja
+                    // CreateShipmentModal internamente (capturedGpsRef). No duplicar aquí.
                     setPickupToConvert(null);
                 }}
                 drivers={drivers}
                 clients={clients}
                 allPoblaciones={allPoblaciones}
-                prefillData={pickupToConvert}
+                prefillData={ssccPrefill ? { ...pickupToConvert, clientReference: ssccPrefill } : pickupToConvert}
                 tariffs={tariffs}
                 articles={articles}
                 familyOrder={familyOrder}
@@ -4386,6 +4508,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 isDriver={true}
                 allShipments={allShipments}
                 onUpdateShipment={onUpdateShipment}
+                onUpdateClient={onUpdateClient}
                 currentDriverId={currentDriverId}
             />
 
@@ -4407,6 +4530,19 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 clients={clients}
                 onConfirm={handleDeliveryConfirm}
             />
+
+            {/* Mapa de ruta optimizada */}
+            {showRouteMap && (
+                <RouteMapModal
+                    route={localRoute}
+                    driverCoords={(() => {
+                        const driver = drivers?.find(d => String(d.id) === String(currentDriverId));
+                        if (!driver?.latitude && !driver?.longitude) return null;
+                        return { lat: driver.latitude, lon: driver.longitude };
+                    })()}
+                    onClose={() => setShowRouteMap(false)}
+                />
+            )}
 
             <ScannerModal 
                 isOpen={isScannerModalOpen}
@@ -4540,11 +4676,69 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         setLearningMessage(`¡Bulto registrado! Envío ${baseId}.`);
                         setTimeout(() => setLearningMessage(null), 3000);
                     } else {
-                        setLearningMessage(`Error: Envío ${baseId} no existe en el sistema.`);
-                        setTimeout(() => setLearningMessage(null), 5000);
+                        // 🛡️ CAPA 2: El código escaneado no existe en el sistema.
+                        // Puede ser un SSCC de Proservice que se imprimió a la impresora equivocada.
+                        // En vez de un error muerto, abrimos el modal de rescate.
+                        setIsScannerModalOpen(false);
+                        setUnregisteredSscc(rawId);
                     }
                 }}
             />
+
+            {/* ======= CAPA 2: MODAL DE RESCATE — SSCC NO REGISTRADO ======= */}
+            {unregisteredSscc && (
+                <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[9990] flex items-end justify-center p-4 animate-in fade-in">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in slide-in-from-bottom-8 duration-300">
+                        {/* Header */}
+                        <div className="p-6 bg-gradient-to-r from-orange-500 to-amber-500 text-white">
+                            <div className="text-4xl mb-2">📦</div>
+                            <h2 className="text-xl font-extrabold">Envío no registrado</h2>
+                            <p className="text-orange-100 text-sm mt-1">Este paquete no está en el sistema. ¿Lo creamos ahora?</p>
+                        </div>
+
+                        {/* Código escaneado */}
+                        <div className="px-6 pt-4 pb-2">
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Código escaneado</p>
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-mono text-sm font-bold text-slate-700 break-all">
+                                {unregisteredSscc}
+                            </div>
+                            <p className="text-xs text-slate-400 mt-2">
+                                💡 Puede que se haya imprimido la etiqueta a la impresora equivocada. Crea el albarán ahora en 10 segundos.
+                            </p>
+                        </div>
+
+                        {/* Botones de acción */}
+                        <div className="p-6 space-y-3">
+                            <button
+                                onClick={() => {
+                                    const currentSscc = unregisteredSscc;
+                                    setUnregisteredSscc(null);
+                                    setSsccPrefill(currentSscc);
+                                    setIsNoteModalOpen(true);
+                                }}
+                                className="w-full bg-orange-500 hover:bg-orange-600 text-white font-extrabold py-4 rounded-2xl transition-all active:scale-[0.98] shadow-lg shadow-orange-400/30 text-sm uppercase tracking-wide"
+                            >
+                                ✏️ Crear albarán ahora
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setUnregisteredSscc(null);
+                                    setIsScannerModalOpen(true);
+                                }}
+                                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-3 rounded-2xl transition-all text-sm"
+                            >
+                                🔄 Escanear otro código
+                            </button>
+                            <button
+                                onClick={() => setUnregisteredSscc(null)}
+                                className="w-full text-slate-400 text-xs py-2 hover:text-slate-600 transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ======= MODAL DE ALERTAS OBLIGATORIAS PARA EL CONDUCTOR ======= */}
             {showAlertModal && pendingAlerts.length > 0 && (
