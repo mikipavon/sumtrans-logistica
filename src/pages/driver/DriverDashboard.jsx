@@ -2236,6 +2236,16 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         };
                     });
 
+                    // ── Punto de inicio para nearest-neighbor ──
+                    // Si hay GPS del conductor, úsalo. Si no, usa el centroide de todos los puntos GPS de la ruta.
+                    const allParsed = enriched.filter(s => s._parsedCoords).map(s => s._parsedCoords);
+                    let startLat = myLat;
+                    let startLon = myLon;
+                    if ((!startLat || !startLon) && allParsed.length > 0) {
+                        startLat = allParsed.reduce((s, c) => s + c.lat, 0) / allParsed.length;
+                        startLon = allParsed.reduce((s, c) => s + c.lon, 0) / allParsed.length;
+                    }
+
                     // ── FASE 1: Determinar turno y orden de pueblos ──
                     const currentHour = new Date().getHours();
                     const isMorningShift = currentHour < 14;
@@ -2376,72 +2386,96 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         const agencies = items.filter(s => s._isAgency);
 
                         const smartSort = (list) => {
+                            // Separar los que tienen coords GPS de los que no
+                            const withCoords = list.filter(s => s._parsedCoords);
+                            const withoutCoords = list.filter(s => !s._parsedCoords);
+
                             if (!hasLearning || list.length <= 1) {
-                                // No learning: sort by GPS distance
-                                list.sort((a, b) => {
-                                    if (myLat && myLon) {
-                                        const dA = a._parsedCoords ? getDistance(myLat, myLon, a._parsedCoords.lat, a._parsedCoords.lon) : Infinity;
-                                        const dB = b._parsedCoords ? getDistance(myLat, myLon, b._parsedCoords.lat, b._parsedCoords.lon) : Infinity;
-                                        if (Math.abs(dA - dB) > 0.1) return dA - dB;
+                                // Sin historial: vecino más cercano encadenado desde startLat/startLon
+                                // (startLat/startLon = GPS del conductor o centroide de los puntos)
+                                if (withCoords.length > 0 && startLat && startLon) {
+                                    const result = [];
+                                    const remaining = [...withCoords];
+                                    let curLat = startLat;
+                                    let curLon = startLon;
+
+                                    while (remaining.length > 0) {
+                                        let bestIdx = 0;
+                                        let bestDist = Infinity;
+                                        for (let i = 0; i < remaining.length; i++) {
+                                            const d = getDistance(curLat, curLon, remaining[i]._parsedCoords.lat, remaining[i]._parsedCoords.lon);
+                                            if (d < bestDist) { bestDist = d; bestIdx = i; }
+                                        }
+                                        const next = remaining.splice(bestIdx, 1)[0];
+                                        result.push(next);
+                                        curLat = next._parsedCoords.lat;
+                                        curLon = next._parsedCoords.lon;
                                     }
-                                    return norm(a.destinationAddress || '').localeCompare(norm(b.destinationAddress || ''));
-                                });
+
+                                    withoutCoords.sort((a, b) => norm(a.destinationAddress || '').localeCompare(norm(b.destinationAddress || '')));
+                                    return [...result, ...withoutCoords];
+                                }
+
+                                // Sin GPS en absoluto: ordenar alfabéticamente
+                                list.sort((a, b) => norm(a.destinationAddress || '').localeCompare(norm(b.destinationAddress || '')));
                                 return list;
                             }
 
-                            // Separate known (has learned position) from unknown
-                            const known = [];
-                            const unknown = [];
-                            list.forEach(s => {
+                            // Nearest-neighbor encadenado con historial como desempate
+
+                            // Pesos de posición aprendida (normalizar entre 0 y 1 para usar como bonus)
+                            const maxLearnPos = Math.max(
+                                ...Object.values(townLearn).map(v => v.avg || 0), 1
+                            );
+                            const learnScore = (s) => {
                                 const name = norm(s.destinationName || s.client);
-                                if (townLearn[name]) {
-                                    known.push(s);
-                                } else {
-                                    unknown.push(s);
-                                }
-                            });
+                                const entry = townLearn[name];
+                                // Cuanto menor posición aprendida, menor penalización (0 = primero)
+                                return entry ? (entry.avg - 1) / maxLearnPos : 0.5; // desconocido = posición media
+                            };
 
-                            // Sort known by their learned position
-                            known.sort((a, b) => {
-                                const posA = townLearn[norm(a.destinationName || a.client)]?.avg ?? 999;
-                                const posB = townLearn[norm(b.destinationName || b.client)]?.avg ?? 999;
-                                return posA - posB;
-                            });
+                            // Nearest-neighbor greedy con desempate por historial
+                            // Usa startLat/startLon (GPS conductor o centroide) como punto de inicio
+                            const nnResult = [];
+                            const remaining = [...withCoords];
+                            let curLat = startLat || null;
+                            let curLon = startLon || null;
 
-                            // Insert unknown at the GPS-best gap between known items
-                            const result = [...known];
-                            unknown.forEach(newItem => {
-                                if (!newItem._parsedCoords || result.length === 0) {
-                                    result.push(newItem); // No GPS → end
-                                    return;
-                                }
-                                // Find the gap where inserting costs the least extra distance
-                                let bestIdx = result.length; // default: end
-                                let bestCost = Infinity;
+                            while (remaining.length > 0) {
+                                let bestIdx = 0;
+                                let bestScore = Infinity;
 
-                                for (let i = 0; i <= result.length; i++) {
-                                    const prev = i > 0 ? result[i - 1]._parsedCoords : (myLat && myLon ? { lat: myLat, lon: myLon } : null);
-                                    const next = i < result.length ? result[i]._parsedCoords : null;
-                                    let cost = 0;
-
-                                    if (prev) {
-                                        cost += getDistance(prev.lat, prev.lon, newItem._parsedCoords.lat, newItem._parsedCoords.lon);
-                                    }
-                                    if (next) {
-                                        cost += getDistance(newItem._parsedCoords.lat, newItem._parsedCoords.lon, next.lat, next.lon);
-                                        // Subtract the original prev→next distance (we're breaking that link)
-                                        if (prev) cost -= getDistance(prev.lat, prev.lon, next.lat, next.lon);
-                                    }
-
-                                    if (cost < bestCost) {
-                                        bestCost = cost;
+                                for (let i = 0; i < remaining.length; i++) {
+                                    const s = remaining[i];
+                                    const distKm = (curLat && curLon)
+                                        ? getDistance(curLat, curLon, s._parsedCoords.lat, s._parsedCoords.lon)
+                                        : 0;
+                                    // Combinar distancia con posición aprendida:
+                                    // Si la diferencia de distancia es < 1 km, el historial desempata
+                                    const score = distKm + learnScore(s) * 0.8; // 0.8 km máximo de bonus por historial
+                                    if (score < bestScore) {
+                                        bestScore = score;
                                         bestIdx = i;
                                     }
                                 }
-                                result.splice(bestIdx, 0, newItem);
+
+                                const next = remaining.splice(bestIdx, 1)[0];
+                                nnResult.push(next);
+                                if (next._parsedCoords) {
+                                    curLat = next._parsedCoords.lat;
+                                    curLon = next._parsedCoords.lon;
+                                }
+                            }
+
+                            // Los sin coordenadas al final, ordenados por posición aprendida o alfabético
+                            withoutCoords.sort((a, b) => {
+                                const pa = townLearn[norm(a.destinationName || a.client)]?.avg ?? 999;
+                                const pb = townLearn[norm(b.destinationName || b.client)]?.avg ?? 999;
+                                if (pa !== pb) return pa - pb;
+                                return norm(a.destinationAddress || '').localeCompare(norm(b.destinationAddress || ''));
                             });
 
-                            return result;
+                            return [...nnResult, ...withoutCoords];
                         };
 
                         const sortedUrgents = smartSort(urgents);
@@ -2515,7 +2549,27 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     if (missed.length > 0) finalRoute.push(...missed);
 
                     // ── Guardar resultado ──
-                    setLocalRoute(finalRoute.map(({ _coords, _parsedCoords, _priority, _isAgency, _city, _id, ...rest }) => rest));
+                    const cleanedRoute = finalRoute.map(({ _coords, _parsedCoords, _priority, _isAgency, _city, _id, ...rest }) => rest);
+                    setLocalRoute(cleanedRoute);
+
+                    // ── Sincronizar orden con Supabase para que el admin lo vea ──
+                    if (currentDriverId) {
+                        const idsToSave = cleanedRoute.map(s => s.id);
+                        try {
+                            localStorage.setItem(`drv_route_${currentDriverId}`, JSON.stringify(idsToSave));
+                        } catch (e) {}
+                        (async () => {
+                            try {
+                                const { data: drvData } = await supabase.from('drivers').select('data').eq('id', currentDriverId).single();
+                                if (drvData) {
+                                    await supabase.from('drivers').update({ data: { ...drvData.data, routeOrder: idsToSave } }).eq('id', currentDriverId);
+                                    console.log('[SmartSort] routeOrder synced to cloud:', idsToSave.length, 'stops');
+                                }
+                            } catch (err) {
+                                console.warn('[SmartSort] Failed to sync routeOrder to cloud:', err);
+                            }
+                        })();
+                    }
 
                     const shiftLabel = isMorningShift ? '☀️ Mañana' : '🌙 Tarde';
                     const townCount = [...townBuckets.keys()].length;
@@ -3296,7 +3350,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                 >
                                     {isOptimizing ? (
                                         <>Calculando...</>
-                                    ) : (
+                                     ) : (
                                         <>
                                             <Sparkles size={14} />
                                             Optimizar Ruta (v4)
@@ -3313,6 +3367,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                     </button>
                                 )}
                             </div>
+
                         </div>
 
                         <div className="space-y-3 lista-repartos">

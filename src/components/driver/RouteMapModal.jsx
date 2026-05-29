@@ -121,6 +121,7 @@ const driverIcon = (live) => L.divIcon({
     iconSize: [42, 42], iconAnchor: [21, 21], popupAnchor: [0, -24],
 });
 
+
 // ─── Fit mapa ─────────────────────────────────────────────────────────────────
 function FitBounds({ positions }) {
     const map = useMap();
@@ -389,69 +390,138 @@ export default function RouteMapModal({ route, driverCoords, onClose }) {
 
             {/* ── Lista de paradas ── */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '4px 10px 10px' }}>
-                {enhancedStops.map((stop) => {
-                    const hasLoc = !!getLocationString(stop);
-                    const navUrl = singleNavUrl(stop, driverCoords);
-                    const stats  = segStats[stop.id];
-                    return (
-                        <div key={stop.id} style={{
-                            background: '#1e293b', borderRadius: 8, padding: '7px 10px',
-                            marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8,
-                            border: `1px solid ${hasLoc ? stop._color + '55' : '#44403c'}`,
-                            opacity: hasLoc ? 1 : 0.5,
-                        }}>
-                            {/* Bola de color */}
-                            <div style={{
-                                width: 26, height: 26, borderRadius: '50%', flexShrink: 0,
-                                background: hasLoc ? stop._color : '#44403c',
-                                color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontWeight: 900, fontSize: 11,
-                                boxShadow: hasLoc ? `0 0 8px ${stop._color}80` : 'none',
-                            }}>{stop._index}</div>
+                {(() => {
+                    // Pre-calcular acumulados: distancia total y tiempo total hasta cada parada
+                    let cumDist = 0;
+                    let cumDur  = 0;
+                    const now = new Date();
 
-                            {/* Info */}
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                    <p style={{ color: '#f1f5f9', fontWeight: 700, fontSize: 12, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {stop._label}
-                                    </p>
-                                    {stop._isRecogida && <span style={{ background: '#92400e', color: '#fcd34d', fontSize: 8, fontWeight: 700, borderRadius: 3, padding: '1px 4px', flexShrink: 0 }}>REC</span>}
-                                    {stop._coords && !stop._geocoded && <span style={{ background: '#1e3a5f', color: '#60a5fa', fontSize: 8, fontWeight: 700, borderRadius: 3, padding: '1px 4px', flexShrink: 0 }}>GPS</span>}
-                                    {stop._geocoded && <span style={{ background: '#14532d', color: '#4ade80', fontSize: 8, fontWeight: 700, borderRadius: 3, padding: '1px 4px', flexShrink: 0 }}>MAP</span>}
-                                </div>
-                                <div style={{ display: 'flex', gap: 8, marginTop: 2, alignItems: 'center' }}>
+                    return enhancedStops.map((stop) => {
+                        const hasLoc = !!getLocationString(stop);
+                        const navUrl = singleNavUrl(stop, driverCoords);
+                        const stats  = segStats[stop.id];
+
+                        // Acumular antes de renderizar esta parada
+                        if (stats?.distance) cumDist += stats.distance;
+                        if (stats?.duration) cumDur  += stats.duration;
+
+                        // Hora estimada de llegada a esta parada
+                        const eta = stats?.duration
+                            ? new Date(now.getTime() + cumDur * 1000)
+                            : null;
+                        const etaStr = eta
+                            ? eta.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+                            : null;
+
+                        return (
+                            <div key={stop.id} style={{
+                                background: '#1e293b', borderRadius: 8, padding: '7px 10px',
+                                marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8,
+                                border: `1px solid ${hasLoc ? stop._color + '55' : '#44403c'}`,
+                                opacity: hasLoc ? 1 : 0.5,
+                            }}>
+                                {/* Bola de color */}
+                                <div style={{
+                                    width: 26, height: 26, borderRadius: '50%', flexShrink: 0,
+                                    background: hasLoc ? stop._color : '#44403c',
+                                    color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    fontWeight: 900, fontSize: 11,
+                                    boxShadow: hasLoc ? `0 0 8px ${stop._color}80` : 'none',
+                                }}>{stop._index}</div>
+
+                                {/* Info */}
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <p style={{ color: '#f1f5f9', fontWeight: 700, fontSize: 12, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {stop._label}
+                                        </p>
+                                        {stop._isRecogida && <span style={{ background: '#92400e', color: '#fcd34d', fontSize: 8, fontWeight: 700, borderRadius: 3, padding: '1px 4px', flexShrink: 0 }}>REC</span>}
+                                        {stop._coords && !stop._geocoded && <span style={{ background: '#1e3a5f', color: '#60a5fa', fontSize: 8, fontWeight: 700, borderRadius: 3, padding: '1px 4px', flexShrink: 0 }}>GPS</span>}
+                                        {stop._geocoded && <span style={{ background: '#14532d', color: '#4ade80', fontSize: 8, fontWeight: 700, borderRadius: 3, padding: '1px 4px', flexShrink: 0 }}>MAP</span>}
+                                    </div>
+
+                                    {/* Dirección */}
                                     {getStopAddress(stop) && (
-                                        <p style={{ color: '#64748b', fontSize: 10, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                        <p style={{ color: '#64748b', fontSize: 10, margin: '1px 0 3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                             {getStopAddress(stop)}
                                         </p>
                                     )}
+
+                                    {/* Tiempos: segmento + acumulado + ETA */}
                                     {stats && (
-                                        <span style={{ color: stop._color, fontSize: 9, fontWeight: 600, flexShrink: 0, display: 'flex', gap: 5 }}>
-                                            {stats.distance && <span>📍 {fmtDist(stats.distance)}</span>}
-                                            {stats.duration && <span>⏱ {fmtTime(stats.duration)}</span>}
-                                        </span>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                                            {/* Segmento actual: distancia y tiempo del tramo */}
+                                            <span style={{ color: stop._color, fontSize: 9, fontWeight: 600, display: 'flex', gap: 4, alignItems: 'center' }}>
+                                                {stats.distance && <span>📍 {fmtDist(stats.distance)}</span>}
+                                                {stats.duration && <span>⏱ {fmtTime(stats.duration)}</span>}
+                                            </span>
+                                            {/* Separador */}
+                                            {cumDur > 0 && <span style={{ color: '#334155', fontSize: 9 }}>│</span>}
+                                            {/* Acumulado desde inicio */}
+                                            {cumDur > 0 && (
+                                                <span style={{ color: '#94a3b8', fontSize: 9, fontWeight: 600, display: 'flex', gap: 4, alignItems: 'center' }}>
+                                                    <span>∑ {fmtDist(cumDist)}</span>
+                                                    <span>∑ {fmtTime(cumDur)}</span>
+                                                    {etaStr && (
+                                                        <span style={{
+                                                            background: '#1e3a5f', color: '#93c5fd',
+                                                            borderRadius: 4, padding: '1px 5px',
+                                                            fontSize: 9, fontWeight: 700,
+                                                        }}>🕐 {etaStr}</span>
+                                                    )}
+                                                </span>
+                                            )}
+                                        </div>
                                     )}
                                     {!stop._coords && !stop._geocoded && geocoding && (
-                                        <span style={{ color: '#fbbf24', fontSize: 9, flexShrink: 0 }}>buscando…</span>
+                                        <span style={{ color: '#fbbf24', fontSize: 9 }}>buscando…</span>
                                     )}
                                 </div>
-                            </div>
 
-                            {/* Ir */}
-                            {navUrl && (
-                                <a href={navUrl} target="_blank" rel="noopener noreferrer" style={{
-                                    background: stop._color, borderRadius: 8, padding: '5px 10px',
-                                    color: 'white', display: 'flex', alignItems: 'center', gap: 4,
-                                    fontSize: 11, fontWeight: 700, flexShrink: 0, textDecoration: 'none',
-                                    boxShadow: `0 2px 8px ${stop._color}60`,
-                                }}>
-                                    <Navigation size={11} /> Ir
-                                </a>
-                            )}
+                                {/* Ir */}
+                                {navUrl && (
+                                    <a href={navUrl} target="_blank" rel="noopener noreferrer" style={{
+                                        background: stop._color, borderRadius: 8, padding: '5px 10px',
+                                        color: 'white', display: 'flex', alignItems: 'center', gap: 4,
+                                        fontSize: 11, fontWeight: 700, flexShrink: 0, textDecoration: 'none',
+                                        boxShadow: `0 2px 8px ${stop._color}60`,
+                                    }}>
+                                        <Navigation size={11} /> Ir
+                                    </a>
+                                )}
+                            </div>
+                        );
+                    });
+                })()}
+
+                {/* ── Resumen total al final ── */}
+                {totals.dist > 0 && (
+                    <div style={{
+                        marginTop: 8, padding: '10px 14px', borderRadius: 10,
+                        background: 'linear-gradient(135deg, #1e3a5f, #1e293b)',
+                        border: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    }}>
+                        <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>
+                            Total ruta
+                        </span>
+                        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                            <span style={{ color: '#60a5fa', fontSize: 13, fontWeight: 800 }}>
+                                📍 {fmtDist(totals.dist)}
+                            </span>
+                            <span style={{ color: '#34d399', fontSize: 13, fontWeight: 800 }}>
+                                ⏱ {fmtTime(totals.dur)}
+                            </span>
+                            <span style={{
+                                background: '#166534', color: '#4ade80',
+                                borderRadius: 6, padding: '3px 8px', fontSize: 11, fontWeight: 800,
+                            }}>
+                                🏁 {new Date(Date.now() + totals.dur * 1000).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
                         </div>
-                    );
-                })}
+                    </div>
+                )}
             </div>
+
         </div>
     );
 }
