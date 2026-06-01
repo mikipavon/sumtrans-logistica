@@ -1200,7 +1200,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             if (c.branches && Array.isArray(c.branches)) {
                 c.branches.forEach(b => {
                     const bNameNorm = normalizeClientName(b.name);
-                    if (bNameNorm) map.set(bNameNorm, c);
+                    if (bNameNorm) map.set(bNameNorm, { ...c, _isBranch: true, _branch: b });
                 });
             }
         });
@@ -2939,11 +2939,21 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 : (currentShip.destinationName || currentShip.client);
 
             if (clientName) {
-                const destClient = clientsMap.get(normalizeClientName(clientName));
-                if (destClient && !(destClient.coordinates && String(destClient.coordinates).trim().length > 0)) {
-                    onUpdateClient(destClient.id, { coordinates: proof.coordinates });
-                    console.log(`[AutoCoords] Destinatario "${clientName}" → ${proof.coordinates}`);
-                } else if (!destClient && !isPickupType && onAddClient) {
+                const destClientObj = clientsMap.get(normalizeClientName(clientName));
+                if (destClientObj) {
+                    if (destClientObj._isBranch) {
+                        const branch = destClientObj._branch;
+                        if (!(branch.coordinates && String(branch.coordinates).trim().length > 0)) {
+                            onUpdateClient(destClientObj.id, { coordinates: proof.coordinates }, branch.id);
+                            console.log(`[AutoCoords] Destinatario (Sede) "${clientName}" → ${proof.coordinates}`);
+                        }
+                    } else {
+                        if (!(destClientObj.coordinates && String(destClientObj.coordinates).trim().length > 0)) {
+                            onUpdateClient(destClientObj.id, { coordinates: proof.coordinates });
+                            console.log(`[AutoCoords] Destinatario "${clientName}" → ${proof.coordinates}`);
+                        }
+                    }
+                } else if (!destClientObj && !isPickupType && onAddClient) {
                     // Destinatario no existe en BD → crear ficha pendiente de validar con GPS incluido
                     onAddClient({
                         name: currentShip.destinationName,

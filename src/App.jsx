@@ -183,6 +183,7 @@ function App() {
 
   // Stored Client Locations
   const [clients, setClients] = useState([])
+  const [isExportingSecretsZip, setIsExportingSecretsZip] = useState(false)
 
   // ======= LATEST STATE REFS (Avoid stale closures in async handlers) =======
   const shipmentsRef = useRef(shipments);
@@ -361,6 +362,46 @@ function App() {
     a.click();
     document.body.removeChild(a);
   }, [getSecretShipments, drivers]);
+
+  const handleExportSecretsZIP = useCallback(async () => {
+    const secrets = getSecretShipments();
+    if (secrets.length === 0) return alert('No hay envíos confidenciales que exportar.');
+
+    setIsExportingSecretsZip(true);
+    try {
+        const JSZip = (await import('jszip')).default;
+        const { saveAs } = await import('file-saver');
+        const { generateDeliveryPDFBlob } = await import('./utils/deliveryPdf');
+        
+        const zip = new JSZip();
+        let count = 0;
+        for (const s of secrets) {
+            const blob = await generateDeliveryPDFBlob(s);
+            if (blob) {
+                const clientFolder = (s.client || 'Sin_Cliente').substring(0, 20).replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+                const fileName = `POD_${s.id}_${(s.destinationName || 'Envio').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '')}.pdf`;
+                zip.folder(clientFolder).file(fileName, blob);
+                count++;
+            }
+        }
+
+        if (count === 0) {
+            alert("No se pudo generar ningún PDF válido para descargar.");
+            setIsExportingSecretsZip(false);
+            return;
+        }
+
+        const content = await zip.generateAsync({ type: "blob" });
+        const dateStr = new Date().toISOString().split('T')[0];
+        saveAs(content, `Albaranes_Historial_${dateStr}.zip`);
+        
+    } catch (error) {
+        console.error('Error generando ZIP:', error);
+        alert('Error al descargar los PDFs en ZIP.');
+    } finally {
+        setIsExportingSecretsZip(false);
+    }
+  }, [getSecretShipments]);
 
   const handleDeleteSecrets = useCallback(async () => {
     const secrets = getSecretShipments();
@@ -1519,8 +1560,25 @@ function App() {
 
       // Auto-save REMITENTE (Sender) if new
       const normalizedNewSender = normalizeClientName(newShipment.client);
-      const senderExists = clients.find(c => normalizeClientName(c.name) === normalizedNewSender || normalizeClientName(c.legalName) === normalizedNewSender);
-      if (!senderExists && newShipment.client) {
+      let targetClient = null;
+      let targetBranch = null;
+
+      for (const c of clients) {
+          if (normalizeClientName(c.name) === normalizedNewSender || normalizeClientName(c.legalName) === normalizedNewSender) {
+              targetClient = c;
+              break;
+          }
+          if (c.branches && Array.isArray(c.branches)) {
+              const b = c.branches.find(br => normalizeClientName(br.name) === normalizedNewSender);
+              if (b) {
+                  targetClient = c;
+                  targetBranch = b;
+                  break;
+              }
+          }
+      }
+
+      if (!targetClient && newShipment.client) {
         const newClientData = {
           id: Date.now(),
           name: newShipment.client,
@@ -1542,12 +1600,19 @@ function App() {
         await handleAddClient(newClientData);
       }
 
-
-
       // Check sender as well if it already exists but has no coordinates
-      if (senderExists && !senderExists.coordinates && newShipment.originCoordinates && senderExists.status === 'pending') {
-         console.log("Auto-filling missing GPS for existing sender:", senderExists.name);
-         await handleUpdateClient(senderExists.id, { coordinates: newShipment.originCoordinates });
+      if (targetClient && newShipment.originCoordinates) {
+          if (targetBranch) {
+              if (targetClient.status === 'pending' && !(targetBranch.coordinates && String(targetBranch.coordinates).trim().length > 0)) {
+                  console.log("Auto-filling missing GPS for existing sender branch:", targetBranch.name);
+                  await handleUpdateClient(targetClient.id, { coordinates: newShipment.originCoordinates }, targetBranch.id);
+              }
+          } else {
+              if (targetClient.status === 'pending' && !(targetClient.coordinates && String(targetClient.coordinates).trim().length > 0)) {
+                  console.log("Auto-filling missing GPS for existing sender:", targetClient.name);
+                  await handleUpdateClient(targetClient.id, { coordinates: newShipment.originCoordinates });
+              }
+          }
       }
 
       return true;
@@ -1844,16 +1909,39 @@ function App() {
     if (newStatus === 'Entregado' || newStatus === 'Entrega aplazada' || newStatus === 'Pendiente Cobro') {
       const shipment = shipmentsRef.current.find(s => s.id === shipmentId);
       if (shipment && shipment.destinationName) {
-        // Find existing client (destinatario)
-        const existingClient = clientsRef.current.find(c =>
-          c.name.toLowerCase() === shipment.destinationName.toLowerCase()
-        );
+        // Find existing client (destinatario) or branch
+        const normDest = normalizeClientName(shipment.destinationName);
+        let targetClient = null;
+        let targetBranch = null;
 
-        if (existingClient) {
-          // ONLY update coordinates if client is still PENDING (not yet validated)
+        for (const c of clientsRef.current) {
+            if (normalizeClientName(c.name) === normDest || normalizeClientName(c.legalName) === normDest) {
+                targetClient = c;
+                break;
+            }
+            if (c.branches && Array.isArray(c.branches)) {
+                const b = c.branches.find(br => normalizeClientName(br.name) === normDest);
+                if (b) {
+                    targetClient = c;
+                    targetBranch = b;
+                    break;
+                }
+            }
+        }
+
+        if (targetClient) {
+          // ONLY update coordinates if client/branch is still PENDING (not yet validated)
           const finalCoords = deliveryCoordinates || shipment.destinationCoordinates;
-          if (finalCoords && existingClient.status === 'pending') {
-            await handleUpdateClient(existingClient.id, { coordinates: finalCoords, lastInteraction: new Date().toISOString().split('T')[0] });
+          if (finalCoords) {
+              if (targetBranch) {
+                  if (targetClient.status === 'pending' && !(targetBranch.coordinates && String(targetBranch.coordinates).trim().length > 0)) {
+                      await handleUpdateClient(targetClient.id, { coordinates: finalCoords }, targetBranch.id);
+                  }
+              } else {
+                  if (targetClient.status === 'pending' && !(targetClient.coordinates && String(targetClient.coordinates).trim().length > 0)) {
+                      await handleUpdateClient(targetClient.id, { coordinates: finalCoords, lastInteraction: new Date().toISOString().split('T')[0] });
+                  }
+              }
           }
         } else {
           // Create new client with coordinates
@@ -1901,9 +1989,19 @@ function App() {
     } catch (e) { alert('Error al añadir respuesta a incidencia'); console.error(e); }
   };
 
-  const handleUpdateClient = async (clientId, updatedData) => {
+  const handleUpdateClient = async (clientId, updatedData, branchId = null) => {
     const c = clientsRef.current.find(item => item.id === clientId);
-    const updated = { ...c, ...updatedData, lastInteraction: new Date().toISOString().split('T')[0] };
+    if (!c) return;
+    
+    let updated = { ...c, lastInteraction: new Date().toISOString().split('T')[0] };
+    
+    if (branchId && c.branches) {
+        const updatedBranches = c.branches.map(b => b.id === branchId ? { ...b, ...updatedData } : b);
+        updated.branches = updatedBranches;
+    } else {
+        updated = { ...updated, ...updatedData };
+    }
+
     try {
       const { data, error } = await supabase.from('clients').update({ name: updated.name, data: updated }).eq('id', clientId).select();
       if (error) throw error;
@@ -2867,14 +2965,24 @@ function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {/* BOTÓN EXPORTAR EXCEL */}
                   <button
                     onClick={handleExportSecretsCSV}
-                    className="w-full bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-500/50 p-6 rounded-xl text-lg font-bold flex items-center justify-center gap-3 transition-all active:scale-95 shadow-lg shadow-emerald-900/20"
+                    className="w-full bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-500/50 p-6 rounded-xl text-lg font-bold flex flex-col items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-emerald-900/20"
                   >
                     <Download size={24} />
-                    Descargar Excel
+                    <span>Descargar Excel</span>
+                  </button>
+
+                  {/* BOTÓN EXPORTAR ZIP (PDFs) */}
+                  <button
+                    onClick={handleExportSecretsZIP}
+                    disabled={isExportingSecretsZip}
+                    className="w-full bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-500/50 p-6 rounded-xl text-lg font-bold flex flex-col items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-blue-900/20 disabled:opacity-50"
+                  >
+                    {isExportingSecretsZip ? <span className="animate-pulse text-2xl">...</span> : <Download size={24} />}
+                    <span>Descargar PDFs</span>
                   </button>
 
                   {/* ESPACIO NUCLEAR DE DESTRUCCIÓN */}

@@ -878,6 +878,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         const shipmentData = {
             id: shipmentId,
             client: formData.clientName,
+            branchId: formData.branchId || null,
+            _parentClientId: formData._parentClientId || null,
             origin: fullOrigin,
             originAddress: formData.originAddress,
             originZip: formData.originZip,
@@ -1000,13 +1002,36 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         const gps = capturedGpsRef.current;
         if (gps && onUpdateClient && clients) {
             const normalize = (s) => String(s || '').toLowerCase().trim().replace(/\s+/g, ' ');
-            const senderClient = clients.find(c =>
-                normalize(c.name) === normalize(finalData.client) ||
-                normalize(c.legalName) === normalize(finalData.client)
-            );
-            if (senderClient && !(senderClient.coordinates && String(senderClient.coordinates).trim().length > 0)) {
-                onUpdateClient(senderClient.id, { coordinates: gps });
-                console.log(`[AutoCoords] Remitente "${finalData.client}" → ${gps}`);
+            let targetClient = null;
+            let targetBranch = null;
+            
+            for (const c of clients) {
+                if (normalize(c.name) === normalize(finalData.client) || normalize(c.legalName) === normalize(finalData.client)) {
+                    targetClient = c;
+                    break;
+                }
+                if (c.branches && Array.isArray(c.branches)) {
+                    const b = c.branches.find(br => normalize(br.name) === normalize(finalData.client));
+                    if (b) {
+                        targetClient = c;
+                        targetBranch = b;
+                        break;
+                    }
+                }
+            }
+
+            if (targetClient) {
+                if (targetBranch) {
+                    if (!(targetBranch.coordinates && String(targetBranch.coordinates).trim().length > 0)) {
+                        onUpdateClient(targetClient.id, { coordinates: gps }, targetBranch.id);
+                        console.log(`[AutoCoords] Remitente Sede "${finalData.client}" → ${gps}`);
+                    }
+                } else {
+                    if (!(targetClient.coordinates && String(targetClient.coordinates).trim().length > 0)) {
+                        onUpdateClient(targetClient.id, { coordinates: gps });
+                        console.log(`[AutoCoords] Remitente "${finalData.client}" → ${gps}`);
+                    }
+                }
             }
         }
 
