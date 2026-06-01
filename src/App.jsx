@@ -1094,27 +1094,6 @@ function App() {
         setCurrentDriverId(driverFound.id);
         setCurrentClientId(null);
 
-        // ── 3. Fichaje automático en segundo plano (fire-and-forget) ──
-        const driverId   = driverFound.id;
-        const driverName = driverFound.name || driverFound.username || 'Conductor';
-        const today      = new Date().toISOString().split('T')[0];
-        supabase
-          .from('time_logs')
-          .select('id')
-          .eq('driver_id', driverId)
-          .eq('date', today)
-          .is('clock_out', null)
-          .maybeSingle()
-          .then(({ data: existingLog }) => {
-            if (!existingLog) {
-              return supabase.from('time_logs').insert([{
-                driver_id:   driverId,
-                driver_name: driverName,
-                date:        today,
-              }]);
-            }
-          })
-          .catch(err => console.error('Error registrando fichaje (background):', err));
 
         return true;
       }
