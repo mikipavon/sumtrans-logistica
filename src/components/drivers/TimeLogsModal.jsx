@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import * as XLSX from 'xlsx';
 
-export default function TimeLogsModal({ isOpen, onClose }) {
+export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) {
     const [logs, setLogs] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
@@ -375,7 +375,8 @@ export default function TimeLogsModal({ isOpen, onClose }) {
                     </div>
                 </div>
 
-                {/* Driver visibility toggle */}
+                {/* Driver visibility toggle (Hidden by default, shown in Dev Mode) */}
+                {isGhostModeUnlocked && (
                 <div className="px-6 py-3 border-b border-slate-100 bg-amber-50/50 shrink-0 flex items-center justify-between">
                     <div>
                         <p className="text-xs font-bold text-slate-700">👁 Visible para conductores</p>
@@ -397,6 +398,7 @@ export default function TimeLogsModal({ isOpen, onClose }) {
                         <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
                     </label>
                 </div>
+                )}
 
                 {/* Summary Bar */}
                 {Object.keys(driverSummary).length > 0 && (

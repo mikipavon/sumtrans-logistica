@@ -396,6 +396,7 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
             <TimeLogsModal
                 isOpen={isTimeLogsModalOpen}
                 onClose={() => setIsTimeLogsModalOpen(false)}
+                isGhostModeUnlocked={isGhostModeUnlocked}
             />
         </div>
     );
