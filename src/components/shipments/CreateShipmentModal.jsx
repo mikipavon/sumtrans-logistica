@@ -923,7 +923,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             porteType: formData.porteType,
             assignedDriverId: formData.assignedDriverId ? Number(formData.assignedDriverId) : null,
             observations: formData.observations,
-            originCoordinates: formData.originCoordinates,
+            originCoordinates: formData.originCoordinates || capturedGpsRef.current || '',
             destinationCoordinates: formData.destinationCoordinates,
             articles: selectedArticles,
             hasCod: formData.hasCod,
@@ -1001,7 +1001,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         // Las del destinatario se guardan en la entrega (handleDeliveryConfirm).
         const gps = capturedGpsRef.current;
         if (gps && onUpdateClient && clients) {
-            const normalize = (s) => String(s || '').toLowerCase().trim().replace(/\s+/g, ' ');
+            const normalize = (s) => String(s || '').normalize("NFD").replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
             let targetClient = null;
             let targetBranch = null;
             
