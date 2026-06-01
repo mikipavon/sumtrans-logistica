@@ -1603,12 +1603,12 @@ function App() {
       // Check sender as well if it already exists but has no coordinates
       if (targetClient && newShipment.originCoordinates) {
           if (targetBranch) {
-              if (targetClient.status === 'pending' && !(targetBranch.coordinates && String(targetBranch.coordinates).trim().length > 0)) {
+              if (!(targetBranch.coordinates && String(targetBranch.coordinates).trim().length > 0)) {
                   console.log("Auto-filling missing GPS for existing sender branch:", targetBranch.name);
                   await handleUpdateClient(targetClient.id, { coordinates: newShipment.originCoordinates }, targetBranch.id);
               }
           } else {
-              if (targetClient.status === 'pending' && !(targetClient.coordinates && String(targetClient.coordinates).trim().length > 0)) {
+              if (!(targetClient.coordinates && String(targetClient.coordinates).trim().length > 0)) {
                   console.log("Auto-filling missing GPS for existing sender:", targetClient.name);
                   await handleUpdateClient(targetClient.id, { coordinates: newShipment.originCoordinates });
               }
@@ -1930,15 +1930,15 @@ function App() {
         }
 
         if (targetClient) {
-          // ONLY update coordinates if client/branch is still PENDING (not yet validated)
+          // ONLY update coordinates if client/branch GPS is empty
           const finalCoords = deliveryCoordinates || shipment.destinationCoordinates;
           if (finalCoords) {
               if (targetBranch) {
-                  if (targetClient.status === 'pending' && !(targetBranch.coordinates && String(targetBranch.coordinates).trim().length > 0)) {
+                  if (!(targetBranch.coordinates && String(targetBranch.coordinates).trim().length > 0)) {
                       await handleUpdateClient(targetClient.id, { coordinates: finalCoords }, targetBranch.id);
                   }
               } else {
-                  if (targetClient.status === 'pending' && !(targetClient.coordinates && String(targetClient.coordinates).trim().length > 0)) {
+                  if (!(targetClient.coordinates && String(targetClient.coordinates).trim().length > 0)) {
                       await handleUpdateClient(targetClient.id, { coordinates: finalCoords, lastInteraction: new Date().toISOString().split('T')[0] });
                   }
               }
