@@ -528,16 +528,16 @@ const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety })
                     .eq('driver_id', currentDriverId)
                     .eq('date', today)
                     .order('clock_in', { ascending: false })
-                    .limit(1)
-                    .maybeSingle();
+                    .limit(1);
 
                 if (error) throw error;
+                const log = data && data.length > 0 ? data[0] : null;
 
-                if (!data) {
+                if (!log) {
                     setStatus('pending_in');
-                } else if (!data.clock_out) {
+                } else if (!log.clock_out) {
                     setStatus('working');
-                    setLogId(data.id);
+                    setLogId(log.id);
                 } else {
                     setStatus('finished');
                 }
@@ -578,18 +578,18 @@ const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety })
                 }).eq('id', logId);
             } else {
                 const today = new Date().toISOString().split('T')[0];
-                const { data: existingLog } = await supabase
+                const { data, error } = await supabase
                     .from('time_logs')
                     .select('id')
                     .eq('driver_id', currentDriverId)
                     .eq('date', today)
                     .is('clock_out', null)
-                    .maybeSingle();
+                    .limit(1);
                 
-                if (existingLog) {
+                if (data && data.length > 0) {
                     await supabase.from('time_logs').update({
                         clock_out: new Date().toISOString()
-                    }).eq('id', existingLog.id);
+                    }).eq('id', data[0].id);
                 }
             }
             setStatus('finished');
@@ -917,15 +917,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     .select('id')
                     .eq('driver_id', currentDriverId)
                     .eq('date', today)
-                    .limit(1)
-                    .maybeSingle();
+                    .limit(1);
 
-                if (error && error.code !== 'PGRST116') {
+                if (error) {
                     console.error("Error auto-clock-in check:", error);
                     return;
                 }
 
-                if (!data) {
+                if (!data || data.length === 0) {
                     const driverObj = drivers?.find(d => String(d.id) === String(currentDriverId));
                     await supabase.from('time_logs').insert([{
                         driver_id: currentDriverId,
