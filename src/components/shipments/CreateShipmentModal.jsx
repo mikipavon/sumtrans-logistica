@@ -925,6 +925,23 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             observations: formData.observations,
             originCoordinates: formData.originCoordinates || capturedGpsRef.current || '',
             destinationCoordinates: formData.destinationCoordinates,
+            destinationBillingType: (function() {
+                if (formData.selectedDestBillingType) return formData.selectedDestBillingType;
+                const normalize = (val) => String(val || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/\s+/g, " ");
+                const dName = normalize(formData.destinationName);
+                const client = clients?.find(c => normalize(c.name) === dName || normalize(c.legalName) === dName);
+                if (client) return client.billingType || 'Facturación';
+                for (const c of (clients || [])) {
+                    if (Array.isArray(c.branches)) {
+                        for (const b of c.branches) {
+                            if (normalize(b.name) === dName) {
+                                return c.billingType || 'Facturación';
+                            }
+                        }
+                    }
+                }
+                return 'Clientes Habituales';
+            })(),
             articles: selectedArticles,
             hasCod: formData.hasCod,
             codAmount: formData.codAmount ? parseFloat(formData.codAmount) : 0,
@@ -953,7 +970,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             setPendingSubmitData(shipmentData);
             setShowPaymentAlert(true);
         } else {
-            const isPendingByDefault = formData.porteType === 'Debido';
+            let isPendingByDefault = false;
+            if (formData.porteType === 'Debido') {
+                const isDestFacturacion = shipmentModel.isInvoiceBilling(shipmentData.destinationBillingType);
+                if (!isDestFacturacion) {
+                    isPendingByDefault = true;
+                }
+            }
             finalizeSubmit(shipmentData, isPendingByDefault ? 'Pending' : 'Paid');
         }
     };

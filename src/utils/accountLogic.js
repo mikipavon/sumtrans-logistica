@@ -159,7 +159,8 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         }
         
         if (!isMyResponsibility) return false;
-        if (!isToday(s.paidAt, targetDate) && !isToday(s.date, targetDate) && !isToday(s.updatedAt, targetDate)) return false;
+        // BUG FIX: removed isToday(s.updatedAt) to prevent old prepaid shipments from reappearing when unassigned or edited today.
+        if (!isToday(s.paidAt, targetDate) && !isToday(s.date, targetDate)) return false;
         return isCashClient(s.client, clients, s.billingType);
     });
 
@@ -339,7 +340,8 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     // 7. Facturas Simplificadas (cobros con IVA, sección aparte)
     const simplifiedInvoices = (allShipments || []).filter(s => {
         if (!s || !s.hasSimplifiedInvoice || !s.simplifiedInvoicePaid) return false;
-        if (!isToday(s.paidAt || s.updatedAt || s.date, targetDate)) return false;
+        // Evitar que s.updatedAt cause falsos positivos al desasignar
+        if (!isToday(s.paidAt, targetDate) && !isToday(s.date, targetDate)) return false;
 
         let isMyResponsibility = false;
         if (s.porteCollectedById) {

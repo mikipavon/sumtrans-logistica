@@ -37,17 +37,32 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
     const shipmentModel = useMemo(() => {
         if (!shipment) return null;
 
-        // Find the destination client to get their billingType
-        const destClient = clients?.find(c => {
-            const name = String(c.name || '').trim().toLowerCase();
-            const dest = String(shipment.destinationName || '').trim().toLowerCase();
-            return name === dest;
-        });
+        // Find the destination client to get their billingType (search in root clients AND branches)
+        const destNorm = String(shipment.destinationName || '').trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        let destBillingType = null;
+
+        for (const c of (clients || [])) {
+            const nameNorm = String(c.name || '').trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            if (nameNorm === destNorm) {
+                destBillingType = c.billingType;
+                break;
+            }
+            if (c.branches && Array.isArray(c.branches)) {
+                for (const b of c.branches) {
+                    const bNorm = String(b.name || '').trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                    if (bNorm === destNorm) {
+                        destBillingType = c.billingType;
+                        break;
+                    }
+                }
+                if (destBillingType) break;
+            }
+        }
 
         return new Shipment({
             ...shipment,
             // Pass destination billing type from client list if available
-            destinationBillingType: destClient?.billingType || shipment.destinationBillingType || null,
+            destinationBillingType: destBillingType || shipment.destinationBillingType || null,
         });
     }, [shipment, clients]);
 
