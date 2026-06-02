@@ -31,6 +31,7 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                 afternoonTowns: driver.afternoonTowns || [],
                 isTestMode: driver.isTestMode || false,
                 isActive: driver.isActive !== false,
+                signaturePinHash: driver.signaturePinHash || null,
             });
             setIsEditing(false);
             setShowPassword(false);
@@ -285,6 +286,37 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                         </button>
                                     </div>
                                 </div>
+                            </div>
+                            
+                            {/* PIN de Firma Section */}
+                            <div className="mt-4 pt-4 border-t border-blue-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-100">
+                                <div>
+                                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">PIN de Firma Digital (Horas)</label>
+                                    <div className="flex items-center gap-2">
+                                        {formData.signaturePinHash ? (
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full">
+                                                <CheckCircle size={12} className="text-emerald-500" /> CONFIGURADO (Encriptado)
+                                            </span>
+                                        ) : (
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-100 px-2.5 py-1 rounded-full">
+                                                ⚪ PENDIENTE DE CONFIGURAR
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                                {formData.signaturePinHash && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (window.confirm("¿Estás seguro de que deseas restablecer el PIN de Firma de este conductor?\n\nEsto borrará el PIN actual y le obligará a configurar un nuevo PIN de 4 dígitos la próxima vez que vaya a firmar su jornada desde su móvil.")) {
+                                                setFormData({ ...formData, signaturePinHash: null });
+                                            }
+                                        }}
+                                        className="sm:self-end bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 hover:text-red-700 px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all active:scale-95 flex items-center gap-1.5 shadow-sm"
+                                    >
+                                        <Trash2 size={12} /> Restablecer PIN de Firma
+                                    </button>
+                                )}
                             </div>
 
                             <div className="mt-6 pt-4 border-t border-blue-200">

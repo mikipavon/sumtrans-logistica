@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { X, Calculator, CheckCircle, ChevronDown, User, FileText } from 'lucide-react';
+import { X, Calculator, CheckCircle, ChevronDown, User, FileText, DownloadCloud } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
+import { generateDeliveryPDFBlob } from '../../utils/deliveryPdf';
 
 export default function BudgetLiquidationModal({ isOpen, onClose, shipments, clients, drivers, onCreateShipment, onUpdateMultipleShipments }) {
     const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
@@ -197,6 +200,40 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
         XLSX.writeFile(wb, fileName);
     };
 
+    const handleDownloadZip = async (clientData) => {
+        setIsProcessing(true);
+        try {
+            const zip = new JSZip();
+            const safeClientName = clientData.clientName.substring(0, 20).replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+            const folderName = `Albaranes_${safeClientName}_${selectedMonth}`;
+            const folder = zip.folder(folderName);
+
+            let count = 0;
+            for (const s of clientData.shipments) {
+                const blob = await generateDeliveryPDFBlob(s);
+                if (blob) {
+                    const fileName = `POD_${s.id}_${s.destinationName || 'Envio'}.pdf`.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_.-]/g, '');
+                    folder.file(fileName, blob);
+                    count++;
+                }
+            }
+
+            if (count === 0) {
+                alert("No se pudo generar ningún PDF válido para descargar.");
+                return;
+            }
+
+            const content = await zip.generateAsync({ type: "blob" });
+            saveAs(content, `${folderName}.zip`);
+            
+        } catch (error) {
+            console.error('Error generando ZIP:', error);
+            alert('Error al descargar los PDFs en ZIP.');
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
     if (!isOpen) return null;
 
     return (
@@ -283,6 +320,14 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                                                     title="Descargar detalle en Excel"
                                                 >
                                                     <FileText size={18} />
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleDownloadZip(data)}
+                                                    disabled={isProcessing}
+                                                    className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-blue-200 disabled:opacity-50"
+                                                    title="Descargar PDFs en ZIP"
+                                                >
+                                                    {isProcessing ? <span className="animate-pulse">...</span> : <DownloadCloud size={18} />}
                                                 </button>
                                                 <button 
                                                     onClick={() => handleLiquidate(data)}

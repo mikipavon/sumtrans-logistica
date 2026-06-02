@@ -642,6 +642,16 @@ const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety })
 };
 
 // ─── DRIVER TIME LOGS HISTORY (Legal compliance) ───
+// Utility for secure cryptographic hashing (SHA-256) of driver PINs
+const hashPIN = async (pin) => {
+    if (!pin) return '';
+    const msgBuffer = new TextEncoder().encode(pin);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    return hashHex;
+};
+
 const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
     const [logs, setLogs] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -650,6 +660,12 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
     const [confirmedAt, setConfirmedAt] = useState(null);
     const currentMonth = new Date().toISOString().slice(0, 7);
     const confirmKey = `timelog_confirm_${currentDriverId}_${currentMonth}`;
+
+    // PIN Signature States
+    const [pinModalMode, setPinModalMode] = useState(null); // null, 'create', 'confirm'
+    const [pinInput, setPinInput] = useState('');
+    const [pinInputConfirm, setPinInputConfirm] = useState('');
+    const [pinError, setPinError] = useState('');
 
     useEffect(() => {
         if (!currentDriverId) return;
@@ -702,8 +718,7 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
         fetchData();
     }, [currentDriverId, currentMonth]);
 
-    const handleConfirm = async () => {
-        if (!window.confirm('Al confirmar, aceptas que las horas mostradas son correctas. ¿Confirmar?')) return;
+    const proceedWithSignature = async () => {
         try {
             const { data: existing } = await supabase.from('settings').select('value').eq('key', 'timelog_confirmations').maybeSingle();
             let confirmations = [];
@@ -721,9 +736,45 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
             await supabase.from('settings').upsert({ key: 'timelog_confirmations', value: JSON.stringify(confirmations) });
             setIsConfirmed(true);
             setConfirmedAt(now);
+            setPinModalMode(null);
+            alert('¡Registro mensual de jornada firmado digitalmente con éxito y bloqueado para el mes!');
         } catch(e) {
-            console.error('Error confirming time logs:', e);
-            alert('Error al confirmar. Inténtalo de nuevo.');
+            console.error('Error al guardar firma:', e);
+            setPinError('Error crítico al firmar en la base de datos.');
+        }
+    };
+
+    const handleConfirm = async () => {
+        setIsLoading(true);
+        setPinError('');
+        try {
+            const { data: driverRes, error: driverErr } = await supabase
+                .from('drivers')
+                .select('*')
+                .eq('id', currentDriverId)
+                .single();
+
+            if (driverErr || !driverRes) {
+                alert('Error al acceder a los datos de firma. Comprueba tu conexión.');
+                setIsLoading(false);
+                return;
+            }
+
+            const driverObj = driverRes.data || {};
+            const pinHash = driverObj.signaturePinHash;
+
+            setPinInput('');
+            setPinInputConfirm('');
+            if (!pinHash) {
+                setPinModalMode('create');
+            } else {
+                setPinModalMode('confirm');
+            }
+        } catch(e) {
+            console.error('Error pre-firma:', e);
+            alert('Error al iniciar el proceso de firma.');
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -748,71 +799,224 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
     }
 
     return (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden relative">
             <div className="p-4 bg-indigo-50 border-b border-indigo-100">
                 <h3 className="font-bold text-indigo-800 text-sm flex items-center gap-2">
                     <Clock size={16} /> Mis Fichajes del Mes
                 </h3>
                 <p className="text-[10px] text-indigo-500 mt-0.5">Registro de jornada según art. 34.9 ET (RDL 8/2019)</p>
             </div>
-        <div className="divide-y divide-slate-100">
-            {/* Summary */}
-            <div className="p-4 flex items-center justify-between bg-slate-50">
-                <div>
-                    <span className="text-xs font-bold text-slate-500 uppercase">{monthLabel}</span>
-                    <p className="text-lg font-extrabold text-slate-800">{totalHours.toFixed(1)}h <span className="text-xs font-bold text-slate-400">en {logs.length} días</span></p>
+            <div className="divide-y divide-slate-100">
+                {/* Summary */}
+                <div className="p-4 flex items-center justify-between bg-slate-50">
+                    <div>
+                        <span className="text-xs font-bold text-slate-500 uppercase">{monthLabel}</span>
+                        <p className="text-lg font-extrabold text-slate-800">{totalHours.toFixed(1)}h <span className="text-xs font-bold text-slate-400">en {logs.length} días</span></p>
+                    </div>
+                    {isConfirmed ? (
+                        <div className="flex flex-col items-end">
+                            <span className="text-[10px] font-bold bg-green-100 text-green-700 px-3 py-1 rounded-full flex items-center gap-1">
+                                <CheckCircle size={12} /> Confirmado
+                            </span>
+                            {confirmedAt && <span className="text-[9px] text-slate-400 mt-1">{new Date(confirmedAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>}
+                        </div>
+                    ) : (
+                        <button
+                            onClick={handleConfirm}
+                            disabled={logs.length === 0}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all disabled:opacity-40 disabled:shadow-none flex items-center gap-1.5"
+                        >
+                            <CheckCircle size={14} /> Confirmar Horas
+                        </button>
+                    )}
                 </div>
-                {isConfirmed ? (
-                    <div className="flex flex-col items-end">
-                        <span className="text-[10px] font-bold bg-green-100 text-green-700 px-3 py-1 rounded-full flex items-center gap-1">
-                            <CheckCircle size={12} /> Confirmado
-                        </span>
-                        {confirmedAt && <span className="text-[9px] text-slate-400 mt-1">{new Date(confirmedAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>}
+
+                {/* Log list */}
+                {logs.length === 0 ? (
+                    <div className="p-6 text-center text-slate-400">
+                        <p className="text-2xl mb-1">📭</p>
+                        <p className="text-xs font-medium">No hay fichajes este mes</p>
                     </div>
                 ) : (
-                    <button
-                        onClick={handleConfirm}
-                        disabled={logs.length === 0}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all disabled:opacity-40 disabled:shadow-none flex items-center gap-1.5"
-                    >
-                        <CheckCircle size={14} /> Confirmar Horas
-                    </button>
+                    <div className="max-h-64 overflow-y-auto">
+                        {logs.map(log => {
+                            const hrs = log.clock_in && log.clock_out ? ((new Date(log.clock_out) - new Date(log.clock_in)) / (1000 * 60 * 60)).toFixed(1) : '-';
+                            const dayName = new Date(log.date).toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' });
+                            return (
+                                <div key={log.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors">
+                                    <span className="text-xs font-medium text-slate-600 capitalize w-24">{dayName}</span>
+                                    <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">{formatTime(log.clock_in)}</span>
+                                    <span className="text-slate-300 text-xs">→</span>
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${log.clock_out ? 'text-red-600 bg-red-50' : 'text-amber-500 bg-amber-50 italic'}`}>
+                                        {log.clock_out ? formatTime(log.clock_out) : 'Activo'}
+                                    </span>
+                                    <span className="text-xs font-extrabold text-slate-700 w-12 text-right">{hrs}h</span>
+                                </div>
+                            );
+                        })}
+                    </div>
                 )}
+
+                {/* Legal footer */}
+                <div className="p-3 bg-slate-50">
+                    <p className="text-[9px] text-slate-400 text-center leading-relaxed">
+                        Al pulsar "Confirmar Horas" declaras que los registros mostrados son correctos, conforme al art. 34.9 del Estatuto de los Trabajadores.
+                    </p>
+                </div>
             </div>
 
-            {/* Log list */}
-            {logs.length === 0 ? (
-                <div className="p-6 text-center text-slate-400">
-                    <p className="text-2xl mb-1">📭</p>
-                    <p className="text-xs font-medium">No hay fichajes este mes</p>
-                </div>
-            ) : (
-                <div className="max-h-64 overflow-y-auto">
-                    {logs.map(log => {
-                        const hrs = log.clock_in && log.clock_out ? ((new Date(log.clock_out) - new Date(log.clock_in)) / (1000 * 60 * 60)).toFixed(1) : '-';
-                        const dayName = new Date(log.date).toLocaleDateString('es-ES', { weekday: 'short', day: '2-digit', month: 'short' });
-                        return (
-                            <div key={log.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors">
-                                <span className="text-xs font-medium text-slate-600 capitalize w-24">{dayName}</span>
-                                <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">{formatTime(log.clock_in)}</span>
-                                <span className="text-slate-300 text-xs">→</span>
-                                <span className={`text-xs font-bold px-2 py-0.5 rounded ${log.clock_out ? 'text-red-600 bg-red-50' : 'text-amber-500 bg-amber-50 italic'}`}>
-                                    {log.clock_out ? formatTime(log.clock_out) : 'Activo'}
-                                </span>
-                                <span className="text-xs font-extrabold text-slate-700 w-12 text-right">{hrs}h</span>
+            {/* PIN Signature Modals */}
+            {pinModalMode && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-200 p-6 flex flex-col gap-4">
+                        <div className="flex justify-between items-start">
+                            <h3 className="font-bold text-slate-800 text-base">
+                                {pinModalMode === 'create' ? 'Configurar PIN de Firma' : 'Firma Digital de Jornada'}
+                            </h3>
+                            <button onClick={() => setPinModalMode(null)} className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors">
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {pinModalMode === 'create' ? (
+                            <div className="flex flex-col gap-3">
+                                <p className="text-xs text-slate-500 leading-relaxed">
+                                    Para firmar tus horas mensuales de forma 100% legal, debes crear un **PIN de Firma de 4 dígitos**. Este PIN será privado e intransferible.
+                                </p>
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Introduce tu PIN de 4 dígitos</label>
+                                        <input
+                                            type="password"
+                                            inputMode="numeric"
+                                            pattern="[0-9]*"
+                                            maxLength={4}
+                                            value={pinInput}
+                                            onChange={(e) => {
+                                                const val = e.target.value.replace(/[^0-9]/g, '');
+                                                setPinInput(val);
+                                            }}
+                                            placeholder="••••"
+                                            className="w-full text-center text-xl font-bold py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-all tracking-widest bg-slate-50"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Repite el PIN para confirmar</label>
+                                        <input
+                                            type="password"
+                                            inputMode="numeric"
+                                            pattern="[0-9]*"
+                                            maxLength={4}
+                                            value={pinInputConfirm}
+                                            onChange={(e) => {
+                                                const val = e.target.value.replace(/[^0-9]/g, '');
+                                                setPinInputConfirm(val);
+                                            }}
+                                            placeholder="••••"
+                                            className="w-full text-center text-xl font-bold py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-all tracking-widest bg-slate-50"
+                                        />
+                                    </div>
+                                </div>
                             </div>
-                        );
-                    })}
+                        ) : (
+                            <div className="flex flex-col gap-3">
+                                <p className="text-xs text-slate-500 leading-relaxed">
+                                    Introduce tu PIN de 4 dígitos para firmar el registro de jornada del mes de **{monthLabel}** ({totalHours.toFixed(1)}h trabajadas).
+                                </p>
+                                <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100 text-xs text-amber-900 leading-relaxed font-semibold italic">
+                                    "Declaro bajo mi responsabilidad que el registro de jornada mensual detallado es correcto y refleja fielmente las horas trabajadas."
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">PIN de Firma de 4 dígitos</label>
+                                    <input
+                                        type="password"
+                                        inputMode="numeric"
+                                        pattern="[0-9]*"
+                                        maxLength={4}
+                                        value={pinInput}
+                                        onChange={(e) => {
+                                            const val = e.target.value.replace(/[^0-9]/g, '');
+                                            setPinInput(val);
+                                        }}
+                                        placeholder="••••"
+                                        className="w-full text-center text-xl font-bold py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-all tracking-widest bg-slate-50"
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        {pinError && (
+                            <p className="text-xs font-bold text-red-500 text-center animate-pulse">{pinError}</p>
+                        )}
+
+                        <div className="flex gap-2 mt-2">
+                            <button
+                                onClick={() => setPinModalMode(null)}
+                                className="w-1/3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-3 rounded-xl transition-all text-xs"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    setPinError('');
+                                    if (pinModalMode === 'create') {
+                                        if (!/^\d{4}$/.test(pinInput)) {
+                                            setPinError('El PIN debe tener exactamente 4 números.');
+                                            return;
+                                        }
+                                        if (pinInput !== pinInputConfirm) {
+                                            setPinError('Los PINs introducidos no coinciden.');
+                                            return;
+                                        }
+                                        try {
+                                            const hash = await hashPIN(pinInput);
+                                            const { data: driverRes } = await supabase.from('drivers').select('*').eq('id', currentDriverId).single();
+                                            const driverObj = driverRes || {};
+                                            const driverDataObj = driverObj.data || {};
+                                            const updatedData = { ...driverDataObj, signaturePinHash: hash };
+                                            
+                                            const { error } = await supabase
+                                                .from('drivers')
+                                                .update({ data: updatedData })
+                                                .eq('id', currentDriverId);
+
+                                            if (error) throw error;
+                                            await proceedWithSignature();
+                                        } catch(e) {
+                                            console.error('Error guardando PIN:', e);
+                                            setPinError('Error al guardar el PIN.');
+                                        }
+                                    } else {
+                                        if (!/^\d{4}$/.test(pinInput)) {
+                                            setPinError('Introduce un PIN de 4 números.');
+                                            return;
+                                        }
+                                        try {
+                                            const hash = await hashPIN(pinInput);
+                                            const { data: driverRes } = await supabase.from('drivers').select('*').eq('id', currentDriverId).single();
+                                            const driverObj = driverRes || {};
+                                            const driverDataObj = driverObj.data || {};
+                                            
+                                            if (driverDataObj.signaturePinHash === hash) {
+                                                await proceedWithSignature();
+                                            } else {
+                                                setPinError('El PIN introducido es incorrecto.');
+                                            }
+                                        } catch(e) {
+                                            console.error('Error al validar firma:', e);
+                                            setPinError('PIN incorrecto o error de conexión.');
+                                        }
+                                    }
+                                }}
+                                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 text-xs"
+                            >
+                                <CheckCircle size={14} />
+                                {pinModalMode === 'create' ? 'Configurar y Firmar' : 'Confirmar y Firmar'}
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
-
-            {/* Legal footer */}
-            <div className="p-3 bg-slate-50">
-                <p className="text-[9px] text-slate-400 text-center leading-relaxed">
-                    Al pulsar "Confirmar Horas" declaras que los registros mostrados son correctos, conforme al art. 34.9 del Estatuto de los Trabajadores.
-                </p>
-            </div>
-            </div>
         </div>
     );
 };

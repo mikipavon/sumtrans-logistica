@@ -103,19 +103,50 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
                     clock_in: originalLog.clock_in,
                     clock_out: originalLog.clock_out
                 },
-                ...(newValues ? { modified: newValues } : {})
-            });
-            // Conservar últimos 2000 registros de auditoría
-            if (auditHistory.length > 2000) auditHistory = auditHistory.slice(0, 2000);
-            await supabase.from('settings').upsert({ key: 'time_logs_audit', value: JSON.stringify(auditHistory) });
-        } catch(e) {
-            console.warn('[Audit] Error guardando auditoría:', e);
+                 ...(newValues ? { modified: newValues } : {})
+             });
+             // Conservar últimos 2000 registros de auditoría
+             if (auditHistory.length > 2000) auditHistory = auditHistory.slice(0, 2000);
+             await supabase.from('settings').upsert({ key: 'time_logs_audit', value: JSON.stringify(auditHistory) });
+         } catch(e) {
+             console.warn('[Audit] Error guardando auditoría:', e);
+         }
+     };
+
+    const isMonthConfirmed = async (driverId, logDate) => {
+        try {
+            const logMonth = logDate.slice(0, 7);
+            const confirmKey = `timelog_confirm_${driverId}_${logMonth}`;
+            
+            const { data } = await supabase
+                .from('settings')
+                .select('value')
+                .eq('key', 'timelog_confirmations')
+                .maybeSingle();
+            
+            if (data?.value) {
+                const confirmations = JSON.parse(data.value);
+                return confirmations.some(c => String(c.key) === String(confirmKey));
+            }
+        } catch (e) {
+            console.error("Error checking log confirmation:", e);
         }
+        return false;
     };
 
     const saveEdit = async (id) => {
         try {
             const originalLog = logs.find(l => l.id === id);
+            
+            if (originalLog) {
+                const confirmed = await isMonthConfirmed(originalLog.driver_id, originalLog.date);
+                if (confirmed) {
+                    alert("⚠️ OPERACIÓN BLOQUEADA: Este mes está firmado digitalmente por el conductor y se encuentra SELLADO legalmente. No es posible realizar modificaciones.");
+                    setEditingLogId(null);
+                    return;
+                }
+            }
+
             const updates = {
                 clock_in: editForm.clock_in ? new Date(editForm.clock_in).toISOString() : null,
                 clock_out: editForm.clock_out ? new Date(editForm.clock_out).toISOString() : null,
@@ -134,9 +165,19 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
     };
 
     const deleteLog = async (id) => {
-        if (!window.confirm("⚠️ ATENCIÓN: Borrar un fichaje queda registrado en el historial de auditoría.\n\n¿Estás seguro de que quieres borrar este registro?")) return;
         try {
             const originalLog = logs.find(l => l.id === id);
+            
+            if (originalLog) {
+                const confirmed = await isMonthConfirmed(originalLog.driver_id, originalLog.date);
+                if (confirmed) {
+                    alert("⚠️ OPERACIÓN BLOQUEADA: Este mes está firmado digitalmente por el conductor y se encuentra SELLADO legalmente. No es posible borrar este fichaje.");
+                    return;
+                }
+            }
+
+            if (!window.confirm("⚠️ ATENCIÓN: Borrar un fichaje queda registrado en el historial de auditoría.\n\n¿Estás seguro de que quieres borrar este registro?")) return;
+            
             // Registrar auditoría ANTES de borrar
             if (originalLog) {
                 await logAudit('delete', originalLog);

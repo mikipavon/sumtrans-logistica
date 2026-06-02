@@ -26,8 +26,8 @@ const getBase64FromUrl = async (url) => {
  * Genera un Justificante de Entrega (POD) en PDF con firma y foto.
  * @param {Object} shipment - El objeto del envío completo.
  */
-export const generateDeliveryPDF = async (shipment) => {
-    if (!shipment) return;
+const createDeliveryPDFDoc = async (shipment) => {
+    if (!shipment) return null;
 
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -92,7 +92,6 @@ export const generateDeliveryPDF = async (shipment) => {
         }
     });
 
-
     const currentY = doc.lastAutoTable.finalY + 15;
 
     // --- DATOS DEL RECEPTOR ---
@@ -129,7 +128,6 @@ export const generateDeliveryPDF = async (shipment) => {
     if (shipment.deliverySignature) {
         const sigBase64 = await getBase64FromUrl(shipment.deliverySignature);
         if (sigBase64) {
-            // Usamos JPEG para evitar problemas de transparencia que resultan en cuadros negros
             doc.addImage(sigBase64, 'JPEG', margin + 5, imageY + 5, (pageWidth / 2) - 30, 50);
         }
     } else {
@@ -141,7 +139,6 @@ export const generateDeliveryPDF = async (shipment) => {
     if (photoToDisplay) {
         const photoBase64 = await getBase64FromUrl(photoToDisplay);
         if (photoBase64) {
-            // La foto suele ser rectangular, la ajustamos
             doc.addImage(photoBase64, 'JPEG', (pageWidth / 2) + 15, imageY + 5, (pageWidth / 2) - 30, 50);
         }
     } else {
@@ -169,7 +166,18 @@ export const generateDeliveryPDF = async (shipment) => {
     doc.text('Este documento es un comprobante de entrega digital generado por SUMTRANS App.', pageWidth / 2, footerY, { align: 'center' });
     doc.text('SUMTRANS LOGISTICA - Conectando destinos.', pageWidth / 2, footerY + 4, { align: 'center' });
 
-    // --- GUARDAR ARCHIVO ---
+    return doc;
+};
+
+export const generateDeliveryPDF = async (shipment) => {
+    const doc = await createDeliveryPDFDoc(shipment);
+    if (!doc) return;
     const fileName = `POD_${shipment.id}_${shipment.destinationName || 'Envio'}.pdf`.replace(/\s+/g, '_');
     doc.save(fileName);
+};
+
+export const generateDeliveryPDFBlob = async (shipment) => {
+    const doc = await createDeliveryPDFDoc(shipment);
+    if (!doc) return null;
+    return doc.output('blob');
 };
