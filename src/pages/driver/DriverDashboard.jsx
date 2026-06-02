@@ -658,8 +658,30 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
     const [isVisible, setIsVisible] = useState(false);
     const [isConfirmed, setIsConfirmed] = useState(false);
     const [confirmedAt, setConfirmedAt] = useState(null);
-    const currentMonth = new Date().toISOString().slice(0, 7);
-    const confirmKey = `timelog_confirm_${currentDriverId}_${currentMonth}`;
+
+    // Dynamic month selection
+    const monthOptions = useMemo(() => {
+        const options = [];
+        const d = new Date();
+        for (let i = 0; i < 6; i++) {
+            options.push(d.toISOString().slice(0, 7));
+            d.setMonth(d.getMonth() - 1);
+        }
+        return options;
+    }, []);
+
+    const [selectedMonth, setSelectedMonth] = useState(() => {
+        const d = new Date();
+        // Si estamos en los primeros 10 días, preseleccionar el mes anterior
+        if (d.getDate() <= 10) {
+            d.setMonth(d.getMonth() - 1);
+        }
+        return d.toISOString().slice(0, 7);
+    });
+
+    const confirmKey = `timelog_confirm_${currentDriverId}_${selectedMonth}`;
+    const activeMonthStr = new Date().toISOString().slice(0, 7);
+    const isMonthInProgress = selectedMonth >= activeMonthStr;
 
     // PIN Signature States
     const [pinModalMode, setPinModalMode] = useState(null); // null, 'create', 'confirm'
@@ -671,8 +693,10 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
         if (!currentDriverId) return;
         const fetchData = async () => {
             setIsLoading(true);
+            setIsConfirmed(false);
+            setConfirmedAt(null);
             try {
-                const startOfMonth = `${currentMonth}-01`;
+                const startOfMonth = `${selectedMonth}-01`;
                 const endOfMonth = new Date(new Date(startOfMonth).getFullYear(), new Date(startOfMonth).getMonth() + 1, 0).toISOString().split('T')[0];
                 
                 const [logsResult, confirmResult, visibilityResult] = await Promise.all([
@@ -716,7 +740,7 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
             }
         };
         fetchData();
-    }, [currentDriverId, currentMonth]);
+    }, [currentDriverId, selectedMonth]);
 
     const proceedWithSignature = async () => {
         try {
@@ -728,7 +752,7 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
                 key: confirmKey,
                 driverId: currentDriverId,
                 driverName: driverName || 'Conductor',
-                month: currentMonth,
+                month: selectedMonth,
                 timestamp: now,
                 totalHours: totalHours.toFixed(2),
                 totalDays: logs.length
@@ -788,7 +812,7 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
         return sum + (new Date(log.clock_out) - new Date(log.clock_in)) / (1000 * 60 * 60);
     }, 0);
 
-    const monthLabel = new Date(currentMonth + '-01').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+    const monthLabel = new Date(selectedMonth + '-01').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
 
     if (isLoading) {
         return <div className="p-6 text-center text-slate-400 text-sm animate-pulse">Cargando fichajes...</div>;
@@ -800,11 +824,27 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
 
     return (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden relative">
-            <div className="p-4 bg-indigo-50 border-b border-indigo-100">
-                <h3 className="font-bold text-indigo-800 text-sm flex items-center gap-2">
-                    <Clock size={16} /> Mis Fichajes del Mes
-                </h3>
-                <p className="text-[10px] text-indigo-500 mt-0.5">Registro de jornada según art. 34.9 ET (RDL 8/2019)</p>
+            <div className="p-4 bg-indigo-50 border-b border-indigo-100 flex justify-between items-center flex-wrap gap-2">
+                <div>
+                    <h3 className="font-bold text-indigo-800 text-sm flex items-center gap-2">
+                        <Clock size={16} /> Mis Fichajes del Mes
+                    </h3>
+                    <p className="text-[10px] text-indigo-500 mt-0.5">Registro de jornada según art. 34.9 ET (RDL 8/2019)</p>
+                </div>
+                <select
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                    className="px-3 py-1.5 bg-white border border-indigo-200 rounded-xl text-xs font-bold text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-sm outline-none"
+                >
+                    {monthOptions.map(m => {
+                        const label = new Date(m + '-01').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+                        return (
+                            <option key={m} value={m} className="capitalize">
+                                {label}
+                            </option>
+                        );
+                    })}
+                </select>
             </div>
             <div className="divide-y divide-slate-100">
                 {/* Summary */}
@@ -820,6 +860,10 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
                             </span>
                             {confirmedAt && <span className="text-[9px] text-slate-400 mt-1">{new Date(confirmedAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>}
                         </div>
+                    ) : isMonthInProgress ? (
+                        <span className="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1.5 rounded-xl text-center max-w-[200px]" title="Este mes todavía está en curso. Podrás firmarlo cuando acabe.">
+                            ⏳ En curso (No firmable)
+                        </span>
                     ) : (
                         <button
                             onClick={handleConfirm}
