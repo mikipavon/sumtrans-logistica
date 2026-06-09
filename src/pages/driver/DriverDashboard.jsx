@@ -1587,6 +1587,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const [showCajaTour, setShowCajaTour] = useState(false);
     const [showRepartaTour, setShowRepartaTour] = useState(false);
     const [showEditTour, setShowEditTour] = useState(false);
+    const [tourMenuOpen, setTourMenuOpen] = useState(false);
     const [tourDemoMode, setTourDemoMode] = useState(null);
 
     // Objetos de envío de demo para los tutoriales ──────────────────────
@@ -3971,100 +3972,89 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
             {/* ── BOTÓN FLOTANTE TUTORIALES (solo en Modo Prueba) ── */}
             {isTestMode && !showTour && !showShipmentTour && !showAlertsTour && !showCajaTour && !showRepartaTour && !showEditTour && (
-                <div style={{
-                    position: 'fixed', bottom: 340, right: 16, zIndex: 9000,
-                    display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8,
-                }}>
+                <>
+                    {/* Backdrop */}
+                    {tourMenuOpen && (
+                        <div
+                            onClick={() => setTourMenuOpen(false)}
+                            style={{
+                                position: 'fixed', inset: 0, zIndex: 8990,
+                                background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(2px)',
+                            }}
+                        />
+                    )}
+
+                    {/* Bottom sheet — siempre montado, se mueve con transform */}
                     <div style={{
-                        background: 'linear-gradient(135deg,#1e293b,#0f172a)',
-                        borderRadius: 20, padding: '6px 14px 6px 8px',
-                        display: 'flex', gap: 6, flexDirection: 'column',
-                        boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
-                        border: '1px solid rgba(255,255,255,0.08)',
+                        position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 9000,
+                        transform: tourMenuOpen ? 'translateY(0)' : 'translateY(110%)',
+                        transition: 'transform 0.28s cubic-bezier(0.32,0.72,0,1)',
+                        background: 'linear-gradient(180deg,#1e293b 0%,#0f172a 100%)',
+                        borderRadius: '22px 22px 0 0',
+                        boxShadow: '0 -8px 40px rgba(0,0,0,0.5)',
+                        paddingBottom: 'env(safe-area-inset-bottom,12px)',
                     }}>
-                        <button
-                            onClick={() => setShowTour(true)}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: 8,
-                                background: 'none', border: 'none', cursor: 'pointer',
-                                color: 'white', padding: '6px 4px', borderRadius: 10,
-                                fontSize: 12, fontWeight: 700,
-                            }}
-                        >
-                            <span style={{ fontSize: 18 }}>🗺️</span> Tour general de la app
-                        </button>
-                        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-                        <button
-                            onClick={() => setShowShipmentTour(true)}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: 8,
-                                background: 'none', border: 'none', cursor: 'pointer',
-                                color: 'white', padding: '6px 4px', borderRadius: 10,
-                                fontSize: 12, fontWeight: 700,
-                            }}
-                        >
-                            <span style={{ fontSize: 18 }}>📋</span> Cómo crear un albarán
-                        </button>
-                        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-                        <button
-                            onClick={() => setShowAlertsTour(true)}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: 8,
-                                background: 'none', border: 'none', cursor: 'pointer',
-                                color: 'white', padding: '6px 4px', borderRadius: 10,
-                                fontSize: 12, fontWeight: 700,
-                            }}
-                        >
-                            <span style={{ fontSize: 18 }}>🔔</span> Notificaciones y alertas
-                        </button>
-                        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-                        <button
-                            onClick={() => setShowCajaTour(true)}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: 8,
-                                background: 'none', border: 'none', cursor: 'pointer',
-                                color: 'white', padding: '6px 4px', borderRadius: 10,
-                                fontSize: 12, fontWeight: 700,
-                            }}
-                        >
-                            <span style={{ fontSize: 18 }}>🏦</span> Caja y justificantes
-                        </button>
-                        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-                        <button
-                            onClick={() => setShowRepartaTour(true)}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: 8,
-                                background: 'none', border: 'none', cursor: 'pointer',
-                                color: 'white', padding: '6px 4px', borderRadius: 10,
-                                fontSize: 12, fontWeight: 700,
-                            }}
-                        >
-                            <span style={{ fontSize: 18 }}>🚚</span> Gestión del Reparto
-                        </button>
-                        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
-                        <button
-                            onClick={() => setShowEditTour(true)}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: 8,
-                                background: 'none', border: 'none', cursor: 'pointer',
-                                color: 'white', padding: '6px 4px', borderRadius: 10,
-                                fontSize: 12, fontWeight: 700,
-                            }}
-                        >
-                            <span style={{ fontSize: 18 }}>✏️</span> Corregir un albarán
-                        </button>
+                        {/* Handle */}
+                        <div style={{ display:'flex', justifyContent:'center', padding:'10px 0 4px' }}>
+                            <div style={{ width:36, height:4, borderRadius:2, background:'rgba(255,255,255,0.18)' }} />
+                        </div>
+                        {/* Título */}
+                        <p style={{ color:'rgba(255,255,255,0.45)', fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.1em', textAlign:'center', margin:'0 0 8px' }}>
+                            📚 Tutoriales
+                        </p>
+                        {/* Opciones */}
+                        <div style={{ padding: '0 12px 16px', display:'flex', flexDirection:'column', gap:2 }}>
+                            {[
+                                { emoji:'🗺️', label:'Tour general de la app',   fn:() => { setShowTour(true);         setTourMenuOpen(false); } },
+                                { emoji:'📋', label:'Cómo crear un albarán',     fn:() => { setShowShipmentTour(true); setTourMenuOpen(false); } },
+                                { emoji:'🔔', label:'Notificaciones y alertas',  fn:() => { setShowAlertsTour(true);   setTourMenuOpen(false); } },
+                                { emoji:'🏦', label:'Caja y justificantes',      fn:() => { setShowCajaTour(true);     setTourMenuOpen(false); } },
+                                { emoji:'🚚', label:'Gestión del Reparto',       fn:() => { setShowRepartaTour(true);  setTourMenuOpen(false); } },
+                                { emoji:'✏️', label:'Corregir un albarán',       fn:() => { setShowEditTour(true);     setTourMenuOpen(false); } },
+                            ].map(({ emoji, label, fn }) => (
+                                <button
+                                    key={label}
+                                    onClick={fn}
+                                    style={{
+                                        display: 'flex', alignItems: 'center', gap: 14,
+                                        background: 'rgba(255,255,255,0.05)',
+                                        border: '1px solid rgba(255,255,255,0.06)',
+                                        borderRadius: 14, padding: '13px 16px',
+                                        color: 'white', fontSize: 14, fontWeight: 600,
+                                        cursor: 'pointer', textAlign: 'left', width: '100%',
+                                    }}
+                                >
+                                    <span style={{ fontSize: 22, lineHeight:1, flexShrink:0 }}>{emoji}</span>
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
                     </div>
-                    <div style={{
-                        background: 'linear-gradient(135deg,#f59e0b,#d97706)',
-                        borderRadius: 30, width: 42, height: 42,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 20, boxShadow: '0 4px 14px rgba(245,158,11,0.5)',
-                        cursor: 'pointer',
-                    }}>
-                        📚
-                    </div>
-                </div>
+
+                    {/* FAB 📚 */}
+                    <button
+                        onClick={() => setTourMenuOpen(o => !o)}
+                        style={{
+                            position: 'fixed', bottom: 90, right: 16, zIndex: 9001,
+                            width: 46, height: 46, borderRadius: '50%',
+                            background: tourMenuOpen
+                                ? 'linear-gradient(135deg,#475569,#334155)'
+                                : 'linear-gradient(135deg,#f59e0b,#d97706)',
+                            boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+                            border: 'none', cursor: 'pointer',
+                            fontSize: tourMenuOpen ? 16 : 20,
+                            display:'flex', alignItems:'center', justifyContent:'center',
+                            color: 'white', fontWeight: 700,
+                            transition: 'background 0.2s',
+                        }}
+                    >
+                        {tourMenuOpen ? '✕' : '📚'}
+                    </button>
+                </>
             )}
+
+
+
 
             <IncidentModal
                 isOpen={isIncidentModalOpen}
