@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 
 export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) {
     const [logs, setLogs] = useState([]);
+    const [absences, setAbsences] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
     const [editingLogId, setEditingLogId] = useState(null);
@@ -33,16 +34,14 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
             const startOfMonth = `${month}-01`;
             const endOfMonth = new Date(new Date(startOfMonth).getFullYear(), new Date(startOfMonth).getMonth() + 1, 0).toISOString().split('T')[0];
             
-            const { data, error } = await supabase
-                .from('time_logs')
-                .select('*')
-                .gte('date', startOfMonth)
-                .lte('date', endOfMonth)
-                .order('date', { ascending: false })
-                .order('clock_in', { ascending: false });
+            const [{ data: logsData, error }, { data: absData }] = await Promise.all([
+                supabase.from('time_logs').select('*').gte('date', startOfMonth).lte('date', endOfMonth).order('date', { ascending: false }).order('clock_in', { ascending: false }),
+                supabase.from('driver_absences').select('*').gte('date', startOfMonth).lte('date', endOfMonth).order('date', { ascending: false })
+            ]);
 
             if (error) throw error;
-            setLogs(data || []);
+            setLogs(logsData || []);
+            setAbsences(absData || []);
         } catch (error) {
             console.error("Error fetching time logs:", error);
         } finally {
@@ -204,20 +203,43 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
 
     // ─── EXPORT EXCEL ───
     const exportExcel = () => {
-        if (logs.length === 0) return alert('No hay registros para exportar.');
+        if (logs.length === 0 && absences.length === 0) return alert('No hay registros para exportar.');
 
-        // Sort chronologically for export
+        const ABSENCE_TYPES_COLOR = { 'Vacaciones': '🏖️', 'Día Libre': '☀️', 'Baja Médica': '🏥', 'Asuntos Propios': '📋' };
+
+        // Sort chronologically for export — merge logs + absences
         const sorted = [...logs].sort((a, b) => new Date(a.date) - new Date(b.date));
+        const sortedAbs = [...absences].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        // Merge: interleave absences and logs by date
+        const allRows = [
+            ...sorted.map(l => ({ ...l, _kind: 'log' })),
+            ...sortedAbs.map(a => ({ ...a, _kind: 'absence' }))
+        ].sort((a, b) => a.date.localeCompare(b.date));
 
         // Sheet 1: Detalle diario
-        const detailRows = sorted.map(log => ({
-            'Fecha': formatDateFull(log.date),
-            'Conductor': log.driver_name || 'Sin nombre',
-            'Hora Entrada': formatTime(log.clock_in),
-            'Hora Salida': log.clock_out ? formatTime(log.clock_out) : 'Sin fichar salida',
-            'Horas Trabajadas': log.clock_in && log.clock_out ? calculateHoursNum(log.clock_in, log.clock_out).toFixed(2) : '0',
-            'Observaciones': !log.clock_out ? 'Salida no registrada' : ''
-        }));
+        const detailRows = allRows.map(row => {
+            if (row._kind === 'absence') {
+                return {
+                    'Fecha': formatDateFull(row.date),
+                    'Conductor': row.driver_name || 'Sin nombre',
+                    'Tipo': `${ABSENCE_TYPES_COLOR[row.type] || ''} ${row.type}`,
+                    'Hora Entrada': '—',
+                    'Hora Salida': '—',
+                    'Horas Trabajadas': '0',
+                    'Observaciones': 'Ausencia programada',
+                };
+            }
+            return {
+                'Fecha': formatDateFull(row.date),
+                'Conductor': row.driver_name || 'Sin nombre',
+                'Tipo': '📅 Jornada',
+                'Hora Entrada': formatTime(row.clock_in),
+                'Hora Salida': row.clock_out ? formatTime(row.clock_out) : 'Sin fichar salida',
+                'Horas Trabajadas': row.clock_in && row.clock_out ? calculateHoursNum(row.clock_in, row.clock_out).toFixed(2) : '0',
+                'Observaciones': !row.clock_out ? 'Salida no registrada' : '',
+            };
+        });
 
         // Sheet 2: Resumen por conductor
         const summaryRows = Object.entries(driverSummary).map(([name, data]) => ({
@@ -235,6 +257,7 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
         wsDetail['!cols'] = [
             { wch: 28 }, // Fecha
             { wch: 22 }, // Conductor
+            { wch: 20 }, // Tipo
             { wch: 14 }, // Entrada
             { wch: 18 }, // Salida
             { wch: 18 }, // Horas
@@ -258,7 +281,7 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
 
     // ─── EXPORT PDF (via print) ───
     const exportPDF = () => {
-        if (logs.length === 0) return alert('No hay registros para exportar.');
+        if (logs.length === 0 && absences.length === 0) return alert('No hay registros para exportar.');
 
         const sorted = [...logs].sort((a, b) => new Date(a.date) - new Date(b.date));
 
@@ -274,15 +297,34 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
             </tr>`
         ).join('');
 
-        const rowsHTML = sorted.map(log =>
-            `<tr>
-                <td style="padding:6px 12px;border:1px solid #e2e8f0;text-transform:capitalize">${formatDateFull(log.date)}</td>
-                <td style="padding:6px 12px;border:1px solid #e2e8f0;font-weight:bold">${log.driver_name || 'Sin nombre'}</td>
-                <td style="padding:6px 12px;border:1px solid #e2e8f0;text-align:center;color:#059669;font-weight:bold">${formatTime(log.clock_in)}</td>
-                <td style="padding:6px 12px;border:1px solid #e2e8f0;text-align:center;color:${log.clock_out ? '#dc2626' : '#d97706'};font-weight:bold">${log.clock_out ? formatTime(log.clock_out) : 'Sin fichar'}</td>
-                <td style="padding:6px 12px;border:1px solid #e2e8f0;text-align:center;font-weight:bold">${calculateHours(log.clock_in, log.clock_out)}</td>
-            </tr>`
-        ).join('');
+        const ABSENCE_COLORS = { 'Vacaciones': '#dbeafe', 'Día Libre': '#fef3c7', 'Baja Médica': '#fee2e2', 'Asuntos Propios': '#f3e8ff' };
+        const ABSENCE_EMOJIS = { 'Vacaciones': '🏖️', 'Día Libre': '☀️', 'Baja Médica': '🏥', 'Asuntos Propios': '📋' };
+
+        // Merge logs + absences sorted by date
+        const allRows = [
+            ...sorted.map(l => ({ ...l, _kind: 'log' })),
+            ...[...absences].sort((a, b) => new Date(a.date) - new Date(b.date)).map(a => ({ ...a, _kind: 'absence' }))
+        ].sort((a, b) => a.date.localeCompare(b.date));
+
+        const rowsHTML = allRows.map(row => {
+            if (row._kind === 'absence') {
+                const bgColor = ABSENCE_COLORS[row.type] || '#f1f5f9';
+                const emoji   = ABSENCE_EMOJIS[row.type]  || '🏖️';
+                return `<tr style="background:${bgColor}">
+                    <td style="padding:6px 12px;border:1px solid #e2e8f0;text-transform:capitalize">${formatDateFull(row.date)}</td>
+                    <td style="padding:6px 12px;border:1px solid #e2e8f0;font-weight:bold">${row.driver_name || 'Sin nombre'}</td>
+                    <td style="padding:6px 12px;border:1px solid #e2e8f0;text-align:center;font-weight:bold" colspan="2">${emoji} ${row.type}</td>
+                    <td style="padding:6px 12px;border:1px solid #e2e8f0;text-align:center;color:#94a3b8">—</td>
+                </tr>`;
+            }
+            return `<tr>
+                <td style="padding:6px 12px;border:1px solid #e2e8f0;text-transform:capitalize">${formatDateFull(row.date)}</td>
+                <td style="padding:6px 12px;border:1px solid #e2e8f0;font-weight:bold">${row.driver_name || 'Sin nombre'}</td>
+                <td style="padding:6px 12px;border:1px solid #e2e8f0;text-align:center;color:#059669;font-weight:bold">${formatTime(row.clock_in)}</td>
+                <td style="padding:6px 12px;border:1px solid #e2e8f0;text-align:center;color:${row.clock_out ? '#dc2626' : '#d97706'};font-weight:bold">${row.clock_out ? formatTime(row.clock_out) : 'Sin fichar'}</td>
+                <td style="padding:6px 12px;border:1px solid #e2e8f0;text-align:center;font-weight:bold">${calculateHours(row.clock_in, row.clock_out)}</td>
+            </tr>`;
+        }).join('');
 
         const totalHoursAll = Object.values(driverSummary).reduce((sum, d) => sum + d.totalHours, 0);
 
@@ -483,41 +525,82 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
                                                 <p className="text-xs mt-1">Los fichajes se registran automáticamente cuando los conductores entran en la app.</p>
                                             </td>
                                         </tr>
-                                    ) : logs.map(log => (
-                                        <tr key={log.id} className="hover:bg-slate-50 transition-colors">
-                                            <td className="p-3 text-sm font-medium text-slate-700 capitalize">{formatDateShort(log.date)}</td>
-                                            <td className="p-3 text-sm font-bold text-slate-800">{log.driver_name}</td>
-                                            <td className="p-3">
-                                                {editingLogId === log.id ? (
-                                                    <input type="datetime-local" value={editForm.clock_in} onChange={e => setEditForm({...editForm, clock_in: e.target.value})} className="text-xs p-1.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none" />
-                                                ) : (
-                                                    <span className="text-sm text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded">{formatTime(log.clock_in)}</span>
-                                                )}
-                                            </td>
-                                            <td className="p-3">
-                                                {editingLogId === log.id ? (
-                                                    <input type="datetime-local" value={editForm.clock_out} onChange={e => setEditForm({...editForm, clock_out: e.target.value})} className="text-xs p-1.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none" />
-                                                ) : log.clock_out ? (
-                                                    <span className="text-sm text-red-600 font-bold bg-red-50 px-2 py-1 rounded">{formatTime(log.clock_out)}</span>
-                                                ) : (
-                                                    <span className="text-xs text-amber-500 font-bold italic">Trabajando...</span>
-                                                )}
-                                            </td>
-                                            <td className="p-3 text-sm font-bold text-slate-600">
-                                                {calculateHours(log.clock_in, log.clock_out)}
-                                            </td>
-                                            <td className="p-3 flex justify-end gap-2">
-                                                {editingLogId === log.id ? (
-                                                    <button onClick={() => saveEdit(log.id)} className="p-1.5 bg-blue-100 text-blue-600 hover:bg-blue-200 rounded-lg transition-colors"><CheckCircle size={16} /></button>
-                                                ) : (
-                                                    <>
-                                                        <button onClick={() => startEdit(log)} className="p-1.5 bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 rounded-lg transition-colors" title="Editar hora"><Edit2 size={16} /></button>
-                                                        <button onClick={() => deleteLog(log.id)} className="p-1.5 bg-slate-100 text-slate-500 hover:bg-red-100 hover:text-red-600 rounded-lg transition-colors" title="Borrar"><Trash2 size={16} /></button>
-                                                    </>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    ) : (() => {
+                                        // Merge logs + absences sorted by date DESC for display
+                                        const ABSENCE_STYLES = {
+                                            'Vacaciones':      'bg-blue-50 border-l-4 border-blue-400',
+                                            'Día Libre':       'bg-amber-50 border-l-4 border-amber-400',
+                                            'Baja Médica':     'bg-red-50 border-l-4 border-red-400',
+                                            'Asuntos Propios': 'bg-purple-50 border-l-4 border-purple-400',
+                                        };
+                                        const ABSENCE_TEXT = {
+                                            'Vacaciones':      'text-blue-700',
+                                            'Día Libre':       'text-amber-700',
+                                            'Baja Médica':     'text-red-700',
+                                            'Asuntos Propios': 'text-purple-700',
+                                        };
+                                        const ABSENCE_EMOJIS = { 'Vacaciones': '🏖️', 'Día Libre': '☀️', 'Baja Médica': '🏥', 'Asuntos Propios': '📋' };
+
+                                        const allRows = [
+                                            ...logs.map(l => ({ ...l, _kind: 'log' })),
+                                            ...absences.map(a => ({ ...a, _kind: 'absence' }))
+                                        ].sort((a, b) => b.date.localeCompare(a.date) || (a._kind === 'log' && b._kind === 'log' ? new Date(b.clock_in) - new Date(a.clock_in) : 0));
+
+                                        return allRows.map(row => {
+                                            if (row._kind === 'absence') {
+                                                const rowStyle = ABSENCE_STYLES[row.type] || 'bg-slate-50';
+                                                const txtStyle = ABSENCE_TEXT[row.type]  || 'text-slate-700';
+                                                const emoji    = ABSENCE_EMOJIS[row.type] || '🏖️';
+                                                return (
+                                                    <tr key={`abs-${row.id}`} className={`${rowStyle} transition-colors`}>
+                                                        <td className="p-3 text-sm font-medium text-slate-700 capitalize">{formatDateShort(row.date)}</td>
+                                                        <td className="p-3 text-sm font-bold text-slate-800">{row.driver_name}</td>
+                                                        <td className={`p-3 text-sm font-bold ${txtStyle}`} colSpan={2}>
+                                                            {emoji} {row.type}
+                                                        </td>
+                                                        <td className="p-3 text-sm text-slate-400">—</td>
+                                                        <td className="p-3" />
+                                                    </tr>
+                                                );
+                                            }
+                                            const log = row;
+                                            return (
+                                                <tr key={log.id} className="hover:bg-slate-50 transition-colors">
+                                                    <td className="p-3 text-sm font-medium text-slate-700 capitalize">{formatDateShort(log.date)}</td>
+                                                    <td className="p-3 text-sm font-bold text-slate-800">{log.driver_name}</td>
+                                                    <td className="p-3">
+                                                        {editingLogId === log.id ? (
+                                                            <input type="datetime-local" value={editForm.clock_in} onChange={e => setEditForm({...editForm, clock_in: e.target.value})} className="text-xs p-1.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                                                        ) : (
+                                                            <span className="text-sm text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded">{formatTime(log.clock_in)}</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-3">
+                                                        {editingLogId === log.id ? (
+                                                            <input type="datetime-local" value={editForm.clock_out} onChange={e => setEditForm({...editForm, clock_out: e.target.value})} className="text-xs p-1.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                                                        ) : log.clock_out ? (
+                                                            <span className="text-sm text-red-600 font-bold bg-red-50 px-2 py-1 rounded">{formatTime(log.clock_out)}</span>
+                                                        ) : (
+                                                            <span className="text-xs text-amber-500 font-bold italic">Trabajando...</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-3 text-sm font-bold text-slate-600">
+                                                        {calculateHours(log.clock_in, log.clock_out)}
+                                                    </td>
+                                                    <td className="p-3 flex justify-end gap-2">
+                                                        {editingLogId === log.id ? (
+                                                            <button onClick={() => saveEdit(log.id)} className="p-1.5 bg-blue-100 text-blue-600 hover:bg-blue-200 rounded-lg transition-colors"><CheckCircle size={16} /></button>
+                                                        ) : (
+                                                            <>
+                                                                <button onClick={() => startEdit(log)} className="p-1.5 bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-700 rounded-lg transition-colors" title="Editar hora"><Edit2 size={16} /></button>
+                                                                <button onClick={() => deleteLog(log.id)} className="p-1.5 bg-slate-100 text-slate-500 hover:bg-red-100 hover:text-red-600 rounded-lg transition-colors" title="Borrar"><Trash2 size={16} /></button>
+                                                            </>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        });
+                                    })()}
                                 </tbody>
                             </table>
                         </div>

@@ -211,11 +211,12 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     );
 
     // 4. Totales de Portes (priorizamos customAmount si está modificado)
-    const totalPrepaid = uniquePrepaidCollections.reduce((sum, s) => sum + parseAmount(s.customAmount !== undefined ? s.customAmount : s.amount), 0);
-    const totalDelivered = uniqueDeliveredCollections.reduce((sum, s) => sum + parseAmount(s.customAmount !== undefined ? s.customAmount : s.amount), 0);
+    const totalPrepaid = uniquePrepaidCollections.reduce((sum, s) => sum + parseAmount(parseAmount(s.customAmount) > 0 ? s.customAmount : s.amount), 0);
+    const totalDelivered = uniqueDeliveredCollections.reduce((sum, s) => sum + parseAmount(parseAmount(s.customAmount) > 0 ? s.customAmount : s.amount), 0);
     const totalManualPorte = manualPorteCollections.reduce((sum, c) => {
         const ship = (allShipments || []).find(s => s.id === c.shipmentId);
-        const amountToUse = ship ? (ship.customAmount !== undefined ? ship.customAmount : ship.amount) : c.amount;
+        const shipAmt = ship ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : null;
+        const amountToUse = (shipAmt !== null && parseAmount(shipAmt) > 0) ? shipAmt : c.amount;
         return sum + parseAmount(amountToUse);
     }, 0);
     const totalPorteValue = totalPrepaid + totalDelivered + totalManualPorte;
@@ -262,8 +263,8 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
             receiver: s.destinationName || 'Destinatario',
             payer: 'sender',
             detail: `Porte Pagado - ${s.id}`,
-            amount: parseAmount(s.customAmount !== undefined ? s.customAmount : s.amount).toFixed(2),
-            amountDisplay: `€${parseAmount(s.customAmount !== undefined ? s.customAmount : s.amount).toFixed(2)}`,
+            amount: parseAmount(parseAmount(s.customAmount) > 0 ? s.customAmount : s.amount).toFixed(2),
+            amountDisplay: `€${parseAmount(parseAmount(s.customAmount) > 0 ? s.customAmount : s.amount).toFixed(2)}`,
             colorClass: 'text-emerald-600',
             sourceTitle: 'Cobro Origen',
             source: 'shipment'
@@ -277,15 +278,16 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
             receiver: s.destinationName || 'Destinatario',
             payer: 'receiver',
             detail: `Porte Debido - ${s.id}`,
-            amount: parseAmount(s.customAmount !== undefined ? s.customAmount : s.amount).toFixed(2),
-            amountDisplay: `€${parseAmount(s.customAmount !== undefined ? s.customAmount : s.amount).toFixed(2)}`,
+            amount: parseAmount(parseAmount(s.customAmount) > 0 ? s.customAmount : s.amount).toFixed(2),
+            amountDisplay: `€${parseAmount(parseAmount(s.customAmount) > 0 ? s.customAmount : s.amount).toFixed(2)}`,
             colorClass: 'text-emerald-600',
             sourceTitle: 'Entrega',
             source: 'shipment'
         })),
         ...manualPorteCollections.map(c => {
             const ship = (allShipments || []).find(s => s.id === c.shipmentId);
-            const amountToUse = ship ? (ship.customAmount !== undefined ? ship.customAmount : ship.amount) : c.amount;
+            const shipAmt = ship ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : null;
+            const amountToUse = (shipAmt !== null && parseAmount(shipAmt) > 0) ? shipAmt : c.amount;
             return {
                 id: c.shipmentId || c.id,
                 key: `man-${c.id}`,

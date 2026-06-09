@@ -159,7 +159,14 @@ export default class Shipment {
    *   - Pagado sin COD → destinatario no paga nada
    */
   amountToCollectAtDelivery() {
-    const porte = parseFloat(this.customAmount) || parseFloat(this.amount) || 0;
+    // Usamos un parser robusto que elimina símbolos de moneda (€, $, etc.)
+    // parseFloat("€7.00") devuelve NaN, por eso necesitamos strip previo.
+    const parseAmt = (v) => {
+      if (v === null || v === undefined || v === '') return 0;
+      if (typeof v === 'number') return v;
+      return parseFloat(String(v).replace(/[^0-9.-]/g, '')) || 0;
+    };
+    const porte = parseAmt(this.customAmount) || parseAmt(this.amount) || 0;
     const cod = this.hasCod ? this.codAmount : 0;
 
     if (this.porteType === 'Debido') {

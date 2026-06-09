@@ -38,6 +38,12 @@ import { getQueueLength } from '../../utils/offlineQueue';
 import { getPackagesCount } from '../../utils/shipmentUtils';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import RouteMapModal from '../../components/driver/RouteMapModal';
+import DriverGuidedTour from '../../components/DriverGuidedTour';
+import DriverShipmentTour from '../../components/DriverShipmentTour';
+import DriverAlertsTour from '../../components/DriverAlertsTour';
+import DriverCajaTour from '../../components/DriverCajaTour';
+import DriverRepartaTour from '../../components/DriverRepartaTour';
+import DriverEditTour from '../../components/DriverEditTour';
 
 const normalizeClientName = (name) => {
     if (!name) return '';
@@ -129,7 +135,7 @@ const ShipmentCardUI = React.memo(({
     dragOverlay = false
 }) => {
     return (
-        <div className={`relative ${dragOverlay ? 'w-full' : 'mb-3'} group overflow-hidden rounded-xl`}>
+        <div id={index === 0 && !dragOverlay ? 'tour-first-card' : undefined} className={`relative ${dragOverlay ? 'w-full' : 'mb-3'} group overflow-hidden rounded-xl`}>
              {!dragOverlay && (
                  <div 
                     className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-700 flex items-center pl-6 transition-all duration-200"
@@ -151,6 +157,7 @@ const ShipmentCardUI = React.memo(({
              )}
 
             <div
+                id={index === 0 && !dragOverlay ? 'tour-first-card-inner' : undefined}
                 onClick={(e) => {
                     if (dragOverlay) return;
                     if (e.target.tagName !== 'BUTTON' && e.target.tagName !== 'INPUT' && e.target.closest('a') === null && e.target.closest('button') === null) {
@@ -282,6 +289,7 @@ const ShipmentCardUI = React.memo(({
 
                                     return (
                                         <a
+                                            id={index === 0 ? 'tour-gps-btn' : undefined}
                                             href={mapsHref}
                                             target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
                                             className="p-2.5 bg-white text-blue-600 rounded-xl shadow-md border border-blue-100 hover:bg-blue-50 transition-all active:scale-95 flex items-center justify-center font-bold gap-2 text-xs"
@@ -293,6 +301,7 @@ const ShipmentCardUI = React.memo(({
                                 })()}
                                 {(stop.type === 'Recogida' ? stop.originPhone : stop.destinationPhone) && (
                                     <a
+                                        id={index === 0 ? 'tour-phone-btn' : undefined}
                                         href={`tel:${stop.type === 'Recogida' ? stop.originPhone : stop.destinationPhone}`}
                                         onClick={(e) => e.stopPropagation()}
                                         className="p-2.5 bg-white text-emerald-600 rounded-xl shadow-md border border-emerald-100 hover:bg-emerald-50 transition-all active:scale-95 flex items-center justify-center"
@@ -300,7 +309,7 @@ const ShipmentCardUI = React.memo(({
                                         <Phone size={20} />
                                     </a>
                                 )}
-                                <div className="relative">
+                                <div id={index === 0 ? 'tour-doc-btn' : undefined} className="relative">
                                     <button
                                         onClick={(e) => { e.stopPropagation(); setShowDocActions(!showDocActions); }}
                                         className={`p-2.5 rounded-xl shadow-md border transition-all active:scale-95 flex items-center justify-center ${showDocActions ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-600 border-blue-100 hover:bg-blue-50'}`}
@@ -396,6 +405,7 @@ const ShipmentCardUI = React.memo(({
                         {!dragOverlay && (
                             <div className="flex gap-2 items-stretch mt-1">
                                 <button
+                                    id={index === 0 ? 'tour-incident-btn' : undefined}
                                     onClick={(e) => { e.stopPropagation(); setIncidentShipment(stop); setIsIncidentModalOpen(true); }}
                                     className="w-[25%] bg-red-50 text-red-600 py-2.5 rounded-xl font-bold text-[10px] shadow-sm hover:bg-red-100 transition-all flex items-center justify-center gap-1 border border-red-100 shrink-0"
                                 >
@@ -420,6 +430,7 @@ const ShipmentCardUI = React.memo(({
                                     </button>
                                 ) : (
                                     <button
+                                        id={index === 0 ? 'tour-deliver-btn' : undefined}
                                         onClick={(e) => { 
                                             e.stopPropagation(); 
                                             const scannedCount = Array.isArray(stop.scannedPackages) ? stop.scannedPackages.length : 0;
@@ -513,45 +524,224 @@ const SortableItem = React.memo((props) => {
 
 
 
+// ─── DRIVER VACATIONS PANEL (Read-only, shown to driver) ───────────────────
+const DriverVacationsPanel = ({ currentDriverId, onClose }) => {
+    const [absences, setAbsences]   = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const year = new Date().getFullYear();
+
+    useEffect(() => {
+        const fetch = async () => {
+            try {
+                const { data } = await supabase
+                    .from('driver_absences')
+                    .select('*')
+                    .eq('driver_id', String(currentDriverId))
+                    .gte('date', `${year}-01-01`)
+                    .lte('date', `${year}-12-31`)
+                    .order('date', { ascending: true });
+                setAbsences(data || []);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetch();
+    }, [currentDriverId]);
+
+    const ABSENCE_INFO = {
+        'Vacaciones':      { emoji: '🏖️', color: 'bg-blue-100 text-blue-700 border-blue-200' },
+        'Día Libre':       { emoji: '☀️',  color: 'bg-amber-100 text-amber-700 border-amber-200' },
+        'Baja Médica':     { emoji: '🏥',  color: 'bg-red-100 text-red-700 border-red-200' },
+        'Asuntos Propios': { emoji: '📋',  color: 'bg-purple-100 text-purple-700 border-purple-200' },
+    };
+
+    const vacUsed      = absences.filter(a => a.type === 'Vacaciones').length;
+    const vacRemaining = 22 - vacUsed;
+
+    // Group by month
+    const byMonth = absences.reduce((acc, a) => {
+        const m = a.date.slice(0, 7);
+        if (!acc[m]) acc[m] = [];
+        acc[m].push(a);
+        return acc;
+    }, {});
+
+    return (
+        <div className="fixed inset-0 bg-slate-900/90 z-[100] flex flex-col animate-in fade-in">
+            <div className="bg-white px-6 py-4 flex items-center justify-between shadow-sm shrink-0">
+                <div className="flex items-center gap-3">
+                    <div className="bg-blue-100 p-2 rounded-xl text-blue-600 text-xl">🏖️</div>
+                    <h2 className="text-lg font-bold text-slate-800">Mis Vacaciones {year}</h2>
+                </div>
+                <button onClick={onClose} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-600 transition-colors">
+                    <X size={20} />
+                </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {/* Counter */}
+                <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-blue-50 rounded-2xl p-4 text-center border border-blue-100">
+                        <p className="text-3xl font-black text-blue-600">{vacUsed}</p>
+                        <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wide mt-1">Días usados</p>
+                    </div>
+                    <div className={`rounded-2xl p-4 text-center border ${vacRemaining >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100'}`}>
+                        <p className={`text-3xl font-black ${vacRemaining >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{Math.max(0, vacRemaining)}</p>
+                        <p className={`text-[10px] font-bold uppercase tracking-wide mt-1 ${vacRemaining >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>Días restantes</p>
+                    </div>
+                    <div className="bg-slate-50 rounded-2xl p-4 text-center border border-slate-100">
+                        <p className="text-3xl font-black text-slate-600">22</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mt-1">Total año</p>
+                    </div>
+                </div>
+
+                {isLoading ? (
+                    <div className="text-center py-10 text-slate-400 animate-pulse font-bold">Cargando...</div>
+                ) : absences.length === 0 ? (
+                    <div className="bg-white rounded-2xl p-8 text-center shadow-sm border border-slate-100">
+                        <p className="text-4xl mb-2">🏖️</p>
+                        <p className="text-slate-500 font-bold">No tienes ausencias registradas este año.</p>
+                        <p className="text-xs text-slate-400 mt-1">Las vacaciones las gestiona administración.</p>
+                    </div>
+                ) : (
+                    Object.entries(byMonth).map(([monthKey, items]) => {
+                        const label = new Date(monthKey + '-01').toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+                        return (
+                            <div key={monthKey}>
+                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider capitalize mb-2">{label}</p>
+                                <div className="space-y-2">
+                                    {items.map(a => {
+                                        const info  = ABSENCE_INFO[a.type] || ABSENCE_INFO['Vacaciones'];
+                                        const dLabel = new Date(a.date + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: '2-digit', month: 'long' });
+                                        return (
+                                            <div key={a.id} className={`flex items-center gap-3 px-4 py-3 rounded-2xl border ${info.color}`}>
+                                                <span className="text-xl">{info.emoji}</span>
+                                                <div>
+                                                    <p className="text-sm font-bold capitalize">{dLabel}</p>
+                                                    <p className="text-[10px] opacity-60">{a.type}</p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        );
+                    })
+                )}
+
+                <p className="text-center text-[10px] text-slate-400 pb-4">
+                    Las vacaciones son gestionadas por administración. Si hay algún error, contacta con tu responsable.
+                </p>
+            </div>
+        </div>
+    );
+};
+
 const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety }) => {
-    const [status, setStatus] = useState('loading'); // loading, pending_in, working, finished
+    const [status, setStatus] = useState('loading'); // loading, pending_in, working, finished, paused, on_absence, weekend, company_holiday
     const [logId, setLogId] = useState(null);
+    const [absenceInfo, setAbsenceInfo] = useState(null);
+    const [holidayInfo, setHolidayInfo] = useState(null);
 
     useEffect(() => {
         const checkStatus = async () => {
             if (!currentDriverId) return;
             try {
-                const today = new Date().toISOString().split('T')[0];
+                const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
+
+                // ── 1. Check weekend (Saturday=6, Sunday=0) ──
+                const todayDate = new Date(today + 'T12:00:00');
+                const dow = todayDate.getDay();
+                if (dow === 0 || dow === 6) {
+                    setStatus('weekend');
+                    return;
+                }
+
+                // ── 2. Check company-wide blocked days ──
+                try {
+                    const { data: settingsData } = await supabase
+                        .from('settings').select('value').eq('key', 'company_blocked_days').maybeSingle();
+                    if (settingsData?.value) {
+                        const blocked = JSON.parse(settingsData.value);
+                        const match = blocked.find(d => d.date === today);
+                        if (match) {
+                            setHolidayInfo(match);
+                            setStatus('company_holiday');
+                            return;
+                        }
+                    }
+                } catch (_) {}
+
                 const { data, error } = await supabase
                     .from('time_logs')
                     .select('*')
                     .eq('driver_id', currentDriverId)
                     .eq('date', today)
-                    .order('clock_in', { ascending: false })
-                    .limit(1);
+                    .order('clock_in', { ascending: false });
 
                 if (error) throw error;
-                const log = data && data.length > 0 ? data[0] : null;
+                const latestLog = data && data.length > 0 ? data[0] : null;
 
-                if (!log) {
-                    setStatus('pending_in');
-                } else if (!log.clock_out) {
+                if (!latestLog) {
+                    // ── Check if today is an absence day before allowing clock-in ──
+                    const { data: absData } = await supabase
+                        .from('driver_absences')
+                        .select('*')
+                        .eq('driver_id', String(currentDriverId))
+                        .eq('date', today)
+                        .maybeSingle();
+
+                    if (absData) {
+                        setAbsenceInfo(absData);
+                        setStatus('on_absence');
+                    } else {
+                        setStatus('pending_in');
+                    }
+                } else if (!latestLog.clock_out) {
                     setStatus('working');
-                    setLogId(log.id);
+                    setLogId(latestLog.id);
                 } else {
-                    setStatus('finished');
+                    const currentHour = new Date().getHours();
+                    const hasAfternoonShift = data.some(log => {
+                        const clockInDate = new Date(log.clock_in);
+                        return clockInDate.getHours() >= 16;
+                    });
+
+                    if (hasAfternoonShift) {
+                        setStatus('finished');
+                    } else {
+                        if (currentHour < 16) {
+                            setStatus('paused');
+                        } else {
+                            setStatus('pending_in');
+                        }
+                    }
                 }
             } catch (e) {
                 console.error("Error fetching time log status:", e);
                 setStatus('pending_in');
             }
         };
+        
         checkStatus();
+        const interval = setInterval(checkStatus, 15000);
+        
+        const handleVisibility = () => {
+            if (document.visibilityState === 'visible') {
+                checkStatus();
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibility);
+
+        return () => {
+            clearInterval(interval);
+            document.removeEventListener('visibilitychange', handleVisibility);
+        };
     }, [currentDriverId]);
 
     const handleClockIn = async () => {
         try {
-            const today = new Date().toISOString().split('T')[0];
+            const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
             const { data, error } = await supabase.from('time_logs').insert([{
                 driver_id: currentDriverId,
                 driver_name: driverName || 'Conductor',
@@ -570,14 +760,14 @@ const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety })
     };
 
     const handleClockOut = async () => {
-        if (!window.confirm('¿Seguro que has terminado tu jornada? Esto registrará tu hora de salida.')) return;
+        if (!window.confirm('¿Seguro que quieres fichar la salida? (Si es el descanso de mediodía, se registrará la salida y podrás volver a fichar por la tarde).')) return;
         try {
             if (logId) {
                 await supabase.from('time_logs').update({
                     clock_out: new Date().toISOString()
                 }).eq('id', logId);
             } else {
-                const today = new Date().toISOString().split('T')[0];
+                const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
                 const { data, error } = await supabase
                     .from('time_logs')
                     .select('id')
@@ -608,12 +798,64 @@ const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety })
         return <div className="py-4 text-slate-400 text-sm font-bold animate-pulse text-center w-full mb-8">Comprobando estado de fichaje...</div>;
     }
 
+    if (status === 'weekend') {
+        const todayDate = new Date();
+        const issunday = todayDate.getDay() === 0;
+        return (
+            <div className="w-full bg-rose-50 text-rose-700 py-5 rounded-xl border-2 border-rose-200 flex flex-col items-center justify-center gap-1.5 mb-8">
+                <span className="text-3xl">{issunday ? '🙏' : '💤'}</span>
+                <span className="text-sm font-black text-rose-800">{issunday ? 'Domingo' : 'Sábado'} — Día de descanso</span>
+                <span className="text-xs font-semibold text-rose-600">No hay jornada laboral hoy.</span>
+                <span className="text-[10px] text-rose-400 mt-0.5">Disfruta tu descanso 😊</span>
+            </div>
+        );
+    }
+
+    if (status === 'company_holiday') {
+        return (
+            <div className="w-full bg-rose-50 text-rose-700 py-5 rounded-xl border-2 border-rose-200 flex flex-col items-center justify-center gap-1.5 mb-8">
+                <span className="text-3xl">🏠</span>
+                <span className="text-sm font-black text-rose-800">{holidayInfo?.reason || 'Día no laborable'}</span>
+                <span className="text-xs font-semibold text-rose-600">La empresa tiene cerrado hoy. No hay jornada.</span>
+                <span className="text-[10px] text-rose-400 mt-0.5">Si crees que es un error, contacta con administración.</span>
+            </div>
+        );
+    }
+
+    if (status === 'on_absence') {
+        const ABSENCE_EMOJIS = { 'Vacaciones': '🏖️', 'Día Libre': '☀️', 'Baja Médica': '🏥', 'Asuntos Propios': '📋' };
+        return (
+            <div className="w-full bg-blue-50 text-blue-700 py-5 rounded-xl border-2 border-blue-200 flex flex-col items-center justify-center gap-1.5 mb-8">
+                <span className="text-3xl">{ABSENCE_EMOJIS[absenceInfo?.type] || '🏖️'}</span>
+                <span className="text-sm font-black text-blue-800">{absenceInfo?.type || 'Ausencia registrada'}</span>
+                <span className="text-xs font-semibold text-blue-600">El fichaje está bloqueado este día.</span>
+                <span className="text-[10px] text-blue-400 mt-0.5">Si es un error, contacta con administración.</span>
+            </div>
+        );
+    }
+
     if (status === 'finished') {
         return (
             <div className="w-full bg-slate-100 text-slate-500 font-bold py-4 rounded-xl shadow-inner flex flex-col items-center justify-center gap-2 mb-8">
                 <CheckCircle size={24} className="text-slate-400" />
                 <span>Jornada Finalizada por hoy</span>
                 <button onClick={handleLogoutWithSafety} className="mt-2 text-xs text-red-500 hover:underline">Cerrar Sesión</button>
+            </div>
+        );
+    }
+
+    if (status === 'paused') {
+        return (
+            <div className="w-full bg-amber-50 text-amber-700 font-bold py-4 rounded-xl border border-amber-100 flex flex-col items-center justify-center gap-1.5 mb-8">
+                <Clock size={24} className="text-amber-500 animate-pulse" />
+                <span>Turno de mañana finalizado</span>
+                <span className="text-[10px] font-medium text-amber-600">El turno de tarde se iniciará automáticamente a las 16:00.</span>
+                <button 
+                    onClick={handleClockIn} 
+                    className="mt-2 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg shadow-sm transition-all active:scale-95 flex items-center justify-center gap-1"
+                >
+                    <Clock size={12} /> Fichar Entrada Tarde (Manual)
+                </button>
             </div>
         );
     }
@@ -1136,7 +1378,7 @@ const DriverTimeLogAlerts = ({ currentDriverId }) => {
     );
 };
 
-function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both' }) {
+function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both', isTestMode = false }) {
     console.log('DriverDashboard Render', { currentDriverId, drivers: drivers?.length, shipments: allShipments?.length, clients: clients?.length });
 
     const getDriverDisplayName = (driver) => {
@@ -1149,29 +1391,22 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     };
 
 
-    const [activeTab, setActiveTab] = useState('route');
+    // === FICHAJE AUTOMÁTICO AL ENTRAR (entrada real a la hora actual) ===
     const hasClockedInRef = useRef(false);
-
-    // === FICHAJE AUTOMÁTICO AL ENTRAR ===
     useEffect(() => {
         const autoClockIn = async () => {
             if (!currentDriverId || !drivers || drivers.length === 0) return;
             if (hasClockedInRef.current) return;
             hasClockedInRef.current = true;
             try {
-                const today = new Date().toISOString().split('T')[0];
+                const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
                 const { data, error } = await supabase
                     .from('time_logs')
                     .select('id')
                     .eq('driver_id', currentDriverId)
                     .eq('date', today)
                     .limit(1);
-
-                if (error) {
-                    console.error("Error auto-clock-in check:", error);
-                    return;
-                }
-
+                if (error) { console.error("Error auto-clock-in check:", error); return; }
                 if (!data || data.length === 0) {
                     const driverObj = drivers?.find(d => String(d.id) === String(currentDriverId));
                     await supabase.from('time_logs').insert([{
@@ -1188,9 +1423,233 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         };
         autoClockIn();
     }, [currentDriverId, drivers]);
-    // ====================================
+    // =====================================================================
 
+    // === MODAL CONFIRMACIÓN DÍA ANTERIOR (solo si showTimeLogsToDrivers activo) ===
+    const [yesterdayPending, setYesterdayPending] = useState(null);
+    const [showYesterdayModal, setShowYesterdayModal] = useState(false);
+    const [isConfirmingYesterday, setIsConfirmingYesterday] = useState(false);
+    const [showTimeLogsToDrivers, setShowTimeLogsToDrivers] = useState(false);
+
+    useEffect(() => {
+        const checkYesterday = async () => {
+            if (!currentDriverId) return;
+            if (isTestMode) return; // No registrar jornada en modo prueba
+            try {
+                // 1. Check if admin has enabled visibility for drivers
+                const { data: settingData } = await supabase
+                    .from('settings')
+                    .select('value')
+                    .eq('key', 'showTimeLogsToDrivers')
+                    .maybeSingle();
+                const isVisible = settingData?.value === 'true';
+                setShowTimeLogsToDrivers(isVisible);
+                if (!isVisible) return;
+
+                // 2. Check yesterday's logs
+                const yesterdayDate = new Date();
+                yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+                const yesterday = new Date(yesterdayDate.getTime() - yesterdayDate.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+
+                const { data: yLogs } = await supabase
+                    .from('time_logs')
+                    .select('*')
+                    .eq('driver_id', currentDriverId)
+                    .eq('date', yesterday)
+                    .order('clock_in', { ascending: true });
+
+                if (!yLogs || yLogs.length === 0) return;
+
+                const hasAfternoon = yLogs.some(l => {
+                    const h = new Date(l.clock_in).getHours();
+                    return h >= 15;
+                });
+                if (hasAfternoon) return;
+
+                const dismissKey = `yest_confirm_dismissed_${currentDriverId}_${yesterday}`;
+                if (localStorage.getItem(dismissKey)) return;
+
+                setYesterdayPending({ date: yesterday, logs: yLogs });
+                setShowYesterdayModal(true);
+            } catch (e) {
+                console.error('Error checking yesterday logs:', e);
+            }
+        };
+        checkYesterday();
+    }, [currentDriverId, isTestMode]);
+
+    // Shared anti-collision pattern generator
+    const generateUniqueShiftPattern = async (targetDate) => {
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+
+        const [{ data: driverLogs }, { data: dayLogsAll }] = await Promise.all([
+            supabase.from('time_logs').select('*').eq('driver_id', currentDriverId).gte('date', thirtyDaysAgoStr),
+            supabase.from('time_logs').select('*').eq('date', targetDate)
+        ]);
+
+        const fmt = (d) => `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+
+        const getPatterns = (logsList) => {
+            const groups = {};
+            (logsList || []).forEach(log => {
+                const key = `${log.driver_id}_${log.date}`;
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(log);
+            });
+            const s = new Set();
+            Object.values(groups).forEach(logs => {
+                logs.sort((a, b) => new Date(a.clock_in) - new Date(b.clock_in));
+                if (logs.length >= 2) s.add(`${fmt(new Date(logs[0].clock_in))}-${fmt(new Date(logs[0].clock_out))}-${fmt(new Date(logs[1].clock_in))}-${fmt(new Date(logs[1].clock_out))}`);
+                else if (logs.length === 1 && logs[0].clock_out) s.add(`${fmt(new Date(logs[0].clock_in))}-${fmt(new Date(logs[0].clock_out))}`);
+            });
+            return s;
+        };
+
+        const existingPatterns = new Set([...getPatterns(driverLogs), ...getPatterns(dayLogsAll)]);
+
+        // Generate ALL 4 times from fixed realistic bases — independent of real app-open time
+        // Morning in:  08:30 ± rand(-5 to +10 min)
+        // Morning out: 13:30 ± rand(-10 to +5 min)
+        // Afternoon in: 16:00 ± rand(-5 to +10 min)
+        // Afternoon out: calculated so total morning+afternoon = exactly 8h
+        let morningIn, morningOut, afternoonIn, afternoonOut;
+        let attempts = 0;
+        while (attempts < 100) {
+            attempts++;
+            const mInOffset  = Math.floor(Math.random() * 16) - 5;   // -5..+10
+            const mOutOffset = Math.floor(Math.random() * 16) - 10;  // -10..+5
+            const aInOffset  = Math.floor(Math.random() * 16) - 5;   // -5..+10
+
+            morningIn   = new Date(new Date(`${targetDate}T08:30:00`).getTime() + mInOffset  * 60000);
+            morningOut  = new Date(new Date(`${targetDate}T13:30:00`).getTime() + mOutOffset * 60000);
+            afternoonIn = new Date(new Date(`${targetDate}T16:00:00`).getTime() + aInOffset  * 60000);
+
+            // Afternoon out = 8h total (morning + afternoon)
+            const morningDurationMs   = morningOut - morningIn;
+            const afternoonDurationMs = 8 * 3600000 - morningDurationMs;
+            afternoonOut = new Date(afternoonIn.getTime() + afternoonDurationMs);
+
+            const candidate = `${fmt(morningIn)}-${fmt(morningOut)}-${fmt(afternoonIn)}-${fmt(afternoonOut)}`;
+            if (!existingPatterns.has(candidate)) break;
+        }
+        return { morningIn, morningOut, afternoonIn, afternoonOut };
+    };
+
+    const handleConfirmYesterday = async () => {
+        if (isConfirmingYesterday || !yesterdayPending) return;
+        setIsConfirmingYesterday(true);
+        try {
+            const { date, logs } = yesterdayPending;
+            const morningLog = [...logs].sort((a, b) => new Date(a.clock_in) - new Date(b.clock_in))[0];
+            const { morningIn, morningOut, afternoonIn, afternoonOut } = await generateUniqueShiftPattern(date);
+            const driverObj = drivers?.find(d => String(d.id) === String(currentDriverId));
+
+            await supabase.from('time_logs').update({
+                clock_in:  morningIn.toISOString(),
+                clock_out: morningOut.toISOString()
+            }).eq('id', morningLog.id);
+
+            await supabase.from('time_logs').insert([{
+                driver_id:   currentDriverId,
+                driver_name: driverObj?.name || 'Conductor',
+                date,
+                clock_in:  afternoonIn.toISOString(),
+                clock_out: afternoonOut.toISOString()
+            }]);
+
+            setShowYesterdayModal(false);
+            setYesterdayPending(null);
+        } catch(e) {
+            console.error('Error confirmando jornada de ayer:', e);
+            alert('Error al registrar. Inténtalo de nuevo.');
+        } finally {
+            setIsConfirmingYesterday(false);
+        }
+    };
+
+
+    const handleDismissYesterday = () => {
+        if (!yesterdayPending) return;
+        const dismissKey = `yest_confirm_dismissed_${currentDriverId}_${yesterdayPending.date}`;
+        localStorage.setItem(dismissKey, '1');
+        setShowYesterdayModal(false);
+        setYesterdayPending(null);
+    };
+    // =============================================================================
+    const [activeTab, setActiveTab] = useState('route');
+
+    // ── GUIDED TOUR (Modo Prueba) ────────────────────────────────────────────
+    const [showTour, setShowTour] = useState(false);
+    const [showShipmentTour, setShowShipmentTour] = useState(false);
+    const [showAlertsTour, setShowAlertsTour] = useState(false);
+    const [showCajaTour, setShowCajaTour] = useState(false);
+    const [showRepartaTour, setShowRepartaTour] = useState(false);
+    const [showEditTour, setShowEditTour] = useState(false);
+    const [tourDemoMode, setTourDemoMode] = useState(null);
+
+    // Objetos de envío de demo para los tutoriales ──────────────────────
+    const DEMO_BASE = useMemo(() => ({
+        id: 'DEMO-TUTORIAL-001',
+        client: clients?.[0]?.name || 'Mercadona S.A.',
+        clientName: clients?.[0]?.name || 'Mercadona S.A.',
+        originAddress: clients?.[0]?.address || 'Av. de la Constitución, 1',
+        originCity: clients?.[0]?.city || 'Córdoba',
+        originZip: clients?.[0]?.zip || '14001',
+        destinationName: 'Manuel García López',
+        destinationAddress: 'C/ Mayor, 23',
+        destinationCity: 'Córdoba',
+        destinationZip: '14001',
+        destinationPhone: '600 123 456',
+        amount: '12.50',
+        porteType: 'Debido',
+        status: 'En Reparto',
+        type: 'Entrega',
+        hasCod: false,
+        codAmount: '',
+        hasReturn: false,
+        needsSignatureReturn: false,
+        observations: '\ud83d\udcda EJEMPLO DE TUTORIAL \u2014 Ningún dato se guardará',
+        billingType: 'Efectivo',
+        destinationBillingType: 'Efectivo',
+        deliveryRules: { requireSignature: true, requireName: true, requirePhoto: false, requireDNI: false },
+    }), [clients]);
+
+    const getDemoShipment = useCallback((mode) => {
+        if (!mode) return null;
+        const base = DEMO_BASE;
+        switch (mode) {
+            case 'delivery_pagado':        return { ...base, porteType: 'Pagado', billingType: 'Facturación', destinationBillingType: 'Facturación', hasCod: false };
+            case 'delivery_debido':        return { ...base, porteType: 'Debido', hasCod: false };
+            case 'delivery_retorno':       return { ...base, porteType: 'Pagado', hasReturn: true, hasCod: false };
+            case 'delivery_firma_vuelta':  return { ...base, porteType: 'Pagado', needsSignatureReturn: true, hasCod: false };
+            case 'delivery_retorno_firma': return { ...base, porteType: 'Pagado', hasReturn: true, needsSignatureReturn: true, hasCod: false };
+            case 'delivery_porte_reembolso': return { ...base, porteType: 'Debido', hasCod: true, codAmount: '85.00', codCommission: '0' };
+            case 'delivery_multi':         return { ...base, porteType: 'Debido', hasCod: false };
+            default: return base;
+        }
+    }, [DEMO_BASE]);
+
+    const getDemoPendingDebts = useCallback((mode) => {
+        if (mode !== 'delivery_multi') return [];
+        return [
+            { id: 'DEMO-DEBT-1', label: 'Porte Debido', type: 'Porte', amount: '8.00',  detail: 'Albarán #2831 — pendiente de cobro' },
+            { id: 'DEMO-DEBT-2', label: 'Reembolso COD', type: 'Reembolso', amount: '45.00', detail: 'Albarán #2819 — pendiente de cobro' },
+        ];
+    }, []);
+    useEffect(() => {
+        if (isTestMode && currentDriverId) {
+            const key = `sumtrans_driver_tour_done_${currentDriverId}`;
+            if (!localStorage.getItem(key)) {
+                const timer = setTimeout(() => setShowTour(true), 900);
+                return () => clearTimeout(timer);
+            }
+        }
+    }, [isTestMode, currentDriverId]);
+    // ─────────────────────────────────────────────────────────────────────────
     const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+
     const currentDriver = useMemo(() => 
         drivers?.find(d => String(d.id) === String(currentDriverId)),
     [drivers, currentDriverId]);
@@ -1466,13 +1925,47 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         return saved ? JSON.parse(saved) : [];
     });
 
+    // SYNC ROBUSTO: al arrancar, fusionar localStorage + Supabase (unión por ID)
+    // Así Chrome y Edge siempre ven los mismos cobros aunque cada uno tenga datos distintos
+    useEffect(() => {
+        if (!currentDriverId) return;
+        const key = `drv_collections_${currentDriverId}_${todayStr}`;
+        supabase.from('drivers').select('data').eq('id', currentDriverId).single().then(({ data: drvRow }) => {
+            const cloud = drvRow?.data?.[`collectedCollections_${todayStr}`] || [];
+            const local = (() => { try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; } })();
+            // Fusionar: todas las entradas únicas de ambas fuentes (por id)
+            const merged = [...cloud];
+            local.forEach(item => {
+                if (item?.id && !merged.find(c => c.id === item.id)) merged.push(item);
+            });
+            if (merged.length !== local.length || merged.some(m => !local.find(c => c.id === m.id))) {
+                console.log('[Cobros] Fusionado cloud(' + cloud.length + ') + local(' + local.length + ') = ' + merged.length);
+                setCollectedCollections(merged);
+                try { localStorage.setItem(key, JSON.stringify(merged)); } catch (_) {}
+                // Subir la versión fusionada a Supabase
+                if (drvRow?.data) {
+                    const updatedData = { ...drvRow.data, [`collectedCollections_${todayStr}`]: merged };
+                    Promise.resolve(supabase.from('drivers').update({ data: updatedData }).eq('id', currentDriverId)).catch(() => {});
+                }
+            }
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentDriverId, todayStr]);
+
+    // Guardar en localStorage Y Supabase cada vez que cambian los cobros
     useEffect(() => {
         const key = `drv_collections_${currentDriverId}_${todayStr}`;
-        try {
-            localStorage.setItem(key, JSON.stringify(collectedCollections));
-        } catch (e) {
+        try { localStorage.setItem(key, JSON.stringify(collectedCollections)); } catch (e) {
             console.warn("No se pudo guardar la colección localmente por límite de cuota iOS", e);
         }
+        if (!currentDriverId) return;
+        supabase.from('drivers').select('data').eq('id', currentDriverId).single().then(({ data: drvRow }) => {
+            if (!drvRow) return;
+            const updatedData = { ...drvRow.data, [`collectedCollections_${todayStr}`]: collectedCollections };
+            Promise.resolve(supabase.from('drivers').update({ data: updatedData }).eq('id', currentDriverId))
+                .then(() => console.log('[Cobros] Guardado en Supabase:', collectedCollections.length, 'entradas'))
+                .catch(err => console.warn('[Cobros] Error sync Supabase:', err.message));
+        });
     }, [collectedCollections, currentDriverId, todayStr]);
 
     const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
@@ -1480,7 +1973,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const [incidentInitialReason, setIncidentInitialReason] = useState('');
     const [incidentShipment, setIncidentShipment] = useState(null);
     const [showFabMenu, setShowFabMenu] = useState(false);
-    const [showPayrollsModal, setShowPayrollsModal] = useState(false);
+    const [showPayrollsModal, setShowPayrollsModal]     = useState(false);
+    const [showVacationsPanel, setShowVacationsPanel]   = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [deliveryModalShipment, setDeliveryModalShipment] = useState(null); // Which shipment is being confirmed
     const [pickupToConvert, setPickupToConvert] = useState(null); // Pickup being converted to shipment
@@ -2893,7 +3387,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             if (!targetName || targetName === 'Destinatario') return [];
 
             // 2. Check if this Entity is 'New' or 'Daily' (Risk)
-            const isTargetType = isCashClient(targetName, clientsMap, deliveryModalShipment.billingType);
+            // Para Porte Debido, el que paga es el DESTINATARIO → usar destinationBillingType como fallback
+            // Para Porte Pagado, el que paga es el REMITENTE → usar billingType como fallback
+            const targetFallbackBilling = deliveryModalShipment.porteType === 'Debido'
+                ? (deliveryModalShipment.destinationBillingType || null)
+                : deliveryModalShipment.billingType;
+            const isTargetType = isCashClient(targetName, clientsMap, targetFallbackBilling);
 
             if (!isTargetType) return [];
 
@@ -2945,12 +3444,16 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 const isDebido = s.porteType === 'Debido';
                 const isPagado = s.porteType === 'Pagado';
                 const hasCod = s.hasCod;
-                const porteVal = parseAmount(s.amount);
+                const porteVal = parseAmount(s.customAmount) || parseAmount(s.amount);
                 const codVal = hasCod ? parseAmount(s.codAmount) : 0;
 
                 const payerName = isDebido ? (s.destinationName || s.client) : (s.originName || s.client);
-                const isPortePayerCash = isCashClient(payerName, clientsMap, s.billingType);
-                const isCodPayerCash = isCashClient(s.destinationName || s.client, clientsMap, s.billingType);
+                // Fallback según quién paga: Debido → destinatario → usar destinationBillingType
+                //                           Pagado → remitente  → usar billingType
+                const porteFallback = isDebido ? (s.destinationBillingType || null) : s.billingType;
+                const isPortePayerCash = isCashClient(payerName, clientsMap, porteFallback);
+                // El reembolso (COD) siempre lo paga el destinatario
+                const isCodPayerCash = isCashClient(s.destinationName || s.client, clientsMap, s.destinationBillingType || null);
 
                 if (porteVal > 0 && !s.portePaid) {
                     if (isPagado && isPortePayerCash) {
@@ -2962,7 +3465,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             label: `Albarán ${s.id}`,
                             detail: payerName || 'N/A'
                         });
-                    } else if (isDebido && isPortePayerCash && (s.status === 'Entregado' || s.id === deliveryModalShipment.id)) {
+                    } else if (isDebido && s.status === 'Entregado') {
+                        // Porte Debido ya entregado pero aún sin cobrar → incluir
                         debtParts.push({
                             id: `${s.id}-porte`,
                             shipmentId: s.id,
@@ -3003,7 +3507,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             console.log("--- Dashboard: Checking Collection Alert Visibility ---", deliveryModalShipment.id);
 
             let targetName = deliveryModalShipment.destinationName || deliveryModalShipment.client;
-            const isTargetCash = isCashClient(targetName, clientsMap, deliveryModalShipment.billingType);
+            const alertFallbackBilling = deliveryModalShipment.porteType === 'Debido'
+                ? (deliveryModalShipment.destinationBillingType || null)
+                : deliveryModalShipment.billingType;
+            const isTargetCash = isCashClient(targetName, clientsMap, alertFallbackBilling);
             
             console.log("Target Client:", targetName, "isCash:", isTargetCash);
 
@@ -3099,7 +3606,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
                 const isPorte = partType === 'porte';
                 const debtKey = `${sid}-${partType}`;
-                const originalAmount = isPorte ? ship.amount : ship.codAmount;
+                const originalAmount = isPorte ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : ship.codAmount;
                 const finalAmount = customAmounts[debtKey] !== undefined ? customAmounts[debtKey] : originalAmount;
 
                 // Si es un porte con Factura Simplificada, NO generamos cobro manual de porte
@@ -3210,9 +3717,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         phone: currentShip.destinationPhone || '',
                         coordinates: proof.coordinates,
                         type: 'Destinatario',
-                        // 'Facturación' para que el albarán no desaparezca en modo oculto
-                        // mientras espera validación. El admin asignará el tipo correcto al validar.
-                        billingType: 'Facturación',
+                        // Por defecto 'Clientes Habituales' (pago inmediato).
+                        // El admin puede cambiar a 'Facturación' al validar si el cliente paga por factura.
+                        billingType: 'Clientes Habituales',
                         status: 'pending',
                         createdFrom: 'Reparto (Driver)',
                         createdBy: currentDriver?.name || 'Driver',
@@ -3356,6 +3863,209 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col transition-all duration-300" style={{ zoom: zoom }}>
+            {/* ── GUIDED TOUR (Modo Prueba) ── */}
+            <DriverGuidedTour
+                isVisible={showTour}
+                onComplete={() => {
+                    localStorage.setItem(`sumtrans_driver_tour_done_${currentDriverId}`, 'true');
+                    setShowTour(false);
+                    // Ofrecer el segundo tutorial tras 600ms
+                    setTimeout(() => setShowShipmentTour(true), 600);
+                }}
+                onSkip={() => setShowTour(false)}
+                onChangeTab={setActiveTab}
+            />
+
+            {/* ── TUTORIAL ALBARÁN Y ENTREGA ── */}
+            <DriverShipmentTour
+                isVisible={showShipmentTour}
+                onComplete={() => { setShowShipmentTour(false); setTourDemoMode(null); }}
+                onSkip={() => { setShowShipmentTour(false); setTourDemoMode(null); }}
+                onChangeTab={setActiveTab}
+                onDemoModeChange={setTourDemoMode}
+            />
+
+            {/* ── MODALES REALES PARA TUTORIALES ── */}
+            {tourDemoMode === 'create_form' && (
+                <CreateShipmentModal
+                    isOpen={true}
+                    onClose={() => setTourDemoMode(null)}
+                    onSave={() => setTourDemoMode(null)}
+                    drivers={drivers}
+                    clients={clients}
+                    allPoblaciones={allPoblaciones}
+                    tariffs={tariffs}
+                    articles={articles}
+                    familyOrder={familyOrder}
+                    coverageZones={coverageZones}
+                    defaultCodFee={defaultCodFee}
+                    isDriver={true}
+                    allShipments={[]}
+                    onUpdateShipment={() => {}}
+                    onUpdateClient={() => {}}
+                    currentDriverId={currentDriverId}
+                />
+            )}
+
+            {['delivery_pagado','delivery_debido','delivery_retorno','delivery_firma_vuelta','delivery_retorno_firma','delivery_porte_reembolso','delivery_multi'].includes(tourDemoMode) && (
+                <DeliveryConfirmationModal
+                    isOpen={true}
+                    onClose={() => setTourDemoMode(null)}
+                    shipment={getDemoShipment(tourDemoMode)}
+                    collectionAlert={false}
+                    pendingDebts={getDemoPendingDebts(tourDemoMode)}
+                    clients={clients}
+                    onConfirm={() => setTourDemoMode(null)}
+                />
+            )}
+
+
+            <DriverAlertsTour
+                isVisible={showAlertsTour}
+                onComplete={() => { setShowAlertsTour(false); setTourDemoMode(null); }}
+                onSkip={() => { setShowAlertsTour(false); setTourDemoMode(null); }}
+                onDemoModeChange={setTourDemoMode}
+            />
+
+            {/* ── TUTORIAL CAJA Y JUSTIFICANTES ── */}
+            <DriverCajaTour
+                isVisible={showCajaTour}
+                onComplete={() => setShowCajaTour(false)}
+                onSkip={() => setShowCajaTour(false)}
+            />
+
+            {/* ── TUTORIAL REPARTO ── */}
+            <DriverRepartaTour
+                isVisible={showRepartaTour}
+                onComplete={() => { setShowRepartaTour(false); setIsIncidentModalOpen(false); }}
+                onSkip={() => { setShowRepartaTour(false); setIsIncidentModalOpen(false); }}
+                onChangeTab={setActiveTab}
+                onOpenIncidentModal={() => {
+                    const demoShipment = localRoute?.[0] || {
+                        id: 'DEMO-001', client: 'Ejemplo S.A.',
+                        destinationAddress: 'Avda. Ronda Tejares 13', destinationCity: 'Córdoba',
+                    };
+                    setIncidentShipment(demoShipment);
+                    setIncidentInitialReason('');
+                    setIsIncidentModalOpen(true);
+                }}
+                onCloseIncidentModal={() => setIsIncidentModalOpen(false)}
+            />
+
+            {/* ── TUTORIAL CORREGIR ALBARÁN ── */}
+            <DriverEditTour
+                isVisible={showEditTour}
+                onComplete={() => { setShowEditTour(false); setIsDetailsModalOpen(false); setIsReadOnlyModal(false); }}
+                onSkip={() => { setShowEditTour(false); setIsDetailsModalOpen(false); setIsReadOnlyModal(false); }}
+                onChangeTab={setActiveTab}
+                onOpenDetailsModal={() => {
+                    const demoShipment = localRoute?.[0] || allShipments?.[0] || null;
+                    if (demoShipment) {
+                        setSelectedShipment(demoShipment);
+                        setIsReadOnlyModal(false);
+                        setIsDetailsModalOpen(true);
+                    }
+                }}
+                onCloseDetailsModal={() => { setIsDetailsModalOpen(false); setIsReadOnlyModal(false); }}
+            />
+
+            {/* ── BOTÓN FLOTANTE TUTORIALES (solo en Modo Prueba) ── */}
+            {isTestMode && !showTour && !showShipmentTour && !showAlertsTour && !showCajaTour && !showRepartaTour && !showEditTour && (
+                <div style={{
+                    position: 'fixed', bottom: 340, right: 16, zIndex: 9000,
+                    display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8,
+                }}>
+                    <div style={{
+                        background: 'linear-gradient(135deg,#1e293b,#0f172a)',
+                        borderRadius: 20, padding: '6px 14px 6px 8px',
+                        display: 'flex', gap: 6, flexDirection: 'column',
+                        boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                    }}>
+                        <button
+                            onClick={() => setShowTour(true)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                color: 'white', padding: '6px 4px', borderRadius: 10,
+                                fontSize: 12, fontWeight: 700,
+                            }}
+                        >
+                            <span style={{ fontSize: 18 }}>🗺️</span> Tour general de la app
+                        </button>
+                        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+                        <button
+                            onClick={() => setShowShipmentTour(true)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                color: 'white', padding: '6px 4px', borderRadius: 10,
+                                fontSize: 12, fontWeight: 700,
+                            }}
+                        >
+                            <span style={{ fontSize: 18 }}>📋</span> Cómo crear un albarán
+                        </button>
+                        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+                        <button
+                            onClick={() => setShowAlertsTour(true)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                color: 'white', padding: '6px 4px', borderRadius: 10,
+                                fontSize: 12, fontWeight: 700,
+                            }}
+                        >
+                            <span style={{ fontSize: 18 }}>🔔</span> Notificaciones y alertas
+                        </button>
+                        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+                        <button
+                            onClick={() => setShowCajaTour(true)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                color: 'white', padding: '6px 4px', borderRadius: 10,
+                                fontSize: 12, fontWeight: 700,
+                            }}
+                        >
+                            <span style={{ fontSize: 18 }}>🏦</span> Caja y justificantes
+                        </button>
+                        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+                        <button
+                            onClick={() => setShowRepartaTour(true)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                color: 'white', padding: '6px 4px', borderRadius: 10,
+                                fontSize: 12, fontWeight: 700,
+                            }}
+                        >
+                            <span style={{ fontSize: 18 }}>🚚</span> Gestión del Reparto
+                        </button>
+                        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)' }} />
+                        <button
+                            onClick={() => setShowEditTour(true)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                color: 'white', padding: '6px 4px', borderRadius: 10,
+                                fontSize: 12, fontWeight: 700,
+                            }}
+                        >
+                            <span style={{ fontSize: 18 }}>✏️</span> Corregir un albarán
+                        </button>
+                    </div>
+                    <div style={{
+                        background: 'linear-gradient(135deg,#f59e0b,#d97706)',
+                        borderRadius: 30, width: 42, height: 42,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 20, boxShadow: '0 4px 14px rgba(245,158,11,0.5)',
+                        cursor: 'pointer',
+                    }}>
+                        📚
+                    </div>
+                </div>
+            )}
+
             <IncidentModal
                 isOpen={isIncidentModalOpen}
                 onClose={() => setIsIncidentModalOpen(false)}
@@ -3461,7 +4171,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 </div>
             )}
             {/* Header */}
-            <header className={`bg-slate-900 text-white p-4 sticky z-50 shadow-md transition-all duration-300 ${(!isOnline || justReconnected) ? 'top-10' : 'top-0'}`}>
+            <header id="driver-header" className={`bg-slate-900 text-white p-4 sticky z-50 shadow-md transition-all duration-300 ${(!isOnline || justReconnected) ? 'top-10' : 'top-0'}`}>
                 <div className="flex justify-between items-center mb-4">
                     <div className="flex items-center gap-3">
                         <div 
@@ -3528,11 +4238,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 {/* Tab Navigation */}
                 <div className="overflow-x-auto pb-2 scrollbar-hide">
                     <nav className="flex bg-slate-800 p-1 rounded-xl gap-0.5 min-w-[300px] overflow-x-auto scrollbar-hide">
-                        <button onClick={() => setActiveTab('route')} className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'route' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>Reparto</button>
-                        <button onClick={() => setActiveTab('assign')} className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'assign' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>Asignar</button>
-                        <button onClick={() => setActiveTab('delivered')} className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'delivered' ? 'bg-green-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>Entregas</button>
-                        <button onClick={() => setActiveTab('collections')} className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'collections' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>C.Pendientes</button>
-                        <button onClick={() => setActiveTab('account')} className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'account' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>Cuenta</button>
+                        <button id="driver-tab-route" onClick={() => setActiveTab('route')} className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'route' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>Reparto</button>
+                        <button id="driver-tab-assign" onClick={() => setActiveTab('assign')} className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'assign' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>Asignar</button>
+                        <button id="driver-tab-delivered" onClick={() => setActiveTab('delivered')} className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'delivered' ? 'bg-green-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>Entregas</button>
+                        <button id="driver-tab-collections" onClick={() => setActiveTab('collections')} className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'collections' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>C.Pendientes</button>
+                        <button id="driver-tab-account" onClick={() => setActiveTab('account')} className={`flex-1 py-2 px-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${activeTab === 'account' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}>Cuenta</button>
                     </nav>
                 </div>
             </header>
@@ -3593,13 +4303,16 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 {/* View: Mi Ruta (Active Shipments) */}
                 {activeTab === 'route' && (
                     <div className="space-y-3">
-                        <div className="flex justify-between items-center px-1 mb-2">
+
+
+                        <div id="tour-route-header" className="flex justify-between items-center px-1 mb-2">
                             <div>
                                 <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Pendientes</h3>
                                 <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">{localRoute.length} Envíos</span>
                             </div>
                             <div className="flex items-center gap-2">
                                 <button
+                                    id="tour-optimize-btn"
                                     onClick={handleSmartSort}
                                     disabled={isOptimizing}
                                     className={`flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shadow-sm
@@ -4675,11 +5388,19 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             <h2 className="text-xl font-bold text-slate-800">{drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name || 'Conductor'}</h2>
                             <p className="text-sm text-slate-500 mb-6 font-mono">ID: {currentDriverId}</p>
 
-                            <TimeLogSection 
-                                currentDriverId={currentDriverId} 
-                                driverName={drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name} 
-                                handleLogoutWithSafety={handleLogoutWithSafety} 
-                            />
+                            {!isTestMode && (
+                                <TimeLogSection 
+                                    currentDriverId={currentDriverId} 
+                                    driverName={drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name} 
+                                    handleLogoutWithSafety={handleLogoutWithSafety} 
+                                />
+                            )}
+                            {isTestMode && (
+                                <div className="w-full mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-center">
+                                    <p className="text-sm font-bold text-amber-700">🟡 Modo Prueba activo</p>
+                                    <p className="text-xs text-amber-600 mt-1">El fichaje de jornada no está disponible en modo de entrenamiento.</p>
+                                </div>
+                            )}
 
                             <div className="w-full grid grid-cols-2 gap-3">
                                 <button onClick={() => setShowPayrollsModal(true)} className="p-4 bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-200 transition-colors rounded-xl flex flex-col items-center justify-center gap-2">
@@ -4689,10 +5410,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                         <span className="text-[9px] font-bold text-white bg-blue-500 px-2 py-0.5 rounded-full">{currentDriver.payrolls.length} disponibles</span>
                                     )}
                                 </button>
-                                <button disabled className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col items-center justify-center gap-2 opacity-60 cursor-not-allowed">
-                                    <Sparkles size={24} className="text-slate-400" />
-                                    <span className="font-bold text-slate-600 text-xs">Mis Vacaciones</span>
-                                    <span className="text-[9px] font-bold text-amber-500 bg-amber-100 px-2 py-0.5 rounded-full uppercase tracking-tighter">Próximamente</span>
+                                <button
+                                    onClick={() => setShowVacationsPanel(true)}
+                                    className="p-4 bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-200 transition-colors rounded-xl flex flex-col items-center justify-center gap-2"
+                                >
+                                    <span className="text-2xl">🏖️</span>
+                                    <span className="font-bold text-slate-700 text-xs">Mis Vacaciones</span>
                                 </button>
                             </div>
                         </div>
@@ -4738,6 +5461,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                     )}
                                 </div>
                             </div>
+                        )}
+
+                        {/* Panel: Mis Vacaciones (Read-only driver view) */}
+                        {showVacationsPanel && (
+                            <DriverVacationsPanel
+                                currentDriverId={currentDriverId}
+                                onClose={() => setShowVacationsPanel(false)}
+                            />
                         )}
                     </div>
                 )}
@@ -4795,7 +5526,53 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 </button>
             </div>
 
+            {/* === MODAL CONFIRMACIÓN JORNADA DE AYER === */}
+            {showYesterdayModal && yesterdayPending && (
+                <div className="fixed inset-0 z-[200] flex items-end justify-center p-4 pb-8" style={{background:'rgba(15,23,42,0.72)', backdropFilter:'blur(6px)'}}>
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in slide-in-from-bottom-6 duration-300">
+                        {/* Header */}
+                        <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 pt-6 pb-5 text-white">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
+                                    <Clock size={20} />
+                                </div>
+                                <div>
+                                    <p className="text-xs font-semibold text-indigo-200 uppercase tracking-widest">Registro de Jornada</p>
+                                    <h3 className="text-lg font-bold leading-tight">Ayer · {new Date(yesterdayPending.date + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="px-6 py-5 flex flex-col gap-3">
+                            <p className="text-sm font-semibold text-slate-800 text-center">
+                                ¿Fue tu jornada de ayer la habitual de 8 horas?
+                            </p>
+                            <button
+                                onClick={handleConfirmYesterday}
+                                disabled={isConfirmingYesterday}
+                                className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-60 text-white text-sm font-bold rounded-2xl shadow-lg shadow-indigo-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                            >
+                                {isConfirmingYesterday ? (
+                                    <><span className="animate-spin">⏳</span> Registrando...</>
+                                ) : (
+                                    <><span>✅</span> Sí</>
+                                )}
+                            </button>
+                            <button
+                                onClick={handleDismissYesterday}
+                                disabled={isConfirmingYesterday}
+                                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-semibold rounded-2xl active:scale-95 transition-all"
+                            >
+                                No
+                            </button>
+                        </div>
+
+                    </div>
+                </div>
+            )}
+            {/* ========================================= */}
+
             <CreateShipmentModal
+
                 isOpen={isNoteModalOpen}
                 onClose={() => {
                     setIsNoteModalOpen(false);

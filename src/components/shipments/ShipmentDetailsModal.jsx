@@ -292,6 +292,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     <div className="flex items-center gap-2">
                         {!isEditing && !isReadOnly && (
                             <button
+                                id="tour-edit-btn"
                                 onClick={() => setIsEditing(true)}
                                 className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
                                 title="Editar"
@@ -341,7 +342,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     <div className="space-y-4">
                         <div className="relative pl-4 border-l-2 border-dashed border-gray-300 space-y-6">
                             {/* Origin */}
-                            <div className="relative">
+                            <div id="tour-edit-origin" className="relative">
                                 <div className="absolute -left-[21px] top-0 w-3 h-3 rounded-full bg-blue-500 ring-4 ring-white"></div>
                                 <h4 className="text-[10px] font-bold text-blue-600 mb-1.5 uppercase tracking-widest">Origen (Remitente)</h4>
                                 <div className="grid grid-cols-1 gap-3">
@@ -410,7 +411,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                             </div>
 
                             {/* Destination */}
-                            <div className="relative">
+                            <div id="tour-edit-destination" className="relative">
                                 <div className="absolute -left-[21px] top-0 w-3 h-3 rounded-full bg-green-500 ring-4 ring-white"></div>
                                 <h4 className="text-[10px] font-bold text-green-600 mb-1.5 uppercase tracking-widest">Destino (Entrega)</h4>
                                 <div className="grid grid-cols-1 gap-3">
@@ -483,7 +484,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
                     {/* Details (Amounts, Packages) */}
                     {!isClientView && (
-                        <div className="grid grid-cols-2 gap-4">
+                        <div id="tour-edit-amounts" className="grid grid-cols-2 gap-4">
                                                 {hidePrices ? (
                             <div className="space-y-1">
                                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
@@ -1001,12 +1002,26 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     <span className="text-[10px] font-bold text-orange-600 uppercase tracking-wider block">Tipo de Porte (Responsable)</span>
                                     <select 
                                         value={formData.porteType || 'Pagado'}
-                                        onChange={(e) => handleChange('porteType', e.target.value)}
+                                        onChange={(e) => {
+                                            const newPorteType = e.target.value;
+                                            handleChange('porteType', newPorteType);
+                                            // Al cambiar a Debido → el porte pasa a estar pendiente de cobro al destinatario
+                                            if (newPorteType === 'Debido') {
+                                                handleChange('paymentStatus', 'Pending');
+                                                handleChange('portePaid', false);
+                                                handleChange('isPaid', false);
+                                            }
+                                        }}
                                         className="w-full text-sm border-2 border-orange-200 rounded-xl p-3 focus:ring-2 focus:ring-orange-500 focus:outline-none bg-white text-orange-900 font-semibold cursor-pointer"
                                     >
                                         <option value="Pagado">Pagado (Remitente)</option>
                                         <option value="Debido">Debido (Beneficiario)</option>
                                     </select>
+                                    {formData.porteType === 'Debido' && (formData.portePaid || formData.paymentStatus === 'Paid') === false && (
+                                        <p className="text-[10px] text-orange-500 font-bold flex items-center gap-1 mt-1">
+                                            ✅ Estado financiero y porte cobrado actualizados automáticamente
+                                        </p>
+                                    )}
                                 </div>
 
                                 <div className="space-y-2">

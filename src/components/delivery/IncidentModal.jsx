@@ -87,6 +87,7 @@ export default function IncidentModal({ isOpen, onClose, onConfirm, shipment, in
                         <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 flex justify-between items-center">
                             <span>Motivo de la Incidencia *</span>
                             <button 
+                                id="tour-incident-mic"
                                 onClick={startListening}
                                 className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold transition-all ${
                                     isListening 
@@ -100,12 +101,13 @@ export default function IncidentModal({ isOpen, onClose, onConfirm, shipment, in
                             </button>
                         </label>
                         <textarea
+                            id="tour-incident-textarea"
                             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all min-h-[100px] resize-none"
                             placeholder="Ej: Cliente ausente, dirección incorrecta, paquete dañado..."
                             value={reason}
                             onChange={(e) => setReason(e.target.value)}
                         />
-                        <div className="flex flex-wrap gap-2 mt-2">
+                        <div id="tour-incident-shortcuts" className="flex flex-wrap gap-2 mt-2">
                             {['Cliente ausente', 'Dirección incorrecta', 'Paquete dañado', 'Local cerrado', 'Falta tiempo', 'Rechazado', 'No dispone del reembolso'].map(r => (
                                 <button
                                     key={r}

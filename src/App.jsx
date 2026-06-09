@@ -2644,6 +2644,7 @@ function App() {
       alertAcknowledgements={alertAcknowledgements}
       isInitialLoading={isSyncing}
       driverNamePreference={driverNamePreference}
+      isTestMode={activeTestMode}
     />
   }
 

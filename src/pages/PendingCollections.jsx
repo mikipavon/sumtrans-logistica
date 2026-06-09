@@ -76,20 +76,22 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
             const senderClient = clients?.find(c => normalize(c.name) === sName || normalize(c.legalName) === sName);
             const destClient = clients?.find(c => normalize(c.name) === dName || normalize(c.legalName) === dName);
 
+            // Prioridad: dato guardado en el albarán > ficha actual del cliente
+            // (la ficha del cliente puede cambiar pero el albarán refleja el estado real al entregar)
             const model = new Shipment({
                 ...s,
-                billingType: senderClient?.billingType || s.billingType || 'Clientes Habituales',
-                destinationBillingType: destClient?.billingType || s.destinationBillingType || null
+                billingType: s.billingType || senderClient?.billingType || 'Clientes Habituales',
+                destinationBillingType: s.destinationBillingType || destClient?.billingType || null
             });
 
             // CASO 2 y 5: Remitente cliente habitual + porte PAGADO → siempre en cobros pendientes
             const senderDebt = model.generatesPendingDebtOnCreation() && s.paymentStatus !== 'Paid';
 
             // CASO 3 y 6: Porte DEBIDO + cliente habitual destinatario → solo si está ENTREGADO
-            const senderIsInvoice = model.isInvoiceBilling(s.billingType);
+            // Usamos el modelo (que ya tiene el billingType correcto del albarán) en lugar de destClient directo
             const receiverOwesPorte = s.porteType === 'Debido'
                 && s.status === 'Entregado'
-                && !model.isInvoiceBilling(destClient?.billingType)
+                && !model.isInvoiceBilling(model.destinationBillingType)
                 && s.paymentStatus !== 'Paid';
 
             // Reembolso pendiente (siempre al entregarse si no se marcó como cobrado)
@@ -107,8 +109,8 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
 
             const model = new Shipment({
                 ...s,
-                billingType: senderClient?.billingType || s.billingType || 'Clientes Habituales',
-                destinationBillingType: destClient?.billingType || s.destinationBillingType || null
+                billingType: s.billingType || senderClient?.billingType || 'Clientes Habituales',
+                destinationBillingType: s.destinationBillingType || destClient?.billingType || null
             });
 
             const codAmount = parseCurrency(s.codAmount);
@@ -130,7 +132,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
             // Porte del DESTINATARIO (Debido + cliente habitual + entregado)
             if (s.porteType === 'Debido'
                 && s.status === 'Entregado'
-                && !model.isInvoiceBilling(destClient?.billingType)
+                && !model.isInvoiceBilling(model.destinationBillingType)
                 && s.paymentStatus !== 'Paid') {
                 types.push({
                     type: 'Portes (Debido)',

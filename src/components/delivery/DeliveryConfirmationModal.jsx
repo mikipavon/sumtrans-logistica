@@ -25,6 +25,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
     const [pendingConfirmData, setPendingConfirmData] = useState(null);
     const [validationFailed, setValidationFailed] = useState(false);
     const [includeIva, setIncludeIva] = useState(false);
+    const [clientGives, setClientGives] = useState('');
 
     // Parse helper
     const parseVal = (val) => {
@@ -86,6 +87,19 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                     label: 'Porte Debido',
                     detail: shipment.destinationName || 'Destinatario'
                 });
+            } else if (!shipment.portePaid && shipment.paymentStatus !== 'Paid') {
+                // Fallback: el cálculo del modelo devolvió 0 (p.ej. destinatario con billing de
+                // facturación), pero el albarán fue modificado manualmente a 'Debido' y sigue
+                // pendiente de cobro (portePaid=false). En ese caso mostramos el importe bruto
+                // para que el conductor pueda cobrarlo igualmente.
+                parts.push({
+                    id: `${shipment.id}-porte`,
+                    shipmentId: shipment.id,
+                    type: 'Porte',
+                    amount: porte.toFixed(2),
+                    label: 'Porte Debido',
+                    detail: shipment.destinationName || 'Destinatario'
+                });
             }
         } else if (shipment.status === 'Pendiente Cobro' && porte > 0) {
             parts.push({
@@ -117,10 +131,10 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
         return [...currentParts, ...pendingDebts];
     }, [currentParts, pendingDebts]);
 
-    // Auto-select only current delivery parts (Porte Debido, Reembolso) by default
+    // Auto-select ALL pending debts by default (current + anteriores). El conductor desmarca lo que no cobra.
     useEffect(() => {
         if (isOpen) {
-            setSelectedDebts(currentParts.map(d => d.id));
+            setSelectedDebts(allSelectableDebts.map(d => d.id));
             // Initialize custom amounts for ALL selectable debts
             const initialAmounts = {};
             allSelectableDebts.forEach(d => {
@@ -130,6 +144,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
         } else {
             setSelectedDebts([]);
             setCustomAmounts({});
+            setClientGives('');
         }
     }, [isOpen, currentParts, allSelectableDebts]);
 
@@ -306,7 +321,8 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                 hasError = true;
             }
 
-            if (!receiverName && !receiverId) {
+            // Check required Name
+            if (rules.requireName !== false && !receiverName?.trim()) {
                 hasError = true;
             }
             if (!proofData.signatureData && !proofData.photoData) {
@@ -325,9 +341,9 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                 } else if (requiresPhoto2 && !proofData.photoData2) {
                     alert("📄 FOTO 2 OBLIGATORIA\n\nDebes tomar una foto del albarán de contenido firmado (Documentación de vuelta).");
                 } else if (rules.requireSignature !== false && !proofData.signatureData) {
-                    alert("✍️ FIRMA OBLIGATORIA\n\nEste cliente exige una firma real del receptor. No se puede dejar en blanco.");
-                } else if (!receiverName && !receiverId) {
-                    alert("Por favor, introduzca el nombre o DNI del receptor.");
+                    alert("✍️ FIRMA OBLIGATORIA\n\nEste cliente exige una firma real en la entrega.");
+                } else if (rules.requireName !== false && !receiverName?.trim()) {
+                    alert("📝 NOMBRE OBLIGATORIO\n\nDebes escribir el nombre de quien recibe el paquete.");
                 } else {
                     alert("Es obligatorio capturar al menos una prueba (Firma o Foto del Sello/Albarán).");
                 }
@@ -336,9 +352,9 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
         }
 
         // IMPORTANT: Filter out current shipment debts if we are choosing "Postpone/Aplazar" mode
-        const finalDebts = skipCurrentDebts 
-            ? selectedDebts.filter(id => !id.startsWith(`${shipment.id}-`))
-            : selectedDebts;
+        // Al aplazar, NO se procesa ningún cobro (ni el actual ni otros pendientes).
+        // Los cobros de otros albaranes solo se registran cuando se entrega con éxito.
+        const finalDebts = skipCurrentDebts ? [] : selectedDebts;
 
         if (status === 'Entregado' && shipment.hasReturn && !showReturnPrompt) {
             setPendingConfirmData({ shipmentId: shipment.id, proofData, status, finalDebts, customAmounts, includeIva });
@@ -488,7 +504,42 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                 </div>
                                 <span className="text-[10px] text-red-400 font-medium">Se marcarán como cobrados</span>
                             </div>
-                            
+
+                            {/* 💰 CALCULADORA DE CAMBIO */}
+                            {totalToCollect > 0 && (() => {
+                                const given = parseFloat(clientGives) || 0;
+                                const change = +(given - totalToCollect).toFixed(2);
+                                const hasEnough = given >= totalToCollect;
+                                const hasInput = clientGives !== '' && given > 0;
+                                return (
+                                    <div className="mt-2 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                                        <div className="flex items-center gap-2 px-2.5 py-1.5">
+                                            <span className="text-sm">💰</span>
+                                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider flex-1">Calculadora de Cambio</p>
+                                            {hasInput && (
+                                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${hasEnough ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                                    {hasEnough ? (change === 0 ? '✅ Exacto' : `💵 Cambio: ${change.toFixed(2)}€`) : `⚠️ Faltan: ${Math.abs(change).toFixed(2)}€`}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="px-2.5 pb-2 flex items-center gap-2">
+                                            <div className="flex-1 flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 shadow-inner focus-within:border-emerald-400 focus-within:ring-1 focus-within:ring-emerald-400/30 transition-all">
+                                                <span className="text-xs font-bold text-slate-400">€</span>
+                                                <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    min="0"
+                                                    value={clientGives}
+                                                    onChange={(e) => setClientGives(e.target.value)}
+                                                    placeholder="Cantidad que da el cliente..."
+                                                    className="flex-1 bg-transparent border-none p-0 text-sm font-mono font-bold text-slate-800 focus:ring-0 placeholder:text-slate-300 placeholder:font-normal placeholder:text-xs"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
                             {/* Casilla Factura Simplificada */}
                             {basePorteTotal > 0 && (
                                 <label className={`mt-3 flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer shadow-sm ${includeIva ? 'bg-orange-50 border-orange-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
@@ -534,42 +585,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                     {/* Secciones de prueba: Solo para entregas, NO para recogidas */}
                     {shipment?.type !== 'Recogida' && (
                     <div className="space-y-6">
-                        {/* Client Rules Banner */}
-                        {(rules.requireDNI || requiresPhoto1 || (rules.requireSignature !== false)) && (
-                            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1">
-                                <p className="text-[10px] font-black text-amber-700 uppercase tracking-widest flex items-center gap-1.5">
-                                    <ShieldCheck size={13} className="text-amber-600" />
-                                    Exigencias del Cliente
-                                </p>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {rules.requireDNI && (
-                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${receiverId?.trim() ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
-                                            🪪 DNI {receiverId?.trim() ? '✓' : 'Obligatorio'}
-                                        </span>
-                                    )}
-                                    {requiresPhoto1 && !requiresPhoto2 && (
-                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${photoPreview ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
-                                            📸 Foto {photoPreview ? '✓' : 'Obligatoria'}
-                                        </span>
-                                    )}
-                                    {requiresPhoto2 && (
-                                        <>
-                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${photoPreview ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
-                                                📸 Foto 1: Agencia {photoPreview ? '✓' : 'Obligatoria'}
-                                            </span>
-                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${photoPreview2 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
-                                                📄 Foto 2: Doc. Firmado {photoPreview2 ? '✓' : 'Obligatoria'}
-                                            </span>
-                                        </>
-                                    )}
-                                    {rules.requireSignature !== false && (
-                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${isSignatureCaptured ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 animate-pulse'}`}>
-                                            ✍️ Firma {isSignatureCaptured ? '✓' : 'Obligatoria'}
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                        )}
+
 
                         {/* 1. Recipient Name Section */}
                         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
@@ -578,12 +594,12 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                 Datos de quien recibe
                             </h4>
                             <div>
-                                <label className={labelClass}>Nombre Completo</label>
+                                <label className={labelClass}>Nombre Completo {rules.requireName !== false && <span className="text-red-500">*</span>}</label>
                                 <div className="relative">
                                     <input
                                         type="text"
                                         placeholder="Pulsa el micro y habla..."
-                                        className={`${inputClass} pr-10`}
+                                        className={`${inputClass} pr-10 ${validationFailed && rules.requireName !== false && !receiverName?.trim() ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
                                         value={receiverName}
                                         onChange={(e) => setReceiverName(e.target.value)}
                                     />
@@ -597,16 +613,19 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                     </button>
                                 </div>
                             </div>
+                            {/* DNI: solo se muestra si el cliente lo exige */}
+                            {rules.requireDNI && (
                             <div>
-                                <label className={labelClass}>DNI / NIE / ID {shipment.deliveryRules?.requireDNI && <span className="text-red-500">*</span>}</label>
+                                <label className={labelClass}>DNI / NIE / ID <span className="text-red-500">*</span></label>
                                 <input
                                     type="text"
                                     placeholder="12345678X"
-                                    className={`${inputClass} ${(validationFailed && shipment.deliveryRules?.requireDNI && !receiverId?.trim()) || (validationFailed && !receiverName && !receiverId) ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
+                                    className={`${inputClass} ${validationFailed && rules.requireDNI && !receiverId?.trim() ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
                                     value={receiverId}
                                     onChange={(e) => setReceiverId(e.target.value)}
                                 />
                             </div>
+                            )}
                         </div>
 
                         {/* 2. Signature Section */}

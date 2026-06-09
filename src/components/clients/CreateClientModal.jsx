@@ -49,7 +49,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         clientNumber: '', name: '', legalName: '', cif: '', address: '', city: '', zip: '', province: '',
         phone: '', mobile: '', email: '', coordinates: '',
         opAddress: '', opCity: '', opZip: '',
-        type: 'Remitente', billingType: 'Facturación', tariffType: 'General',
+        type: 'Remitente', billingType: 'Clientes Habituales', tariffType: 'General',
         customRates: {}, customRatesB2: {}, allowedArticles: [], codFee: '', color: '#ef4444', 
         priority: 'urgent',
         username: '', password: '',
@@ -68,6 +68,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         branches: [],
         // Delivery Rules
         requireWeight: false,
+        requireName: true,
         requireDNI: false,
         requirePhoto: false,
         requireSignature: true,
@@ -1170,6 +1171,22 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                             </div>
                                         </label>
 
+                                        {/* Require Name */}
+                                        <label className="flex items-center justify-between p-4 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-blue-300 transition-colors group">
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-lg">📝</span>
+                                                <div>
+                                                    <p className="text-sm font-bold text-slate-700 group-hover:text-blue-700 transition-colors">Exigir Nombre del Receptor <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded-full">POR DEFECTO</span></p>
+                                                    <p className="text-[10px] text-slate-400">El repartidor debe escribir el nombre de quien recibe el paquete.</p>
+                                                </div>
+                                            </div>
+                                            <div className="relative">
+                                                <input type="checkbox" className="sr-only peer" checked={formData.requireName !== false} onChange={e => set('requireName', e.target.checked)} />
+                                                <div className="w-11 h-6 bg-slate-200 peer-checked:bg-blue-600 rounded-full transition-colors"></div>
+                                                <div className="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform"></div>
+                                            </div>
+                                        </label>
+
                                         {/* Require DNI */}
                                         <label className="flex items-center justify-between p-4 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-blue-300 transition-colors group">
                                             <div className="flex items-center gap-3">
@@ -1220,11 +1237,12 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                     </div>
                                 </div>
 
-                                {(formData.requireWeight || formData.requireDNI || formData.requirePhoto) && (
+                                {(formData.requireName !== false || formData.requireWeight || formData.requireDNI || formData.requirePhoto) && (
                                     <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
                                         <p className="text-xs text-blue-700 font-medium">✅ Reglas activas para este cliente:</p>
                                         <ul className="text-[11px] text-blue-600 mt-1 space-y-0.5">
                                             {formData.requireWeight && <li>• Los kilos serán obligatorios al crear albaranes.</li>}
+                                            {formData.requireName !== false && <li>• El repartidor deberá escribir el nombre del receptor.</li>}
                                             {formData.requireDNI && <li>• El repartidor deberá poner DNI al entregar.</li>}
                                             {formData.requirePhoto && <li>• El repartidor deberá hacer foto al entregar.</li>}
                                             {formData.requireSignature !== false && <li>• Se exigirá firma real (no firma ausente).</li>}

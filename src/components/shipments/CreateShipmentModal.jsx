@@ -202,9 +202,10 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
         const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
         const client = resolveBillingClient(payingClientName, parentId);
-        if (!client) return { requireWeight: false, requireDNI: false, requirePhoto: false, requireSignature: true };
+        if (!client) return { requireWeight: false, requireName: true, requireDNI: false, requirePhoto: false, requireSignature: true };
         return {
             requireWeight: !!client.requireWeight,
+            requireName: client.requireName !== false,
             requireDNI: !!client.requireDNI,
             requirePhoto: !!client.requirePhoto,
             requireSignature: client.requireSignature !== false,
@@ -955,6 +956,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             weightBracket: weightClientData ? getWeightBracketLabel(weightKg, weightClientData.tariff) : null,
             // Delivery rules snapshot from client config (frozen at creation time)
             deliveryRules: {
+                requireName: clientRules.requireName,
                 requireDNI: clientRules.requireDNI,
                 requirePhoto: clientRules.requirePhoto,
                 requireSignature: clientRules.requireSignature,
@@ -1121,7 +1123,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                 <div className="overflow-y-auto p-4 custom-scrollbar">
                     <form onSubmit={handleInitialSubmit} className="space-y-4">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div className="space-y-3">
+                            <div className="space-y-3" id="shipment-form-sender">
                                 <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider border-b border-blue-100 pb-2 flex items-center justify-between">
                                     <div className="flex items-center gap-2">
                                         <Building2 size={14} />
@@ -1168,6 +1170,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                 value={formData.clientName}
                                                 onChange={handleClientNameChange}
                                                 onFocus={handleFocus}
+                                                onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                                                 required
                                             />
                                             {showSuggestions && filteredClients.length > 0 && (
@@ -1236,7 +1239,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
                                 </div>
                             </div>
-                            <div className="space-y-3">
+                            <div className="space-y-3" id="shipment-form-dest">
                                 <h4 className="text-xs font-bold text-amber-600 uppercase tracking-wider border-b border-amber-100 pb-2 flex items-center gap-2">
                                     <MapIcon size={14} />
                                     Destinatario (Entrega)
@@ -1263,6 +1266,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                     value={formData.destinationName}
                                                     onChange={(e) => { handleDestinationNameChange(e); setSavedDestClient(false); }}
                                                     onFocus={handleDestFocus}
+                                                    onBlur={() => setTimeout(() => setShowDestSuggestions(false), 150)}
                                                     required
                                                 />
                                                 {formData.destinationName && onAddClient && !clients?.find(c => c.name.toLowerCase() === formData.destinationName.toLowerCase()) && (
@@ -1276,7 +1280,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                                 zip: formData.destinationZip || '',
                                                                 phone: formData.destinationPhone || '',
                                                                 type: 'Destinatario',
-                                                                billingType: 'Facturación'
+                                                                billingType: 'Clientes Habituales'
                                                             });
                                                             setSavedDestClient(true);
                                                         }}
@@ -1343,13 +1347,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                             </div>
                         </div>
 
-                        <div className="pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div className="pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-5" id="shipment-form-payment">
                             <div>
                                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
                                     <Euro size={14} className="text-blue-600" />
                                     Condiciones de Pago
                                 </h4>
-                                <div className="space-y-3">
+                                <div className="space-y-3" id="shipment-form-sender">
                                     <label className={labelClass}>¿Quién Paga el Porte?</label>
                                     <div className="flex gap-2">
                                         <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer p-3 rounded-lg border transition-all ${formData.porteType === 'Pagado' ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
@@ -1396,7 +1400,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                             </div>
                         </div>
 
-                        <div className="pt-3 border-t border-slate-100 space-y-3">
+                        <div className="pt-3 border-t border-slate-100 space-y-3" id="shipment-form-articles">
                             <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
                                 <FileText size={14} />
                                 Artículos y Servicios
@@ -1525,7 +1529,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                     <div className="border-t border-slate-200 mt-2 pt-2 flex justify-between items-center px-1"><span className="font-bold text-slate-500 text-xs uppercase">Total Artículos</span><span className="font-bold text-blue-600">{shouldHidePrices ? 'Fijado en Tarifa' : `${selectedArticles.reduce((sum, item) => sum + item.totalPrice, 0).toFixed(2)}€`}</span></div>
                                 </div>
                             )}
-                            <div>
+                            <div id="shipment-form-cod">
                                 <div className="relative">
                                     <Euro className="absolute left-3 top-1/2 -translate-y-1/2 text-red-400" size={16} />
                                     <input type="number" step="0.01" placeholder="REEMBOLSO 0.00" className={inputClass + " pl-9 border-red-200 focus:border-red-500 focus:ring-red-500/20"} value={formData.codAmount} onChange={(e) => {
@@ -1538,7 +1542,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                     }} />
                                 </div>
                             </div>
-                            <div className="space-y-1">
+                            <div className="space-y-1" id="shipment-form-price">
                                 <div className="relative">
                                     <Euro className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                                     <input type="number" step="0.01" inputMode="decimal" placeholder={shouldHidePrices ? "FACTURACIÓN - pulsa para cambiar" : "PRECIO FINAL 0.00"} className={`w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-bold text-lg ${shouldHidePrices && priceOverride === null ? 'text-slate-400 italic' : 'text-slate-700'}`} value={shouldHidePrices ? (priceOverride !== null ? priceOverride : '') : formData.amount} onChange={(e) => { const val = e.target.value; if (shouldHidePrices) { setPriceOverride(val); } setFormData({ ...formData, amount: val }); }} />
@@ -1644,7 +1648,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                         </div>
 
 
-                        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 rounded-b-2xl">
+                        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 rounded-b-2xl" id="shipment-form-save-btn">
                             <button type="button" onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors text-sm">Cancelar</button>
                             <button type="submit" className="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 text-sm"><Package size={18} />Generar Albarán</button>
                     </div>

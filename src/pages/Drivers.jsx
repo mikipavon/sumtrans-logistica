@@ -1,4 +1,4 @@
-import { User, Phone, Star, Map as MapIcon, Clock, Truck, Trash2, CheckCircle, Route, Settings } from 'lucide-react';
+import { User, Phone, Star, Map as MapIcon, Clock, Truck, Trash2, CheckCircle, Route, Settings, FileText, CalendarOff, Building2 } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -11,7 +11,8 @@ import RoutesManagerModal from '../components/drivers/RoutesManagerModal';
 import PayrollUploadModal from '../components/drivers/PayrollUploadModal';
 import GpsAlertsModal from '../components/drivers/GpsAlertsModal';
 import TimeLogsModal from '../components/drivers/TimeLogsModal';
-import { FileText } from 'lucide-react';
+import AbsenceManagerModal from '../components/drivers/AbsenceManagerModal';
+import CompanyCalendarModal from '../components/drivers/CompanyCalendarModal';
 
 function SortableDriverCard({ id, children, isManualSort }) {
     const {
@@ -54,7 +55,9 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
   const [showAlertHistory, setShowAlertHistory] = useState(false);
   const [alertHistoryFilter, setAlertHistoryFilter] = useState('all'); // 'all' or driverId
     const [isGpsAlertsModalOpen, setIsGpsAlertsModalOpen] = useState(false);
-    const [isTimeLogsModalOpen, setIsTimeLogsModalOpen] = useState(false);
+    const [isTimeLogsModalOpen, setIsTimeLogsModalOpen]   = useState(false);
+    const [absenceDriver, setAbsenceDriver]               = useState(null);
+    const [showCompanyCalendar, setShowCompanyCalendar]   = useState(false);
 
 
     const sensors = useSensors(
@@ -189,7 +192,7 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                     >
                         <FileText size={16} /> Subir Nóminas
                     </button>
-                                        <button
+                    <button
                         onClick={() => setIsGpsAlertsModalOpen(true)}
                         className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-indigo-100 transition-colors flex items-center gap-2"
                         title="Configurar GPS y Alertas"
@@ -203,7 +206,21 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                     >
                         <Clock size={16} /> Control Horario
                     </button>
-<button
+                    <button
+                        onClick={() => setAbsenceDriver({ _global: true })}
+                        className="bg-blue-50 text-blue-700 border border-blue-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-100 transition-colors flex items-center gap-2"
+                        title="Gestionar vacaciones y ausencias de conductores"
+                    >
+                        <CalendarOff size={16} /> Ausencias
+                    </button>
+                    <button
+                        onClick={() => setShowCompanyCalendar(true)}
+                        className="bg-rose-50 text-rose-700 border border-rose-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-rose-100 transition-colors flex items-center gap-2"
+                        title="Festivos y días de cierre de empresa"
+                    >
+                        <Building2 size={16} /> Festivos
+                    </button>
+                    <button
                         onClick={() => setIsRoutesModalOpen(true)}
                         className="bg-slate-100 text-slate-700 border border-slate-200 px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-200 transition-colors flex items-center gap-2"
                         title="Administrar Rutas Maestras"
@@ -317,14 +334,15 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                                 <Phone size={16} /> Llamar
                             </button>
                             <button
-                                onClick={() => onNavigate && onNavigate('tracking')}
-                                className="text-slate-500 hover:text-blue-600 text-sm font-medium flex items-center gap-2 transition-colors"
+                                onClick={() => setAbsenceDriver(driver)}
+                                className="text-blue-600 hover:text-blue-800 text-sm font-bold flex items-center gap-1.5 transition-colors bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-lg"
+                                title="Gestionar vacaciones y ausencias"
                             >
-                                <MapIcon size={16} /> Localizar
+                                📅 Ausencias
                             </button>
                             <button
                                 onClick={() => onImpersonate && onImpersonate(driver.id)}
-                                className="text-blue-600 hover:text-blue-800 text-sm font-bold flex items-center gap-2 transition-colors bg-blue-50 px-3 py-1 rounded-lg"
+                                className="text-slate-500 hover:text-blue-600 text-sm font-bold flex items-center gap-2 transition-colors bg-slate-50 px-3 py-1 rounded-lg"
                             >
                                 <User size={16} /> Entrar
                             </button>
@@ -397,6 +415,18 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                 isOpen={isTimeLogsModalOpen}
                 onClose={() => setIsTimeLogsModalOpen(false)}
                 isGhostModeUnlocked={isGhostModeUnlocked}
+            />
+
+            <AbsenceManagerModal
+                isOpen={!!absenceDriver}
+                driver={absenceDriver?._global ? null : absenceDriver}
+                drivers={drivers}
+                onClose={() => setAbsenceDriver(null)}
+            />
+
+            <CompanyCalendarModal
+                isOpen={showCompanyCalendar}
+                onClose={() => setShowCompanyCalendar(false)}
             />
         </div>
     );

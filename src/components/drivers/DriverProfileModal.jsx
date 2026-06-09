@@ -1,5 +1,6 @@
 import { X, Truck, Phone, MapPin, Package, Clock, Euro, Wallet, Calendar, CheckCircle, AlertTriangle, Edit2, Save, Eye, EyeOff, Key, BarChart2, TrendingUp, Target, Activity, Printer, Sun, Moon, FileText, Trash2, Download } from 'lucide-react';
 import { useMemo, useState, useEffect } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import { calculateDailyAccount, isToday } from '../../utils/accountLogic';
 import { generateCashReportPDF } from '../../utils/cashReportPdf';
 import ShipmentDetailsModal from '../shipments/ShipmentDetailsModal';
@@ -17,6 +18,7 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
     const [morningInput, setMorningInput] = useState('');
     const activeRoutes = routes && routes.length > 0 ? routes : RUTAS_MAESTRAS;
     const [afternoonInput, setAfternoonInput] = useState('');
+    const [driverCollections, setDriverCollections] = useState([]);
 
     useEffect(() => {
         if (driver && isOpen) {
@@ -37,6 +39,17 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
             setShowPassword(false);
             setSelectedDateStr(new Date().toISOString().split('T')[0]);
             setActiveTab('actividad');
+            // Cargar collectedCollections del conductor desde Supabase
+            setDriverCollections([]);
+            const supabase = createClient(
+                import.meta.env.VITE_SUPABASE_URL,
+                import.meta.env.VITE_SUPABASE_ANON_KEY
+            );
+            const todayStr = new Date().toISOString().split('T')[0];
+            supabase.from('drivers').select('data').eq('id', driver.id).single().then(({ data: drvRow }) => {
+                const cloud = drvRow?.data?.[`collectedCollections_${todayStr}`];
+                if (cloud && Array.isArray(cloud)) setDriverCollections(cloud);
+            });
         }
     }, [driver, isOpen]);
 
@@ -75,7 +88,7 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
             allShipments: shipments, // Need entire shipments context for createdById checks
             driverId: driver.id,
             clients: clients || [],
-            collectedCollections: [], // Admin doesn't see ephemeral collections
+            collectedCollections: driverCollections, // Cargado desde Supabase para coincidir con la vista del conductor
             targetDate: targetDate
         });
 
@@ -488,7 +501,7 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                             </p>
                                             <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-50">
                                                 <span className="font-mono text-slate-500">{shipment.id}</span>
-                                                <span className="font-bold text-slate-700">{shipment.amount}</span>
+                                                <span className="font-bold text-slate-700">€{(parseFloat(String(shipment.amount || shipment.customAmount || 0).replace(/[^0-9.-]/g, '')) || 0).toFixed(2)}</span>
                                             </div>
                                         </div>
                                     </div>
