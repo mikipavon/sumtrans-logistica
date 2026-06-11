@@ -207,7 +207,7 @@ serve(async (req: Request) => {
 
     // ── 2. Extraer campos (compatibles con los nombres del formulario) ──
     const nombreComercial = fields['Nombre_Comercial'] || fields['nombre'] || ''
-    const cif             = (fields['CIF'] || fields['cif'] || '').trim().toUpperCase()
+    const cif             = (fields['CIF'] || fields['cif'] || '').trim().toUpperCase().replace(/[-\s]/g, '')
     const razonSocial     = fields['Razon_Social'] || fields['razon_social'] || nombreComercial
     const direccion       = fields['Direccion'] || fields['direccion'] || ''
     const poblacion       = fields['Poblacion'] || fields['poblacion'] || ''
