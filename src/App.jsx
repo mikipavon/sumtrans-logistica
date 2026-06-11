@@ -2346,7 +2346,19 @@ function App() {
 
   const handleValidateClient = async (clientId, approved) => {
     if (approved) {
-      await handleUpdateClient(clientId, { status: 'approved' });
+      const client = clients.find(c => c.id === clientId);
+      console.log('[Validar] Cliente encontrado:', client?.name, '| billingType:', client?.billingType, '| clientNumber:', client?.clientNumber);
+      const updateData = { status: 'approved' };
+      if (client && !client.clientNumber) {
+        // Fallback: si billingType no está definido, usar 'Clientes Habituales' por defecto
+        const billing = client.billingType || 'Clientes Habituales';
+        const prefix = getClientPrefix(billing);
+        const nextNum = getNextClientNumber(clientsRef.current, prefix);
+        updateData.clientNumber = nextNum;
+        console.log('[Validar] Asignando número:', nextNum, '| prefix:', prefix, '| billing:', billing);
+      }
+      await handleUpdateClient(clientId, updateData);
+      console.log('[Validar] Cliente aprobado y guardado:', clientId, updateData);
     } else {
       try {
         const { error } = await supabase.from('clients').delete().eq('id', clientId);

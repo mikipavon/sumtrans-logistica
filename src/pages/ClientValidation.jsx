@@ -1,6 +1,32 @@
 import { useState } from 'react';
-import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail } from 'lucide-react';
 import CreateClientModal from '../components/clients/CreateClientModal';
+import { supabase } from '../lib/supabase';
+
+// ── Llama a la Edge Function para enviar email de acceso al cliente ──
+async function sendAccessEmail(clientId) {
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const res = await fetch(`${supabaseUrl}/functions/v1/confirmar-acceso`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({ clientId }),
+        });
+        const result = await res.json();
+        if (result.ok) {
+            console.log(`[Email] Email de acceso enviado a: ${result.emailSentTo}`);
+        } else {
+            console.warn('[Email] No se pudo enviar el email de acceso:', result.error);
+        }
+    } catch (e) {
+        console.warn('[Email] Error al enviar email de acceso:', e);
+    }
+}
 
 export default function ClientValidation({ clients, onValidateClient, onUpdateClient, articles, tariffs, allPoblaciones }) {
     // Filter only pending clients — exclude test-mode clients (isTest: true)
@@ -15,14 +41,17 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
         setIsEditModalOpen(true);
     };
 
-    const handleSaveAndApprove = (clientData) => {
+    const handleSaveAndApprove = async (clientData) => {
         if (onUpdateClient && editingClient) {
             // Update client data with everything from the full form
+            // ⚠️ await is important: ensures billingType is saved before number assignment
             const { id, ...dataWithoutId } = clientData;
-            onUpdateClient(editingClient.id, dataWithoutId);
+            await onUpdateClient(editingClient.id, dataWithoutId);
         }
-        // Auto-approve after editing
-        onValidateClient(editingClient.id, true);
+        // Auto-approve after editing (billingType ya actualizado → número correcto)
+        await onValidateClient(editingClient.id, true);
+        // Enviar email automático de confirmación de acceso
+        await sendAccessEmail(editingClient.id);
         setEditingClient(null);
         setIsEditModalOpen(false);
     };
@@ -32,8 +61,10 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
         setEditingClient(null);
     };
 
-    const handleApprove = (clientId) => {
-        onValidateClient(clientId, true);
+    const handleApprove = async (clientId) => {
+        await onValidateClient(clientId, true);
+        // Enviar email automático de confirmación de acceso
+        await sendAccessEmail(clientId);
     };
 
     const handleReject = (clientId) => {
