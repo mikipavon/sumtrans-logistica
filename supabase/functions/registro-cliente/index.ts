@@ -3,6 +3,7 @@
 // Recibe el POST del formulario de sumtransportes.com,
 // detecta si el cliente ya existe (por CIF + nombre),
 // crea o actualiza la ficha, y manda emails automáticos.
+// v2.1 — sin JWT, CIF normalizado, emails corporativos SUM
 // ============================================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
