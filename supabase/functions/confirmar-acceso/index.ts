@@ -2,6 +2,7 @@
 // Edge Function: confirmar-acceso
 // Llamada desde la app cuando el admin aprueba un cliente nuevo.
 // Envía el email de confirmación de acceso al cliente.
+// v2.1 — sin JWT, emails corporativos SUM
 // ============================================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
