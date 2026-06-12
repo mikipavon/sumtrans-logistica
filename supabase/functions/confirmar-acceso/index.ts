@@ -87,7 +87,7 @@ serve(async (req: Request) => {
         <p style="color:#1e3a5f;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 14px">Credenciales de acceso al portal</p>
         <table style="border-collapse:collapse;width:100%">
           <tr><td style="color:#64748b;font-size:13px;padding:4px 0;width:100px">Usuario:</td><td style="color:#1e293b;font-size:14px;font-weight:600">${email}</td></tr>
-          <tr><td style="color:#64748b;font-size:13px;padding:4px 0">Contraseña:</td><td style="color:#1e293b;font-size:14px;font-weight:600">${password}</td></tr>
+          <tr><td style="color:#64748b;font-size:13px;padding:4px 0">Contraseña:</td><td style="color:#475569;font-size:13px;font-style:italic">La contraseña que usted eligió al registrarse</td></tr>
         </table>
       </div>
       <!-- CTA -->
