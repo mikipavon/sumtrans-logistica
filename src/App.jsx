@@ -1333,22 +1333,43 @@ function App() {
   }
 
   const handleUpdateDriver = async (driverId, updatedData) => {
-    // Detectar si se está DESACTIVANDO el modo pruebas
     const previousDriver = driversRef.current.find(d => String(d.id) === String(driverId));
+    if (!previousDriver) {
+      console.error('[UpdateDriver] Conductor no encontrado en estado:', driverId);
+      return;
+    }
+
     const wasTestMode = previousDriver?.isTestMode || false;
     const isNowTestMode = updatedData.isTestMode || false;
     const isDeactivating = wasTestMode && !isNowTestMode;
 
+    // ⚠️ Merge con datos previos para NO perder campos no incluidos en el formulario
+    const mergedData = { ...previousDriver, ...updatedData };
+
+    console.log('[UpdateDriver] Guardando conductor', driverId, '| isTestMode:', mergedData.isTestMode);
+
     try {
       const { data, error } = await supabase.from('drivers').update({ 
-        username: updatedData.username, 
-        password: updatedData.password, 
-        data: updatedData 
+        username: mergedData.username, 
+        password: mergedData.password, 
+        data: mergedData 
       }).eq('id', driverId).select();
       if (error) throw error;
-      setDrivers(prev => prev.map(d => d.id === driverId ? { ...data[0].data, id: data[0].id, username: data[0].username, password: data[0].password } : d));
 
-      // Al desactivar el modo pruebas, limpiar todo lo que hizo el conductor
+      if (!data || data.length === 0) {
+        console.error('[UpdateDriver] El UPDATE no devolvió filas. ¿ID incorrecto o RLS bloqueando?', driverId);
+        alert('No se pudo guardar el conductor. Comprueba los permisos.');
+        return;
+      }
+
+      console.log('[UpdateDriver] Guardado OK | isTestMode en BD:', data[0].data?.isTestMode);
+
+      // Usar String() para evitar problemas de tipo number vs string en el ID
+      setDrivers(prev => prev.map(d => String(d.id) === String(driverId) 
+        ? { ...data[0].data, id: data[0].id, username: data[0].username, password: data[0].password } 
+        : d
+      ));
+
       if (isDeactivating) {
         await handleDeactivateTestMode(driverId);
       }
