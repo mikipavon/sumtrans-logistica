@@ -40,44 +40,65 @@ const createDeliveryPDFDoc = async (shipment) => {
   const pH = doc.internal.pageSize.getHeight();
   const M  = 14;
 
-  // ── CABECERA navy ──
-  doc.setFillColor(...NAVY);
-  doc.rect(0, 0, pW, 44, 'F');
+  // ── CABECERA: banner corporativo ──
+  const BANNER_URL = 'https://www.sumtransportes.com/banner-email.png';
+  const bannerB64 = await getBase64FromUrl(BANNER_URL);
+  const bannerH = 44; // altura en mm
+
+  if (bannerB64) {
+    // Usar el banner como cabecera completa
+    doc.addImage(bannerB64, 'PNG', 0, 0, pW, bannerH);
+
+    // Overlay semitransparente a la derecha para el título POD
+    doc.setFillColor(0, 30, 80);
+    doc.setGState(new doc.GState({ opacity: 0.55 }));
+    doc.rect(pW / 2, 0, pW / 2, bannerH, 'F');
+    doc.setGState(new doc.GState({ opacity: 1 }));
+
+    // Título POD sobre el banner
+    doc.setTextColor(...WHITE);
+    doc.setFontSize(13);
+    doc.setFont('helvetica', 'bold');
+    doc.text('JUSTIFICANTE DE ENTREGA', pW - M, 19, { align: 'right' });
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(200, 215, 240);
+    doc.text('Proof of Delivery (POD)', pW - M, 27, { align: 'right' });
+  } else {
+    // Fallback: cabecera navy con texto
+    doc.setFillColor(...NAVY);
+    doc.rect(0, 0, pW, bannerH, 'F');
+
+    doc.setTextColor(...WHITE);
+    doc.setFontSize(20);
+    doc.setFont('helvetica', 'bold');
+    doc.text('SUMTRANS LOGÍSTICA', M, 17);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(180, 200, 235);
+    doc.text('SOLUCIONES DE TRANSPORTE Y MENSAJERÍA', M, 24);
+    doc.setFontSize(7.5);
+    doc.setTextColor(150, 180, 220);
+    doc.text('CIF: B-56131717  ·  Tel: 957 245 221  ·  info@sumtransportes.com', M, 31);
+    doc.text('Pol. El Junquillo Nº 83  ·  Cabra (Córdoba)  ·  CP 14940', M, 38);
+
+    doc.setTextColor(...WHITE);
+    doc.setFontSize(13);
+    doc.setFont('helvetica', 'bold');
+    doc.text('JUSTIFICANTE DE ENTREGA', pW - M, 19, { align: 'right' });
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(200, 215, 240);
+    doc.text('Proof of Delivery (POD)', pW - M, 27, { align: 'right' });
+  }
 
   // Franja roja decorativa
   doc.setFillColor(...RED);
-  doc.rect(0, 44, pW, 3, 'F');
+  doc.rect(0, bannerH, pW, 3, 'F');
 
-  // Nombre empresa
-  doc.setTextColor(...WHITE);
-  doc.setFontSize(20);
-  doc.setFont('helvetica', 'bold');
-  doc.text('SUMTRANS LOGÍSTICA', M, 17);
-
-  // Slogan
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(180, 200, 235);
-  doc.text('SOLUCIONES DE TRANSPORTE Y MENSAJERÍA', M, 24);
-
-  // Datos contacto en cabecera
-  doc.setFontSize(7.5);
-  doc.setTextColor(150, 180, 220);
-  doc.text('CIF: B-56131717  ·  Tel: 957 245 221  ·  info@sumtransportes.com', M, 31);
-  doc.text('Pol. El Junquillo Nº 83  ·  Cabra (Córdoba)  ·  CP 14940', M, 38);
-
-  // Título POD — derecha
-  doc.setTextColor(...WHITE);
-  doc.setFontSize(13);
-  doc.setFont('helvetica', 'bold');
-  doc.text('JUSTIFICANTE DE ENTREGA', pW - M, 19, { align: 'right' });
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(200, 215, 240);
-  doc.text('Proof of Delivery (POD)', pW - M, 27, { align: 'right' });
 
   // ── BANDA INFO ALBARÁN ──
-  const infoY = 52;
+  const infoY = bannerH + 8;
   doc.setFillColor(...LGRAY);
   doc.rect(0, infoY, pW, 18, 'F');
   doc.setDrawColor(...MGRAY);
