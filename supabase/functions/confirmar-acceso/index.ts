@@ -1,8 +1,9 @@
 // ============================================================
 // Edge Function: confirmar-acceso
 // Llamada desde la app cuando el admin aprueba un cliente nuevo.
-// Envía el email de confirmación de acceso al cliente.
-// v2.1 — sin JWT, emails corporativos SUM
+// Envía el email de confirmación de acceso al cliente y
+// confirma su cuenta Supabase Auth.
+// v3.0 — con Supabase Auth confirmation
 // ============================================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -66,6 +67,41 @@ serve(async (req: Request) => {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
+    }
+
+    // ── Confirmar cuenta Supabase Auth del cliente ──
+    try {
+      // Buscar el usuario auth por email
+      const { data: authUsers } = await supabase.auth.admin.listUsers()
+      const authUser = authUsers?.users?.find((u: any) => u.email === email)
+      if (authUser) {
+        // Confirmar el email (activa la cuenta)
+        await supabase.auth.admin.updateUserById(authUser.id, {
+          email_confirm: true,
+        })
+        console.log(`[confirmar-acceso] Cuenta Auth confirmada para ${email}`)
+      } else {
+        // Si no existe la cuenta auth, crearla
+        if (password && password.length >= 6) {
+          const { error: createErr } = await supabase.auth.admin.createUser({
+            email: email,
+            password: password,
+            email_confirm: true,
+            user_metadata: {
+              role: 'client',
+              linked_id: String(clientId),
+              display_name: nombre,
+            },
+          })
+          if (createErr) {
+            console.warn('[confirmar-acceso] Error creando Auth user:', createErr.message)
+          } else {
+            console.log(`[confirmar-acceso] Cuenta Auth creada y confirmada para ${email}`)
+          }
+        }
+      }
+    } catch (authErr) {
+      console.warn('[confirmar-acceso] Error gestionando Auth:', authErr)
     }
 
     // Enviar email de confirmación de acceso

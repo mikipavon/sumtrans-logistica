@@ -11,13 +11,14 @@ import Clients from './pages/Clients'
 import Articles from './pages/Articles'
 import Tracking from './pages/Tracking'
 import FuelManagement from './pages/FuelManagement'
+import MaintenanceHistory from './pages/MaintenanceHistory'
 import ClientDashboard from './pages/client/ClientDashboard'
 import Incidents from './pages/Incidents'
 import ClientValidation from './pages/ClientValidation'
 import PendingCollections from './pages/PendingCollections'
 import NotificationCenter from './pages/NotificationCenter'
 import Shipment from './models/Shipment';
-import { supabase } from './lib/supabase'
+import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { initStorageBuckets } from './utils/storage';
 import { getIrregularReasons } from './utils/shipmentUtils';
 import { BAREMO_1_PUEBLOS, BAREMO_2_PUEBLOS } from './data/baremos';
@@ -78,6 +79,50 @@ function App() {
   const [currentDriverId, setCurrentDriverId] = useState(null) // ID of the logged in driver
   const [currentClientId, setCurrentClientId] = useState(null) // ID of the logged in client
   const [shipmentStatusFilter, setShipmentStatusFilter] = useState(null) // Filter passed from Dashboard KPI cards
+  const [isRestoringSession, setIsRestoringSession] = useState(true) // true while checking for existing Supabase Auth session
+
+  // ── Restaurar sesión de Supabase Auth al cargar la app ──
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreSession() {
+      try {
+        const session = await getCurrentSession();
+        if (session && !cancelled) {
+          const profile = await getUserProfile();
+          if (profile && !cancelled) {
+            setIsAuthenticated(true);
+            setUserRole(profile.role);
+            if (profile.role === 'driver') setCurrentDriverId(profile.linked_id);
+            if (profile.role === 'client') setCurrentClientId(profile.linked_id);
+          }
+        }
+      } catch (e) {
+        console.warn('[Session] Error restoring session:', e);
+      } finally {
+        if (!cancelled) setIsRestoringSession(false);
+      }
+    }
+
+    restoreSession();
+
+    // Escuchar cambios de auth (logout desde otra pestaña, etc.)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (event === 'SIGNED_OUT') {
+          setIsAuthenticated(false);
+          setUserRole(null);
+          setCurrentDriverId(null);
+          setCurrentClientId(null);
+        }
+      }
+    );
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   // --- OFFLINE / CONNECTIVITY ---
   const { isOnline, justReconnected } = useOnlineStatus();
@@ -1059,6 +1104,76 @@ function App() {
   }
 
   const handleLogin = async (role = 'admin', username = '', password = '') => {
+    try {
+      // ── Construir el email para Supabase Auth ──
+      let authEmail = username;
+
+      // Para drivers: el username podría no ser un email, pero ahora exigimos email real
+      // Para admin y client: ya usan email
+
+      // ── Autenticación con Supabase Auth ──
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: authEmail,
+        password: password,
+      });
+
+      if (authError || !authData.user) {
+        console.warn('[Login] Supabase Auth failed:', authError?.message);
+        // ── FALLBACK: login legacy (para transición mientras se migran usuarios) ──
+        return await handleLegacyLogin(role, username, password);
+      }
+
+      // ── Obtener perfil con rol ──
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authData.user.id)
+        .single();
+
+      if (!profile) {
+        console.warn('[Login] No profile found for auth user, falling back to legacy');
+        return await handleLegacyLogin(role, username, password);
+      }
+
+      // ── Verificar que el driver está activo ──
+      if (profile.role === 'driver' && profile.linked_id) {
+        const driver = drivers.find(d => String(d.id) === String(profile.linked_id));
+        if (driver && driver.isActive === false) {
+          await supabase.auth.signOut();
+          alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
+          return false;
+        }
+      }
+
+      // ── Login exitoso ──
+      setIsAuthenticated(true);
+      setUserRole(profile.role);
+
+      if (profile.role === 'driver') {
+        setCurrentDriverId(profile.linked_id);
+        setCurrentClientId(null);
+      } else if (profile.role === 'client') {
+        setCurrentClientId(profile.linked_id);
+        setCurrentDriverId(null);
+        // Notificar a la web padre (iframe)
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: 'SUM_CLIENT_LOGIN_SUCCESS', clientId: profile.linked_id }, '*');
+        }
+      } else {
+        setCurrentDriverId(null);
+        setCurrentClientId(null);
+      }
+
+      return true;
+    } catch (e) {
+      console.error('[Login] Error:', e);
+      // Fallback a login legacy
+      return await handleLegacyLogin(role, username, password);
+    }
+  }
+
+  // ── Login legacy (compatibilidad durante la transición) ──
+  const handleLegacyLogin = async (role = 'admin', username = '', password = '') => {
     if (role === 'driver') {
       // ── 1. Autenticación: usar caché local primero (evita round-trip de red) ──
       let driverFound = drivers.find(
@@ -1152,7 +1267,13 @@ function App() {
     }
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Cerrar sesión de Supabase Auth
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('[Logout] Error signing out from Supabase Auth:', e);
+    }
     setIsAuthenticated(false)
     setUserRole(null)
     setCurrentDriverId(null)
@@ -1238,6 +1359,20 @@ function App() {
         return false
       }
       
+      // ── Crear cuenta Supabase Auth para el nuevo conductor ──
+      if (newDriver.email && newDriver.password && newDriver.password.length >= 6) {
+        try {
+          const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+          const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+          // Llamar a una Edge Function o usar la API de admin (desde el backend)
+          // Nota: createUser de admin NO está disponible desde el frontend con anon key
+          // Los nuevos conductores se migrarán cuando se ejecute migrate-users
+          console.log(`[AddDriver] Conductor creado. Para activar Supabase Auth, ejecutar migrate-users.`);
+        } catch (authErr) {
+          console.warn('[AddDriver] No se pudo crear cuenta Auth:', authErr);
+        }
+      }
+
       setDrivers(prev => [...prev, { ...data[0].data, id: data[0].id, username: data[0].username, password: data[0].password }])
       return true
     } catch (e) { 
@@ -2702,12 +2837,13 @@ function App() {
     >
                 {currentView === 'dashboard' && (
                     <div className="animate-in fade-in duration-500">
-                        <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
+                        <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} vehicles={vehicles} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
                     </div>
                 )}
       {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} driverNamePreference={driverNamePreference} />}
       {currentView === 'shipments' && <Shipments shipments={visibleShipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} />}
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
+      {currentView === 'maintenance-history' && <MaintenanceHistory vehicles={vehicles} onUpdateVehicle={handleUpdateVehicle} onNavigateToFleet={() => setCurrentView('fleet')} />}
       {currentView === 'fuel' && <FuelManagement fuelLogs={fuelLogs} onAddFuelLog={handleAddFuelLog} drivers={drivers} shipments={visibleShipments} />}
       {currentView === 'drivers' && <Drivers routes={routes} onUpdateRoutes={handleUpdateRoutes} routeKnowledge={routeKnowledge} onUpdateRouteKnowledge={handleUpdateRouteKnowledge} drivers={drivers} shipments={visibleShipments} clients={visibleClients} onAddDriver={handleAddDriver} onUpdateDriver={handleUpdateDriver} onDeleteDriver={handleDeleteDriver} onImpersonate={handleImpersonate} onNavigate={setCurrentView} articles={articles} defaultCodFee={defaultCodFee} isGhostModeUnlocked={isGhostModeUnlocked} driverOrder={driverOrder} onUpdateDriverOrder={handleUpdateDriverOrder} gpsIntervalMinutes={gpsIntervalMinutes} setGpsIntervalMinutes={setGpsIntervalMinutes} driverAlerts={driverAlerts} setDriverAlerts={setDriverAlerts} driverNamePreference={driverNamePreference} onUpdateDriverNamePreference={handleUpdateDriverNamePreference} />}
       {currentView === 'tracking' && <Tracking drivers={drivers} shipments={shipments} onRequestGps={handleRequestDriverGps} />}

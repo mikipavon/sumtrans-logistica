@@ -1,4 +1,4 @@
-import { X, User, Phone, Truck, Lock, BadgeCheck } from 'lucide-react';
+import { X, User, Phone, Truck, Lock, BadgeCheck, Mail } from 'lucide-react';
 import { useState } from 'react';
 
 export default function CreateDriverModal({ isOpen, onClose, onSave }) {
@@ -6,6 +6,7 @@ export default function CreateDriverModal({ isOpen, onClose, onSave }) {
         name: '',
         alias: '',
         phone: '',
+        email: '',
         vehicle: '',
         status: 'Disponible',
         username: '',
@@ -23,7 +24,7 @@ export default function CreateDriverModal({ isOpen, onClose, onSave }) {
             rating: 5.0, // Default rating
             since: new Date().getFullYear().toString()
         });
-        setFormData({ name: '', alias: '', phone: '', vehicle: '', status: 'Disponible', username: '', password: '', isTestMode: true });
+        setFormData({ name: '', alias: '', phone: '', email: '', vehicle: '', status: 'Disponible', username: '', password: '', isTestMode: true });
         onClose();
     };
 
@@ -73,6 +74,18 @@ export default function CreateDriverModal({ isOpen, onClose, onSave }) {
                                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 text-sm"
                                 value={formData.phone}
                                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                            />
+                        </div>
+
+                        <div className="relative">
+                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                            <input
+                                type="email"
+                                placeholder="Email del Conductor"
+                                required
+                                className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 text-sm"
+                                value={formData.email}
+                                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                             />
                         </div>
 

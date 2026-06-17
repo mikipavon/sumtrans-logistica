@@ -2,8 +2,9 @@
 // Edge Function: registro-cliente
 // Recibe el POST del formulario de sumtransportes.com,
 // detecta si el cliente ya existe (por CIF + nombre),
-// crea o actualiza la ficha, y manda emails automáticos.
-// v2.1 — sin JWT, CIF normalizado, emails corporativos SUM
+// crea o actualiza la ficha, crea cuenta Supabase Auth,
+// y manda emails automáticos.
+// v3.0 — con Supabase Auth + sin contraseñas en emails
 // ============================================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -293,12 +294,36 @@ serve(async (req: Request) => {
         })
       }
 
+      // ── Crear cuenta Supabase Auth para el cliente existente ──
+      try {
+        if (password.length >= 6) {
+          const { error: authError } = await supabase.auth.admin.createUser({
+            email: email,
+            password: password,
+            email_confirm: true,
+            user_metadata: {
+              role: 'client',
+              linked_id: String(existingClient.id),
+              display_name: nombreComercial,
+            },
+          })
+          if (authError && !authError.message?.includes('already')) {
+            console.warn('[registro-cliente] Error creando Auth user (existente):', authError.message)
+          } else {
+            console.log(`[registro-cliente] Auth user creado/existente para ${email}`)
+          }
+        }
+      } catch (authErr) {
+        console.warn('[registro-cliente] Auth creation error:', authErr)
+      }
+
       // Emails: acceso inmediato al cliente + aviso a Miguel
+      // NOTA: ya no enviamos la contraseña en el email por seguridad
       await Promise.all([
         sendEmail(
           email,
           '¡Ya tienes acceso al Portal de Clientes de Sumtrans! 🚛',
-          emailAccesoInmediato(nombreComercial, email, password)
+          emailAccesoInmediato(nombreComercial, email, '(la contraseña que elegiste al registrarte)')
         ),
         sendEmail(
           ADMIN_EMAIL,
@@ -354,6 +379,29 @@ serve(async (req: Request) => {
           status: 500,
           headers: { ...CORS, 'Content-Type': 'application/json' },
         })
+      }
+
+      // ── Crear cuenta Supabase Auth para el nuevo cliente (desactivada hasta aprobación) ──
+      try {
+        if (password.length >= 6 && inserted?.id) {
+          const { error: authError } = await supabase.auth.admin.createUser({
+            email: email,
+            password: password,
+            email_confirm: false, // No confirmar hasta que el admin apruebe
+            user_metadata: {
+              role: 'client',
+              linked_id: String(inserted.id),
+              display_name: nombreComercial,
+            },
+          })
+          if (authError && !authError.message?.includes('already')) {
+            console.warn('[registro-cliente] Error creando Auth user (nuevo):', authError.message)
+          } else {
+            console.log(`[registro-cliente] Auth user creado para nuevo cliente ${email}`)
+          }
+        }
+      } catch (authErr) {
+        console.warn('[registro-cliente] Auth creation error:', authErr)
       }
 
       // Emails: aviso de espera al cliente + aviso a Miguel
