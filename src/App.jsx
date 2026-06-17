@@ -1170,6 +1170,8 @@ function App() {
         setCurrentClientId(null);
       }
 
+      // Login exitoso — recargar para que los datos se carguen con el token de auth
+      window.location.reload();
       return true;
     } catch (e) {
       console.error('[Login] Error:', e);
