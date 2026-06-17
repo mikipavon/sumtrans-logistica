@@ -10,6 +10,7 @@ export default function Clients({ clients, allPoblaciones, articles, onUpdateCli
     
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
+    const [filterGPS, setFilterGPS] = useState(false);
     const [expandedClients, setExpandedClients] = useState(new Set());
 
     const filteredClients = useMemo(() => {
@@ -17,6 +18,9 @@ export default function Clients({ clients, allPoblaciones, articles, onUpdateCli
         let result = safeClients.filter(c => {
             // Only show validated/active clients in the master list
             if (c.status === 'pending') return false;
+            
+            // GPS filter
+            if (filterGPS && !(c.coordinates && c.coordinates.trim())) return false;
             
             const search = (searchTerm || '').toLowerCase();
             const mainMatch = (c.name || '').toLowerCase().includes(search) ||
@@ -54,7 +58,7 @@ export default function Clients({ clients, allPoblaciones, articles, onUpdateCli
             });
         }
         return result;
-    }, [clients, searchTerm, sortConfig]);
+    }, [clients, searchTerm, sortConfig, filterGPS]);
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -352,6 +356,18 @@ export default function Clients({ clients, allPoblaciones, articles, onUpdateCli
                     />
                 </div>
                 <div className="flex gap-2 w-full sm:w-auto">
+                    <button
+                        onClick={() => setFilterGPS(!filterGPS)}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all border ${
+                            filterGPS
+                                ? 'bg-emerald-50 border-emerald-300 text-emerald-700 shadow-sm'
+                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                        title="Filtrar clientes con ubicación GPS guardada"
+                    >
+                        <MapPin size={18} className={filterGPS ? 'text-emerald-600' : 'text-slate-400'} />
+                        {filterGPS ? `Con GPS (${filteredClients.length})` : 'Con GPS'}
+                    </button>
                     <input
                         type="file"
                         ref={fileInputRef}
