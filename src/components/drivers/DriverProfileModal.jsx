@@ -280,6 +280,16 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                         placeholder="Ej: conductor1"
                                     />
                                 </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 mb-1">📧 Email <span className="text-amber-600 font-normal">(necesario para Supabase Auth)</span></label>
+                                    <input
+                                        type="email"
+                                        value={formData.email || ''}
+                                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                                        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="conductor@email.com"
+                                    />
+                                </div>
                                 <div className="relative">
                                     <label className="block text-xs font-bold text-slate-600 mb-1">Contraseña</label>
                                     <div className="flex items-center">
