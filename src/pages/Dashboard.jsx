@@ -1,8 +1,8 @@
-import { TrendingUp, Package, Truck, AlertCircle, BarChart2, DollarSign, Activity, Clock, Filter, Calendar } from 'lucide-react';
+import { TrendingUp, Package, Truck, AlertCircle, BarChart2, DollarSign, Activity, Clock, Filter, Calendar, CheckCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
-export default function Dashboard({ onSync, isSyncing, shipments = [], clients = [], isGhostModeUnlocked = false, onNavigate }) {
+export default function Dashboard({ onSync, isSyncing, shipments = [], clients = [], vehicles = [], isGhostModeUnlocked = false, onNavigate }) {
     const normalize = (val) => String(val || '').toLowerCase().trim();
     
     const [timeGrouping, setTimeGrouping] = useState('days'); 
@@ -221,11 +221,66 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
         };
     }, [filteredShipments]);
 
-    const alerts = [
-        { id: 1, type: 'warning', title: 'Baja Rentabilidad en Ruta Norte', desc: 'El coste de combustible supera el margen en 15%.', time: 'Hace 2h' },
-        { id: 2, type: 'danger', title: 'Exceso de Entregas Aplazadas', desc: 'El cliente Global Tech tiene 4 envíos pendientes recurrentes.', time: 'Hace 5h' },
-        { id: 3, type: 'info', title: 'Pico de Volumen Previsto', desc: 'Se esperan +40 envíos a Zona Centro mañana.', time: 'Hace 1 día' },
-    ];
+    // Real maintenance alerts from vehicle data
+    const maintenanceAlerts = useMemo(() => {
+        const alerts = [];
+        (vehicles || []).forEach(v => {
+            const odometer = parseInt(v.currentOdometer || 0);
+            (v.maintenanceLogs || []).forEach(log => {
+                if (!log.alertAtKm) return;
+                const alertKm = parseInt(log.alertAtKm);
+                const remaining = alertKm - odometer;
+                const MAINT_TYPES = {
+                    Aceite: 'Cambio de Aceite', Correa: 'Correa Distribución',
+                    Ruedas: 'Neumáticos / Ruedas', Filtros: 'Filtros',
+                    Frenos: 'Frenos / Pastillas', Revisión: 'Revisión General',
+                    Reparación: 'Reparación', Otro: 'Mantenimiento',
+                };
+                const label = MAINT_TYPES[log.type] || log.type;
+                if (remaining <= 0) {
+                    alerts.push({ id: `${v.id}-${log.id}`, type: 'danger', vehicleId: v.id, label, km: alertKm, odometer, remaining });
+                } else if (remaining <= 1000) {
+                    alerts.push({ id: `${v.id}-${log.id}`, type: 'warning', vehicleId: v.id, label, km: alertKm, odometer, remaining });
+                } else if (remaining <= 3000) {
+                    alerts.push({ id: `${v.id}-${log.id}`, type: 'info', vehicleId: v.id, label, km: alertKm, odometer, remaining });
+                }
+            });
+        });
+        return alerts.sort((a, b) => a.remaining - b.remaining);
+    }, [vehicles]);
+
+    // Insurance expiry alerts from vehicle documents
+    const insuranceAlerts = useMemo(() => {
+        const alerts = [];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        (vehicles || []).forEach(v => {
+            (v.documents || []).forEach(doc => {
+                if (doc.docType !== 'Seguro' || !doc.expiryDate) return;
+                const expiry    = new Date(doc.expiryDate);
+                const alertDate = doc.alertDate ? new Date(doc.alertDate) : new Date(expiry.getTime() - 30 * 86400000);
+                const daysToExpiry = Math.ceil((expiry - today) / 86400000);
+                let type = null;
+                if (daysToExpiry <= 0)          type = 'danger';   // vencido
+                else if (today >= alertDate)    type = 'warning';  // dentro del mes de alerta
+                else if (daysToExpiry <= 60)    type = 'info';     // aviso anticipado
+                if (type) {
+                    alerts.push({
+                        id:          `seguro-${v.id}`,
+                        type,
+                        vehicleId:   v.id,
+                        label:       'Seguro Vehículo',
+                        expiryLabel: doc.expiryLabel || expiry.toLocaleDateString('es-ES'),
+                        daysToExpiry,
+                        kind:        'insurance',
+                    });
+                }
+            });
+        });
+        return alerts.sort((a, b) => a.daysToExpiry - b.daysToExpiry);
+    }, [vehicles]);
+
+    const allAlerts = useMemo(() => [...insuranceAlerts, ...maintenanceAlerts], [insuranceAlerts, maintenanceAlerts]);
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
@@ -397,34 +452,64 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
 
                 {/* Profitability Alerts */}
                 <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700/60 p-6 flex flex-col">
-                    <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
                         <AlertCircle className="text-amber-500" size={20} />
-                        Alertas de Rentabilidad
+                        Alertas de Flota
                     </h3>
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">
+                        {allAlerts.length > 0
+                            ? `${allAlerts.length} alerta${allAlerts.length > 1 ? 's' : ''} activa${allAlerts.length > 1 ? 's' : ''}`
+                            : 'Toda la flota en orden ✅'}
+                    </p>
 
-                    <div className="space-y-4 flex-1">
-                        {alerts.map((alert) => (
-                            <div key={alert.id} className={`p-4 rounded-xl border transition-colors hover:shadow-sm ${alert.type === 'warning' ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-100 dark:border-amber-800/50' :
-                                    alert.type === 'danger' ? 'bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-800/50' :
-                                        'bg-blue-50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-800/50'
-                                }`}>
-                                <div className="flex justify-between items-start mb-1">
-                                    <h4 className={`font-bold text-sm ${alert.type === 'warning' ? 'text-amber-800 dark:text-amber-300' :
-                                            alert.type === 'danger' ? 'text-red-800 dark:text-red-300' :
-                                                'text-blue-800 dark:text-blue-300'
-                                        }`}>
-                                        {alert.title}
-                                    </h4>
-                                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 bg-white/50 dark:bg-black/20 px-1.5 py-0.5 rounded">{alert.time}</span>
+                    <div className="space-y-3 flex-1 overflow-y-auto">
+                        {allAlerts.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-8 text-center">
+                                <div className="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center mb-3">
+                                    <CheckCircle className="text-emerald-500" size={24} />
                                 </div>
-                                <p className={`text-xs mt-1 leading-relaxed ${alert.type === 'warning' ? 'text-amber-600 dark:text-amber-400/80' :
-                                        alert.type === 'danger' ? 'text-red-600 dark:text-red-400/80' :
-                                            'text-blue-600 dark:text-blue-400/80'
-                                    }`}>
-                                    {alert.desc}
-                                </p>
+                                <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">Sin alertas activas</p>
+                                <p className="text-xs text-slate-400 mt-1">Todos los vehículos están al día</p>
                             </div>
-                        ))}
+                        ) : (
+                            allAlerts.slice(0, 6).map((alert) => (
+                                <div key={alert.id} className={`p-3.5 rounded-xl border transition-colors ${
+                                    alert.type === 'danger'  ? 'bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-800/50' :
+                                    alert.type === 'warning' ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-100 dark:border-amber-800/50' :
+                                                               'bg-blue-50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-800/50'
+                                }`}>
+                                    <div className="flex justify-between items-start mb-0.5">
+                                        <h4 className={`font-bold text-xs flex items-center gap-1 ${
+                                            alert.type === 'danger'  ? 'text-red-800 dark:text-red-300' :
+                                            alert.type === 'warning' ? 'text-amber-800 dark:text-amber-300' :
+                                                                       'text-blue-800 dark:text-blue-300'
+                                        }`}>
+                                            {alert.kind === 'insurance' ? '🛡️' : '🔧'} {alert.label}
+                                        </h4>
+                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ml-2 ${
+                                            alert.type === 'danger'  ? 'bg-red-200/60 text-red-700' :
+                                            alert.type === 'warning' ? 'bg-amber-200/60 text-amber-700' :
+                                                                       'bg-blue-200/60 text-blue-700'
+                                        }`}>
+                                            {alert.kind === 'insurance'
+                                                ? (alert.daysToExpiry <= 0 ? '¡Vencido!' : `${alert.daysToExpiry}d`)
+                                                : (alert.remaining <= 0 ? '¡Superado!' : `${alert.remaining.toLocaleString('es-ES')} km`)}
+                                        </span>
+                                    </div>
+                                    <p className={`text-[11px] leading-relaxed ${
+                                        alert.type === 'danger'  ? 'text-red-600 dark:text-red-400/80' :
+                                        alert.type === 'warning' ? 'text-amber-600 dark:text-amber-400/80' :
+                                                                   'text-blue-600 dark:text-blue-400/80'
+                                    }`}>
+                                        🚚 {alert.vehicleId} &mdash;{' '}
+                                        {alert.kind === 'insurance'
+                                            ? `vence el ${alert.expiryLabel}`
+                                            : `alerta a ${alert.km?.toLocaleString('es-ES')} km${alert.odometer > 0 ? ` (actual: ${alert.odometer.toLocaleString('es-ES')} km)` : ''}`
+                                        }
+                                    </p>
+                                </div>
+                            ))
+                        )}
                     </div>
 
                     <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700/50">

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useTourAudio } from '../hooks/useTourAudio';
 
 // ─── PASOS DEL TOUR ──────────────────────────────────────────────────────────
 const TOUR_STEPS = [
@@ -9,6 +10,8 @@ const TOUR_STEPS = [
     emoji: '👋',
     title: '¡Bienvenido a tu panel!',
     description: 'Esta es tu pantalla de trabajo. Aquí ves tu nombre, el estado del GPS y los botones para ajustar el tamaño de la letra según te sea más cómodo.',
+    audio: '¡Bienvenido! Esta es tu pantalla principal de trabajo. Aquí arriba ves tu nombre, el estado del GPS, y los botones para agrandar o reducir la letra según te sea más cómodo. Vamos a ver juntos cada sección.',
+    audioId: 'guided_01_bienvenida',
     padding: 12,
   },
   {
@@ -17,6 +20,8 @@ const TOUR_STEPS = [
     emoji: '📦',
     title: 'Pestaña: Reparto',
     description: 'Aquí tienes todos los envíos que debes entregar hoy, ordenados por tu ruta. ¡Esta es tu pestaña más importante!',
+    audio: 'Esta es la pestaña de Reparto — la más importante. Aquí tienes todos los envíos que debes entregar hoy, ordenados por tu ruta. Al empezar el día, empieza siempre por aquí.',
+    audioId: 'guided_02_reparto',
     padding: 8,
   },
   {
@@ -25,6 +30,8 @@ const TOUR_STEPS = [
     emoji: '➕',
     title: 'Pestaña: Asignar',
     description: 'Si hay un paquete en tu furgoneta que no ves en tu reparto, búscalo aquí y asígnate la entrega tú mismo.',
+    audio: 'La pestaña Asignar. Si cargas un paquete en la furgoneta y no aparece en tu reparto, entra aquí, búscalo por el número de albarán y asígnatelo tú mismo. Así queda registrado.',
+    audioId: 'guided_03_asignar',
     padding: 8,
   },
   {
@@ -33,6 +40,8 @@ const TOUR_STEPS = [
     emoji: '✅',
     title: 'Pestaña: Entregas',
     description: 'Los envíos que ya has completado hoy aparecen aquí. Puedes consultar el historial completo de tu jornada.',
+    audio: 'Aquí en Entregas aparecen todos los envíos que ya has completado hoy. Si necesitas revisar algo — una firma, una foto, un dato — lo encuentras en esta pestaña.',
+    audioId: 'guided_04_entregas',
     padding: 8,
   },
   {
@@ -41,6 +50,8 @@ const TOUR_STEPS = [
     emoji: '💰',
     title: 'Pestaña: Cobros Pendientes',
     description: 'Envíos donde debes cobrar dinero en mano al cliente. Registra cada cobro para que la contabilidad cuadre al final del día.',
+    audio: 'Cobros Pendientes. Aquí están los envíos donde tienes que cobrar dinero en efectivo al cliente. Muy importante: registra cada cobro en la aplicación para que la contabilidad cuadre al final del día.',
+    audioId: 'guided_05_cobros',
     padding: 8,
   },
   {
@@ -49,6 +60,8 @@ const TOUR_STEPS = [
     emoji: '📊',
     title: 'Pestaña: Tu Cuenta',
     description: 'El resumen económico de tu jornada: portes cobrados, reembolsos y el total de efectivo que llevas encima.',
+    audio: 'Tu Cuenta es el resumen económico de tu jornada. Aquí ves cuánto has cobrado en portes, los reembolsos, y el total de efectivo que llevas encima. Lo usarás al hacer la liquidación con la oficina.',
+    audioId: 'guided_06_cuenta',
     padding: 8,
   },
   {
@@ -57,6 +70,8 @@ const TOUR_STEPS = [
     emoji: '🗂️',
     title: 'Una Parada de Reparto',
     description: 'Cada tarjeta es un envío. Ves el número de parada, el nombre del cliente, la dirección, y si hay dinero que cobrar (marcado en verde).',
+    audio: 'Mira esta tarjeta de ejemplo. Cada parada es un envío. Ves el número de parada, el nombre del cliente, la dirección, y si hay una cantidad en verde, significa que tienes que cobrar dinero al entregar.',
+    audioId: 'guided_07_tarjeta',
     padding: 14,
     showDemoCard: true,
     demoTarget: 'card',
@@ -67,6 +82,8 @@ const TOUR_STEPS = [
     emoji: '✅',
     title: 'Botón: Confirmar Entrega',
     description: 'Cuando entregues el paquete, pulsa este botón verde. La app te pedirá la firma del cliente y una foto del paquete como justificante.',
+    audio: 'Cuando entregues un paquete, pulsa este botón verde que dice Confirmar Entrega. La aplicación te pedirá que el cliente firme con el dedo, y que hagas una foto del paquete. Eso queda guardado como justificante.',
+    audioId: 'guided_08_confirmar',
     padding: 8,
     showDemoCard: true,
     demoTarget: 'confirm',
@@ -77,6 +94,8 @@ const TOUR_STEPS = [
     emoji: '⚠️',
     title: 'Botón: Reportar Incidencia',
     description: 'Si no puedes entregar (nadie en casa, dirección incorrecta, paquete dañado...), pulsa aquí y escribe el motivo para avisar a la oficina.',
+    audio: 'Si no puedes entregar — porque no hay nadie en casa, la dirección es incorrecta, o el paquete viene dañado — pulsa el botón de Incidencia. Escribe el motivo y la oficina recibirá el aviso automáticamente.',
+    audioId: 'guided_09_incidencia',
     padding: 8,
     showDemoCard: true,
     demoTarget: 'incident',
@@ -87,6 +106,8 @@ const TOUR_STEPS = [
     emoji: '🟡',
     title: '¡Ya conoces la app!',
     description: 'Recuerda: estás en Modo Prueba. Todo lo que hagas aquí es una simulación — puedes practicar sin miedo. Cuando te sientas listo, la oficina desactivará el modo prueba. ¡A por ello!',
+    audio: '¡Perfecto! Ya conoces las partes principales de la aplicación. Recuerda que estás en Modo Prueba, así que todo lo que hagas aquí es una simulación — practica sin miedo. Cuando te sientas listo, díselo a la oficina y desactivarán el modo prueba. ¡Ánimo!',
+    audioId: 'guided_10_final',
     isFinal: true,
   },
 ];
@@ -96,6 +117,7 @@ export default function DriverGuidedTour({ isVisible, onComplete, onSkip, onChan
   const [step, setStep] = useState(0);
   const [targetRect, setTargetRect] = useState(null);
   const [animOut, setAnimOut] = useState(false);
+  const { speak, stop, isMuted, toggleMute } = useTourAudio();
 
   const demoCardRef    = useRef(null);
   const demoConfirmRef = useRef(null);
@@ -137,7 +159,18 @@ export default function DriverGuidedTour({ isVisible, onComplete, onSkip, onChan
   // Reset step when tour becomes visible again
   useEffect(() => {
     if (isVisible) setStep(0);
-  }, [isVisible]);
+    else stop();
+  }, [isVisible, stop]);
+
+  // Narrar cada paso al avanzar
+  useEffect(() => {
+    if (!isVisible) return;
+    const { audio, audioId } = currentStep;
+    if (audio || audioId) {
+      const t = setTimeout(() => speak(audio, audioId), 400);
+      return () => clearTimeout(t);
+    }
+  }, [step, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Navegación ──────────────────────────────────────────────────────────────
   const goNext = () => {
@@ -170,12 +203,12 @@ export default function DriverGuidedTour({ isVisible, onComplete, onSkip, onChan
   }
 
   // Posición del tooltip
-  const tooltipW = Math.min(334, vw - 32);
+  const tooltipW = Math.min(360, vw - 24);
   let tooltipTop, tooltipLeft;
 
   if (currentStep.isFinal || (!targetRect && !isDemo)) {
-    // Centrado en pantalla
-    tooltipTop  = vh / 2 - 170;
+    // Posicionar arriba para aprovechar pantalla (especialmente iPhone)
+    tooltipTop  = 16;
     tooltipLeft = vw / 2 - tooltipW / 2;
   } else if (isDemo && targetRect) {
     // La demo card está abajo → tooltip encima
@@ -193,7 +226,7 @@ export default function DriverGuidedTour({ isVisible, onComplete, onSkip, onChan
     tooltipTop  = Math.max(8, Math.min(vh - 260, tooltipTop));
     tooltipLeft = Math.max(16, Math.min(vw - tooltipW - 16, (sLeft + sRight) / 2 - tooltipW / 2));
   } else {
-    tooltipTop  = vh / 2 - 170;
+    tooltipTop  = 16;
     tooltipLeft = vw / 2 - tooltipW / 2;
   }
 
@@ -451,19 +484,37 @@ export default function DriverGuidedTour({ isVisible, onComplete, onSkip, onChan
           </button>
         </div>
 
-        {/* Saltar tour */}
-        {!currentStep.isFinal && (
+        {/* Fila inferior: botón silencio + saltar */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
           <button
-            onClick={onSkip}
+            onClick={toggleMute}
+            title={isMuted ? 'Activar voz' : 'Silenciar voz'}
             style={{
-              width: '100%', marginTop: 10, padding: '6px',
-              background: 'none', border: 'none',
-              color: '#94a3b8', fontSize: 12, cursor: 'pointer', fontWeight: 500,
+              padding: '5px 10px', borderRadius: 10,
+              border: '1.5px solid #e2e8f0',
+              background: isMuted ? '#f1f5f9' : '#eff6ff',
+              color: isMuted ? '#94a3b8' : '#3b82f6',
+              fontSize: 15, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontWeight: 600, flexShrink: 0,
             }}
           >
-            Saltar tutorial
+            {isMuted ? '🔇' : '🔊'}
           </button>
-        )}
+
+          {!currentStep.isFinal && (
+            <button
+              onClick={onSkip}
+              style={{
+                padding: '6px 8px',
+                background: 'none', border: 'none',
+                color: '#94a3b8', fontSize: 12, cursor: 'pointer', fontWeight: 500,
+              }}
+            >
+              Saltar tutorial
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

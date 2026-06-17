@@ -345,6 +345,35 @@ const ShipmentCardUI = React.memo(({
                                     {stop.destinationCity} {stop.destinationZip && `(${stop.destinationZip})`}
                                 </p>
                             )}
+                            {/* BULTOS / ARTÍCULOS — una píldora por unidad, inline con wrap */}
+                            {(() => {
+                                const arts = stop.articles || [];
+                                const pkgText = (stop.packages || '').trim();
+                                const hasArts = arts.length > 0;
+                                if (!hasArts && !pkgText) return null;
+
+                                // Expandir artículos: qty=2 → dos entradas del mismo nombre
+                                const pills = hasArts
+                                    ? arts.flatMap(a => {
+                                        const qty = parseInt(a.quantity) || 1;
+                                        return Array(qty).fill(a.name);
+                                    })
+                                    : [pkgText];
+
+                                return (
+                                    <div className="pl-6 mb-1 flex flex-wrap gap-1">
+                                        {pills.map((name, i) => (
+                                            <span
+                                                key={i}
+                                                className="inline-flex items-center gap-1 bg-blue-50 border border-blue-100 rounded-md px-2 py-0.5 text-[11px] font-bold text-blue-700 shadow-sm"
+                                            >
+                                                <Package size={10} className="text-blue-400 shrink-0" />
+                                                {name}
+                                            </span>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
                             {(() => {
                                 const normalizeText = (val) => String(val || '').trim().toLowerCase();
                                 const sName = normalizeText(stop.originName || stop.client);
@@ -371,7 +400,7 @@ const ShipmentCardUI = React.memo(({
                                 if (toCollectStrings.length === 0) return null;
                                 return (
                                     <div className="flex items-center gap-2 pl-6">
-                                          <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100 shadow-sm flex items-center gap-1.5 ring-4 ring-emerald-500/5">
+                                          <span id="tour-cobros-label" className="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-100 shadow-sm flex items-center gap-1.5 ring-4 ring-emerald-500/5">
                                             <Wallet size={12} className="text-emerald-500" />
                                             COBRAR: {toCollectStrings.join(' + ')}
                                         </span>
@@ -3938,9 +3967,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             {/* ── TUTORIAL REPARTO ── */}
             <DriverRepartaTour
                 isVisible={showRepartaTour}
-                onComplete={() => { setShowRepartaTour(false); setIsIncidentModalOpen(false); }}
-                onSkip={() => { setShowRepartaTour(false); setIsIncidentModalOpen(false); }}
+                onComplete={() => { setShowRepartaTour(false); setIsIncidentModalOpen(false); setTourDemoMode(null); }}
+                onSkip={() => { setShowRepartaTour(false); setIsIncidentModalOpen(false); setTourDemoMode(null); }}
                 onChangeTab={setActiveTab}
+                onDemoModeChange={setTourDemoMode}
                 onOpenIncidentModal={() => {
                     const demoShipment = localRoute?.[0] || {
                         id: 'DEMO-001', client: 'Ejemplo S.A.',

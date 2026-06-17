@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useTourAudio } from '../hooks/useTourAudio';
 
 const TOUR_STEPS = [
   // ── INTRO ─────────────────────────────────────────────────────────────
@@ -7,6 +8,8 @@ const TOUR_STEPS = [
     emoji: '📋',
     title: '¿Cómo crear un albarán?',
     description: 'Este tutorial abre el formulario REAL de la app y te explica cada sección campo a campo. Ningún dato se guardará — es solo formación. ¡Tarda 3 minutos!',
+    audio: 'En este tutorial te explico cómo crear un albarán paso a paso. Vamos a abrir el formulario real de la aplicación. Ningún dato se guardará — es solo formación. Tarda unos tres minutos.',
+    audioId: 'shipment_01_intro',
     isIntro: true,
     demoMode: null,
   },
@@ -16,6 +19,8 @@ const TOUR_STEPS = [
     emoji: '📝',
     title: 'Abrir el formulario',
     description: 'Pulsa el botón de crear nuevo albarán. Se abrirá el formulario real. A partir de aquí el tutorial te irá explicando cada sección.',
+    audio: 'Primero, pulsa el botón de crear nuevo albarán. Se abrirá el formulario real y a partir de ahí te iré explicando cada sección.',
+    audioId: 'shipment_02_abrir',
     targetId: 'driver-create-shipment-btn',
     tab: 'assign',
     padding: 10,
@@ -27,6 +32,8 @@ const TOUR_STEPS = [
     emoji: '🏢',
     title: 'Remitente (quien envía)',
     description: 'Escribe el cliente que envía. La app busca en tu lista y rellena la dirección automáticamente.\n\n💡 Si vas a crear varios del mismo remitente seguidos, marca "ENVÍO MÚLTIPLE" — el formulario se reabre ya relleno.',
+    audio: 'La primera sección es el remitente, que es quien envía el paquete. Escribe el nombre del cliente y la aplicación buscará en tu lista y rellenará la dirección automáticamente. Si vas a crear varios del mismo remitente seguidos, activa la opción de Envío Múltiple.',
+    audioId: 'shipment_03_remitente',
     isRealModal: true,
     demoMode: 'create_form',
     targetId: 'shipment-form-sender',
@@ -36,6 +43,8 @@ const TOUR_STEPS = [
     emoji: '📍',
     title: 'Destinatario (quien recibe)',
     description: 'Rellena el nombre, dirección, código postal, ciudad y teléfono de quien va a recibir el paquete. Si ya está en la lista de clientes, se autocompleta todo.',
+    audio: 'Ahora el destinatario, que es quien va a recibir el paquete. Rellena el nombre, la dirección, el código postal, la ciudad y el teléfono. Si ya está en la lista de clientes, se autocompleta todo.',
+    audioId: 'shipment_04_destinatario',
     isRealModal: true,
     demoMode: 'create_form',
     targetId: 'shipment-form-dest',
@@ -45,6 +54,8 @@ const TOUR_STEPS = [
     emoji: '💶',
     title: 'Condiciones de pago',
     description: '"PAGADO (Remitente)" → ya pagó el remitente, no cobres al entregar.\n"DEBIDO (Destinatario)" → cobras al entregar.\n\n"Con Retorno" → el cliente te devuelve algo.\n"Firma Doc." → el cliente firma el albarán de papel.',
+    audio: 'Las condiciones de pago. Pagado significa que el remitente ya pagó y no cobras al entregar. Debido significa que cobras al entregar. Con Retorno significa que el cliente te devuelve algo. Y Firma de Documento significa que el cliente firma el albarán de papel.',
+    audioId: 'shipment_05_pago',
     isRealModal: true,
     demoMode: 'create_form',
     targetId: 'shipment-form-payment',
@@ -54,6 +65,8 @@ const TOUR_STEPS = [
     emoji: '📦',
     title: 'Artículos y Servicios',
     description: 'Selecciona el tipo de bulto (BLT_1, BLT_2...) y la cantidad. El precio se calcula solo según la tarifa del cliente. Si aparece el campo "Kg", introduce el peso.',
+    audio: 'Selecciona el tipo de bulto y la cantidad. El precio se calcula solo según la tarifa del cliente. Si aparece el campo de kilogramos, introduce el peso.',
+    audioId: 'shipment_06_articulos',
     isRealModal: true,
     demoMode: 'create_form',
     targetId: 'shipment-form-articles',
@@ -63,6 +76,8 @@ const TOUR_STEPS = [
     emoji: '💸',
     title: 'Reembolso (COD)',
     description: 'Si el destinatario debe pagarte dinero en efectivo que luego devuelves al remitente, escríbelo aquí. Esto activa el modo COD y añade la comisión automáticamente.',
+    audio: 'Si el destinatario debe pagarte dinero en efectivo que luego devuelves al remitente, escribe el importe aquí. Esto activa el modo de reembolso y añade la comisión automáticamente.',
+    audioId: 'shipment_07_reembolso',
     isRealModal: true,
     demoMode: 'create_form',
     targetId: 'shipment-form-cod',
@@ -72,6 +87,8 @@ const TOUR_STEPS = [
     emoji: '💰',
     title: 'Precio / Facturación',
     description: 'Si el precio está fijado en tarifa aparecerá en gris. Puedes pulsarlo para sobrescribirlo si es necesario. Normalmente no hace falta tocarlo — se calcula solo.',
+    audio: 'Si el precio está fijado en tarifa aparecerá en gris. Puedes pulsarlo para cambiarlo si es necesario. Normalmente no hace falta tocarlo porque se calcula solo.',
+    audioId: 'shipment_08_precio',
     isRealModal: true,
     demoMode: 'create_form',
     targetId: 'shipment-form-price',
@@ -81,6 +98,8 @@ const TOUR_STEPS = [
     emoji: '💾',
     title: 'Guardar el albarán',
     description: 'Cuando hayas rellenado los datos pulsa "Generar Albarán". Quedará registrado en el sistema.\n\n📚 En este tutorial el botón no guarda nada real — puedes pulsarlo para avanzar.',
+    audio: 'Cuando hayas rellenado todos los datos, pulsa Generar Albarán. Quedará registrado en el sistema. En el tutorial, el botón no guarda nada real, pero puedes pulsarlo para avanzar.',
+    audioId: 'shipment_09_guardar',
     isRealModal: true,
     demoMode: 'create_form',
     targetId: 'shipment-form-save-btn',
@@ -92,6 +111,8 @@ const TOUR_STEPS = [
     emoji: '➡️',
     title: '¿Dónde va el albarán después de guardarlo?',
     description: 'Una vez guardado, el albarán queda en el sistema a la espera de que la oficina lo asigne al conductor de reparto:\n\n• Recogida de mañana → asignado al reparto de tarde\n• Creado por la tarde → asignado al reparto de mañana siguiente',
+    audio: 'Una vez guardado, el albarán queda en el sistema esperando que la oficina lo asigne al conductor de reparto. Si lo creas por la mañana, va al reparto de tarde. Si lo creas por la tarde, va al reparto de la mañana siguiente.',
+    audioId: 'shipment_10_despues',
     targetId: 'driver-tab-assign',
     tab: 'assign',
     padding: 8,
@@ -101,6 +122,8 @@ const TOUR_STEPS = [
     emoji: '👥',
     title: 'Así se ve la asignación',
     description: 'Debajo de cada albarán aparece una fila con los repartidores sugeridos por turno y un desplegable manual. Los botones parpadeantes en rojo son el turno más urgente.',
+    audio: 'Así se ve la pantalla de asignación. Debajo de cada albarán aparece una fila con los repartidores sugeridos y un botón que parpadea en rojo indicando el turno más urgente.',
+    audioId: 'shipment_11_asignacion',
     demoMode: null,
     inlineDemo: 'assign_card',
   },
@@ -110,6 +133,8 @@ const TOUR_STEPS = [
     emoji: '🚪',
     title: 'Llegando al cliente',
     description: 'Cuando te asignen el reparto, verás las tarjetas de tus envíos en "Reparto". Cuando llegues a la dirección, localiza la tarjeta y pulsa "Confirmar Entrega".',
+    audio: 'Cuando te asignen el reparto, verás las tarjetas de tus envíos en la pestaña Reparto. Cuando llegues a la dirección, localiza la tarjeta y pulsa Confirmar Entrega.',
+    audioId: 'shipment_12_cliente',
     targetId: 'driver-tab-route',
     tab: 'route',
     padding: 8,
@@ -119,6 +144,8 @@ const TOUR_STEPS = [
     emoji: '💰',
     title: 'Cobros al entregar',
     description: 'Si hay importe a cobrar (Porte Debido o Reembolso COD) aparece en rojo automáticamente. Usa la calculadora de cambio si el cliente te da un billete grande.',
+    audio: 'Si hay importe a cobrar — porte debido o reembolso — aparece en rojo automáticamente. Puedes usar la calculadora de cambio si el cliente te da un billete grande.',
+    audioId: 'shipment_13_cobros',
     isRealModal: true,
     demoMode: 'delivery_debido',
   },
@@ -126,6 +153,8 @@ const TOUR_STEPS = [
     emoji: '📋',
     title: 'Varios portes del mismo cliente',
     description: 'Si el cliente tenía albaranes anteriores sin cobrar, aparecen TODOS agrupados. Puedes cobrarlos de golpe o desmarcar los que no puedas cobrar ahora.',
+    audio: 'Si el cliente tenía albaranes anteriores sin cobrar, aparecen todos agrupados. Puedes cobrarlos todos a la vez o desmarcar los que no puedas cobrar en ese momento.',
+    audioId: 'shipment_14_agrupados',
     isRealModal: true,
     demoMode: 'delivery_multi',
   },
@@ -133,6 +162,8 @@ const TOUR_STEPS = [
     emoji: '✍️',
     title: 'Nombre y firma',
     description: '¡Practica ahora! Escribe el nombre de quien recibe y pide la firma con el dedo en la pantalla. En el tutorial no se guarda nada.',
+    audio: 'Pide al cliente que escriba su nombre y firme con el dedo en la pantalla. En el tutorial no se guarda nada, así que puedes practicar.',
+    audioId: 'shipment_15_firma',
     isRealModal: true,
     demoMode: 'delivery_debido',
   },
@@ -140,6 +171,8 @@ const TOUR_STEPS = [
     emoji: '✅',
     title: 'Confirmar entrega',
     description: 'Pulsa "Entregado" para registrar la entrega con la prueba (firma, foto). En el tutorial este botón no guarda nada — en el trabajo real sí queda todo guardado.',
+    audio: 'Pulsa Entregado para registrar la entrega con la prueba de firma o foto. En el tutorial este botón no guarda nada, pero en el trabajo real sí queda todo guardado.',
+    audioId: 'shipment_16_confirmar',
     isRealModal: true,
     demoMode: 'delivery_debido',
   },
@@ -147,6 +180,8 @@ const TOUR_STEPS = [
     emoji: '🎉',
     title: '¡Ya sabes crear albaranes!',
     description: 'Flujo completo: Rellenar formulario → guardar → esperar asignación → llegar al cliente → confirmar con firma o foto. Vuelve a este tutorial desde el botón 📚.',
+    audio: '¡Ya sabes crear albaranes! El flujo completo es: rellenar el formulario, guardar, esperar la asignación, llegar al cliente, y confirmar con firma o foto. Puedes volver a este tutorial desde el botón de tutoriales.',
+    audioId: 'shipment_17_final',
     isFinal: true,
     demoMode: null,
   },
@@ -289,6 +324,7 @@ export default function DriverShipmentTour({ isVisible, onComplete, onSkip, onCh
   const [step, setStep] = useState(0);
   const [animOut, setAnimOut] = useState(false);
   const [targetRect, setTargetRect] = useState(null);
+  const { speak, stop, isMuted, toggleMute } = useTourAudio();
 
   const currentStep = TOUR_STEPS[step];
   const isRealModal = !!currentStep.isRealModal;
@@ -301,9 +337,19 @@ export default function DriverShipmentTour({ isVisible, onComplete, onSkip, onCh
   }, [step, isVisible, currentStep, onDemoModeChange]);
 
   useEffect(() => {
-    if (!isVisible) { onDemoModeChange?.(null); return; }
+    if (!isVisible) { onDemoModeChange?.(null); stop(); return; }
     setStep(0);
-  }, [isVisible, onDemoModeChange]);
+  }, [isVisible, onDemoModeChange, stop]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Narrar cada paso
+  useEffect(() => {
+    if (!isVisible) return;
+    const { audio, audioId } = currentStep;
+    if (audio || audioId) {
+      const t = setTimeout(() => speak(audio, audioId), 400);
+      return () => clearTimeout(t);
+    }
+  }, [step, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!isVisible) return;
@@ -358,30 +404,57 @@ export default function DriverShipmentTour({ isVisible, onComplete, onSkip, onCh
   // useBottom: cuando hay modal real SIN campo concreto, anclamos abajo para no tapar el modal
   const useBottom = isRealModal && !hasTarget;
   let tooltipTop = 0, tooltipLeft = 0, tooltipBottom = 0;
+  // maxH: espacio vertical disponible para el tooltip (para que los botones no se corten)
+  let tooltipMaxH = vh - 32;
 
   if (useBottom) {
     // Barra flotante en la parte inferior — el modal queda visible encima
     tooltipBottom = 16;
     tooltipLeft   = Math.max(16, vw / 2 - tooltipW / 2);
-  } else if (isRealModal && hasTarget) {
-    // Modal real con spotlight: tooltip arriba
+    tooltipMaxH   = Math.min(320, vh * 0.45);
+  } else if (isRealModal && hasTarget && targetRect) {
+    // Elegir el lado con MÁS espacio disponible
+    const spaceBelow = vh - sBottom - 16;   // espacio libre debajo del campo
+    const spaceAbove = sTop - 16;           // espacio libre encima del campo
+    if (spaceBelow >= spaceAbove) {
+      // Hay más espacio abajo → tooltip DEBAJO del campo
+      tooltipTop  = sBottom + 12;
+      tooltipMaxH = Math.max(100, spaceBelow - 8);
+    } else {
+      // Hay más espacio arriba → tooltip ENCIMA del campo
+      tooltipMaxH = Math.max(100, spaceAbove - 8);
+      tooltipTop  = Math.max(8, sTop - 12 - tooltipMaxH);
+    }
+    tooltipLeft = Math.max(16, vw / 2 - tooltipW / 2);
+  } else if (isRealModal && hasTarget && !targetRect) {
+    // Sin rect todavía: tooltip arriba por defecto
     tooltipTop  = 12;
     tooltipLeft = Math.max(16, vw / 2 - tooltipW / 2);
+    tooltipMaxH = vh * 0.4;
   } else if (currentStep.isFinal || currentStep.isIntro) {
-    tooltipTop  = vh / 2 - 170;
+    tooltipTop  = 16;
     tooltipLeft = vw / 2 - tooltipW / 2;
+    tooltipMaxH = vh - 32;
   } else if (targetRect && hasTarget) {
-    const spaceBelow = vh - sBottom;
-    const spaceAbove = sTop;
-    tooltipTop = spaceBelow >= 180 || spaceBelow >= spaceAbove
-      ? sBottom + 14
-      : Math.max(8, sTop - 14 - 220);
-    tooltipTop  = Math.max(8, Math.min(vh - 240, tooltipTop));
+    const spaceBelow = vh - sBottom - 16;
+    const spaceAbove = sTop - 16;
+    if (spaceBelow >= spaceAbove) {
+      tooltipTop  = sBottom + 12;
+      tooltipMaxH = Math.max(100, spaceBelow - 8);
+    } else {
+      tooltipMaxH = Math.max(100, spaceAbove - 8);
+      tooltipTop  = Math.max(8, sTop - 12 - tooltipMaxH);
+    }
     tooltipLeft = Math.max(16, Math.min(vw - tooltipW - 16, (sLeft + sRight) / 2 - tooltipW / 2));
   } else {
-    tooltipTop  = vh / 2 - 170;
+    tooltipTop  = 16;
     tooltipLeft = vw / 2 - tooltipW / 2;
+    tooltipMaxH = vh - 32;
   }
+
+  // Padding compacto si el espacio es pequeño
+  const compact = tooltipMaxH < 220;
+  const tPad = compact ? '12px 16px 10px' : '18px 20px 14px';
 
   // ── PORTAL 1: Overlay (solo cuando NO hay modal real) ────────────────
   const overlayEl = !isRealModal ? (
@@ -436,30 +509,38 @@ export default function DriverShipmentTour({ isVisible, onComplete, onSkip, onCh
         bottom: tooltipBottom,
         left: Math.max(8, tooltipLeft),
         width: tooltipW,
+        maxHeight: tooltipMaxH,
+        display: 'flex',
+        flexDirection: 'column',
         zIndex: 2147483647,
         background: 'white',
         borderRadius: 22,
         boxShadow: '0 -8px 40px rgba(0,0,0,0.25), 0 32px 80px rgba(0,0,0,0.4)',
-        padding: '18px 20px 14px',
+        padding: tPad,
         opacity: animOut ? 0 : 1,
         transform: animOut ? 'translateY(12px)' : 'translateY(0)',
         transition: 'opacity 0.18s ease, transform 0.18s ease',
         pointerEvents: 'all',
+        overflowY: 'hidden',
       }
     : {
         position: 'fixed',
         top: Math.max(8, tooltipTop),
         left: Math.max(8, tooltipLeft),
         width: tooltipW,
+        maxHeight: tooltipMaxH,
+        display: 'flex',
+        flexDirection: 'column',
         zIndex: 2147483647,
         background: 'white',
         borderRadius: 22,
         boxShadow: '0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.05)',
-        padding: '18px 20px 14px',
+        padding: tPad,
         opacity: animOut ? 0 : 1,
         transform: animOut ? 'translateY(8px) scale(0.97)' : 'translateY(0) scale(1)',
         transition: 'opacity 0.18s ease, transform 0.18s ease',
         pointerEvents: 'all',
+        overflowY: 'hidden',
       };
 
   const tooltipEl = (
@@ -484,14 +565,17 @@ export default function DriverShipmentTour({ isVisible, onComplete, onSkip, onCh
         </h3>
       </div>
 
-      <p style={{ color: '#475569', fontSize: 13, lineHeight: 1.65, margin: '0 0 14px', whiteSpace: 'pre-line' }}>
-        {currentStep.description}
-      </p>
+      {/* Zona scrollable: sólo el texto puede hacer scroll, el header y botones siempre visibles */}
+      <div style={{ overflowY: 'auto', flexGrow: 1, marginBottom: 8 }}>
+        <p style={{ color: '#475569', fontSize: compact ? 12 : 13, lineHeight: 1.6, margin: '0 0 6px', whiteSpace: 'pre-line' }}>
+          {currentStep.description}
+        </p>
 
-      {/* Demo inline embed (ej. assign_card) — va DENTRO del tooltip */}
-      {hasInlineDemo && currentStep.inlineDemo === 'assign_card' && <AssignCardDemo />}
+        {/* Demo inline embed (ej. assign_card) — va DENTRO del tooltip */}
+        {hasInlineDemo && currentStep.inlineDemo === 'assign_card' && <AssignCardDemo />}
+      </div>
 
-      <div style={{ display: 'flex', gap: 3, alignItems: 'center', marginBottom: 14, marginTop: 14 }}>
+      <div style={{ display: 'flex', gap: 3, alignItems: 'center', marginBottom: compact ? 8 : 14, marginTop: compact ? 6 : 14, flexShrink: 0 }}>
         {TOUR_STEPS.map((_, i) => (
           <div key={i} style={{
             height: 4, width: i === step ? 20 : 5, borderRadius: 2, flexShrink: 0,
@@ -504,7 +588,7 @@ export default function DriverShipmentTour({ isVisible, onComplete, onSkip, onCh
         </span>
       </div>
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
         {step > 0 && !currentStep.isFinal && (
           <button onClick={goPrev} style={{ padding: '10px 14px', borderRadius: 12, border: '1.5px solid #e2e8f0', background: 'white', color: '#64748b', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
             ← Atrás
@@ -521,9 +605,26 @@ export default function DriverShipmentTour({ isVisible, onComplete, onSkip, onCh
       </div>
 
       {!currentStep.isFinal && (
-        <button onClick={onSkip} style={{ width: '100%', marginTop: 10, padding: '6px', background: 'none', border: 'none', color: '#94a3b8', fontSize: 12, cursor: 'pointer', fontWeight: 500 }}>
-          Saltar tutorial
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+          <button
+            onClick={toggleMute}
+            title={isMuted ? 'Activar voz' : 'Silenciar voz'}
+            style={{
+              padding: '5px 10px', borderRadius: 10,
+              border: '1.5px solid #e2e8f0',
+              background: isMuted ? '#f1f5f9' : '#eff6ff',
+              color: isMuted ? '#94a3b8' : '#3b82f6',
+              fontSize: 15, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontWeight: 600, flexShrink: 0,
+            }}
+          >
+            {isMuted ? '🔇' : '🔊'}
+          </button>
+          <button onClick={onSkip} style={{ padding: '6px 8px', background: 'none', border: 'none', color: '#94a3b8', fontSize: 12, cursor: 'pointer', fontWeight: 500 }}>
+            Saltar tutorial
+          </button>
+        </div>
       )}
     </div>
   );

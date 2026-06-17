@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useTourAudio } from '../hooks/useTourAudio';
 
 // Pasos del tutorial de edición de albarán
 // isDetailsModal: true → abrir el ShipmentDetailsModal real
@@ -8,12 +9,16 @@ const TOUR_STEPS = [
     emoji: '✏️',
     title: 'Corregir un albarán',
     description: 'Te explico cómo modificar un albarán si te has equivocado en el remitente, destinatario, portes o artículos, usando directamente la app real.',
+    audio: 'En este tutorial aprenders cómo corregir un albarán si te has equivocado en el remitente, el destinatario, los portes o los artículos. Usaremos la aplicación real.',
+    audioId: 'edit_01_intro',
     isIntro: true,
   },
   {
     emoji: '👆',
     title: 'Paso 1: Pulsa en el albarán',
     description: 'Para editar un albarán, pulsa directamente sobre la tarjeta — en la zona del nombre o dirección, no en los botones de acción.\n\n⬆️ El albarán señalado arriba es un ejemplo. Pulsa sobre él para abrirlo.',
+    audio: 'Para editar un albarán, pulsa directamente sobre la tarjeta en la zona del nombre o la dirección, pero no en los botones de acción. Eso abre el detalle del albarán.',
+    audioId: 'edit_02_pulsar',
     tab: 'route',
     targetId: 'tour-first-card',
     padding: 6,
@@ -23,6 +28,8 @@ const TOUR_STEPS = [
     emoji: '✏️',
     title: 'Paso 2: Botón de editar ✏️',
     description: 'En la cabecera del albarán abierto verás un icono ✏️ de lápiz en color azul.\n\nPúlsalo para activar el modo de edición. Todos los campos se vuelven editables.',
+    audio: 'En la cabecera del albarán abierto verás un icono de lápiz en color azul. Púlsalo para activar el modo de edición. Todos los campos se vuelven editables.',
+    audioId: 'edit_03_boton_editar',
     isDetailsModal: true,
     targetId: 'tour-edit-btn',
     padding: 10,
@@ -32,6 +39,8 @@ const TOUR_STEPS = [
     emoji: '🏠',
     title: 'Paso 3: Cambiar el Remitente (Origen)',
     description: 'La sección azul "ORIGEN (REMITENTE)" tiene todos los datos del que envía:\n\n• Nombre del remitente\n• Dirección de recogida\n• Población y C.P.\n• Teléfono\n\nCambia el nombre y si está en tu lista de clientes, los demás campos se rellenan solos.',
+    audio: 'La sección azul de Origen tiene todos los datos del remitente: nombre, dirección, población, código postal y teléfono. Si cambias el nombre y está en tu lista de clientes, los demás campos se rellenan solos.',
+    audioId: 'edit_04_remitente',
     isDetailsModal: true,
     targetId: 'tour-edit-origin',
     padding: 12,
@@ -40,6 +49,8 @@ const TOUR_STEPS = [
     emoji: '📦',
     title: 'Paso 4: Cambiar el Destinatario',
     description: 'La sección verde "DESTINO (ENTREGA)" tiene los datos de quien recibe:\n\n• Nombre del destinatario\n• Dirección de entrega\n• Población y C.P.\n• Teléfono y Contacto\n\nIgual que el remitente: si escribes un nombre de cliente conocido, se autocompleta.',
+    audio: 'La sección verde de Destino tiene los datos del destinatario: nombre, dirección, población, código postal, teléfono y contacto. Igual que el remitente: si escribes un nombre de cliente conocido, se autocompleta todo.',
+    audioId: 'edit_05_destinatario',
     isDetailsModal: true,
     targetId: 'tour-edit-destination',
     padding: 12,
@@ -48,6 +59,8 @@ const TOUR_STEPS = [
     emoji: '💶',
     title: 'Paso 5: Cambiar portes y artículos',
     description: 'En la sección de importes puedes:\n\n📦 Añadir o quitar artículos del desplegable\n💶 Modificar el precio final del porte\n💰 Cambiar el importe del reembolso COD\n\nAl cambiar artículos, el importe total se recalcula automáticamente.',
+    audio: 'En la sección de importes puedes añadir o quitar artículos, modificar el precio final del porte, y cambiar el importe del reembolso. Al cambiar los artículos, el importe total se recalcula automáticamente.',
+    audioId: 'edit_06_portes',
     isDetailsModal: true,
     targetId: 'tour-edit-amounts',
     padding: 12,
@@ -56,6 +69,8 @@ const TOUR_STEPS = [
     emoji: '💾',
     title: 'Paso 6: Guardar los cambios',
     description: 'Cuando hayas terminado de corregir, baja hasta el final del formulario y pulsa el botón azul "💾 Guardar Cambios".\n\nLos cambios se guardan en la nube al instante y el albarán queda actualizado para todos.',
+    audio: 'Cuando hayas terminado de corregir, baja hasta el final del formulario y pulsa el botón azul de Guardar Cambios. Los cambios se guardan en la nube al instante y el albarán queda actualizado para todos.',
+    audioId: 'edit_07_guardar',
     isDetailsModal: true,
     targetId: 'tour-edit-amounts',
     padding: 200,
@@ -65,6 +80,8 @@ const TOUR_STEPS = [
     emoji: '🎉',
     title: '¡Albarán corregido!',
     description: 'Resumen para corregir errores:\n\n1️⃣ Pulsa la tarjeta del albarán\n2️⃣ Toca el ✏️ lápiz azul\n3️⃣ Edita Remitente / Destinatario / Portes / Artículos\n4️⃣ Pulsa 💾 Guardar Cambios\n\nLos cambios son instantáneos y se sincronizan con la oficina.',
+    audio: '¡Albarán corregido! El proceso es: pulsar la tarjeta, tocar el lápiz azul, editar lo que necesites, y guardar los cambios. Los cambios son instantáneos y se sincronizan con la oficina.',
+    audioId: 'edit_08_final',
     isFinal: true,
   },
 ];
@@ -73,6 +90,7 @@ export default function DriverEditTour({ isVisible, onComplete, onSkip, onChange
   const [step, setStep]       = useState(0);
   const [animOut, setAnimOut] = useState(false);
   const [targetRect, setTargetRect] = useState(null);
+  const { speak, stop, isMuted, toggleMute } = useTourAudio();
 
   // Refs para callbacks (evitar re-disparos por referencias inline)
   const openRef  = useRef(onOpenDetailsModal);
@@ -103,10 +121,21 @@ export default function DriverEditTour({ isVisible, onComplete, onSkip, onChange
   useEffect(() => {
     if (!isVisible) {
       closeRef.current?.();
+      stop();
       return;
     }
     setStep(0);
-  }, [isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isVisible, stop]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Narrar cada paso
+  useEffect(() => {
+    if (!isVisible) return;
+    const { audio, audioId } = currentStep;
+    if (audio || audioId) {
+      const t = setTimeout(() => speak(audio, audioId), 400);
+      return () => clearTimeout(t);
+    }
+  }, [step, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Medir el elemento target
   useEffect(() => {
@@ -168,7 +197,7 @@ export default function DriverEditTour({ isVisible, onComplete, onSkip, onChange
       tooltipTop = Math.max(8, sTop - 14 - 230);
     }
   } else if (currentStep.isIntro || currentStep.isFinal) {
-    tooltipTop = vh / 2 - 160;
+    tooltipTop = 16;
   } else {
     tooltipBottom = 16;
   }
@@ -270,9 +299,26 @@ export default function DriverEditTour({ isVisible, onComplete, onSkip, onChange
       </div>
 
       {!currentStep.isFinal && (
-        <button onClick={onSkip} style={{ width:'100%', marginTop:10, padding:'6px', background:'none', border:'none', color:'#94a3b8', fontSize:12, cursor:'pointer', fontWeight:500 }}>
-          Saltar tutorial
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+          <button
+            onClick={toggleMute}
+            title={isMuted ? 'Activar voz' : 'Silenciar voz'}
+            style={{
+              padding: '5px 10px', borderRadius: 10,
+              border: '1.5px solid #e2e8f0',
+              background: isMuted ? '#f1f5f9' : '#eff6ff',
+              color: isMuted ? '#94a3b8' : '#3b82f6',
+              fontSize: 15, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontWeight: 600, flexShrink: 0,
+            }}
+          >
+            {isMuted ? '🔇' : '🔊'}
+          </button>
+          <button onClick={onSkip} style={{ padding: '6px 8px', background: 'none', border: 'none', color: '#94a3b8', fontSize: 12, cursor: 'pointer', fontWeight: 500 }}>
+            Saltar tutorial
+          </button>
+        </div>
       )}
     </div>
   );

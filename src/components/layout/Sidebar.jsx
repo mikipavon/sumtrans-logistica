@@ -1,4 +1,4 @@
-import { LayoutDashboard, Truck, Package, Settings, LogOut, Menu, Users, Map as MapIcon, Database, Tag, FileText, AlertTriangle, UserCheck, Wallet, Calculator, Fuel, Bell } from 'lucide-react';
+import { LayoutDashboard, Truck, Package, Settings, LogOut, Menu, Users, Map as MapIcon, Database, Tag, FileText, AlertTriangle, UserCheck, Wallet, Calculator, Fuel, Bell, Wrench } from 'lucide-react';
 import { useState, useRef } from 'react';
 
 export default function Sidebar({ onLogout, currentView, onNavigate, pendingClientsCount = 0, pendingIncidentsCount = 0, irregularCount = 0, onSecretUnlock }) {
@@ -40,6 +40,7 @@ export default function Sidebar({ onLogout, currentView, onNavigate, pendingClie
             items: [
                 { id: 'drivers', icon: Users, label: 'Conductores' },
                 { id: 'fleet', icon: Truck, label: 'Flota (Vehículos)' },
+                { id: 'maintenance-history', icon: Wrench, label: 'Historial Mantenimiento' },
                 { id: 'fuel', icon: Fuel, label: 'Control Combustible' },
                 { id: 'tracking', icon: MapIcon, label: 'Mapa en Vivo' },
             ]

@@ -1,34 +1,44 @@
-import { Truck, CheckCircle, AlertTriangle, MapPin, Gauge, Trash2 } from 'lucide-react';
+import { Truck, CheckCircle, AlertTriangle, MapPin, Gauge, Trash2, Ban } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import CreateVehicleModal from '../components/fleet/CreateVehicleModal';
 import VehicleDetailsModal from '../components/fleet/VehicleDetailsModal';
+import BrandLogo from '../components/fleet/BrandLogo';
 
 export default function Fleet({ vehicles, drivers, onAddVehicle, onUpdateVehicle, onDeleteVehicle }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [selectedVehicle, setSelectedVehicle] = useState(null);
     const [sortConfig, setSortConfig] = useState({ key: 'id', direction: 'asc' });
+    const [showInactive, setShowInactive] = useState(false);
 
 
     // Calc stats
     const totalVehicles = vehicles?.length || 0;
     const activeVehicles = vehicles?.filter(v => v.status === 'Disponible' || v.status === 'En Ruta').length || 0;
     const maintenanceVehicles = vehicles?.filter(v => v.status === 'Mantenimiento').length || 0;
+    const inactiveVehicles = vehicles?.filter(v => v.status === 'Inactivo').length || 0;
 
     const sortedVehicles = useMemo(() => {
         let result = [...(vehicles || [])];
-        if (sortConfig.key) {
-            result.sort((a, b) => {
-                let aVal = a[sortConfig.key];
-                let bVal = b[sortConfig.key];
-                const sA = String(aVal || '').toLowerCase();
-                const sB = String(bVal || '').toLowerCase();
-                if (sA < sB) return sortConfig.direction === 'asc' ? -1 : 1;
-                if (sA > sB) return sortConfig.direction === 'asc' ? 1 : -1;
-                return 0;
-            });
-        }
-        return result;
-    }, [vehicles, sortConfig]);
+        // Separate active and inactive
+        const active = result.filter(v => v.status !== 'Inactivo');
+        const inactive = result.filter(v => v.status === 'Inactivo');
+        
+        const sortFn = (a, b) => {
+            let aVal = a[sortConfig.key];
+            let bVal = b[sortConfig.key];
+            const sA = String(aVal || '').toLowerCase();
+            const sB = String(bVal || '').toLowerCase();
+            if (sA < sB) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (sA > sB) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        };
+        
+        active.sort(sortFn);
+        inactive.sort(sortFn);
+        
+        // Active first, inactive at the end (only if shown)
+        return showInactive ? [...active, ...inactive] : active;
+    }, [vehicles, sortConfig, showInactive]);
 
 
     return (
@@ -36,7 +46,20 @@ export default function Fleet({ vehicles, drivers, onAddVehicle, onUpdateVehicle
             <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 mb-6 relative">
                 <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-bold text-slate-800">Estado de la Flota</h2>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
+                        {inactiveVehicles > 0 && (
+                            <button
+                                onClick={() => setShowInactive(!showInactive)}
+                                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+                                    showInactive 
+                                        ? 'bg-slate-200 border-slate-400 text-slate-700' 
+                                        : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 hover:text-slate-600'
+                                }`}
+                            >
+                                <Ban size={14} />
+                                {showInactive ? `Ocultar (${inactiveVehicles})` : `Inactivos (${inactiveVehicles})`}
+                            </button>
+                        )}
                         <select
                             className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
                             value={`${sortConfig.key}-${sortConfig.direction}`}
@@ -47,6 +70,8 @@ export default function Fleet({ vehicles, drivers, onAddVehicle, onUpdateVehicle
                         >
                             <option value="id-asc">Matrícula (A-Z)</option>
                             <option value="id-desc">Matrícula (Z-A)</option>
+                            <option value="created_at-desc">Más nuevo primero</option>
+                            <option value="created_at-asc">Más antiguo primero</option>
                             <option value="status-asc">Estado (A-Z)</option>
                             <option value="location-asc">Ubicación (A-Z)</option>
                         </select>
@@ -80,8 +105,18 @@ export default function Fleet({ vehicles, drivers, onAddVehicle, onUpdateVehicle
                             <p className="text-sm text-slate-600">En Taller</p>
                         </div>
                     </div>
+                    {inactiveVehicles > 0 && (
+                        <div className="bg-slate-100 p-4 rounded-lg flex items-center gap-4">
+                            <div className="bg-slate-300 p-3 rounded-full text-slate-600"><Ban /></div>
+                            <div>
+                                <p className="text-2xl font-bold text-slate-500">{inactiveVehicles}</p>
+                                <p className="text-sm text-slate-500">Inactivos</p>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
+
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {(sortedVehicles || []).map((truck) => {
@@ -91,7 +126,7 @@ export default function Fleet({ vehicles, drivers, onAddVehicle, onUpdateVehicle
                         <div
                             key={truck.id}
                             onClick={() => setSelectedVehicle(truck)}
-                            className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-md hover:border-blue-300 transition-all cursor-pointer group"
+                            className={`bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-md hover:border-blue-300 transition-all cursor-pointer group ${truck.status === 'Inactivo' ? 'opacity-50 grayscale hover:opacity-80 hover:grayscale-0' : ''}`}
                         >
                             <div className="p-4 border-b border-slate-50 flex justify-between items-center bg-slate-50/50 group-hover:bg-blue-50/30 transition-colors relative">
                                 <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
@@ -110,9 +145,7 @@ export default function Fleet({ vehicles, drivers, onAddVehicle, onUpdateVehicle
                                 </div>
 
                                 <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 bg-white border border-slate-200 rounded-lg flex items-center justify-center group-hover:border-blue-200 transition-colors">
-                                        <Truck className="text-slate-500 group-hover:text-blue-600" size={20} />
-                                    </div>
+                                    <BrandLogo model={truck.model} size={40} />
                                     <div>
                                         <h3 className="font-bold text-slate-800">{truck.id}</h3>
                                         <p className="text-xs text-slate-500">{truck.model}</p>
@@ -120,9 +153,10 @@ export default function Fleet({ vehicles, drivers, onAddVehicle, onUpdateVehicle
                                 </div>
                                 <span className={`px-2 py-1 rounded-full text-xs font-medium mr-8 ${truck.status === 'En Ruta' ? 'bg-blue-100 text-blue-700' :
                                     truck.status === 'Disponible' ? 'bg-green-100 text-green-700' :
+                                    truck.status === 'Inactivo' ? 'bg-slate-200 text-slate-500' :
                                         'bg-amber-100 text-amber-700'
                                     }`}>
-                                    {truck.status}
+                                    {truck.status === 'Inactivo' ? '⛔ Inactivo' : truck.status}
                                 </span>
                             </div>
 
@@ -165,7 +199,7 @@ export default function Fleet({ vehicles, drivers, onAddVehicle, onUpdateVehicle
             <VehicleDetailsModal
                 isOpen={!!selectedVehicle}
                 onClose={() => setSelectedVehicle(null)}
-                vehicle={selectedVehicle}
+                vehicle={selectedVehicle ? (vehicles || []).find(v => v.id === selectedVehicle.id) || selectedVehicle : null}
                 drivers={drivers}
                 onUpdateVehicle={onUpdateVehicle}
             />

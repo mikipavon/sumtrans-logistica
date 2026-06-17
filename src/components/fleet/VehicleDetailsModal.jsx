@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
-import { X, Truck, User, FileText, Upload, Download, Trash2, Shield, Cpu, AlertTriangle, CheckCircle, Clock, Wrench, Droplets, Circle, Plus, Euro } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { X, Truck, User, FileText, Upload, Download, Trash2, Shield, Cpu, AlertTriangle, CheckCircle, Clock, Wrench, Droplets, Circle, Plus, Euro, Camera, Pencil } from 'lucide-react';
+import BrandLogo from './BrandLogo';
+import MaintenanceIcon, { getMaintenanceConfig } from './MaintenanceIcon';
 
 const DOC_TYPES = ['Seguro','ITV','Permiso de Circulación','Tarjeta de Transporte','Tacógrafo','Extintor / Seguridad','Otro'];
 
@@ -52,6 +54,7 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
 
     // Maintenance form state
     const [showMaintForm, setShowMaintForm] = useState(false);
+    const [editingLogId, setEditingLogId] = useState(null); // null = adding, id = editing
     const [mType, setMType] = useState('Aceite');
     const [mDate, setMDate] = useState(new Date().toISOString().split('T')[0]);
     const [mKm, setMKm] = useState('');
@@ -60,6 +63,8 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
     const [mWorkshop, setMWorkshop] = useState('');
     const [mNextKm, setMNextKm] = useState('');
     const [mAlertAtKm, setMAlertAtKm] = useState('');
+    const [mInvoicePhoto, setMInvoicePhoto] = useState(null);
+    const invoiceInputRef = useRef(null);
 
     // Vehicle current odometer
     const [currentOdometer, setCurrentOdometer] = useState('');
@@ -110,23 +115,71 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
         }
     };
 
+    const resetMaintForm = () => {
+        setMType('Aceite'); setMKm(''); setMCost(''); setMNotes(''); setMWorkshop(''); setMNextKm(''); setMAlertAtKm(''); setMInvoicePhoto(null);
+        setMDate(new Date().toISOString().split('T')[0]);
+        setEditingLogId(null);
+        setShowMaintForm(false);
+    };
+
     const handleAddMaintenance = (e) => {
         e.preventDefault();
-        const newLog = {
-            id: Date.now(), type: mType, date: mDate, km: mKm,
-            cost: mCost, notes: mNotes, workshop: mWorkshop, nextKm: mNextKm,
-            alertAtKm: mAlertAtKm || null,
-            createdAt: new Date().toISOString(),
-        };
-        const updated = [newLog, ...maintenanceLogs];
+        let updated;
+        if (editingLogId) {
+            // Editing existing log
+            updated = maintenanceLogs.map(log => {
+                if (log.id === editingLogId) {
+                    return {
+                        ...log,
+                        type: mType, date: mDate, km: mKm,
+                        cost: mCost, notes: mNotes, workshop: mWorkshop, nextKm: mNextKm,
+                        alertAtKm: mAlertAtKm || null,
+                        invoicePhoto: mInvoicePhoto || log.invoicePhoto || null,
+                        updatedAt: new Date().toISOString(),
+                    };
+                }
+                return log;
+            });
+        } else {
+            // Adding new log
+            const newLog = {
+                id: Date.now(), type: mType, date: mDate, km: mKm,
+                cost: mCost, notes: mNotes, workshop: mWorkshop, nextKm: mNextKm,
+                alertAtKm: mAlertAtKm || null,
+                invoicePhoto: mInvoicePhoto || null,
+                createdAt: new Date().toISOString(),
+            };
+            updated = [newLog, ...maintenanceLogs];
+        }
         setMaintenanceLogs(updated);
-        // Also save currently recorded odometer if filled in
         const updates = { maintenanceLogs: updated };
         if (mKm) { setCurrentOdometer(mKm); updates.currentOdometer = mKm; }
         onUpdateVehicle(vehicle.id, updates);
-        setMType('Aceite'); setMKm(''); setMCost(''); setMNotes(''); setMWorkshop(''); setMNextKm(''); setMAlertAtKm('');
-        setMDate(new Date().toISOString().split('T')[0]);
-        setShowMaintForm(false);
+        resetMaintForm();
+    };
+
+    const handleEditMaint = (log) => {
+        setEditingLogId(log.id);
+        setMType(log.type || 'Aceite');
+        setMDate(log.date || new Date().toISOString().split('T')[0]);
+        setMKm(log.km || '');
+        setMCost(log.cost || '');
+        setMNotes(log.notes || '');
+        setMWorkshop(log.workshop || '');
+        setMNextKm(log.nextKm || '');
+        setMAlertAtKm(log.alertAtKm || '');
+        setMInvoicePhoto(log.invoicePhoto || null);
+        setShowMaintForm(true);
+    };
+
+    const handleInvoicePhotoUpload = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (file.size > 4 * 1024 * 1024) { alert('Imagen demasiado grande. Límite: 4MB.'); return; }
+        const reader = new FileReader();
+        reader.onload = (ev) => setMInvoicePhoto(ev.target.result);
+        reader.readAsDataURL(file);
+        e.target.value = '';
     };
 
     const handleDeleteMaint = (id) => {
@@ -151,7 +204,7 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                 {/* Header */}
                 <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                     <div className="flex items-center gap-3 flex-wrap">
-                        <div className="bg-blue-100 p-2 rounded-lg text-blue-600"><Truck size={24} /></div>
+                        <BrandLogo model={vehicle.model} size={40} />
                         <div>
                             <h3 className="font-bold text-slate-800 text-lg">{vehicle.id}</h3>
                             <p className="text-sm text-slate-500">{vehicle.model}</p>
@@ -210,6 +263,27 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                     </div>
                                 )}
                             </div>
+                            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Truck size={18} className="text-slate-400" /> Estado del Vehículo</h4>
+                                <select
+                                    value={vehicle.status || 'Disponible'}
+                                    onChange={(e) => onUpdateVehicle(vehicle.id, { status: e.target.value })}
+                                    className={`w-full border rounded-lg px-4 py-2.5 font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                                        vehicle.status === 'Inactivo' ? 'border-slate-300 bg-slate-100 text-slate-500' :
+                                        vehicle.status === 'Mantenimiento' ? 'border-amber-300 bg-amber-50 text-amber-700' :
+                                        vehicle.status === 'En Ruta' ? 'border-blue-300 bg-blue-50 text-blue-700' :
+                                        'border-green-300 bg-green-50 text-green-700'
+                                    }`}
+                                >
+                                    <option value="Disponible">🟢 Disponible</option>
+                                    <option value="En Ruta">🔵 En Ruta</option>
+                                    <option value="Mantenimiento">🟡 En Taller / Mantenimiento</option>
+                                    <option value="Inactivo">⛔ Inactivo / Vendido</option>
+                                </select>
+                                {vehicle.status === 'Inactivo' && (
+                                    <p className="text-xs text-slate-400 mt-2 italic">Este vehículo aparecerá atenuado en la lista de flota</p>
+                                )}
+                            </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-start gap-3">
                                     <Shield className="text-emerald-500 mt-0.5" size={20} />
@@ -235,7 +309,7 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                     </div>
                                     <div className="bg-white rounded-xl border border-slate-200 p-3 text-center shadow-sm">
                                         <p className="text-xl font-bold text-slate-800">€{totalMaintCost.toFixed(0)}</p>
-                                        <p className="text-xs text-slate-500 font-medium">Coste Total</p>
+                                        <p className="text-xs text-slate-500 font-medium">Coste Total (sin IVA)</p>
                                     </div>
                                     <div className="bg-white rounded-xl border border-slate-200 p-3 text-center shadow-sm">
                                         <p className="text-xl font-bold text-slate-800">{maintenanceLogs[0]?.km ? `${parseInt(maintenanceLogs[0].km).toLocaleString('es-ES')} km` : '—'}</p>
@@ -269,10 +343,12 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                     <Plus size={18} /> Añadir Registro de Mantenimiento
                                 </button>
                             ) : (
-                                <form onSubmit={handleAddMaintenance} className="bg-white rounded-xl border border-blue-200 shadow-sm p-5 space-y-4">
+                                <form onSubmit={handleAddMaintenance} className={`bg-white rounded-xl border shadow-sm p-5 space-y-4 ${editingLogId ? 'border-amber-300 bg-amber-50/30' : 'border-blue-200'}`}>
                                     <div className="flex justify-between items-center mb-2">
-                                        <h4 className="font-bold text-slate-800">Nuevo Registro</h4>
-                                        <button type="button" onClick={() => setShowMaintForm(false)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+                                        <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                                            {editingLogId ? <><Pencil size={16} className="text-amber-500" /> Editando Registro</> : 'Nuevo Registro'}
+                                        </h4>
+                                        <button type="button" onClick={resetMaintForm} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
                                     </div>
 
                                     {/* Type selector */}
@@ -286,7 +362,7 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                                         onClick={() => setMType(t.value)}
                                                         className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-bold transition-all ${mType === t.value ? 'border-blue-500 bg-blue-50 text-blue-700 shadow' : 'border-slate-200 text-slate-600 hover:border-blue-300'}`}
                                                     >
-                                                        <div className={`p-1 rounded ${t.color}`}><Icon size={14} /></div>
+                                                        <MaintenanceIcon type={t.value} size={14} withBg={false} />
                                                         {t.label.split('/')[0].trim()}
                                                     </button>
                                                 );
@@ -304,7 +380,7 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                             <input type="number" placeholder="Ej: 125000" value={mKm} onChange={e => setMKm(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                                         </div>
                                         <div>
-                                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Coste (€)</label>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Coste sin IVA (€)</label>
                                             <input type="number" step="0.01" placeholder="0.00" value={mCost} onChange={e => setMCost(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                                         </div>
                                         <div>
@@ -337,8 +413,33 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                         <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Notas / Descripción</label>
                                         <textarea rows={2} placeholder="Describe el trabajo realizado, piezas cambiadas, observaciones..." value={mNotes} onChange={e => setMNotes(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                                     </div>
-                                    <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20">
-                                        <Plus size={18} /> Guardar Registro
+
+                                    {/* Invoice photo */}
+                                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                            <Camera size={12} /> Foto de Factura / Ticket (opcional)
+                                        </label>
+                                        {mInvoicePhoto ? (
+                                            <div className="flex items-center gap-3">
+                                                <img src={mInvoicePhoto} alt="Factura" className="w-16 h-16 object-cover rounded-lg border border-slate-200 shadow-sm" />
+                                                <div className="flex flex-col gap-1">
+                                                    <span className="text-xs text-emerald-600 font-bold">✓ Foto adjunta</span>
+                                                    <button type="button" onClick={() => setMInvoicePhoto(null)}
+                                                        className="text-xs text-red-400 hover:text-red-600 flex items-center gap-1">
+                                                        <X size={10} /> Eliminar
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <label className="cursor-pointer flex items-center justify-center gap-2 border-2 border-dashed border-slate-300 hover:border-blue-400 bg-white hover:bg-blue-50 text-slate-500 hover:text-blue-600 font-medium rounded-xl py-3 text-sm transition-all">
+                                                <Camera size={16} /> Seleccionar foto o PDF
+                                                <input type="file" className="hidden" accept="image/*,.pdf" ref={invoiceInputRef} onChange={handleInvoicePhotoUpload} />
+                                            </label>
+                                        )}
+                                    </div>
+
+                                    <button type="submit" className={`w-full font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg text-white ${editingLogId ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-500/20' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20'}`}>
+                                        {editingLogId ? <><Pencil size={16} /> Guardar Cambios</> : <><Plus size={18} /> Guardar Registro</>}
                                     </button>
                                 </form>
                             )}
@@ -360,7 +461,7 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                             <div key={log.id} className={`bg-white border rounded-xl p-4 shadow-sm group hover:border-blue-200 transition-colors ${kmStatus?.icon === 'critical' ? 'border-red-300' : kmStatus?.icon === 'warning' ? 'border-amber-300' : 'border-slate-200'}`}>
                                                 <div className="flex items-start justify-between gap-3">
                                                     <div className="flex items-start gap-3 flex-1 min-w-0">
-                                                        <div className={`p-2.5 rounded-xl shrink-0 ${tc.color}`}><Icon size={18} /></div>
+                                                        <MaintenanceIcon type={log.type} size={18} withBg={true} bgSize={38} />
                                                         <div className="flex-1 min-w-0">
                                                             <div className="flex items-center flex-wrap gap-2">
                                                                 <p className="font-bold text-slate-800 text-sm">{tc.label}</p>
@@ -371,6 +472,12 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                                             {log.workshop && <p className="text-xs text-slate-500 mt-1">🔧 {log.workshop}</p>}
                                                             {log.notes && <p className="text-xs text-slate-500 mt-1 italic">"{log.notes}"</p>}
                                                             {log.nextKm && <p className="text-xs text-blue-600 mt-1 font-medium">📍 Próx. cambio referencia: {parseInt(log.nextKm).toLocaleString('es-ES')} km</p>}
+                                                            {log.invoicePhoto && (
+                                                                <a href={log.invoicePhoto} target="_blank" rel="noreferrer"
+                                                                    className="inline-flex items-center gap-1 mt-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                                                                    <Camera size={11} /> Ver factura adjunta
+                                                                </a>
+                                                            )}
                                                             {log.alertAtKm && kmStatus && (
                                                                 <span className={`inline-flex items-center gap-1 mt-1.5 text-xs font-bold px-2 py-0.5 rounded-full border ${kmStatus.color}`}>
                                                                     {kmStatus.icon === 'critical' ? <AlertTriangle size={10}/> : <Clock size={10}/>}
@@ -379,9 +486,14 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                                             )}
                                                         </div>
                                                     </div>
-                                                    <button onClick={() => handleDeleteMaint(log.id)} className="opacity-0 group-hover:opacity-100 p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all" title="Eliminar">
-                                                        <Trash2 size={14} />
-                                                    </button>
+                                                    <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                                        <button onClick={() => handleEditMaint(log)} className="p-1.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="Editar">
+                                                            <Pencil size={14} />
+                                                        </button>
+                                                        <button onClick={() => handleDeleteMaint(log.id)} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all" title="Eliminar">
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         );
@@ -450,7 +562,14 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-2">
-                                                    <a href={doc.dataUrl} download={doc.name} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg" title="Descargar"><Download size={18} /></a>
+                                                    <a
+                                                        href={doc.dataUrl}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        download={doc.dataUrl?.startsWith('data:') ? doc.name : undefined}
+                                                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
+                                                        title="Abrir documento"
+                                                    ><Download size={18} /></a>
                                                     <button onClick={() => handleDeleteDocument(doc.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 size={18} /></button>
                                                 </div>
                                             </div>

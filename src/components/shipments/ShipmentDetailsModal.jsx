@@ -50,16 +50,17 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         return parseFloat(sorted[sorted.length - 1].price);
     };
 
-    const addArticle = () => {
-        if (!tempArticleId || tempQuantity < 1 || !tariffs) return;
-        const article = (articles || []).find(a => a.id.toString() === tempArticleId.toString());
+    const addArticle = (articleId) => {
+        const idToUse = articleId || tempArticleId;
+        if (!idToUse || tempQuantity < 1) return;
+        const article = (articles || []).find(a => a.id.toString() === idToUse.toString());
         if (!article) return;
         
         let price = article.basePrice || 0;
         let dest = formData.destinationCity;
         if (shipment && shipment.type === 'Recogida') dest = formData.originCity;
         
-        if (dest && tariffs[dest]) {
+        if (dest && tariffs && tariffs[dest]) {
             const familyCode = article.category ? article.category.substring(0, 3).toUpperCase() : 'NEU';
             if (tariffs[dest][familyCode] !== undefined) {
                 price = tariffs[dest][familyCode];
@@ -94,11 +95,17 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
     useEffect(() => {
         if (shipment) {
-            let packagesText = shipment.packages || '';
-            if (!packagesText && shipment.articles && shipment.articles.length > 0) {
-                packagesText = shipment.articles.map(a => `${a.quantity || 1}x ${a.name}`).join('\n');
+            // Los artículos guardados son la fuente de verdad.
+            // Si hay articles[], regeneramos el texto de packages a partir de ellos.
+            // Así la vista y el editor siempre muestran los mismos datos.
+            const currentArticles = shipment.articles || [];
+            let packagesText = '';
+            if (currentArticles.length > 0) {
+                packagesText = currentArticles.map(a => `${a.quantity || 1}x ${a.name}`).join('\n');
+            } else {
+                packagesText = shipment.packages || '';
             }
-            setSelectedArticles(shipment.articles || []);
+            setSelectedArticles(currentArticles);
             setWeightKg(shipment.weightKg || '');
             setFormData({
                 ...shipment,
@@ -115,6 +122,14 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         if (onUpdate && !isReadOnly) {
             setIsUploadingPhoto(true);
             let finalFormData = { ...formData };
+
+            // ── ARTÍCULOS Y KILOS ────────────────────────────────────────────────
+            // selectedArticles y weightKg se gestionan en estado propio (fuera de
+            // formData), así que hay que fusionarlos explícitamente antes de guardar.
+            finalFormData.articles = selectedArticles;
+            if (weightKg !== '' && weightKg !== null && weightKg !== undefined) {
+                finalFormData.weightKg = weightKg;
+            }
             
             try {
                 // REVERSION DE ESTADO MANUAL POR ADMINISTRADOR
@@ -264,7 +279,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     ))}
                 </datalist>
             )}
-            <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg h-[92vh] sm:h-auto sm:max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
+            <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col modal-mobile-height">
                 {/* Header */}
                 <div className="sticky top-0 bg-white border-b border-gray-100 p-4 flex items-center justify-between z-10 shrink-0">
                     <div className="flex items-center gap-3">
@@ -499,12 +514,12 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                             <div className="col-span-full bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
                                 <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1 border-b border-slate-100 pb-2"><Package size={12} /> Bultos y Artículos</span>
                                 
-                                {/* Article Selector */}
+                                {/* Article Selector — añade al seleccionar, igual que en creación */}
                                 <div className="flex gap-2 items-end">
                                     <div className="flex-1">
                                         <select 
                                             value={tempArticleId} 
-                                            onChange={(e) => setTempArticleId(e.target.value)} 
+                                            onChange={(e) => { const val = e.target.value; setTempArticleId(val); if (val) addArticle(val); }} 
                                             className="w-full text-sm border-2 border-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                                         >
                                             <option value="">Seleccionar artículo...</option>
@@ -533,10 +548,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             })()}
                                         </select>
                                     </div>
-                                    <div className="w-16">
-                                        <input type="number" min="1" className="w-full text-sm border-2 border-slate-200 rounded-lg p-2.5" value={tempQuantity} onChange={(e) => setTempQuantity(e.target.value)} />
+                                    <div className="w-20" title="Cantidad (ajusta antes de seleccionar)">
+                                        <input type="number" min="1" className="w-full text-sm border-2 border-slate-200 rounded-lg p-2.5 text-center font-bold" value={tempQuantity} onChange={(e) => setTempQuantity(e.target.value)} />
                                     </div>
-                                    <button type="button" onClick={addArticle} className="p-2.5 bg-blue-100 text-blue-600 rounded-lg font-bold hover:bg-blue-200"><Plus size={18} /></button>
                                 </div>
                                 
                                 {weightClientData && (

@@ -115,10 +115,13 @@ const createDeliveryPDFDoc = async (shipment) => {
   doc.setFont('helvetica', 'bold');
   doc.text('Ref. Albarán: ' + shipment.id, M, infoY + 7);
 
+  const totalBultosPDF = Array.isArray(shipment.articles) && shipment.articles.length > 0
+    ? shipment.articles.reduce((s, a) => s + (parseInt(a.quantity) || 1), 0)
+    : (shipment.packages || 1);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(...DGRAY);
-  doc.text('Bultos: ' + (shipment.packages || 1), M, infoY + 14);
+  doc.text('Bultos: ' + totalBultosPDF, M, infoY + 14);
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...NAVY);

@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useTourAudio } from '../hooks/useTourAudio';
 
 // ── Datos demo ────────────────────────────────────────────────────────────────
 const DEMO_PORTES = [
@@ -17,6 +18,8 @@ const TOUR_STEPS = [
     emoji: '🏦',
     title: '¿Qué es la pestaña Caja?',
     description: 'Al final del día, la pestaña "Cuenta" muestra todo lo que has recaudado: portes cobrados, reembolsos COD y facturas simplificadas. Desde aquí también generas los justificantes.',
+    audio: 'Al final del día, la pestaña Cuenta muestra todo lo que has recaudado: portes cobrados, reembolsos y facturas simplificadas. Desde aquí también generas los justificantes para los remitentes.',
+    audioId: 'caja_01_intro',
     isIntro: true,
     demoMode: null,
     inlineDemo: null,
@@ -25,6 +28,8 @@ const TOUR_STEPS = [
     emoji: '💶',
     title: 'Totales del día',
     description: 'Arriba aparecen dos tarjetas:\n\n💜 Reembolsos — dinero COD cobrado al destinatario que debes entregar al remitente.\n🚚 Porte (Caja) — cobros de porte debido del día.\n\nEl cuadro negro grande es el TOTAL RECAUDADO.',
+    audio: 'Arriba aparecen dos tarjetas: Reembolsos, que es el dinero del COD que debes entregar al remitente; y Porte de Caja, que son los cobros de porte del día. El cuadro negro grande es el total recaudado.',
+    audioId: 'caja_02_totales',
     demoMode: null,
     inlineDemo: 'caja_totales',
   },
@@ -32,6 +37,8 @@ const TOUR_STEPS = [
     emoji: '📋',
     title: 'Detalle de portes cobrados',
     description: 'Debajo aparece cada porte cobrado con el nombre del cliente y el importe. Puedes pulsar en cualquier línea para ver el albarán completo.\n\nEl botón 🖨️ imprime el resumen de portes del día.',
+    audio: 'Debajo aparece cada porte cobrado con el nombre del cliente y el importe. Puedes pulsar en cualquier línea para ver el albarán completo. El botón de imprimir genera el resumen de portes del día.',
+    audioId: 'caja_03_portes',
     demoMode: null,
     inlineDemo: 'caja_portes',
   },
@@ -39,6 +46,8 @@ const TOUR_STEPS = [
     emoji: '💸',
     title: 'Detalle de reembolsos (COD)',
     description: 'En la sección "Detalle Reembolsos" aparece cada COD cobrado hoy. Cada línea tiene un botón 🖨️ individual para imprimir ese justificante.\n\n"Imprimir Todos" genera todos los justificantes de golpe en formato A6.',
+    audio: 'En la sección de Detalle Reembolsos aparece cada cobro de tipo COD del día. Cada línea tiene un botón individual para imprimir ese justificante. El botón Imprimir Todos genera todos a la vez en formato A6.',
+    audioId: 'caja_04_reembolsos',
     demoMode: null,
     inlineDemo: 'caja_reembolsos',
   },
@@ -46,6 +55,8 @@ const TOUR_STEPS = [
     emoji: '🧾',
     title: '¿Qué es un justificante de reembolso?',
     description: 'Es el documento que le das al REMITENTE cuando le entregas el dinero que cobró su cliente (COD). Incluye:\n\n• Nombre del remitente\n• ID del envío con QR\n• Importe total\n• Espacio para firma y sello',
+    audio: 'El justificante de reembolso es el documento que le das al remitente cuando le entregas el dinero que cobró su cliente. Incluye el nombre del remitente, el identificador del envío con código QR, el importe total, y espacio para firma y sello.',
+    audioId: 'caja_05_justificante',
     demoMode: null,
     inlineDemo: 'justificante_preview',
   },
@@ -53,6 +64,8 @@ const TOUR_STEPS = [
     emoji: '🖨️',
     title: 'Cómo generar los justificantes',
     description: '1️⃣ Ve a la pestaña Cuenta al final del día.\n2️⃣ En "Detalle Reembolsos" pulsa 🖨️ junto a cada reembolso para imprimirlo individualmente.\n3️⃣ O pulsa "Imprimir Todos" para sacar todos a la vez en formato A6 (4 por folio).\n4️⃣ Se abre una ventana de impresión — acepta y el justificante queda impreso.',
+    audio: 'Para generar los justificantes: ve a la pestaña Cuenta al final del día, en Detalle Reembolsos pulsa el icono de imprimir junto a cada reembolso, o pulsa Imprimir Todos para sacar todos a la vez en formato A6, cuatro por folio.',
+    audioId: 'caja_06_como_imprimir',
     demoMode: null,
     inlineDemo: 'caja_reembolsos',
   },
@@ -60,6 +73,8 @@ const TOUR_STEPS = [
     emoji: '📄',
     title: 'Cierre de Caja PDF',
     description: 'El botón "Mi Cierre (PDF)" genera un resumen completo del día con todos los cobros. Úsalo al final de tu jornada para entregar en la oficina o guardar como comprobante.',
+    audio: 'El botón Mi Cierre en PDF genera un resumen completo del día con todos los cobros. Úsalo al final de tu jornada para entregar en la oficina o guardar como comprobante.',
+    audioId: 'caja_07_cierre',
     demoMode: null,
     inlineDemo: 'caja_cierre',
   },
@@ -67,6 +82,8 @@ const TOUR_STEPS = [
     emoji: '🎉',
     title: '¡Ya dominas la Caja!',
     description: 'Al final de cada jornada:\n✅ Revisa los totales en Cuenta\n✅ Imprime los justificantes de reembolso para los remitentes\n✅ Genera el Cierre PDF y entrégalo en oficina',
+    audio: '¡Ya dominas la Caja! Al final de cada jornada: revisa los totales en Cuenta, imprime los justificantes de reembolso para los remitentes, y genera el Cierre en PDF para entregarlo en la oficina.',
+    audioId: 'caja_08_final',
     isFinal: true,
     demoMode: null,
     inlineDemo: null,
@@ -276,9 +293,25 @@ function InlineDemo({ type }) {
 export default function DriverCajaTour({ isVisible, onComplete, onSkip }) {
   const [step, setStep] = useState(0);
   const [animOut, setAnimOut] = useState(false);
+  const { speak, stop, isMuted, toggleMute } = useTourAudio();
 
   const currentStep = TOUR_STEPS[step];
   const hasInlineDemo = !!currentStep.inlineDemo;
+
+  useEffect(() => {
+    if (!isVisible) { stop(); return; }
+    setStep(0);
+  }, [isVisible, stop]);
+
+  // Narrar cada paso
+  useEffect(() => {
+    if (!isVisible) return;
+    const { audio, audioId } = currentStep;
+    if (audio || audioId) {
+      const t = setTimeout(() => speak(audio, audioId), 400);
+      return () => clearTimeout(t);
+    }
+  }, [step, isVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const goNext = () => {
     if (step >= TOUR_STEPS.length - 1) { onComplete(); return; }
@@ -298,8 +331,8 @@ export default function DriverCajaTour({ isVisible, onComplete, onSkip }) {
   const tooltipW = Math.min(360, vw - 24);
   const tooltipLeft = Math.max(12, vw / 2 - tooltipW / 2);
 
-  // Siempre overlay oscuro + tooltip centrado (no hay modales reales en este tour)
-  const tooltipTop = Math.max(16, vh / 2 - (hasInlineDemo ? 280 : 200));
+  // Siempre overlay oscuro + tooltip arriba para aprovechar toda la pantalla (especialmente iPhone)
+  const tooltipTop = 16;
 
   const overlayEl = (
     <div style={{ position: 'fixed', inset: 0, zIndex: 9990, background: 'rgba(2,6,23,0.88)', backdropFilter: 'blur(3px)', pointerEvents: 'all' }} />
@@ -381,9 +414,26 @@ export default function DriverCajaTour({ isVisible, onComplete, onSkip }) {
       </div>
 
       {!currentStep.isFinal && (
-        <button onClick={onSkip} style={{ width: '100%', marginTop: 10, padding: '6px', background: 'none', border: 'none', color: '#94a3b8', fontSize: 12, cursor: 'pointer', fontWeight: 500 }}>
-          Saltar tutorial
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+          <button
+            onClick={toggleMute}
+            title={isMuted ? 'Activar voz' : 'Silenciar voz'}
+            style={{
+              padding: '5px 10px', borderRadius: 10,
+              border: '1.5px solid #e2e8f0',
+              background: isMuted ? '#f1f5f9' : '#f0fdf4',
+              color: isMuted ? '#94a3b8' : '#16a34a',
+              fontSize: 15, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontWeight: 600, flexShrink: 0,
+            }}
+          >
+            {isMuted ? '🔇' : '🔊'}
+          </button>
+          <button onClick={onSkip} style={{ padding: '6px 8px', background: 'none', border: 'none', color: '#94a3b8', fontSize: 12, cursor: 'pointer', fontWeight: 500 }}>
+            Saltar tutorial
+          </button>
+        </div>
       )}
     </div>
   );

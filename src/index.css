@@ -158,3 +158,16 @@ body, #root, .lista-repartos {
   background: none !important;
   border: none !important;
 }
+
+/* Fix modal height on iPhone - dvh respects the dynamic browser chrome */
+.modal-mobile-height {
+  height: 92vh; /* fallback for older browsers */
+  height: 92dvh;
+  max-height: 92dvh;
+}
+@media (min-width: 640px) {
+  .modal-mobile-height {
+    height: auto;
+    max-height: 90vh;
+  }
+}

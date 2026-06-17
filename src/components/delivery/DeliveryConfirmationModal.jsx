@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { X, CheckCircle, PenTool, Camera, Image as ImageIcon, Mic, MicOff, Wallet, MapPin, RotateCcw, AlertTriangle, FileText, ShieldCheck } from 'lucide-react';
+import { X, CheckCircle, PenTool, Camera, Image as ImageIcon, Mic, MicOff, Wallet, MapPin, RotateCcw, AlertTriangle, FileText, ShieldCheck, Package } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import Shipment from '../../models/Shipment';
 import { compressImage } from '../../utils/imageCompression';
@@ -628,6 +628,51 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                             )}
                         </div>
 
+                        {/* BANNER DE BULTOS — siempre visible antes de firmar */}
+                        {(() => {
+                            const arts = shipment.articles || [];
+                            const pkgText = shipment.packages || '';
+                            const hasArts = arts.length > 0;
+                            const totalBultos = hasArts
+                                ? arts.reduce((s, a) => s + (parseInt(a.quantity) || 1), 0)
+                                : null;
+                            if (!hasArts && !pkgText) return null;
+                            return (
+                                <div className="rounded-2xl overflow-hidden border-2 border-orange-300 shadow-lg shadow-orange-100">
+                                    {/* Header */}
+                                    <div className="bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-2.5 flex items-center gap-2">
+                                        <Package size={18} className="text-white" />
+                                        <span className="text-white font-black text-xs uppercase tracking-widest flex-1">Verificar Bultos Antes de Firmar</span>
+                                        {totalBultos !== null && (
+                                            <span className="bg-white text-orange-600 font-black text-sm px-3 py-0.5 rounded-full shadow">
+                                                {totalBultos} {totalBultos === 1 ? 'bulto' : 'bultos'}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {/* Lista de artículos */}
+                                    <div className="bg-orange-50 px-4 py-3 space-y-1.5">
+                                        {hasArts ? (
+                                            arts.map((a, i) => (
+                                                <div key={i} className="flex items-center gap-2">
+                                                    <span className="w-8 h-8 flex items-center justify-center bg-orange-500 text-white font-black text-sm rounded-lg shrink-0">
+                                                        {parseInt(a.quantity) || 1}
+                                                    </span>
+                                                    <span className="text-sm font-bold text-slate-800 leading-tight">{a.name}</span>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <p className="text-sm font-bold text-slate-700 whitespace-pre-wrap">{pkgText}</p>
+                                        )}
+                                    </div>
+                                    {/* Pie de confirmación */}
+                                    <div className="bg-orange-100 px-4 py-2 flex items-center gap-1.5">
+                                        <ShieldCheck size={13} className="text-orange-600 shrink-0" />
+                                        <span className="text-[10px] text-orange-700 font-bold uppercase tracking-wide">Confirma que la mercancía coincide antes de pedir la firma</span>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
                         {/* 2. Signature Section */}
                         <div className="space-y-2">
                             <div className="flex justify-between items-end">
@@ -656,6 +701,28 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                         {/* 3. Photo Section */}
                         {requiresPhoto1 && (
                             <div className="space-y-4">
+                                {/* Mini-recordatorio de bultos también sobre la foto */}
+                                {(() => {
+                                    const arts = shipment.articles || [];
+                                    const pkgText = shipment.packages || '';
+                                    const totalBultos = arts.length > 0
+                                        ? arts.reduce((s, a) => s + (parseInt(a.quantity) || 1), 0)
+                                        : null;
+                                    if (!arts.length && !pkgText) return null;
+                                    return (
+                                        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                                            <Package size={14} className="text-amber-500 shrink-0" />
+                                            <span className="text-xs font-black text-amber-700 uppercase tracking-wide">
+                                                {totalBultos !== null
+                                                    ? `${totalBultos} ${totalBultos === 1 ? 'bulto' : 'bultos'} — `
+                                                    : ''}
+                                                {arts.length > 0
+                                                    ? arts.map(a => `${parseInt(a.quantity)||1}× ${a.name}`).join(', ')
+                                                    : pkgText}
+                                            </span>
+                                        </div>
+                                    );
+                                })()}
                                 {requiresPhoto2 ? (
                                     <div className="grid grid-cols-2 gap-4">
                                         {/* Photo 1: Agency Proof */}
