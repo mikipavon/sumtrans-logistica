@@ -36,8 +36,8 @@ serve(async (req: Request) => {
       })
     }
 
-    if (password.length < 6) {
-      return new Response(JSON.stringify({ error: 'La contraseña debe tener al menos 6 caracteres' }), {
+    if (password.length < 4) {
+      return new Response(JSON.stringify({ error: 'La contraseña debe tener al menos 4 caracteres' }), {
         status: 400,
         headers: { ...CORS, 'Content-Type': 'application/json' },
       })

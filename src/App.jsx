@@ -1116,8 +1116,22 @@ function App() {
       // ── Construir el email para Supabase Auth ──
       let authEmail = username;
 
-      // Para drivers: el username podría no ser un email, pero ahora exigimos email real
-      // Para admin y client: ya usan email
+      // Para drivers: si no es un email, buscar el email del conductor por username
+      if (role === 'driver' && !username.includes('@')) {
+        try {
+          const { data: driverRows } = await supabase
+            .from('drivers')
+            .select('data')
+            .ilike('username', username);
+          const driverEmail = driverRows?.[0]?.data?.email;
+          if (driverEmail) {
+            authEmail = driverEmail;
+            console.log('[Login] Driver username →', authEmail);
+          }
+        } catch (e) {
+          console.warn('[Login] No se pudo buscar email del conductor:', e);
+        }
+      }
 
       // ── Autenticación con Supabase Auth ──
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({

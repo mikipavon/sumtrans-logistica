@@ -237,14 +237,14 @@ export default function Login({ onLogin }) {
 
                         <div className="space-y-1.5">
                             <label className="block text-sm font-bold text-slate-600 ml-1">
-                                {activeTab === 'admin' ? 'Email Corporativo' : activeTab === 'driver' ? 'Usuario / ID' : 'Email de Contacto'}
+                                {activeTab === 'admin' ? 'Email Corporativo' : activeTab === 'driver' ? 'Email o Usuario' : 'Email de Contacto'}
                             </label>
                             <input
                                 ref={emailRef}
                                 type="text"
                                 autoComplete="username"
                                 className={`w-full px-5 py-3.5 rounded-xl border border-slate-200 focus:border-transparent focus:ring-2 ${config.ring} outline-none transition-all shadow-sm bg-slate-50 focus:bg-white`}
-                                placeholder={activeTab === 'admin' ? 'Tu email' : activeTab === 'driver' ? 'Tu usuario' : 'Tu email'}
+                                placeholder={activeTab === 'admin' ? 'Tu email' : activeTab === 'driver' ? 'Tu email o usuario' : 'Tu email'}
                                 onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                             />
                         </div>
