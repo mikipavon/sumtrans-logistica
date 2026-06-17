@@ -1365,15 +1365,20 @@ function App() {
         return false
       }
       
-      // ── Crear cuenta Supabase Auth para el nuevo conductor ──
+      // ── Crear cuenta Supabase Auth automáticamente ──
       if (newDriver.email && newDriver.password && newDriver.password.length >= 6) {
         try {
-          const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-          const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-          // Llamar a una Edge Function o usar la API de admin (desde el backend)
-          // Nota: createUser de admin NO está disponible desde el frontend con anon key
-          // Los nuevos conductores se migrarán cuando se ejecute migrate-users
-          console.log(`[AddDriver] Conductor creado. Para activar Supabase Auth, ejecutar migrate-users.`);
+          const res = await supabase.functions.invoke('create-auth-user', {
+            body: {
+              email: newDriver.email,
+              password: newDriver.password,
+              role: 'driver',
+              linked_id: String(data[0].id),
+              display_name: newDriver.name || newDriver.username,
+            }
+          });
+          if (res.error) console.warn('[AddDriver] Auth:', res.error.message);
+          else console.log('[AddDriver] Cuenta Auth creada ✅');
         } catch (authErr) {
           console.warn('[AddDriver] No se pudo crear cuenta Auth:', authErr);
         }
@@ -1513,6 +1518,25 @@ function App() {
 
       if (isDeactivating) {
         await handleDeactivateTestMode(driverId);
+      }
+
+      // ── Crear/actualizar cuenta Supabase Auth si tiene email ──
+      if (mergedData.email && mergedData.password && mergedData.password.length >= 6) {
+        try {
+          const res = await supabase.functions.invoke('create-auth-user', {
+            body: {
+              email: mergedData.email,
+              password: mergedData.password,
+              role: 'driver',
+              linked_id: String(driverId),
+              display_name: mergedData.name || mergedData.username,
+            }
+          });
+          if (res.error) console.warn('[UpdateDriver] Auth:', res.error.message);
+          else console.log('[UpdateDriver] Cuenta Auth creada/actualizada ✅');
+        } catch (authErr) {
+          console.warn('[UpdateDriver] No se pudo crear cuenta Auth:', authErr);
+        }
       }
     } catch (e) { alert('Error al actualizar transportista'); console.error(e); }
   }
