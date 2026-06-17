@@ -628,6 +628,12 @@ function App() {
         return;
     }
 
+    // No cargar datos hasta que el usuario esté autenticado (RLS lo bloquearía)
+    if (!isAuthenticated) {
+        setIsSyncing(false);
+        return;
+    }
+
     // Non-blocking: init storage buckets in parallel (don't block data loading)
     initStorageBuckets().catch(e => console.warn('initStorageBuckets background error:', e));
 
@@ -902,7 +908,7 @@ function App() {
     return () => {
       supabase.removeChannel(channel);
     }
-  }, [])
+  }, [isAuthenticated])
 
   // ======= REFRESCO PERIÓDICO DE ENVÍOS ACTIVOS (cada 90s, silencioso) =======
   // Red de seguridad: si el Realtime falla o está throttleado por cuota,
