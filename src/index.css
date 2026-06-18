@@ -16,11 +16,15 @@ html, body, #root, .lista-repartos {
   touch-action: pan-x pan-y;
 }
 
+/* Bloquear pull-to-refresh en TODOS los contenedores scrollables */
+* {
+  overscroll-behavior: none;
+}
+
 /* Bloqueo extra para PWA standalone en Android */
 @media all and (display-mode: standalone) {
   html, body {
     overscroll-behavior: none !important;
-    -webkit-overflow-scrolling: touch;
   }
 }
 
