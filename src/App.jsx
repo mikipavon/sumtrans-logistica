@@ -1353,6 +1353,12 @@ function App() {
     } catch (e) {
       console.warn('[Logout] Error signing out from Supabase Auth:', e);
     }
+    // Limpiar sesión local (para que no se restaure al recargar)
+    try {
+      sessionStorage.removeItem('sumtrans_session');
+      sessionStorage.removeItem('sumtrans_creating_shipment');
+      sessionStorage.removeItem('sumtrans_shipment_draft');
+    } catch {}
     setIsAuthenticated(false)
     setUserRole(null)
     setCurrentDriverId(null)

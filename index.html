@@ -16,8 +16,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Sumtrans Logística</title>
   </head>
-  <body>
+  <body style="overscroll-behavior:none">
     <div id="root"></div>
+    <script>
+      // Bloquear pull-to-refresh en Android PWA
+      (function() {
+        var startY = 0;
+        document.addEventListener('touchstart', function(e) {
+          startY = e.touches[0].pageY;
+        }, { passive: true });
+        document.addEventListener('touchmove', function(e) {
+          var y = e.touches[0].pageY;
+          // Si estamos en el top de la página y tiramos hacia abajo → bloquear
+          if (window.scrollY === 0 && y > startY && e.cancelable) {
+            e.preventDefault();
+          }
+        }, { passive: false });
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

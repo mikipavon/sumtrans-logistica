@@ -8,11 +8,20 @@
   }
 }
 
-body, #root, .lista-repartos {
-  /* Evita el refresco de página al tirar hacia abajo */
-  overscroll-behavior-y: contain; 
+html, body, #root, .lista-repartos {
+  /* Evita el refresco de página al tirar hacia abajo (pull-to-refresh Android) */
+  overscroll-behavior-y: none;
+  overscroll-behavior: none;
   /* Evita gestos del sistema que interfieran con el drag */
-  touch-action: pan-x pan-y; 
+  touch-action: pan-x pan-y;
+}
+
+/* Bloqueo extra para PWA standalone en Android */
+@media all and (display-mode: standalone) {
+  html, body {
+    overscroll-behavior: none !important;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 .item-reparto {
