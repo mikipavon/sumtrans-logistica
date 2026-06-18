@@ -27,7 +27,8 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
     const weightClientData = React.useMemo(() => {
         // Solo el cliente que PAGA determina si va por kilos
-        const payingClientName = formData.porteType === 'Pagado' ? formData.client : formData.destinationName;
+        const pt = formData.porteType || 'Pagado';
+        const payingClientName = pt === 'Pagado' ? formData.client : formData.destinationName;
         if (!payingClientName) return null;
         
         const cName = payingClientName.toLowerCase().trim();
@@ -69,7 +70,8 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
             price = 0;
         } else {
             // Check if paying client has custom rates for this article
-            const payingClientName = formData.porteType === 'Pagado' ? formData.client : formData.destinationName;
+            const pt = formData.porteType || 'Pagado';
+            const payingClientName = pt === 'Pagado' ? formData.client : formData.destinationName;
             const cName = (payingClientName || '').toLowerCase().trim();
             const client = (clients || []).find(c =>
                 String(c.name || '').toLowerCase().trim() === cName ||
@@ -78,17 +80,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
             if (client?.customRates && client.customRates[article.id] !== undefined && client.customRates[article.id] !== '') {
                 price = parseFloat(client.customRates[article.id]);
-            } else {
-                let dest = formData.destinationCity;
-                if (shipment && shipment.type === 'Recogida') dest = formData.originCity;
-                
-                if (dest && tariffs && tariffs[dest]) {
-                    const familyCode = article.category ? article.category.substring(0, 3).toUpperCase() : 'NEU';
-                    if (tariffs[dest][familyCode] !== undefined) {
-                        price = parseFloat(tariffs[dest][familyCode]);
-                    }
-                }
             }
+            // Eliminada la lógica antigua de tariffs[dest][familyCode] porque los precios base 
+            // ahora se manejan con article.price y customRates.
         }
         
         const newItem = {
