@@ -62,19 +62,31 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         const article = (articles || []).find(a => a.id.toString() === idToUse.toString());
         if (!article) return;
         
-        let price = article.basePrice || 0;
+        let price = parseFloat(article.price || 0);
 
         // ── Para clientes "Por Kilos": el precio viene del peso, NO del artículo ──
         if (weightClientData) {
             price = 0;
         } else {
-            let dest = formData.destinationCity;
-            if (shipment && shipment.type === 'Recogida') dest = formData.originCity;
-            
-            if (dest && tariffs && tariffs[dest]) {
-                const familyCode = article.category ? article.category.substring(0, 3).toUpperCase() : 'NEU';
-                if (tariffs[dest][familyCode] !== undefined) {
-                    price = tariffs[dest][familyCode];
+            // Check if paying client has custom rates for this article
+            const payingClientName = formData.porteType === 'Pagado' ? formData.client : formData.destinationName;
+            const cName = (payingClientName || '').toLowerCase().trim();
+            const client = (clients || []).find(c =>
+                String(c.name || '').toLowerCase().trim() === cName ||
+                String(c.legalName || '').toLowerCase().trim() === cName
+            );
+
+            if (client?.customRates && client.customRates[article.id] !== undefined && client.customRates[article.id] !== '') {
+                price = parseFloat(client.customRates[article.id]);
+            } else {
+                let dest = formData.destinationCity;
+                if (shipment && shipment.type === 'Recogida') dest = formData.originCity;
+                
+                if (dest && tariffs && tariffs[dest]) {
+                    const familyCode = article.category ? article.category.substring(0, 3).toUpperCase() : 'NEU';
+                    if (tariffs[dest][familyCode] !== undefined) {
+                        price = parseFloat(tariffs[dest][familyCode]);
+                    }
                 }
             }
         }
