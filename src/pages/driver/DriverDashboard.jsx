@@ -1678,7 +1678,21 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
     }, [isTestMode, currentDriverId]);
     // ─────────────────────────────────────────────────────────────────────────
-    const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+    // Restaurar modal de creación abierto si Android mató la página
+    const [isNoteModalOpen, setIsNoteModalOpen] = useState(() => {
+        try { return sessionStorage.getItem('sumtrans_creating_shipment') === 'true'; } catch { return false; }
+    });
+
+    // Persistir estado del modal de creación
+    useEffect(() => {
+        try {
+            if (isNoteModalOpen) {
+                sessionStorage.setItem('sumtrans_creating_shipment', 'true');
+            } else {
+                sessionStorage.removeItem('sumtrans_creating_shipment');
+            }
+        } catch {}
+    }, [isNoteModalOpen]);
 
     const currentDriver = useMemo(() => 
         drivers?.find(d => String(d.id) === String(currentDriverId)),

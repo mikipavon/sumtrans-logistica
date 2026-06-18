@@ -75,13 +75,39 @@ const normalizeClientName = (name) => {
 };
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [userRole, setUserRole] = useState(null) // 'admin', 'driver', 'client'
-  const [currentView, setCurrentView] = useState('dashboard')
-  const [currentDriverId, setCurrentDriverId] = useState(null) // ID of the logged in driver
-  const [currentClientId, setCurrentClientId] = useState(null) // ID of the logged in client
+  // ── Restaurar sesión LOCAL instantáneamente (para sobrevivir a Android matando la página) ──
+  const savedSession = (() => {
+    try {
+      const s = sessionStorage.getItem('sumtrans_session');
+      if (s) return JSON.parse(s);
+    } catch {}
+    return null;
+  })();
+
+  const [isAuthenticated, setIsAuthenticated] = useState(!!savedSession)
+  const [userRole, setUserRole] = useState(savedSession?.role || null) // 'admin', 'driver', 'client'
+  const [currentView, setCurrentView] = useState(savedSession?.view || 'dashboard')
+  const [currentDriverId, setCurrentDriverId] = useState(savedSession?.driverId || null) // ID of the logged in driver
+  const [currentClientId, setCurrentClientId] = useState(savedSession?.clientId || null) // ID of the logged in client
   const [shipmentStatusFilter, setShipmentStatusFilter] = useState(null) // Filter passed from Dashboard KPI cards
-  const [isRestoringSession, setIsRestoringSession] = useState(true) // true while checking for existing Supabase Auth session
+  const [isRestoringSession, setIsRestoringSession] = useState(!savedSession) // Skip waiting if we have a local session
+
+  // ── Persistir sesión local cada vez que cambie el estado de login ──
+  useEffect(() => {
+    if (isAuthenticated && userRole) {
+      try {
+        sessionStorage.setItem('sumtrans_session', JSON.stringify({
+          role: userRole,
+          driverId: currentDriverId,
+          clientId: currentClientId,
+          view: currentView,
+          savedAt: Date.now()
+        }));
+      } catch {}
+    } else {
+      sessionStorage.removeItem('sumtrans_session');
+    }
+  }, [isAuthenticated, userRole, currentDriverId, currentClientId, currentView]);
 
   // ── Restaurar sesión de Supabase Auth al cargar la app ──
   useEffect(() => {
