@@ -5,6 +5,7 @@ import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
+import CityAutocomplete from '../CityAutocomplete';
 
 export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, clients, allPoblaciones, prefillData, onAddClient, onUpdateClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
     const [formData, setFormData] = useState({
@@ -1198,10 +1199,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                     <div className="grid grid-cols-3 gap-3">
                                         <div className="col-span-2">
                                             <label className={labelClass}>Población</label>
-                                            <input
-                                                type="text"
+                                            <CityAutocomplete
                                                 className={inputClass}
                                                 value={formData.originCity}
+                                                poblaciones={allPoblaciones || []}
+                                                placeholder="Población"
+                                                required
                                                 onChange={(e) => {
                                                     const val = e.target.value;
                                                     const match = (coverageZones || []).find(z => z.name === val);
@@ -1211,8 +1214,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                         handleCityChange(val, 'origin');
                                                     }
                                                 }}
-                                                list="poblaciones-list"
-                                                required
+                                                onSelect={(val) => {
+                                                    const match = (coverageZones || []).find(z => z.name === val);
+                                                    if (match) {
+                                                        setFormData(prev => ({ ...prev, originCity: val, originZip: match.zip || prev.originZip }));
+                                                    }
+                                                }}
                                             />
                                         </div>
                                         <div>
@@ -1311,10 +1318,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                     <div className="grid grid-cols-3 gap-3">
                                         <div className="col-span-2">
                                             <label className={labelClass}>Población</label>
-                                            <input 
-                                                type="text" 
-                                                className={inputClass} 
-                                                value={formData.destinationCity} 
+                                            <CityAutocomplete
+                                                className={inputClass}
+                                                value={formData.destinationCity}
+                                                poblaciones={allPoblaciones || []}
+                                                placeholder="Población"
+                                                required
                                                 onChange={(e) => {
                                                     const val = e.target.value;
                                                     const match = (coverageZones || []).find(z => z.name === val);
@@ -1323,9 +1332,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                     } else {
                                                         handleCityChange(val, 'destination');
                                                     }
-                                                }} 
-                                                list="poblaciones-list" 
-                                                required 
+                                                }}
+                                                onSelect={(val) => {
+                                                    const match = (coverageZones || []).find(z => z.name === val);
+                                                    if (match) {
+                                                        setFormData(prev => ({ ...prev, destinationCity: val, destinationZip: match.zip || prev.destinationZip }));
+                                                    }
+                                                }}
                                             />
                                         </div>
                                         <div>
