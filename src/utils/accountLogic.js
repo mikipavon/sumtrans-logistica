@@ -183,8 +183,13 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     });
 
     // 3. Cobros Manuales (desde pestaña Cobros o generados en entrega)
+    // Primero, crear un Set con los IDs de envíos que existen para filtrar rápido
+    const existingShipmentIds = new Set((allShipments || []).map(s => s.id));
+
     const manualPorteCollections = (collectedCollections || [])
         .filter(c => {
+            // Ignorar cobros de envíos que ya no existen (borrados por admin)
+            if (c.shipmentId && !existingShipmentIds.has(c.shipmentId)) return false;
             const matchType = (c.type === 'Porte' || c.type === 'Efectivo');
             const matchDate = isToday(c.date, targetDate);
             if (matchType && (c.date === todayStr || matchDate)) return true;
@@ -224,6 +229,11 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     // 5. Reembolsos
     const collectedReembolsosRaw = (collectedCollections || [])
         .filter(c => c.type === 'Reembolso' && isToday(c.date, targetDate))
+        .filter(c => {
+            // Ignorar cobros de envíos que ya no existen (borrados por admin)
+            if (c.shipmentId && !existingShipmentIds.has(c.shipmentId)) return false;
+            return true;
+        })
         .filter((c, index, self) => 
             !c.shipmentId || index === self.findIndex(t => t.shipmentId === c.shipmentId && t.type === c.type)
         );
