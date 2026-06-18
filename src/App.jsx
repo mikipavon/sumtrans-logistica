@@ -1942,6 +1942,38 @@ function App() {
     try {
       const shipmentToDelete = shipmentsRef.current.find(s => s.id === shipmentId);
       
+      // ── PROTECCIÓN: Albarán cobrado ──
+      if (shipmentToDelete) {
+        const hasPaidPorte = shipmentToDelete.portePaid;
+        const hasPaidCod = shipmentToDelete.codPaid && parseFloat(String(shipmentToDelete.codAmount || '0').replace(',', '.')) > 0;
+        const paidAmount = parseFloat(String(shipmentToDelete.customAmount || shipmentToDelete.amount || '0').replace(',', '.')) || 0;
+        const codAmount = parseFloat(String(shipmentToDelete.codAmount || '0').replace(',', '.')) || 0;
+        
+        if (hasPaidPorte || hasPaidCod) {
+          const warnings = [];
+          if (hasPaidPorte && paidAmount > 0) warnings.push(`Porte cobrado: ${paidAmount.toFixed(2)} €`);
+          if (hasPaidCod && codAmount > 0) warnings.push(`Reembolso cobrado: ${codAmount.toFixed(2)} €`);
+          
+          const confirmed = window.confirm(
+            `⚠️ ¡ATENCIÓN! Este albarán tiene cobros registrados:\n\n` +
+            warnings.join('\n') + '\n\n' +
+            `Si lo borras, estos cobros DESAPARECERÁN de la Cuenta del conductor.\n` +
+            `El dinero ya cobrado quedará sin justificante.\n\n` +
+            `¿Estás SEGURO de que quieres borrarlo?`
+          );
+          if (!confirmed) return;
+          
+          // Segunda confirmación para cobros
+          const doubleConfirm = window.confirm(
+            `🔴 CONFIRMACIÓN FINAL\n\n` +
+            `Vas a borrar el albarán ${shipmentId} con cobros ya realizados.\n` +
+            `Esta acción NO se puede deshacer.\n\n` +
+            `¿Confirmar borrado definitivo?`
+          );
+          if (!doubleConfirm) return;
+        }
+      }
+
       // REVERSIÓN DE PRESUPUESTOS
       if (shipmentToDelete && shipmentToDelete.type === 'Recibo') {
           const linkedShipments = shipmentsRef.current.filter(s => s.linkedReceiptId === shipmentId);
