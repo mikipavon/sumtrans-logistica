@@ -1736,7 +1736,7 @@ function App() {
         return false
       }
 
-      const newShipmentFromDB = { ...data[0].data, id: data[0].id };
+      const newShipmentFromDB = (data && data[0]) ? { ...data[0].data, id: data[0].id } : { ...shipmentWithMeta };
 
       // 2. Update local state
       if (originalPickupId) {
