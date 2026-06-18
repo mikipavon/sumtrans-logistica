@@ -656,10 +656,25 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                 {formData.tariffType === 'Por Kilos' && (
                                     <div className="animate-in fade-in slide-in-from-top-2 duration-300">
                                         <div className="bg-indigo-50/50 rounded-xl p-4 border border-indigo-100">
-                                            <h4 className="text-sm font-bold text-indigo-700 flex items-center gap-2 mb-2">
-                                                ⚖️ Tramos de Peso
+                                            <h4 className="text-sm font-bold text-indigo-700 flex items-center justify-between mb-3">
+                                                <span className="flex items-center gap-2">⚙️ Configuración "Por Kilos"</span>
                                             </h4>
-                                            <p className="text-[10px] text-slate-500 mb-3">Define los tramos de peso y su precio. Al crear un albarán se pedirán los kilos obligatoriamente.</p>
+                                            
+                                            <div className="mb-4">
+                                                <label className="text-xs font-bold text-indigo-900 block mb-1">Modo de Cálculo</label>
+                                                <select 
+                                                    className="w-full px-3 py-2 bg-white border border-indigo-200 rounded-lg text-sm text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    value={formData.weightCalculationMode || 'brackets'}
+                                                    onChange={(e) => set('weightCalculationMode', e.target.value)}
+                                                >
+                                                    <option value="brackets">Tramos de Peso (Redondeo al tramo superior)</option>
+                                                    <option value="formula">Fórmula Matemática (Kilos Base + Precio por Kg Extra)</option>
+                                                </select>
+                                            </div>
+
+                                            {(!formData.weightCalculationMode || formData.weightCalculationMode === 'brackets') ? (
+                                                <>
+                                                    <p className="text-[10px] text-slate-500 mb-3">Define los tramos de peso y su precio. Se cobrará el precio del primer tramo que supere o iguale el peso.</p>
                                             <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
                                                 <div className="grid grid-cols-[1fr_1fr_auto] gap-0 text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-50 border-b border-slate-200">
                                                     <div className="px-3 py-2">Hasta (Kg)</div>
@@ -697,18 +712,48 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                                             }} className="p-1 text-slate-300 hover:text-red-500 transition-colors">
                                                                 <Trash2 size={14} />
                                                             </button>
-                                                        </div>
                                                     </div>
                                                 ))}
-                                            </div>
-                                            <button type="button" onClick={() => {
-                                                const sorted = [...(formData.weightTariff || [])].sort((a, b) => a.maxKg - b.maxKg);
-                                                const lastKg = sorted.length > 0 ? sorted[sorted.length - 1].maxKg : 0;
-                                                const lastPrice = sorted.length > 0 ? parseFloat(sorted[sorted.length - 1].price) : 0;
-                                                set('weightTariff', [...(formData.weightTariff || []), { maxKg: lastKg + 50, price: (lastPrice + 3).toFixed(2) }]);
-                                            }} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors mt-2">
-                                                + Añadir Tramo
-                                            </button>
+                                                </div>
+                                                <button type="button" onClick={() => {
+                                                    const sorted = [...(formData.weightTariff || [])].sort((a, b) => a.maxKg - b.maxKg);
+                                                    const lastKg = sorted.length > 0 ? sorted[sorted.length - 1].maxKg : 0;
+                                                    const lastPrice = sorted.length > 0 ? parseFloat(sorted[sorted.length - 1].price) : 0;
+                                                    set('weightTariff', [...(formData.weightTariff || []), { maxKg: lastKg + 50, price: (lastPrice + 3).toFixed(2) }]);
+                                                }} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors mt-2">
+                                                    + Añadir Tramo
+                                                </button>
+                                                </>
+                                            ) : (
+                                                <div className="bg-white rounded-lg border border-indigo-200 p-4 space-y-4">
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        <div>
+                                                            <label className="text-xs font-bold text-slate-700 block mb-1">Kilos Base (Hasta)</label>
+                                                            <input type="number" step="0.1" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
+                                                                value={formData.weightFormula?.baseKg || ''} 
+                                                                onChange={e => set('weightFormula', { ...formData.weightFormula, baseKg: e.target.value })} 
+                                                                placeholder="Ej: 23" />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-xs font-bold text-slate-700 block mb-1">Precio Base (€)</label>
+                                                            <input type="number" step="0.01" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
+                                                                value={formData.weightFormula?.basePrice || ''} 
+                                                                onChange={e => set('weightFormula', { ...formData.weightFormula, basePrice: e.target.value })} 
+                                                                placeholder="Ej: 3.00" />
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-xs font-bold text-slate-700 block mb-1">Precio por Kg Extra (€)</label>
+                                                        <input type="number" step="0.01" className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm" 
+                                                                value={formData.weightFormula?.extraKgPrice || ''} 
+                                                                onChange={e => set('weightFormula', { ...formData.weightFormula, extraKgPrice: e.target.value })} 
+                                                                placeholder="Ej: 0.13" />
+                                                    </div>
+                                                    <div className="bg-slate-50 p-3 rounded text-xs text-slate-600 font-mono">
+                                                        Precio = Precio Base + (Kilos Reales - Kilos Base) × Precio Kg Extra
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 )}

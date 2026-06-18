@@ -47,10 +47,22 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         return null;
     }, [formData.porteType, formData.client, formData.destinationName, clients]);
 
-    const calculateWeightPrice = (kg, tariff) => {
-        if (!kg || !tariff || tariff.length === 0) return 0;
+    const calculateWeightPrice = (kg, tariff, clientData) => {
+        if (!kg) return 0;
         const weight = parseFloat(kg);
         if (isNaN(weight) || weight <= 0) return 0;
+
+        if (clientData?.weightCalculationMode === 'formula' && clientData?.weightFormula) {
+            const { baseKg, basePrice, extraKgPrice } = clientData.weightFormula;
+            const bKg = parseFloat(baseKg) || 0;
+            const bPrice = parseFloat(basePrice) || 0;
+            const ePrice = parseFloat(extraKgPrice) || 0;
+
+            if (weight <= bKg) return bPrice;
+            return bPrice + ((weight - bKg) * ePrice);
+        }
+
+        if (!tariff || tariff.length === 0) return 0;
         const sorted = [...tariff].sort((a, b) => a.maxKg - b.maxKg);
         const bracket = sorted.find(b => weight <= b.maxKg);
         if (bracket) return parseFloat(bracket.price);
@@ -610,7 +622,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             onChange={(e) => {
                                                 const val = e.target.value;
                                                 setWeightKg(val);
-                                                const p = calculateWeightPrice(val, weightClientData.tariff);
+                                                const p = calculateWeightPrice(val, weightClientData.tariff, weightClientData.client);
                                                 const aTotal = selectedArticles.reduce((sum, item) => sum + item.totalPrice, 0);
                                                 const com = parseFloat(formData.codCommission) || 0;
                                                 setFormData(prev => ({ ...prev, amount: (aTotal + p + com).toFixed(2) }));

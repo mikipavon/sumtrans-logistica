@@ -189,18 +189,18 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
     const [priceOverride, setPriceOverride] = useState(null); // null = no override, string = manual price
 
-    // Detect if the current client uses weight-based pricing
-    // Comprueba AMBOS clientes (remitente y destinatario) por si alguno factura por kilos
+    // Detect if the PAYING client uses weight-based pricing
+    // Solo el cliente que PAGA determina si va por kilos:
+    //   - Pagado → el remitente paga → comprobar remitente
+    //   - Debido → el destinatario paga → comprobar destinatario
     const weightClientData = useMemo(() => {
-        // Check sender
-        const senderClient = resolveBillingClient(formData.clientName, formData._parentClientId);
-        if (senderClient && senderClient.tariffType === 'Por Kilos') {
-            return { client: senderClient, tariff: senderClient.weightTariff || [] };
-        }
-        // Check destination
-        const destClient = resolveBillingClient(formData.destinationName, formData._destParentClientId);
-        if (destClient && destClient.tariffType === 'Por Kilos') {
-            return { client: destClient, tariff: destClient.weightTariff || [] };
+        const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
+        const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
+        const client = resolveBillingClient(payingClientName, parentId);
+        console.log('[WeightTariff] porteType:', formData.porteType, '| Paying client:', payingClientName, '| Resolved:', client?.name, '| tariffType:', client?.tariffType);
+        const isByKilos = client && client.tariffType === 'Por Kilos';
+        if (isByKilos) {
+            return { client, tariff: client.weightTariff || [] };
         }
         return null;
     }, [formData.porteType, formData.clientName, formData.destinationName, formData._parentClientId, formData._destParentClientId, clients]);
@@ -221,10 +221,22 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     }, [formData.porteType, formData.clientName, formData.destinationName, formData._parentClientId, formData._destParentClientId, clients]);
 
     // Calculate price from weight bracket
-    const calculateWeightPrice = (kg, tariff) => {
-        if (!kg || !tariff || tariff.length === 0) return 0;
+    const calculateWeightPrice = (kg, tariff, clientData) => {
+        if (!kg) return 0;
         const weight = parseFloat(kg);
         if (isNaN(weight) || weight <= 0) return 0;
+
+        if (clientData?.weightCalculationMode === 'formula' && clientData?.weightFormula) {
+            const { baseKg, basePrice, extraKgPrice } = clientData.weightFormula;
+            const bKg = parseFloat(baseKg) || 0;
+            const bPrice = parseFloat(basePrice) || 0;
+            const ePrice = parseFloat(extraKgPrice) || 0;
+
+            if (weight <= bKg) return bPrice;
+            return bPrice + ((weight - bKg) * ePrice);
+        }
+
+        if (!tariff || tariff.length === 0) return 0;
         // Sort tariff by maxKg ascending
         const sorted = [...tariff].sort((a, b) => a.maxKg - b.maxKg);
         // Find the first bracket where maxKg >= weight
@@ -691,18 +703,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
         const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
         const client = resolveBillingClient(payingClientName, parentId);
-        // ── Verificar si alguno de los clientes factura por kilos ──
-        const senderClient = resolveBillingClient(formData.clientName, formData._parentClientId);
-        const destClient = resolveBillingClient(formData.destinationName, formData._destParentClientId);
-        const isWeightBased = weightClientData || 
-            (client && client.tariffType === 'Por Kilos') ||
-            (senderClient?.tariffType === 'Por Kilos') ||
-            (destClient?.tariffType === 'Por Kilos');
 
         const updatedArticles = selectedArticles.map(item => {
             let unitPrice = parseFloat(item.price || 0); // Base (B1)
 
-            if (isWeightBased) {
+            // Solo el que PAGA determina si va por kilos
+            if (weightClientData) {
                 unitPrice = 0;
             } else if (baremo === 2 && client?.customRatesB2 && client.customRatesB2[item.id] !== undefined && client.customRatesB2[item.id] !== '') {
                 unitPrice = parseFloat(client.customRatesB2[item.id]);
@@ -749,14 +755,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
         let unitPrice = parseFloat(article.price);
 
-        // ── Para clientes "Por Kilos": el precio viene del peso, NO del artículo ──
-        // Verificamos AMBOS clientes (remitente y destinatario) por si alguno factura por kilos
-        const isWeightBased = weightClientData || 
-            (client && client.tariffType === 'Por Kilos') ||
-            (resolveBillingClient(formData.destinationName, formData._destParentClientId)?.tariffType === 'Por Kilos') ||
-            (resolveBillingClient(formData.clientName, formData._parentClientId)?.tariffType === 'Por Kilos');
-        
-        if (isWeightBased) {
+        // ── Solo el que PAGA determina si va por kilos ──
+        if (weightClientData) {
             unitPrice = 0;
         } else if (baremo === 2 && client?.customRatesB2 && client.customRatesB2[article.id] !== undefined && client.customRatesB2[article.id] !== '') {
             unitPrice = parseFloat(client.customRatesB2[article.id]);
@@ -1522,7 +1522,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                     const val = e.target.value;
                                                     setWeightKg(val);
                                                     if (weightClientData) {
-                                                        const price = calculateWeightPrice(val, weightClientData.tariff);
+                                                        const price = calculateWeightPrice(val, weightClientData.tariff, weightClientData.client);
                                                         const articlesTotal = selectedArticles.reduce((sum, item) => sum + item.totalPrice, 0);
                                                         const commission = parseFloat(formData.codCommission) || 0;
                                                         setFormData(prev => ({ ...prev, amount: (articlesTotal + price + commission).toFixed(2) }));
@@ -1541,7 +1541,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                     <div className="flex-1">
                                         <p className="text-[10px] font-bold text-indigo-400 uppercase">{getWeightBracketLabel(weightKg, weightClientData.tariff)}</p>
                                         <p className="text-sm font-black text-indigo-700">
-                                            {shouldHidePrices ? 'Precio fijado en tarifa' : `${calculateWeightPrice(weightKg, weightClientData.tariff).toFixed(2)}€ (porte por peso)`}
+                                            {shouldHidePrices ? 'Precio fijado en tarifa' : `${calculateWeightPrice(weightKg, weightClientData.tariff, weightClientData.client).toFixed(2)}€ (porte por peso)`}
                                         </p>
                                     </div>
                                     {!shouldHidePrices && (
