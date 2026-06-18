@@ -108,12 +108,21 @@ function App() {
 
     // Escuchar cambios de auth (logout desde otra pestaña, etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (event === 'SIGNED_OUT') {
-          setIsAuthenticated(false);
-          setUserRole(null);
-          setCurrentDriverId(null);
-          setCurrentClientId(null);
+      async (event, session) => {
+        console.log('[Auth] Event:', event, '| Session:', !!session);
+        if (event === 'SIGNED_OUT' && !session) {
+          // Solo hacer logout real si no hay sesión (evita falsos SIGNED_OUT durante refresh)
+          // Esperar un momento para verificar que no es un refresh
+          setTimeout(async () => {
+            const { data: { session: currentSession } } = await supabase.auth.getSession();
+            if (!currentSession) {
+              console.log('[Auth] Confirmed logout — no session found');
+              setIsAuthenticated(false);
+              setUserRole(null);
+              setCurrentDriverId(null);
+              setCurrentClientId(null);
+            }
+          }, 500);
         }
       }
     );
@@ -1186,8 +1195,7 @@ function App() {
         setCurrentClientId(null);
       }
 
-      // Login exitoso — recargar para que los datos se carguen con el token de auth
-      window.location.reload();
+      // No reload needed — el useEffect [isAuthenticated] carga datos automáticamente
       return true;
     } catch (e) {
       console.error('[Login] Error:', e);
@@ -1215,7 +1223,11 @@ function App() {
             });
             if (!authErr && authData?.user) {
               console.log('[LegacyLogin] Driver auth session established ✅');
-              window.location.reload();
+              // setIsAuthenticated se llamará en el handleLogin principal
+              setIsAuthenticated(true);
+              setUserRole(role);
+              setCurrentDriverId(driverInfo.id);
+              setCurrentClientId(null);
               return true;
             }
           }
