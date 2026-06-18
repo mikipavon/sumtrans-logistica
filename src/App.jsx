@@ -1384,7 +1384,7 @@ function App() {
       }
       
       // ── Crear cuenta Supabase Auth automáticamente ──
-      if (newDriver.email && newDriver.password && newDriver.password.length >= 6) {
+      if (newDriver.email && newDriver.password && newDriver.password.length >= 4) {
         try {
           const res = await supabase.functions.invoke('create-auth-user', {
             body: {
@@ -1539,7 +1539,7 @@ function App() {
       }
 
       // ── Crear/actualizar cuenta Supabase Auth si tiene email ──
-      if (mergedData.email && mergedData.password && mergedData.password.length >= 6) {
+      if (mergedData.email && mergedData.password && mergedData.password.length >= 4) {
         try {
           const res = await supabase.functions.invoke('create-auth-user', {
             body: {
