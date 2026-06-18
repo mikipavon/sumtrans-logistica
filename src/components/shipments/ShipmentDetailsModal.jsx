@@ -537,25 +537,54 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             <option value="">Seleccionar artículo...</option>
                                             {(() => {
                                                 let availableArticles = [...(articles || [])];
-                                                const client = (clients||[]).find(c => c.name.toLowerCase() === (formData.client||'').toLowerCase());
-                                                if (client && client.allowedArticles && client.allowedArticles.length > 0) {
-                                                    const allowedIds = client.allowedArticles;
-                                                    availableArticles = availableArticles.filter(a => allowedIds.includes(a.id)).sort((a, b) => allowedIds.indexOf(a.id) - allowedIds.indexOf(b.id));
+                                                
+                                                const clientName = (formData.client || '').toLowerCase().trim();
+                                                const destName = (formData.destinationName || '').toLowerCase().trim();
+                                                
+                                                const client = (clients || []).find(c => 
+                                                    String(c.name || '').toLowerCase().trim() === clientName || 
+                                                    String(c.legalName || '').toLowerCase().trim() === clientName
+                                                );
+                                                
+                                                const destClient = (clients || []).find(c => 
+                                                    String(c.name || '').toLowerCase().trim() === destName || 
+                                                    String(c.legalName || '').toLowerCase().trim() === destName
+                                                );
+
+                                                const STD_IDS = ['1774442159060', '1774442159061', '1774442159062', '1774442159063']; // BLT_1-4
+
+                                                const isWeightClient = client?.tariffType === 'Por Kilos' || destClient?.tariffType === 'Por Kilos';
+
+                                                let clientIds;
+                                                if (client?.allowedArticles?.length > 0) {
+                                                    clientIds = client.allowedArticles;
+                                                } else if (isWeightClient) {
+                                                    clientIds = availableArticles
+                                                        .filter(a => {
+                                                            const name = String(a.name || '').toLowerCase();
+                                                            return name.includes('blt_') || name.includes('bulto') || name.includes('palet');
+                                                        })
+                                                        .map(a => a.id);
+                                                    if (clientIds.length === 0) clientIds = STD_IDS;
                                                 } else {
-                                                    availableArticles = availableArticles.filter(a => {
-                                                        const cat = String(a.category || '').toLowerCase();
-                                                        return cat.includes('tarifa estandar') || cat.includes('tarifas estandar') || cat.includes('estándar');
-                                                    });
-                                                    availableArticles.sort((a, b) => {
-                                                        const indexA = (familyOrder||[])?.indexOf(a.category || 'Sin Categoría') ?? -1;
-                                                        const indexB = (familyOrder||[])?.indexOf(b.category || 'Sin Categoría') ?? -1;
-                                                        if (indexA !== indexB) return (indexA === -1 ? 1 : indexB === -1 ? -1 : indexA - indexB);
-                                                        const numA = parseInt(a.name) || 0;
-                                                        const numB = parseInt(b.name) || 0;
-                                                        if (numA && numB && numA !== numB) return numA - numB;
-                                                        return (a.name || '').localeCompare(b.name || '');
-                                                    });
+                                                    clientIds = STD_IDS;
                                                 }
+
+                                                const destIds = (destClient?.allowedArticles?.length > 0) ? destClient.allowedArticles : [];
+
+                                                // Merge
+                                                const mergedIds = [...clientIds];
+                                                for (const id of destIds) {
+                                                    if (!mergedIds.includes(id)) mergedIds.push(id);
+                                                }
+
+                                                availableArticles = availableArticles.filter(a => mergedIds.includes(a.id) || mergedIds.includes(String(a.id)));
+                                                availableArticles.sort((a, b) => {
+                                                    const iA = mergedIds.indexOf(a.id) !== -1 ? mergedIds.indexOf(a.id) : mergedIds.indexOf(String(a.id));
+                                                    const iB = mergedIds.indexOf(b.id) !== -1 ? mergedIds.indexOf(b.id) : mergedIds.indexOf(String(b.id));
+                                                    return iA - iB;
+                                                });
+
                                                 return availableArticles.map(article => <option key={article.id} value={article.id}>{article.name}</option>);
                                             })()}
                                         </select>
