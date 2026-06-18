@@ -733,7 +733,10 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
         let unitPrice = parseFloat(article.price);
 
-        if (baremo === 2 && client?.customRatesB2 && client.customRatesB2[article.id] !== undefined && client.customRatesB2[article.id] !== '') {
+        // ── Para clientes "Por Kilos": el precio viene del peso, NO del artículo ──
+        if (weightClientData) {
+            unitPrice = 0;
+        } else if (baremo === 2 && client?.customRatesB2 && client.customRatesB2[article.id] !== undefined && client.customRatesB2[article.id] !== '') {
             unitPrice = parseFloat(client.customRatesB2[article.id]);
         } else if (baremo === 1 && client?.customRates && client.customRates[article.id] !== undefined && client.customRates[article.id] !== '') {
             unitPrice = parseFloat(client.customRates[article.id]);

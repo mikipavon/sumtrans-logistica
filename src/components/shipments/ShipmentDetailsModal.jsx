@@ -57,13 +57,19 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         if (!article) return;
         
         let price = article.basePrice || 0;
-        let dest = formData.destinationCity;
-        if (shipment && shipment.type === 'Recogida') dest = formData.originCity;
-        
-        if (dest && tariffs && tariffs[dest]) {
-            const familyCode = article.category ? article.category.substring(0, 3).toUpperCase() : 'NEU';
-            if (tariffs[dest][familyCode] !== undefined) {
-                price = tariffs[dest][familyCode];
+
+        // ── Para clientes "Por Kilos": el precio viene del peso, NO del artículo ──
+        if (weightClientData) {
+            price = 0;
+        } else {
+            let dest = formData.destinationCity;
+            if (shipment && shipment.type === 'Recogida') dest = formData.originCity;
+            
+            if (dest && tariffs && tariffs[dest]) {
+                const familyCode = article.category ? article.category.substring(0, 3).toUpperCase() : 'NEU';
+                if (tariffs[dest][familyCode] !== undefined) {
+                    price = tariffs[dest][familyCode];
+                }
             }
         }
         
