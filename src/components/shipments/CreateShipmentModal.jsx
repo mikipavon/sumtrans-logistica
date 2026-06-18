@@ -1047,6 +1047,37 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
         setSelectedDebtIds([]);
 
+        // ── Auto-crear clientes desconocidos ──
+        if (onAddClient && clients) {
+            const normalize = (s) => String(s || '').normalize("NFD").replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
+            const checkAndCreateClient = (name, type, address, zip, city, phone) => {
+                if (!name || String(name).trim() === '') return;
+                const nName = normalize(name);
+                const exists = clients.some(c => 
+                    normalize(c.name) === nName || 
+                    normalize(c.legalName) === nName || 
+                    (c.branches && c.branches.some(b => normalize(b.name) === nName))
+                );
+                if (!exists) {
+                    onAddClient({
+                        name: name.trim(),
+                        type: type,
+                        address: address || '',
+                        zip: zip || '',
+                        city: city || '',
+                        phone: phone || '',
+                        status: 'pending',
+                        billingType: 'Clientes Habituales',
+                        createdFrom: 'Albarán Automático',
+                        createdBy: isDriver ? 'Conductor' : 'Administración',
+                        creatorId: currentDriverId || 'admin'
+                    });
+                }
+            };
+            checkAndCreateClient(finalData.client, 'Remitente', finalData.originAddress, finalData.originZip, finalData.originCity, finalData.originPhone);
+            checkAndCreateClient(finalData.destinationName, 'Destinatario', finalData.destinationAddress, finalData.destinationZip, finalData.destinationCity, finalData.destinationPhone);
+        }
+
         // ── Auto-aprendizaje de coordenadas del REMITENTE ──
         // Solo guardamos las coords del remitente al crear el albarán (estamos en su ubicación).
         // Las del destinatario se guardan en la entrega (handleDeliveryConfirm).
