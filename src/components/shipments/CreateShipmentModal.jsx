@@ -444,15 +444,34 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         }
     };
 
+    const normalize = (s) => String(s || '').normalize("NFD").replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
     const handleCityChange = (city, prefix) => {
         const cityKey = prefix === 'origin' ? 'originCity' : 'destinationCity';
         const zipKey = prefix === 'origin' ? 'originZip' : 'destinationZip';
 
         setFormData(prev => ({ ...prev, [cityKey]: city }));
 
-        const match = ALL_BAREMO_PUEBLOS.find(p => p.name.toLowerCase() === city.toLowerCase());
-        if (match) {
-            setFormData(prev => ({ ...prev, [zipKey]: match.zip }));
+        let matchedZip = null;
+        
+        // 1. Check coverageZones first
+        const zoneMatch = (coverageZones || []).find(z => normalize(z.name) === normalize(city));
+        if (zoneMatch && zoneMatch.zip) {
+            matchedZip = zoneMatch.zip;
+        }
+
+        // 2. Fallback to ALL_BAREMO_PUEBLOS if no zip found
+        if (!matchedZip) {
+            const baremoMatch = ALL_BAREMO_PUEBLOS.find(p => normalize(p.name) === normalize(city));
+            if (baremoMatch && baremoMatch.zip) {
+                matchedZip = baremoMatch.zip;
+            }
+        }
+
+        if (matchedZip) {
+            setFormData(prev => ({ ...prev, [zipKey]: matchedZip }));
+        }
+    };
         }
     };
 
@@ -1266,21 +1285,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                 poblaciones={allPoblaciones || []}
                                                 placeholder="Población"
                                                 required
-                                                onChange={(e) => {
-                                                    const val = e.target.value;
-                                                    const match = (coverageZones || []).find(z => z.name === val);
-                                                    if (match) {
-                                                        setFormData({ ...formData, originCity: val, originZip: match.zip || formData.originZip });
-                                                    } else {
-                                                        handleCityChange(val, 'origin');
-                                                    }
-                                                }}
-                                                onSelect={(val) => {
-                                                    const match = (coverageZones || []).find(z => z.name === val);
-                                                    if (match) {
-                                                        setFormData(prev => ({ ...prev, originCity: val, originZip: match.zip || prev.originZip }));
-                                                    }
-                                                }}
+                                                onChange={(e) => handleCityChange(e.target.value, 'origin')}
+                                                onSelect={(val) => handleCityChange(val, 'origin')}
                                             />
                                         </div>
                                         <div>
@@ -1386,21 +1392,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                 poblaciones={allPoblaciones || []}
                                                 placeholder="Población"
                                                 required
-                                                onChange={(e) => {
-                                                    const val = e.target.value;
-                                                    const match = (coverageZones || []).find(z => z.name === val);
-                                                    if (match) {
-                                                        setFormData({ ...formData, destinationCity: val, destinationZip: match.zip || formData.destinationZip });
-                                                    } else {
-                                                        handleCityChange(val, 'destination');
-                                                    }
-                                                }}
-                                                onSelect={(val) => {
-                                                    const match = (coverageZones || []).find(z => z.name === val);
-                                                    if (match) {
-                                                        setFormData(prev => ({ ...prev, destinationCity: val, destinationZip: match.zip || prev.destinationZip }));
-                                                    }
-                                                }}
+                                                onChange={(e) => handleCityChange(e.target.value, 'destination')}
+                                                onSelect={(val) => handleCityChange(val, 'destination')}
                                             />
                                         </div>
                                         <div>

@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Download, Upload, Trash2, Database, Shield, Clock, Folder, CheckCircle, AlertCircle, Save, Settings, X, RotateCcw, User } from 'lucide-react'
+import DailySummaryModal from './components/DailySummaryModal';
+import { ALL_BAREMO_PUEBLOS } from './data/baremos';
 import Layout from './components/layout/Layout'
 import Dashboard from './pages/Dashboard'
 import Shipments from './pages/Shipments'
@@ -615,6 +617,10 @@ function App() {
     
     (coverageZones || []).forEach(z => {
       if (z.name) set.add(z.name.trim());
+    });
+    
+    (ALL_BAREMO_PUEBLOS || []).forEach(p => {
+      if (p.name) set.add(p.name.trim());
     });
 
     // De-duplicación por si acaso hubiera entradas idénticas
