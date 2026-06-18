@@ -1116,20 +1116,16 @@ function App() {
       // ── Construir el email para Supabase Auth ──
       let authEmail = username;
 
-      // Para drivers: si no es un email, buscar el email del conductor por username
+      // Para drivers: si no es un email, buscar el email usando RPC segura (bypasa RLS)
       if (role === 'driver' && !username.includes('@')) {
         try {
-          const { data: driverRows } = await supabase
-            .from('drivers')
-            .select('data')
-            .ilike('username', username);
-          const driverEmail = driverRows?.[0]?.data?.email;
-          if (driverEmail) {
-            authEmail = driverEmail;
+          const { data: email } = await supabase.rpc('get_driver_email_by_username', { p_username: username });
+          if (email) {
+            authEmail = email;
             console.log('[Login] Driver username →', authEmail);
           }
         } catch (e) {
-          console.warn('[Login] No se pudo buscar email del conductor:', e);
+          console.warn('[Login] RPC email lookup failed:', e);
         }
       }
 
@@ -1159,8 +1155,12 @@ function App() {
 
       // ── Verificar que el driver está activo ──
       if (profile.role === 'driver' && profile.linked_id) {
-        const driver = drivers.find(d => String(d.id) === String(profile.linked_id));
-        if (driver && driver.isActive === false) {
+        const { data: driverCheck } = await supabase
+          .from('drivers')
+          .select('data')
+          .eq('id', profile.linked_id)
+          .single();
+        if (driverCheck?.data?.isActive === false) {
           await supabase.auth.signOut();
           alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
           return false;
@@ -1199,44 +1199,55 @@ function App() {
   // ── Login legacy (compatibilidad durante la transición) ──
   const handleLegacyLogin = async (role = 'admin', username = '', password = '') => {
     if (role === 'driver') {
-      // ── 1. Autenticación: usar caché local primero (evita round-trip de red) ──
-      let driverFound = drivers.find(
-        d => d.username === username && d.password === password
-      );
-
-      // Fallback a Supabase solo si la caché está vacía (arranque frío)
-      if (!driverFound && (!drivers || drivers.length === 0)) {
-        try {
-          const { data: remoteDriver } = await supabase
-            .from('drivers')
-            .select('*')
-            .eq('username', username)
-            .eq('password', password)
-            .single();
-          if (remoteDriver) {
-            driverFound = { ...remoteDriver.data, id: remoteDriver.id, username: remoteDriver.username, password: remoteDriver.password };
+      // Usar RPC segura para verificar credenciales (bypasa RLS)
+      try {
+        const { data: driverInfo } = await supabase.rpc('verify_driver_login', { 
+          p_username: username, 
+          p_password: password 
+        });
+        
+        if (driverInfo && driverInfo.found) {
+          // Si tiene email, intentar login con Supabase Auth para tener sesión
+          if (driverInfo.email) {
+            const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+              email: driverInfo.email,
+              password: password,
+            });
+            if (!authErr && authData?.user) {
+              console.log('[LegacyLogin] Driver auth session established ✅');
+              window.location.reload();
+              return true;
+            }
           }
-        } catch (err) {
-          console.error('Login error (fallback Supabase):', err);
+          
+          // Fallback sin sesión Auth (funcionalidad limitada)
+          console.warn('[LegacyLogin] Driver sin sesión Auth — funcionalidad limitada');
+          setIsAuthenticated(true);
+          setUserRole(role);
+          setCurrentDriverId(driverInfo.id);
+          setCurrentClientId(null);
+          return true;
         }
+      } catch (e) {
+        console.warn('[LegacyLogin] RPC verify failed:', e);
       }
 
+      // Último fallback: caché local
+      const driverFound = drivers.find(
+        d => d.username === username && d.password === password
+      );
       if (driverFound) {
         if (driverFound.isActive === false) {
           alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
           return false;
         }
-
-        // ── 2. Login inmediato — entrar sin esperar el fichaje ──
         setIsAuthenticated(true);
         setUserRole(role);
         setCurrentDriverId(driverFound.id);
         setCurrentClientId(null);
-
-
         return true;
       }
-      return false; // Credenciales incorrectas
+      return false;
 
     } else if (role === 'client') {
       // Usar datos en memoria si ya están cargados — evita round-trip de red innecesario
