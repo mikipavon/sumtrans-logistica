@@ -190,13 +190,17 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     const [priceOverride, setPriceOverride] = useState(null); // null = no override, string = manual price
 
     // Detect if the current client uses weight-based pricing
+    // Comprueba AMBOS clientes (remitente y destinatario) por si alguno factura por kilos
     const weightClientData = useMemo(() => {
-        const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
-        const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
-        const client = resolveBillingClient(payingClientName, parentId);
-        const isByKilos = client && client.tariffType === 'Por Kilos';
-        if (isByKilos) {
-            return { client, tariff: client.weightTariff || [] };
+        // Check sender
+        const senderClient = resolveBillingClient(formData.clientName, formData._parentClientId);
+        if (senderClient && senderClient.tariffType === 'Por Kilos') {
+            return { client: senderClient, tariff: senderClient.weightTariff || [] };
+        }
+        // Check destination
+        const destClient = resolveBillingClient(formData.destinationName, formData._destParentClientId);
+        if (destClient && destClient.tariffType === 'Por Kilos') {
+            return { client: destClient, tariff: destClient.weightTariff || [] };
         }
         return null;
     }, [formData.porteType, formData.clientName, formData.destinationName, formData._parentClientId, formData._destParentClientId, clients]);
@@ -687,11 +691,20 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
         const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
         const client = resolveBillingClient(payingClientName, parentId);
+        // ── Verificar si alguno de los clientes factura por kilos ──
+        const senderClient = resolveBillingClient(formData.clientName, formData._parentClientId);
+        const destClient = resolveBillingClient(formData.destinationName, formData._destParentClientId);
+        const isWeightBased = weightClientData || 
+            (client && client.tariffType === 'Por Kilos') ||
+            (senderClient?.tariffType === 'Por Kilos') ||
+            (destClient?.tariffType === 'Por Kilos');
 
         const updatedArticles = selectedArticles.map(item => {
             let unitPrice = parseFloat(item.price || 0); // Base (B1)
 
-            if (baremo === 2 && client?.customRatesB2 && client.customRatesB2[item.id] !== undefined && client.customRatesB2[item.id] !== '') {
+            if (isWeightBased) {
+                unitPrice = 0;
+            } else if (baremo === 2 && client?.customRatesB2 && client.customRatesB2[item.id] !== undefined && client.customRatesB2[item.id] !== '') {
                 unitPrice = parseFloat(client.customRatesB2[item.id]);
             } else if (baremo === 1 && client?.customRates && client.customRates[item.id] !== undefined && client.customRates[item.id] !== '') {
                 unitPrice = parseFloat(client.customRates[item.id]);
@@ -737,7 +750,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         let unitPrice = parseFloat(article.price);
 
         // ── Para clientes "Por Kilos": el precio viene del peso, NO del artículo ──
-        if (weightClientData) {
+        // Verificamos AMBOS clientes (remitente y destinatario) por si alguno factura por kilos
+        const isWeightBased = weightClientData || 
+            (client && client.tariffType === 'Por Kilos') ||
+            (resolveBillingClient(formData.destinationName, formData._destParentClientId)?.tariffType === 'Por Kilos') ||
+            (resolveBillingClient(formData.clientName, formData._parentClientId)?.tariffType === 'Por Kilos');
+        
+        if (isWeightBased) {
             unitPrice = 0;
         } else if (baremo === 2 && client?.customRatesB2 && client.customRatesB2[article.id] !== undefined && client.customRatesB2[article.id] !== '') {
             unitPrice = parseFloat(client.customRatesB2[article.id]);
