@@ -48,6 +48,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     const [selectedDebtIds, setSelectedDebtIds] = useState([]); // Deudas seleccionadas para cobrar
     const [showSuccessFeedback, setShowSuccessFeedback] = useState(false);
 
+    // ── Ref para el input del destinatario (para auto-focus en creación múltiple) ──
+    const destinationInputRef = useRef(null);
+
     // ── GPS silencioso: captura la ubicación del dispositivo al abrir el modal ──
     const capturedGpsRef = useRef('');
     useEffect(() => {
@@ -1092,8 +1095,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             setWeightKg('');
             setMerchandisePhoto(null);
             
-            // Show brief visual feedback (could be a toast, but an alert is simple and blocks to avoid double submit)
-            // But browser alert breaks flow. We can just let it blank out, the user will see it form cleared except origin.
+            // Auto-scroll y focus al campo del destinatario
+            setTimeout(() => {
+                if (destinationInputRef.current) {
+                    destinationInputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    destinationInputRef.current.focus();
+                }
+            }, 400);
         } else {
             onClose();
         }
@@ -1270,6 +1278,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                         <div className="relative">
                                             <div className="flex gap-2">
                                                 <input
+                                                    ref={destinationInputRef}
                                                     type="text"
                                                     placeholder="Buscar destino..."
                                                     className={`${inputClass} flex-1`}
