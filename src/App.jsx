@@ -1413,7 +1413,7 @@ function App() {
         }
       }
 
-      setDrivers(prev => [...prev, { ...data[0].data, id: data[0].id, username: data[0].username, password: data[0].password }])
+      if (data && data[0]) setDrivers(prev => [...prev, { ...data[0].data, id: data[0].id, username: data[0].username, password: data[0].password }])
       return true
     } catch (e) { 
       console.error(e)
@@ -2199,7 +2199,8 @@ function App() {
     try {
       const { data, error } = await supabase.from('clients').update({ name: updated.name, data: updated }).eq('id', clientId).select();
       if (error) throw error;
-      setClients(prev => prev.map(item => item.id === clientId ? { ...data[0].data, id: data[0].id } : item));
+      if (data && data[0]) setClients(prev => prev.map(item => item.id === clientId ? { ...data[0].data, id: data[0].id } : item));
+      else setClients(prev => prev.map(item => item.id === clientId ? updated : item));
     } catch (e) { alert('Error al actualizar cliente'); console.error(e); }
   }
 
@@ -2258,7 +2259,8 @@ function App() {
     try {
       const { data, error } = await supabase.from('clients').insert([{ id: clientWithMeta.id, name: clientWithMeta.name, data: clientWithMeta }]).select();
       if (error) throw error;
-      setClients(prev => [...prev, { ...data[0].data, id: data[0].id }]);
+      if (data && data[0]) setClients(prev => [...prev, { ...data[0].data, id: data[0].id }]);
+      else setClients(prev => [...prev, clientWithMeta]);
     } catch (e) { alert('Error al guardar cliente'); console.error(e); }
   }
 
