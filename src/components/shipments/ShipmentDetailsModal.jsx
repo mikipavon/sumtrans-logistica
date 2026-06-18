@@ -26,34 +26,25 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
 
     const weightClientData = React.useMemo(() => {
-        // Check sender (client)
-        if (formData.client) {
-            const cName = formData.client.toLowerCase().trim();
-            const client = (clients || []).find(c =>
-                String(c.name || '').toLowerCase().trim() === cName ||
-                String(c.legalName || '').toLowerCase().trim() === cName
-            );
-            const hasTariff = client && client.weightTariff && Array.isArray(client.weightTariff) && client.weightTariff.length > 0;
-            const isByKilos = client && client.tariffType === 'Por Kilos';
+        // Solo el cliente que PAGA determina si va por kilos
+        const payingClientName = formData.porteType === 'Pagado' ? formData.client : formData.destinationName;
+        if (!payingClientName) return null;
+        
+        const cName = payingClientName.toLowerCase().trim();
+        const client = (clients || []).find(c =>
+            String(c.name || '').toLowerCase().trim() === cName ||
+            String(c.legalName || '').toLowerCase().trim() === cName
+        );
+        
+        if (client) {
+            const hasTariff = client.weightTariff && Array.isArray(client.weightTariff) && client.weightTariff.length > 0;
+            const isByKilos = client.tariffType === 'Por Kilos';
             if (hasTariff || isByKilos) {
                 return { client, tariff: client.weightTariff || [] };
             }
         }
-        // Check destination
-        if (formData.destinationName) {
-            const dName = formData.destinationName.toLowerCase().trim();
-            const destClient = (clients || []).find(c =>
-                String(c.name || '').toLowerCase().trim() === dName ||
-                String(c.legalName || '').toLowerCase().trim() === dName
-            );
-            const hasTariff = destClient && destClient.weightTariff && Array.isArray(destClient.weightTariff) && destClient.weightTariff.length > 0;
-            const isByKilos = destClient && destClient.tariffType === 'Por Kilos';
-            if (hasTariff || isByKilos) {
-                return { client: destClient, tariff: destClient.weightTariff || [] };
-            }
-        }
         return null;
-    }, [formData.client, formData.destinationName, clients]);
+    }, [formData.porteType, formData.client, formData.destinationName, clients]);
 
     const calculateWeightPrice = (kg, tariff) => {
         if (!kg || !tariff || tariff.length === 0) return 0;
