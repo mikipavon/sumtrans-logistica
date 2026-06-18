@@ -1,5 +1,5 @@
 import { X, Truck, Package, Euro, Map as MapIcon, Building2, FileText, UserPlus, Check, MapPin, Loader2, CheckCircle, Trash2, Plus, Mic, MicOff, RotateCcw, Image as ImageIcon, Camera } from 'lucide-react';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Shipment from '../../models/Shipment';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { uploadProof } from '../../utils/storage';
@@ -128,6 +128,48 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
     const [validationFailed, setValidationFailed] = useState(false);
     const fileInputRef = useRef(null);
+    const cameraOpenRef = useRef(false); // Track if the native camera is open
+
+    // ── Persistencia Android: guardar/restaurar formulario ──
+    // Android mata la pestaña del navegador al abrir la cámara nativa.
+    // Guardamos el estado del formulario en sessionStorage para poder restaurarlo.
+    const SESSION_KEY = 'sumtrans_shipment_draft';
+
+    const saveFormToSession = useCallback(() => {
+        try {
+            const draft = {
+                formData,
+                selectedArticles,
+                weightKg,
+                keepOrigin,
+                savedAt: Date.now()
+            };
+            sessionStorage.setItem(SESSION_KEY, JSON.stringify(draft));
+        } catch { /* sessionStorage may be full or unavailable */ }
+    }, [formData, selectedArticles, weightKg, keepOrigin]);
+
+    // Restaurar borrador al abrir el modal (si Android mató la página)
+    useEffect(() => {
+        if (!isOpen) return;
+        try {
+            const saved = sessionStorage.getItem(SESSION_KEY);
+            if (saved) {
+                const draft = JSON.parse(saved);
+                // Solo restaurar si se guardó hace menos de 10 minutos
+                if (draft.savedAt && (Date.now() - draft.savedAt) < 10 * 60 * 1000) {
+                    if (draft.formData && draft.formData.clientName) {
+                        setFormData(prev => ({ ...prev, ...draft.formData }));
+                    }
+                    if (draft.selectedArticles?.length > 0) {
+                        setSelectedArticles(draft.selectedArticles);
+                    }
+                    if (draft.weightKg) setWeightKg(draft.weightKg);
+                    if (draft.keepOrigin !== undefined) setKeepOrigin(draft.keepOrigin);
+                }
+                sessionStorage.removeItem(SESSION_KEY);
+            }
+        } catch { /* ignore parse errors */ }
+    }, [isOpen]);
 
     // --- IDLE TIMER (Auto-close after 2 mins of inactivity if open) ---
     const idleTimerRef = useRef(null);
@@ -147,9 +189,23 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             onClose();
         }, 120000);
 
+        // Pause the idle timer when the page goes to background (camera open)
+        const handleVisibility = () => {
+            if (document.visibilityState === 'hidden') {
+                // Page going to background (camera opening) — pause idle timer
+                if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+            } else {
+                // Page returning from background — restart idle timer
+                if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+                idleTimerRef.current = setTimeout(() => onClose(), 120000);
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibility);
+
         // Cleanup on unmount or when dependencies change
         return () => {
             if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+            document.removeEventListener('visibilitychange', handleVisibility);
         };
     }, [isOpen, formData, selectedArticles, keepOrigin]);
     // ----------------------------------------------------------------
@@ -821,6 +877,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     }, [formData.destinationCity, formData.destinationZip, tariffs, isOpen, selectedArticles]);
 
     const handlePhotoChange = (e) => {
+        cameraOpenRef.current = false; // Camera returned
         const file = e.target.files[0];
         if (!file) return;
         if (file.size > 20 * 1024 * 1024) {
@@ -837,6 +894,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             }
         };
         reader.readAsDataURL(file);
+    };
+
+    // Guardar formulario antes de abrir la cámara (por si Android mata la página)
+    const handleOpenCamera = () => {
+        cameraOpenRef.current = true;
+        saveFormToSession();
+        fileInputRef.current?.click();
     };
 
     const handleInitialSubmit = async (e) => {
@@ -1682,7 +1746,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                 {!merchandisePhoto ? (
                                     <button
                                         type="button"
-                                        onClick={() => fileInputRef.current?.click()}
+                                        onClick={handleOpenCamera}
                                         className="w-full py-4 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-100 hover:border-slate-300 transition-all flex flex-col items-center justify-center gap-1.5 active:scale-95 group"
                                     >
                                         <div className="p-2 bg-white rounded-full shadow-sm group-hover:scale-110 transition-transform">
