@@ -2160,12 +2160,29 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
         const titleText = isSecret ? `*JUSTIFICANTE DE ENTREGA*` : `*JUSTIFICANTE SUMTRANS LOGISTICA*`;
 
+        // Calcular precio para el justificante
+        const parseAmt = (val) => {
+            if (!val) return 0;
+            if (typeof val === 'number') return val;
+            const str = val.toString().replace(/[^0-9,.-]+/g, '');
+            const normalized = str.includes(',') && !str.includes('.') ? str.replace(',', '.') : str;
+            const num = parseFloat(normalized);
+            return isNaN(num) ? 0 : num;
+        };
+        const priceBase = parseAmt(shipment.customAmount || shipment.amount);
+        const priceIva = +(priceBase * 0.21).toFixed(2);
+        const priceTotal = +(priceBase + priceIva).toFixed(2);
+        const priceText = priceBase > 0
+            ? `*Precio:* ${priceBase.toFixed(2)} € + IVA = *${priceTotal.toFixed(2)} €*%0A`
+            : '';
+
         const message = `${titleText}%0A%0A` +
             `*REF:* ${shipment.id}%0A` +
             `*Fecha:* ${date}%0A` +
             `*Remitente:* ${origin}%0A` +
             `*Destinatario:* ${dest}%0A` +
             `*Estado:* ${status}%0A` +
+            priceText +
             codText +
             `%0A` +
             `Gracias por su confianza.`;
