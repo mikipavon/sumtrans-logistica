@@ -75,30 +75,45 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
         const cod = parseVal(shipment.codAmount) || 0;
         const amountToColl = shipmentModel.amountToCollectAtDelivery();
 
+        // Detectar si el importe es "Tarifa" (sin valor numérico calculado)
+        const isTarifaText = porte === 0 && (
+            String(shipment.amount || '').toLowerCase().includes('tarifa') ||
+            String(shipment.customAmount || '').toLowerCase().includes('tarifa')
+        );
+
         // Porte a cobrar en destino
-        if (shipment.porteType === 'Debido' && porte > 0) {
-            const porteACobrar = amountToColl - (shipment.hasCod ? cod : 0);
-            if (porteACobrar > 0) {
+        if (shipment.porteType === 'Debido' && (porte > 0 || isTarifaText)) {
+            if (porte > 0) {
+                const porteACobrar = amountToColl - (shipment.hasCod ? cod : 0);
+                if (porteACobrar > 0) {
+                    parts.push({
+                        id: `${shipment.id}-porte`,
+                        shipmentId: shipment.id,
+                        type: 'Porte',
+                        amount: porteACobrar.toFixed(2),
+                        label: 'Porte Debido',
+                        detail: shipment.destinationName || 'Destinatario'
+                    });
+                } else if (!shipment.portePaid && shipment.paymentStatus !== 'Paid') {
+                    parts.push({
+                        id: `${shipment.id}-porte`,
+                        shipmentId: shipment.id,
+                        type: 'Porte',
+                        amount: porte.toFixed(2),
+                        label: 'Porte Debido',
+                        detail: shipment.destinationName || 'Destinatario'
+                    });
+                }
+            } else if (isTarifaText && !shipment.portePaid) {
+                // El precio es "Tarifa" sin valor → permitir al conductor poner el importe manualmente
                 parts.push({
                     id: `${shipment.id}-porte`,
                     shipmentId: shipment.id,
                     type: 'Porte',
-                    amount: porteACobrar.toFixed(2),
-                    label: 'Porte Debido',
-                    detail: shipment.destinationName || 'Destinatario'
-                });
-            } else if (!shipment.portePaid && shipment.paymentStatus !== 'Paid') {
-                // Fallback: el cálculo del modelo devolvió 0 (p.ej. destinatario con billing de
-                // facturación), pero el albarán fue modificado manualmente a 'Debido' y sigue
-                // pendiente de cobro (portePaid=false). En ese caso mostramos el importe bruto
-                // para que el conductor pueda cobrarlo igualmente.
-                parts.push({
-                    id: `${shipment.id}-porte`,
-                    shipmentId: shipment.id,
-                    type: 'Porte',
-                    amount: porte.toFixed(2),
-                    label: 'Porte Debido',
-                    detail: shipment.destinationName || 'Destinatario'
+                    amount: '0.00',
+                    label: 'Porte Debido (introducir importe)',
+                    detail: shipment.destinationName || 'Destinatario',
+                    needsManualAmount: true
                 });
             }
         } else if (shipment.status === 'Pendiente Cobro' && porte > 0) {
@@ -138,7 +153,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             // Initialize custom amounts for ALL selectable debts
             const initialAmounts = {};
             allSelectableDebts.forEach(d => {
-                initialAmounts[d.id] = d.amount === 'Tarifa' ? '' : d.amount;
+                initialAmounts[d.id] = (d.needsManualAmount || d.amount === 'Tarifa') ? '' : d.amount;
             });
             setCustomAmounts(initialAmounts);
         } else {
@@ -472,17 +487,19 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                                     {debt.type}
                                                 </span>
                                                 <div className="text-right flex flex-col items-end">
-                                                    <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 shadow-inner focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
+                                                    <div className={`flex items-center gap-1 rounded-lg px-2 py-1 shadow-inner transition-all ${debt.needsManualAmount ? 'bg-red-50 border-2 border-red-400 ring-2 ring-red-200' : 'bg-slate-50 border border-slate-200 focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400'}`}>
                                                         <input
                                                             type="number"
                                                             step="0.01"
+                                                            inputMode="decimal"
                                                             value={customAmounts[debt.id] ?? ''}
                                                             onChange={(e) => {
                                                                 setCustomAmounts(prev => ({ ...prev, [debt.id]: e.target.value }));
                                                             }}
-                                                            onClick={(e) => e.preventDefault()} // Prevent label click from toggling checkbox when clicking input
-                                                            className="w-16 bg-transparent border-none p-0 text-right font-mono font-bold text-slate-800 text-sm focus:ring-0"
-                                                            placeholder="0.00"
+                                                            onClick={(e) => e.preventDefault()}
+                                                            className={`bg-transparent border-none p-0 text-right font-mono font-bold text-sm focus:ring-0 ${debt.needsManualAmount ? 'w-20 text-red-700' : 'w-16 text-slate-800'}`}
+                                                            placeholder={debt.needsManualAmount ? "PRECIO" : "0.00"}
+                                                            autoFocus={debt.needsManualAmount}
                                                         />
                                                         <span className="text-xs font-bold text-slate-400">€</span>
                                                     </div>
