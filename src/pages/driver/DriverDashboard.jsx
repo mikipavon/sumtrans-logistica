@@ -354,21 +354,30 @@ const ShipmentCardUI = React.memo(({
 
                                 // Expandir artículos: qty=2 → dos entradas del mismo nombre
                                 const pills = hasArts
-                                    ? arts.flatMap(a => {
-                                        const qty = parseInt(a.quantity) || 1;
-                                        return Array(qty).fill(a.name);
-                                    })
-                                    : [pkgText];
+                                    ? (() => {
+                                        // Agrupar artículos iguales: {nombre: cantidadTotal}
+                                        const grouped = {};
+                                        arts.forEach(a => {
+                                            const name = a.name || 'Artículo';
+                                            const qty = parseInt(a.quantity) || 1;
+                                            grouped[name] = (grouped[name] || 0) + qty;
+                                        });
+                                        return Object.entries(grouped).map(([name, qty]) => ({
+                                            name,
+                                            qty
+                                        }));
+                                    })()
+                                    : [{ name: pkgText, qty: 1 }];
 
                                 return (
                                     <div className="pl-6 mb-1 flex flex-wrap gap-1">
-                                        {pills.map((name, i) => (
+                                        {pills.map((item, i) => (
                                             <span
                                                 key={i}
                                                 className="inline-flex items-center gap-1 bg-blue-50 border border-blue-100 rounded-md px-2 py-0.5 text-[11px] font-bold text-blue-700 shadow-sm"
                                             >
                                                 <Package size={10} className="text-blue-400 shrink-0" />
-                                                {name}
+                                                {item.qty > 1 ? `${item.qty}x ` : ''}{item.name}
                                             </span>
                                         ))}
                                     </div>
