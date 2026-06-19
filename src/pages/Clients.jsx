@@ -75,6 +75,38 @@ export default function Clients({ clients, allPoblaciones, articles, onUpdateCli
 
 
     // Edit Handler: Open modal with client data
+    // ==============================================================
+    // TEMPORARY REPORT: Print clients and their assigned articles
+    // ==============================================================
+    useEffect(() => {
+        if (clients && articles) {
+            console.group('📊 REPORTE DE CLIENTES Y ARTÍCULOS ASIGNADOS');
+            const articleMap = {};
+            articles.forEach(a => { articleMap[a.id] = a.name; });
+            
+            const approved = clients.filter(c => c.status === 'approved' || !c.status);
+            const withArticles = approved.filter(c => c.allowedArticles?.length > 0);
+            const withoutArticles = approved.filter(c => !c.allowedArticles || c.allowedArticles.length === 0);
+
+            console.log(`Total Aprobados: ${approved.length}`);
+            
+            console.groupCollapsed(`✅ CON ARTÍCULOS ASIGNADOS (${withArticles.length})`);
+            withArticles.forEach(c => {
+                const names = c.allowedArticles.map(id => articleMap[id] || id).join(', ');
+                console.log(`${c.name} (${c.billingType}) -> ${names}`);
+            });
+            console.groupEnd();
+
+            console.groupCollapsed(`⚠️ SIN ARTÍCULOS ASIGNADOS (${withoutArticles.length})`);
+            withoutArticles.forEach(c => {
+                console.log(`${c.name} (${c.billingType})`);
+            });
+            console.groupEnd();
+            console.groupEnd();
+        }
+    }, [clients, articles]);
+    // ==============================================================
+
     const handleEdit = (client) => {
         setEditingClient(client);
         setIsCreateModalOpen(true);
