@@ -1,0 +1,55 @@
+
+#Vehículo
+
+"Nombre del vehículo","Activo","Tipo de vehículo","Marca","Modelo","Matrícula","Año","Capacidad del deposito(gal)","Odómetro (km)","Registro de vehículos","Identificación (VIN)","Notas",
+"Fiat 5835LPF Javi","Si","Camión","Fiat","Ducato","5835LPF","2021","","Kilómetro (km)","","","",
+
+#Gasto
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de gasto","Gasto local","Conductor","Método de pago","Motivo","Notas","(System Date)"
+"Fiat 5835LPF Javi","0","06/04/2024 07:10","601.92","Financiación","","Victor Pavon","","","","11/02/2024 06:10"
+"Fiat 5835LPF Javi","0","06/03/2024 07:09","601.92","Financiación","","Victor Pavon","","","","11/02/2024 06:10"
+"Fiat 5835LPF Javi","0","06/02/2024 07:09","601.92","Financiación","","Victor Pavon","","","","11/02/2024 06:09"
+"Fiat 5835LPF Javi","0","06/01/2024 07:09","601.92","Financiación","","Victor Pavon","","","","11/02/2024 06:09"
+"Fiat 5835LPF Javi","0","06/12/2023 07:32","601.92","Financiación","","Victor Pavon","","","","06/12/2023 06:32"
+"Fiat 5835LPF Javi","0","06/11/2023 07:31","601.92","Financiación","","Victor Pavon","","","","06/12/2023 06:32"
+"Fiat 5835LPF Javi","0","06/10/2023 07:30","601.92","Financiación","","Victor Pavon","","","","06/12/2023 06:30"
+"Fiat 5835LPF Javi","170000","06/09/2023 20:20","601.92","Financiación","","Victor Pavon","","","","24/09/2023 18:23"
+
+#Servicio
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de servicio","Local del servicio","Conductor","Método de pago","Notas","(System Date)"
+"Fiat 5835LPF Javi","316044","16/04/2026 17:44","120","DISCOS DE FRENO DELANTEROS","","Victor Pavon","","","16/04/2026 15:45"
+"Fiat 5835LPF Javi","316044","16/04/2026 17:44","20","Pastillas Delanteras","","Victor Pavon","","","16/04/2026 15:45"
+"Fiat 5835LPF Javi","316043","08/04/2026 18:37","20","Aditivos Motor","","Victor Pavon","","Rompetochos para adblue","08/04/2026 16:38"
+"Fiat 5835LPF Javi","305706","20/08/2025 14:41","50","Cambio de Aceite","","Victor Pavon","","","03/10/2025 18:08"
+"Fiat 5835LPF Javi","305706","20/08/2025 14:41","295","Neumaticos Traseros","","Victor Pavon","","","03/10/2025 18:08"
+"Fiat 5835LPF Javi","291301","26/05/2025 20:09","50","Pastillas Delanteras","","Victor Pavon","","","26/05/2025 18:10"
+"Fiat 5835LPF Javi","282605","20/02/2025 18:33","40","Cambio de Aceite","Victor","Victor Pavon","","","09/03/2025 17:34"
+"Fiat 5835LPF Javi","282605","20/02/2025 18:33","12","Filtro de Aceite","Victor","Victor Pavon","","","09/03/2025 17:34"
+"Fiat 5835LPF Javi","282605","20/02/2025 18:33","20","Filtro de Aire","Victor","Victor Pavon","","","09/03/2025 17:34"
+"Fiat 5835LPF Javi","282605","20/02/2025 18:33","30","Filtro de Combustible","Victor","Victor Pavon","","","09/03/2025 17:34"
+"Fiat 5835LPF Javi","264914","27/11/2024 17:13","40","Cambio de Aceite","","Victor Pavon","","","27/11/2024 16:14"
+"Fiat 5835LPF Javi","264914","27/11/2024 17:13","15","Filtro de Aceite","","Victor Pavon","","","27/11/2024 16:14"
+"Fiat 5835LPF Javi","257066","24/10/2024 23:01","0","Cambio de Aceite","","Victor Pavon","","","28/12/2024 22:02"
+"Fiat 5835LPF Javi","257066","24/10/2024 15:56","0","Pastillas Delanteras","","Victor Pavon","","","24/10/2024 13:57"
+"Fiat 5835LPF Javi","256526","17/10/2024 11:30","500","Cambio aceite caja cambios","Solis Marques","Victor Pavon","","","17/10/2024 09:32"
+"Fiat 5835LPF Javi","242070","02/08/2024 09:46","15","Filtro de Aceite","","Victor Pavon","","","02/08/2024 07:49"
+"Fiat 5835LPF Javi","242070","02/08/2024 09:46","15","Filtro de Aire","","Victor Pavon","","","02/08/2024 07:49"
+"Fiat 5835LPF Javi","242070","02/08/2024 09:46","10","Aditivos Motor","","Victor Pavon","","","02/08/2024 07:49"
+"Fiat 5835LPF Javi","225912","27/05/2024 20:23","45","Pastillas Delanteras","Victor","Victor Pavon","","Pastillas necto","27/05/2024 18:24"
+"Fiat 5835LPF Javi","214613","03/04/2024 20:34","36","Cambio de Aceite","Victor","Victor Pavon","","","03/04/2024 18:36"
+"Fiat 5835LPF Javi","214613","03/04/2024 20:34","12","Filtro de Aceite","Victor","Victor Pavon","","","03/04/2024 18:36"
+"Fiat 5835LPF Javi","214613","03/04/2024 20:34","12.87","Aditivos Motor","Victor","Victor Pavon","","","03/04/2024 18:36"
+"Fiat 5835LPF Javi","187052","25/11/2023 18:35","0","Cambio de Aceite","Tomas","Victor Pavon","","","27/11/2023 18:40"
+"Fiat 5835LPF Javi","187052","25/11/2023 18:35","145.99","Cambio Distribución Y Bomba De Agua","Tomas","Victor Pavon","","","27/11/2023 18:40"
+"Fiat 5835LPF Javi","187052","25/11/2023 18:35","12.3","Correa de accesorios","Tomas","Victor Pavon","","","27/11/2023 18:40"
+"Fiat 5835LPF Javi","187052","25/11/2023 18:35","8.3","Filtro de Aceite","Tomas","Victor Pavon","","","27/11/2023 18:40"
+"Fiat 5835LPF Javi","187052","25/11/2023 18:35","12.98","Filtro de Aire","Tomas","Victor Pavon","","","27/11/2023 18:40"
+"Fiat 5835LPF Javi","187052","25/11/2023 18:35","9.56","Filtro de Aire del habitáculo","Tomas","Victor Pavon","","","27/11/2023 18:40"
+"Fiat 5835LPF Javi","187052","25/11/2023 18:35","31.17","Filtro de Combustible","Tomas","Victor Pavon","","","27/11/2023 18:40"
+"Fiat 5835LPF Javi","187052","25/11/2023 18:35","100","Mano de Obra","Tomas","Victor Pavon","","","27/11/2023 18:40"
+"Fiat 5835LPF Javi","174636","06/10/2023 13:21","401","Neumaticos Traseros","Tarifa","Victor Pavon","","","02/10/2023 11:22"
+"Fiat 5835LPF Javi","166972","23/08/2023 21:34","37.07","Pastillas Delanteras","Victor","Victor Pavon","","","20/09/2023 19:35"
+"Fiat 5835LPF Javi","144274","04/05/2023 10:16","183.9","Cambio de Aceite","David Gomez","Victor Pavon","","","26/09/2023 08:30"
+"Fiat 5835LPF Javi","142341","21/04/2023 20:23","338.84","Neumaticos Delanteros","Tarifa","Victor Pavon","","","24/09/2023 18:25"

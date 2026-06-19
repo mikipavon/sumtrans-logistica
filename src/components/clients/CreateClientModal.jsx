@@ -713,6 +713,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                                                 <Trash2 size={14} />
                                                             </button>
                                                     </div>
+                                                </div>
                                                 ))}
                                                 </div>
                                                 <button type="button" onClick={() => {

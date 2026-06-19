@@ -528,8 +528,6 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             setFormData(prev => ({ ...prev, [zipKey]: matchedZip }));
         }
     };
-        }
-    };
 
     const handleFocus = () => updateSuggestions(formData.clientName);
     const handleDestFocus = () => updateDestSuggestions(formData.destinationName);

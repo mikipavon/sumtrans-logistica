@@ -1,19 +1,15 @@
 -- ============================================================
 -- FASE 4 (FINAL): Políticas RLS restrictivas basadas en roles
--- Proyecto: mottccbalzdzzrgqzfkdl (SUM Transportes)
+-- Proyecto: mottccbalzdzrgqzfkdl (SUM Transportes)
 -- Fecha: 2026-06-17
--- Descripción: Reemplaza las políticas temporales permisivas
---   (temp_allow_all) por políticas granulares basadas en el
---   rol del usuario (admin, driver, client).
+-- CORREGIDO: cast id::text para comparar con get_linked_id()
+-- IDEMPOTENTE: DROP IF EXISTS antes de cada CREATE
 -- ============================================================
 
 -- ────────────────────────────────────────────────────────────
 -- 1. FUNCIONES AUXILIARES
---    Permiten consultar el rol y el linked_id del usuario
---    autenticado de forma segura y eficiente.
 -- ────────────────────────────────────────────────────────────
 
--- Devuelve el rol del usuario autenticado desde la tabla profiles
 CREATE OR REPLACE FUNCTION public.get_user_role()
 RETURNS TEXT
 LANGUAGE sql
@@ -26,8 +22,6 @@ AS $$
   LIMIT 1;
 $$;
 
--- Devuelve el linked_id del usuario autenticado desde la tabla profiles
--- (linked_id vincula el usuario auth con su registro en drivers/clients)
 CREATE OR REPLACE FUNCTION public.get_linked_id()
 RETURNS TEXT
 LANGUAGE sql
@@ -40,163 +34,78 @@ AS $$
   LIMIT 1;
 $$;
 
-COMMENT ON FUNCTION public.get_user_role() IS
-  'Obtiene el rol del usuario autenticado desde profiles (admin/driver/client)';
-COMMENT ON FUNCTION public.get_linked_id() IS
-  'Obtiene el linked_id del usuario autenticado (vincula con drivers/clients)';
-
-
 -- ────────────────────────────────────────────────────────────
--- 2. ELIMINAR POLÍTICAS TEMPORALES (temp_allow_all)
---    Recorre las 11 tablas y elimina la política temporal
---    que se creó durante la migración.
+-- 2. ELIMINAR TODAS las políticas anteriores (limpieza total)
 -- ────────────────────────────────────────────────────────────
 
 DO $$
 DECLARE
   _table TEXT;
   _tables TEXT[] := ARRAY[
-    'articles',
-    'clients',
-    'driver_absences',
-    'drivers',
-    'fuel_logs',
-    'settings',
-    'shipments',
-    'tariffs',
-    'time_logs',
-    'vehicles'
+    'articles', 'clients', 'driver_absences', 'drivers',
+    'fuel_logs', 'settings', 'shipments', 'tariffs',
+    'time_logs', 'vehicles'
+  ];
+  _pol RECORD;
+BEGIN
+  FOREACH _table IN ARRAY _tables LOOP
+    -- Borrar TODAS las políticas existentes en cada tabla
+    FOR _pol IN
+      SELECT policyname FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = _table
+    LOOP
+      EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', _pol.policyname, _table);
+      RAISE NOTICE 'Eliminada: %.%', _table, _pol.policyname;
+    END LOOP;
+  END LOOP;
+END $$;
+
+-- ════════════════════════════════════════════════════════════
+-- 3. ADMIN — Acceso completo a todas las tablas
+-- ════════════════════════════════════════════════════════════
+
+DO $$
+DECLARE
+  _table TEXT;
+  _tables TEXT[] := ARRAY[
+    'articles', 'clients', 'driver_absences', 'drivers',
+    'fuel_logs', 'settings', 'shipments', 'tariffs',
+    'time_logs', 'vehicles'
   ];
 BEGIN
-  FOREACH _table IN ARRAY _tables
-  LOOP
+  FOREACH _table IN ARRAY _tables LOOP
     EXECUTE format(
-      'DROP POLICY IF EXISTS "temp_allow_all" ON public.%I',
+      'CREATE POLICY "admin_full_access" ON public.%I FOR ALL USING (get_user_role() = ''admin'') WITH CHECK (get_user_role() = ''admin'')',
       _table
     );
-    RAISE NOTICE 'Política temp_allow_all eliminada de: %', _table;
   END LOOP;
-END
-$$;
-
-
--- ════════════════════════════════════════════════════════════
--- 3. POLÍTICAS DE ADMINISTRADOR (ADMIN)
---    Acceso completo (ALL) a todas las tablas.
--- ════════════════════════════════════════════════════════════
-
--- articles
-CREATE POLICY "admin_full_access"
-  ON public.articles FOR ALL
-  USING (get_user_role() = 'admin')
-  WITH CHECK (get_user_role() = 'admin');
-
--- clients
-CREATE POLICY "admin_full_access"
-  ON public.clients FOR ALL
-  USING (get_user_role() = 'admin')
-  WITH CHECK (get_user_role() = 'admin');
-
--- driver_absences
-CREATE POLICY "admin_full_access"
-  ON public.driver_absences FOR ALL
-  USING (get_user_role() = 'admin')
-  WITH CHECK (get_user_role() = 'admin');
-
--- drivers
-CREATE POLICY "admin_full_access"
-  ON public.drivers FOR ALL
-  USING (get_user_role() = 'admin')
-  WITH CHECK (get_user_role() = 'admin');
-
--- fuel_logs
-CREATE POLICY "admin_full_access"
-  ON public.fuel_logs FOR ALL
-  USING (get_user_role() = 'admin')
-  WITH CHECK (get_user_role() = 'admin');
-
--- settings
-CREATE POLICY "admin_full_access"
-  ON public.settings FOR ALL
-  USING (get_user_role() = 'admin')
-  WITH CHECK (get_user_role() = 'admin');
-
--- shipments
-CREATE POLICY "admin_full_access"
-  ON public.shipments FOR ALL
-  USING (get_user_role() = 'admin')
-  WITH CHECK (get_user_role() = 'admin');
-
--- tariffs
-CREATE POLICY "admin_full_access"
-  ON public.tariffs FOR ALL
-  USING (get_user_role() = 'admin')
-  WITH CHECK (get_user_role() = 'admin');
-
--- time_logs
-CREATE POLICY "admin_full_access"
-  ON public.time_logs FOR ALL
-  USING (get_user_role() = 'admin')
-  WITH CHECK (get_user_role() = 'admin');
-
--- vehicles
-CREATE POLICY "admin_full_access"
-  ON public.vehicles FOR ALL
-  USING (get_user_role() = 'admin')
-  WITH CHECK (get_user_role() = 'admin');
-
+  RAISE NOTICE '✅ Políticas ADMIN creadas en 10 tablas';
+END $$;
 
 -- ════════════════════════════════════════════════════════════
--- 4. POLÍTICAS DE CONDUCTOR (DRIVER)
---    Lectura amplia + escritura limitada a sus propios datos.
+-- 4. DRIVER — Lectura amplia + escritura limitada
 -- ════════════════════════════════════════════════════════════
 
--- 4a. SELECT — El conductor puede leer datos de referencia y operativos
---     Tablas: shipments, drivers, settings, articles, vehicles,
---             clients, coverage_zones, tariffs, fuel_logs,
---             time_logs, driver_absences
+-- 4a. SELECT en tablas de referencia y operativas
+DO $$
+DECLARE
+  _table TEXT;
+  _tables TEXT[] := ARRAY[
+    'shipments', 'drivers', 'settings', 'articles',
+    'vehicles', 'clients', 'tariffs', 'fuel_logs',
+    'time_logs', 'driver_absences'
+  ];
+BEGIN
+  FOREACH _table IN ARRAY _tables LOOP
+    EXECUTE format(
+      'CREATE POLICY "driver_select" ON public.%I FOR SELECT USING (get_user_role() = ''driver'')',
+      _table
+    );
+  END LOOP;
+  RAISE NOTICE '✅ Políticas DRIVER SELECT creadas';
+END $$;
 
-CREATE POLICY "driver_select"
-  ON public.shipments FOR SELECT
-  USING (get_user_role() = 'driver');
-
-CREATE POLICY "driver_select"
-  ON public.drivers FOR SELECT
-  USING (get_user_role() = 'driver');
-
-CREATE POLICY "driver_select"
-  ON public.settings FOR SELECT
-  USING (get_user_role() = 'driver');
-
-CREATE POLICY "driver_select"
-  ON public.articles FOR SELECT
-  USING (get_user_role() = 'driver');
-
-CREATE POLICY "driver_select"
-  ON public.vehicles FOR SELECT
-  USING (get_user_role() = 'driver');
-
-CREATE POLICY "driver_select"
-  ON public.clients FOR SELECT
-  USING (get_user_role() = 'driver');
-
-CREATE POLICY "driver_select"
-  ON public.tariffs FOR SELECT
-  USING (get_user_role() = 'driver');
-
-CREATE POLICY "driver_select"
-  ON public.fuel_logs FOR SELECT
-  USING (get_user_role() = 'driver');
-
-CREATE POLICY "driver_select"
-  ON public.time_logs FOR SELECT
-  USING (get_user_role() = 'driver');
-
-CREATE POLICY "driver_select"
-  ON public.driver_absences FOR SELECT
-  USING (get_user_role() = 'driver');
-
--- 4b. UPDATE — El conductor solo puede actualizar envíos asignados a él
+-- 4b. UPDATE envíos asignados al conductor
 CREATE POLICY "driver_update_assigned_shipments"
   ON public.shipments FOR UPDATE
   USING (
@@ -208,46 +117,43 @@ CREATE POLICY "driver_update_assigned_shipments"
     AND (data->>'assignedDriverId') = get_linked_id()
   );
 
--- 4c. UPDATE — El conductor puede actualizar su propio perfil de conductor
+-- 4c. UPDATE su propio perfil (id::text para comparar con linked_id TEXT)
 CREATE POLICY "driver_update_own_profile"
   ON public.drivers FOR UPDATE
   USING (
     get_user_role() = 'driver'
-    AND id = get_linked_id()
+    AND id::text = get_linked_id()
   )
   WITH CHECK (
     get_user_role() = 'driver'
-    AND id = get_linked_id()
+    AND id::text = get_linked_id()
   );
 
--- 4d. ALL — El conductor puede gestionar sus propios registros de tiempo
+-- 4d. Gestionar registros de tiempo
 CREATE POLICY "driver_manage_time_logs"
   ON public.time_logs FOR ALL
   USING (get_user_role() = 'driver')
   WITH CHECK (get_user_role() = 'driver');
 
--- 4e. ALL — El conductor puede gestionar sus propias ausencias
+-- 4e. Gestionar ausencias
 CREATE POLICY "driver_manage_absences"
   ON public.driver_absences FOR ALL
   USING (get_user_role() = 'driver')
   WITH CHECK (get_user_role() = 'driver');
 
-
 -- ════════════════════════════════════════════════════════════
--- 5. POLÍTICAS DE CLIENTE (CLIENT)
---    Solo lectura de sus propios datos + datos de referencia.
---    Puede crear nuevos envíos.
+-- 5. CLIENT — Solo sus datos + datos de referencia
 -- ════════════════════════════════════════════════════════════
 
--- 5a. SELECT — El cliente solo puede ver su propia ficha
+-- 5a. Ver solo su propia ficha (id::text para comparar)
 CREATE POLICY "client_select_own_data"
   ON public.clients FOR SELECT
   USING (
     get_user_role() = 'client'
-    AND id = get_linked_id()
+    AND id::text = get_linked_id()
   );
 
--- 5b. SELECT — El cliente puede ver envíos donde es remitente o destinatario
+-- 5b. Ver envíos propios
 CREATE POLICY "client_select_own_shipments"
   ON public.shipments FOR SELECT
   USING (
@@ -258,7 +164,7 @@ CREATE POLICY "client_select_own_shipments"
     )
   );
 
--- 5c. SELECT — El cliente puede consultar datos de referencia (solo lectura)
+-- 5c. Datos de referencia (solo lectura)
 CREATE POLICY "client_select_articles"
   ON public.articles FOR SELECT
   USING (get_user_role() = 'client');
@@ -267,53 +173,20 @@ CREATE POLICY "client_select_tariffs"
   ON public.tariffs FOR SELECT
   USING (get_user_role() = 'client');
 
--- 5d. INSERT — El cliente puede crear nuevos envíos
+-- 5d. Crear nuevos envíos
 CREATE POLICY "client_insert_shipments"
   ON public.shipments FOR INSERT
   WITH CHECK (get_user_role() = 'client');
 
-
 -- ────────────────────────────────────────────────────────────
--- VERIFICACIÓN FINAL
--- Muestra un resumen de todas las políticas RLS activas
+-- VERIFICACIÓN
 -- ────────────────────────────────────────────────────────────
-
 DO $$
 DECLARE
-  _rec RECORD;
-  _count INTEGER := 0;
+  _count INTEGER;
 BEGIN
-  RAISE NOTICE '══════════════════════════════════════════════════';
-  RAISE NOTICE 'RESUMEN DE POLÍTICAS RLS APLICADAS';
-  RAISE NOTICE '══════════════════════════════════════════════════';
-
-  FOR _rec IN
-    SELECT
-      schemaname,
-      tablename,
-      policyname,
-      cmd AS operation,
-      permissive
-    FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename IN (
-        'articles', 'clients',
-        'driver_absences', 'drivers', 'fuel_logs',
-        'settings', 'shipments', 'tariffs',
-        'time_logs', 'vehicles'
-      )
-    ORDER BY tablename, policyname
-  LOOP
-    RAISE NOTICE '  %-20s | %-40s | %-8s | %s',
-      _rec.tablename,
-      _rec.policyname,
-      _rec.operation,
-      _rec.permissive;
-    _count := _count + 1;
-  END LOOP;
-
-  RAISE NOTICE '──────────────────────────────────────────────────';
-  RAISE NOTICE 'Total de políticas activas: %', _count;
-  RAISE NOTICE '══════════════════════════════════════════════════';
-END
-$$;
+  SELECT count(*) INTO _count FROM pg_policies WHERE schemaname = 'public';
+  RAISE NOTICE '══════════════════════════════════════';
+  RAISE NOTICE '✅ Total políticas RLS activas: %', _count;
+  RAISE NOTICE '══════════════════════════════════════';
+END $$;

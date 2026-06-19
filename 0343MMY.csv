@@ -1,0 +1,29 @@
+
+#Vehículo
+
+"Nombre del vehículo","Activo","Tipo de vehículo","Marca","Modelo","Matrícula","Año","Capacidad del deposito(gal)","Odómetro (km)","Registro de vehículos","Identificación (VIN)","Notas",
+"Fiat 0343MMY Antonio","Si","Camión","Fiat","Ducato","0343MMY","2024","","Kilómetro (km)","","","",
+
+#Servicio
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de servicio","Local del servicio","Conductor","Método de pago","Notas","(System Date)"
+"Fiat 0343MMY Antonio","148231","04/06/2026 12:11","0","Cambio de Aceite","","Victor Pavon","","Cambio bomba de aceite","15/06/2026 10:12"
+"Fiat 0343MMY Antonio","148231","04/06/2026 12:11","0","Filtro de Aceite","","Victor Pavon","","Cambio bomba de aceite","15/06/2026 10:12"
+"Fiat 0343MMY Antonio","135553","02/03/2026 09:27","35","Pastillas Delanteras","","Victor Pavon","","","03/03/2026 08:27"
+"Fiat 0343MMY Antonio","111246","03/10/2025 20:10","35","Pastillas Traseras","","Victor Pavon","","","03/10/2025 18:10"
+"Fiat 0343MMY Antonio","102654","11/08/2025 15:36","55","Pastillas Delanteras","","Victor Pavon","","","11/08/2025 13:36"
+"Fiat 0343MMY Antonio","87541","23/05/2025 20:30","35","Pastillas Traseras","Victor","Victor Pavon","","","24/05/2025 18:31"
+"Fiat 0343MMY Antonio","79980","25/04/2025 20:45","50","Pastillas Delanteras","Victor","Victor Pavon","","","27/04/2025 18:46"
+"Fiat 0343MMY Antonio","63765","21/02/2025 18:34","113.88","Cambio de Aceite","Tobalo","Victor Pavon","","","06/05/2025 16:40"
+"Fiat 0343MMY Antonio","63765","21/02/2025 18:34","27.97","Filtro de Aceite","Tobalo","Victor Pavon","","","06/05/2025 16:40"
+"Fiat 0343MMY Antonio","63765","21/02/2025 18:34","30.86","Filtro de Aire","Tobalo","Victor Pavon","","","06/05/2025 16:40"
+"Fiat 0343MMY Antonio","63765","21/02/2025 18:34","55.75","Filtro de Aire del habitáculo","Tobalo","Victor Pavon","","","06/05/2025 16:40"
+"Fiat 0343MMY Antonio","63765","21/02/2025 18:34","61.01","Filtro de Combustible","Tobalo","Victor Pavon","","","06/05/2025 16:40"
+"Fiat 0343MMY Antonio","63765","21/02/2025 18:34","142.6","Mano de Obra","Tobalo","Victor Pavon","","","06/05/2025 16:40"
+"Fiat 0343MMY Antonio","55260","16/01/2025 13:18","50","Pastillas Delanteras","","Victor Pavon","","","16/01/2025 12:18"
+"Fiat 0343MMY Antonio","55260","16/01/2025 13:18","40","Pastillas Traseras","","Victor Pavon","","","16/01/2025 12:18"
+"Fiat 0343MMY Antonio","43299","21/11/2024 22:57","0","Cambio de Aceite","","Victor Pavon","","","15/01/2025 18:29"
+"Fiat 0343MMY Antonio","43300","21/11/2024 15:03","0","Neumaticos Traseros","Felipe Osuna","Victor Pavon","","","30/11/2024 14:04"
+"Fiat 0343MMY Antonio","38611","05/11/2024 07:11","45","Pastillas de Freno","Victor","Victor Pavon","","","09/11/2024 06:13"
+"Fiat 0343MMY Antonio","31872","09/10/2024 07:17","211.99","Cambio de Aceite","Tobalo","Victor Pavon","","","09/11/2024 06:19"
+"Fiat 0343MMY Antonio","31872","09/10/2024 07:17","0","Filtro de Aceite","Tobalo","Victor Pavon","","","09/11/2024 06:19"

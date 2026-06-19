@@ -1,0 +1,60 @@
+
+#Vehículo
+
+"Nombre del vehículo","Activo","Tipo de vehículo","Marca","Modelo","Matrícula","Año","Capacidad del deposito(gal)","Odómetro (km)","Registro de vehículos","Identificación (VIN)","Notas",
+"Fiat 5834LPF Paco","Si","Camión","Fiat","Ducato","5834LPF","2021","","Kilómetro (km)","","","",
+
+#Gasto
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de gasto","Gasto local","Conductor","Método de pago","Motivo","Notas","(System Date)"
+"Fiat 5834LPF Paco","0","06/04/2024 07:11","601.92","Financiación","","Victor Pavon","","","","11/02/2024 06:12"
+"Fiat 5834LPF Paco","0","06/03/2024 07:11","601.92","Financiación","","Victor Pavon","","","","11/02/2024 06:11"
+"Fiat 5834LPF Paco","0","06/02/2024 07:11","601.92","Financiación","","Victor Pavon","","","","11/02/2024 06:11"
+"Fiat 5834LPF Paco","0","06/01/2024 07:10","601.92","Financiación","","Victor Pavon","","","","11/02/2024 06:11"
+"Fiat 5834LPF Paco","0","06/12/2023 07:29","601920","Financiación","","Victor Pavon","","","","06/12/2023 06:29"
+"Fiat 5834LPF Paco","0","06/11/2023 07:29","601.92","Financiación","","Victor Pavon","","","","06/12/2023 06:29"
+"Fiat 5834LPF Paco","0","06/10/2023 07:28","601.92","Financiación","","Victor Pavon","","","","06/12/2023 06:29"
+"Fiat 5834LPF Paco","151715","06/09/2023 20:00","601.92","Financiación","","Victor Pavon","","","","24/09/2023 18:01"
+
+#Servicio
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de servicio","Local del servicio","Conductor","Método de pago","Notas","(System Date)"
+"Fiat 5834LPF Paco","349792","04/05/2026 17:44","0","Neumaticos Delanteros","","Victor Pavon","","Son la sstar 20%u20AC","04/05/2026 15:46"
+"Fiat 5834LPF Paco","349792","04/05/2026 17:44","30","Pastillas Delanteras","","Victor Pavon","","Son la sstar 20%u20AC","04/05/2026 15:46"
+"Fiat 5834LPF Paco","347009","24/03/2026 18:32","20","Filtro de Aire","","Victor Pavon","","","08/04/2026 16:33"
+"Fiat 5834LPF Paco","347009","24/03/2026 18:32","35","Filtro de Combustible","","Victor Pavon","","","08/04/2026 16:33"
+"Fiat 5834LPF Paco","347009","24/03/2026 18:29","40","Cambio de Aceite","","Victor Pavon","","","08/04/2026 16:32"
+"Fiat 5834LPF Paco","347009","24/03/2026 18:29","15","Filtro de Aceite","","Victor Pavon","","","08/04/2026 16:32"
+"Fiat 5834LPF Paco","324523","11/12/2025 13:37","35","Pastillas Delanteras","","Victor Pavon","","A gastado antes las izquierdas k las derechas","11/12/2025 12:38"
+"Fiat 5834LPF Paco","307000","19/09/2025 11:29","30","Filtro de Combustible","","Victor Pavon","","","23/09/2025 09:30"
+"Fiat 5834LPF Paco","306014","05/09/2025 19:29","0","Bateria","","Victor Pavon","","Cambiada en garantía la anterior es de noviembre de 2024","05/09/2025 17:31"
+"Fiat 5834LPF Paco","305969","26/08/2025 13:52","40","Cambio de Aceite","","Victor Pavon","","","26/08/2025 11:53"
+"Fiat 5834LPF Paco","305969","26/08/2025 13:52","15","Filtro de Aceite","","Victor Pavon","","","26/08/2025 11:53"
+"Fiat 5834LPF Paco","291314","03/06/2025 05:16","150","DISCOS DE FRENO DELANTEROS","","Victor Pavon","","","11/06/2025 03:17"
+"Fiat 5834LPF Paco","286800","13/05/2025 20:05","0","Cambio de Aceite","Victor","Victor Pavon","","","13/05/2025 18:06"
+"Fiat 5834LPF Paco","286800","13/05/2025 20:05","0","Filtro de Aceite","Victor","Victor Pavon","","","13/05/2025 18:06"
+"Fiat 5834LPF Paco","283690","29/04/2025 14:41","0","Pastillas Traseras","","Victor Pavon","","","29/04/2025 12:44"
+"Fiat 5834LPF Paco","280000","21/04/2025 13:44","0","Neumaticos Traseros","Felipe Osuna","Victor Pavon","","","22/04/2025 10:54"
+"Fiat 5834LPF Paco","275000","22/02/2025 12:55","170","Batería","Eresa","Victor Pavon","","","22/04/2025 10:57"
+"Fiat 5834LPF Paco","257161","30/12/2024 08:32","0","Cambio de Aceite","","Victor Pavon","","","30/12/2024 07:33"
+"Fiat 5834LPF Paco","255000","16/12/2024 12:46","56","Batería","","Victor Pavon","","","17/03/2025 11:48"
+"Fiat 5834LPF Paco","242368","26/11/2024 12:31","0","Neumaticos Traseros","Felipe Osuna","Victor Pavon","","","29/12/2024 11:32"
+"Fiat 5834LPF Paco","242350","19/10/2024 08:54","0","Pastillas Delanteras","","Victor Pavon","","","22/10/2024 06:55"
+"Fiat 5834LPF Paco","232800","06/09/2024 13:34","30","Filtro de Combustible","","Victor Pavon","","","06/09/2024 11:48"
+"Fiat 5834LPF Paco","227561","31/07/2024 18:46","0","Neumaticos Traseros","","Victor Pavon","","Tarifa","31/07/2024 16:48"
+"Fiat 5834LPF Paco","222054","19/07/2024 18:46","0","Cambio de Aceite","","Victor Pavon","","","07/08/2024 16:47"
+"Fiat 5834LPF Paco","212196","25/05/2024 21:52","0","Cambio Distribución Y Bomba De Agua","Jesus","Victor Pavon","Tarjeta de débito","","25/05/2024 19:54"
+"Fiat 5834LPF Paco","208489","07/05/2024 20:13","35","Pastillas Delanteras","","Victor Pavon","","Necto","07/05/2024 18:15"
+"Fiat 5834LPF Paco","198458","28/03/2024 04:42","36","Cambio de Aceite","Victor","Victor Pavon","","","28/03/2024 03:43"
+"Fiat 5834LPF Paco","198458","28/03/2024 04:42","12","Filtro de Aceite","Victor","Victor Pavon","","","28/03/2024 03:43"
+"Fiat 5834LPF Paco","193662","09/03/2024 14:44","30","Filtro de Combustible","Victor","Victor Pavon","","","09/03/2024 13:45"
+"Fiat 5834LPF Paco","177049","26/12/2023 19:33","40","Pastillas Delanteras","","Victor Pavon","","","26/12/2023 18:34"
+"Fiat 5834LPF Paco","175358","20/12/2023 21:11","0","Neumaticos Traseros","","Victor Pavon","","","20/12/2023 20:12"
+"Fiat 5834LPF Paco","173741","12/12/2023 21:08","0","Cambio de Aceite","","Victor Pavon","","","20/12/2023 20:10"
+"Fiat 5834LPF Paco","173741","12/12/2023 21:08","0","Filtro de Aceite","","Victor Pavon","","","20/12/2023 20:10"
+"Fiat 5834LPF Paco","173741","12/12/2023 21:08","0","Filtro de Aire","","Victor Pavon","","","20/12/2023 20:10"
+"Fiat 5834LPF Paco","173741","12/12/2023 21:08","0","Filtro de Combustible","","Victor Pavon","","","20/12/2023 20:10"
+"Fiat 5834LPF Paco","164366","28/10/2023 18:25","33","Pastillas Traseras","","Victor Pavon","","","28/10/2023 16:26"
+"Fiat 5834LPF Paco","153000","01/10/2023 18:12","undefined","Vidrio/Espejos","","Victor Pavon","","","07/10/2023 16:15"
+"Fiat 5834LPF Paco","148346","17/08/2023 10:00","205.66","Cambio de Aceite","David Gomez","Victor Pavon","","","26/09/2023 08:00"
+"Fiat 5834LPF Paco","147715","14/08/2023 19:51","338.84","Neumaticos Traseros","Tarifa","Victor Pavon","","","20/09/2023 17:54"

@@ -1,0 +1,54 @@
+
+#Vehículo
+
+"Nombre del vehículo","Activo","Tipo de vehículo","Marca","Modelo","Matrícula","Año","Capacidad del deposito(gal)","Odómetro (km)","Registro de vehículos","Identificación (VIN)","Notas",
+"Peugeot 5831LWK Antonio","Si","Camión","Peugeot","Boxer","5931LWK","2022","90.000","Kilómetro (km)","","","",
+
+#Gasto
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de gasto","Gasto local","Conductor","Método de pago","Motivo","Notas","(System Date)"
+"Peugeot 5831LWK Antonio","0","14/04/2024 07:14","452.75","Financiación","","Victor Pavon","","","","11/02/2024 06:14"
+"Peugeot 5831LWK Antonio","0","14/03/2024 07:13","452.75","Financiación","","Victor Pavon","","","","11/02/2024 06:13"
+"Peugeot 5831LWK Antonio","0","14/02/2024 07:12","452.75","Financiación","","Victor Pavon","","","","11/02/2024 06:13"
+"Peugeot 5831LWK Antonio","0","14/01/2024 07:13","452.75","Financiación","","Victor Pavon","","","","11/02/2024 06:14"
+"Peugeot 5831LWK Antonio","0","14/12/2023 07:38","452.75","Financiación","","Victor Pavon","","","","06/12/2023 06:38"
+"Peugeot 5831LWK Antonio","0","14/11/2023 07:38","452.75","Financiación","","Victor Pavon","","","","06/12/2023 06:38"
+"Peugeot 5831LWK Antonio","0","14/10/2023 07:37","452.75","Financiación","","Victor Pavon","","","","06/12/2023 06:38"
+"Peugeot 5831LWK Antonio","96000","14/09/2023 08:48","452.75","Financiación","","Victor Pavon","","","","21/09/2023 06:52"
+
+#Servicio
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de servicio","Local del servicio","Conductor","Método de pago","Notas","(System Date)"
+"Peugeot 5831LWK Antonio","212217","23/09/2025 11:41","202","Neumaticos Traseros","","Victor Pavon","","","23/09/2025 09:42"
+"Peugeot 5831LWK Antonio","203809","07/07/2025 20:38","40","Cambio de Aceite","","Victor Pavon","","","10/07/2025 18:39"
+"Peugeot 5831LWK Antonio","203809","07/07/2025 20:38","15","Filtro de Aceite","","Victor Pavon","","","10/07/2025 18:39"
+"Peugeot 5831LWK Antonio","200900","23/05/2025 20:33","35","Pastillas Traseras","Victor","Victor Pavon","","","24/05/2025 18:34"
+"Peugeot 5831LWK Antonio","190385","31/03/2025 20:51","40","Cambio de Aceite","Victor","Victor Pavon","","","11/04/2025 12:52"
+"Peugeot 5831LWK Antonio","190385","31/03/2025 20:51","15","Filtro de Aceite","Victor","Victor Pavon","","","11/04/2025 12:52"
+"Peugeot 5831LWK Antonio","185789","12/03/2025 07:04","45","Pastillas Delanteras","Victor","Victor Pavon","","","19/03/2025 06:06"
+"Peugeot 5831LWK Antonio","185789","12/03/2025 07:04","150","DISCOS DE FRENO DELANTEROS","Victor","Victor Pavon","","","19/03/2025 06:06"
+"Peugeot 5831LWK Antonio","171158","20/12/2024 18:50","0","Cambio de Aceite","Hispasur","Victor Pavon","","","20/12/2024 17:51"
+"Peugeot 5831LWK Antonio","171158","20/12/2024 18:50","0","Filtro de Aceite","Hispasur","Victor Pavon","","","20/12/2024 17:51"
+"Peugeot 5831LWK Antonio","165808","26/11/2024 14:46","45","Pastillas Delanteras","","Victor Pavon","","","26/11/2024 13:47"
+"Peugeot 5831LWK Antonio","164023","15/11/2024 16:33","35","Pastillas Traseras","","Victor Pavon","","","17/11/2024 15:33"
+"Peugeot 5831LWK Antonio","151007","04/09/2024 13:02","55","Pastillas Delanteras","","Victor Pavon","","","05/09/2024 11:03"
+"Peugeot 5831LWK Antonio","148772","22/08/2024 18:48","42","Cambio de Aceite","","Victor Pavon","","","22/08/2024 16:49"
+"Peugeot 5831LWK Antonio","148772","22/08/2024 18:48","15","Filtro de Aceite","","Victor Pavon","","","22/08/2024 16:49"
+"Peugeot 5831LWK Antonio","145965","02/08/2024 13:39","35","Pastillas Traseras","Victor","Victor Pavon","","","03/08/2024 11:40"
+"Peugeot 5831LWK Antonio","138566","07/06/2024 17:32","168.72","Neumaticos Traseros","","Victor Pavon","","","27/06/2024 15:33"
+"Peugeot 5831LWK Antonio","136842","30/05/2024 18:54","43.23","Pastillas Delanteras","","Victor Pavon","","Pastillas girlin","30/05/2024 16:56"
+"Peugeot 5831LWK Antonio","132271","07/05/2024 21:02","35","Pastillas Delanteras","","Victor Pavon","","Necto","07/05/2024 19:02"
+"Peugeot 5831LWK Antonio","128349","17/04/2024 12:24","33","Pastillas Traseras","","Victor Pavon","","","19/04/2024 10:25"
+"Peugeot 5831LWK Antonio","117650","19/02/2024 19:33","0","Motor","Hispasur","Victor Pavon","","Sustitucion motor","22/04/2024 12:30"
+"Peugeot 5831LWK Antonio","113305","14/11/2023 15:11","0","Cambio aceite caja cambios","Hispasur","Victor Pavon","","Sustitucion caja cambios","22/04/2024 13:12"
+"Peugeot 5831LWK Antonio","99898","03/10/2023 18:47","49","Pastillas Delanteras","Victor","Victor Pavon","","","03/10/2023 16:48"
+"Peugeot 5831LWK Antonio","84314","25/07/2023 19:28","45.06","Líquido de Frenos","Hispasur","Victor Pavon","","","20/09/2023 17:41"
+"Peugeot 5831LWK Antonio","84314","25/07/2023 19:28","22.42","Filtro de Aceite","Hispasur","Victor Pavon","","","20/09/2023 17:41"
+"Peugeot 5831LWK Antonio","84314","25/07/2023 19:28","48.44","Cambio de Aceite","Hispasur","Victor Pavon","","","20/09/2023 17:41"
+"Peugeot 5831LWK Antonio","84314","25/07/2023 19:28","3.56","Anticongelante","Hispasur","Victor Pavon","","","20/09/2023 17:41"
+"Peugeot 5831LWK Antonio","84314","25/07/2023 19:28","3.16","Limpia Parabrisas","Hispasur","Victor Pavon","","","20/09/2023 17:41"
+"Peugeot 5831LWK Antonio","84314","25/07/2023 19:28","6","Bombillas","Hispasur","Victor Pavon","","","20/09/2023 17:41"
+"Peugeot 5831LWK Antonio","84314","25/07/2023 19:28","162.33","Pastillas Delanteras","Hispasur","Victor Pavon","","","20/09/2023 17:41"
+"Peugeot 5831LWK Antonio","84314","25/07/2023 19:28","132.22","Pastillas Traseras","Hispasur","Victor Pavon","","","20/09/2023 17:41"
+"Peugeot 5831LWK Antonio","84314","25/07/2023 19:28","96.18","Mano de Obra","Hispasur","Victor Pavon","","","20/09/2023 17:41"
+"Peugeot 5831LWK Antonio","43500","07/01/2023 20:31","338.84","Neumaticos Delanteros","Neumaticos Velasco","Victor Pavon","","","24/09/2023 18:32"

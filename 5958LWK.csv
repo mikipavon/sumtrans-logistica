@@ -1,0 +1,56 @@
+
+#Vehículo
+
+"Nombre del vehículo","Activo","Tipo de vehículo","Marca","Modelo","Matrícula","Año","Capacidad del deposito(gal)","Odómetro (km)","Registro de vehículos","Identificación (VIN)","Notas",
+"Peugeot 5958LWK","Si","Camión","Peugeot","Boxer","5958LWK","2022","","Kilómetro (km)","","","",
+
+#Gasto
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de gasto","Gasto local","Conductor","Método de pago","Motivo","Notas","(System Date)"
+"Peugeot 5958LWK","0","14/04/2024 07:15","452.75","Financiación","","Victor Pavon","","","","11/02/2024 06:15"
+"Peugeot 5958LWK","0","14/03/2024 07:15","452.75","Financiación","","Victor Pavon","","","","11/02/2024 06:15"
+"Peugeot 5958LWK","0","14/02/2024 07:15","452.75","Financiación","","Victor Pavon","","","","11/02/2024 06:15"
+"Peugeot 5958LWK","0","14/01/2024 07:14","452.75","Financiación","","Victor Pavon","","","","11/02/2024 06:14"
+"Peugeot 5958LWK","0","14/12/2023 07:39","452.75","Financiación","","Victor Pavon","","","","06/12/2023 06:40"
+"Peugeot 5958LWK","0","14/11/2023 07:39","452.75","Financiación","","Victor Pavon","","","","06/12/2023 06:39"
+"Peugeot 5958LWK","0","14/10/2023 07:39","452.75","Financiación","","Victor Pavon","","","","06/12/2023 06:39"
+"Peugeot 5958LWK","85000","14/09/2023 10:58","452.7","Financiación","","Victor Pavon","","","","27/09/2023 08:59"
+
+#Servicio
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de servicio","Local del servicio","Conductor","Método de pago","Notas","(System Date)"
+"Peugeot 5958LWK","208850","28/05/2026 13:53","0","DISCOS DE FRENO DELANTEROS","","Victor Pavon","","","28/05/2026 11:53"
+"Peugeot 5958LWK","208850","28/05/2026 13:52","32","Pastillas Delanteras","","Victor Pavon","","","28/05/2026 11:53"
+"Peugeot 5958LWK","201831","03/02/2026 15:56","200","Neumaticos Traseros","","Victor Pavon","","","04/02/2026 14:57"
+"Peugeot 5958LWK","190849","17/11/2025 22:11","35","Pastillas Delanteras","","Victor Pavon","","Proximo cambio discos","17/11/2025 21:12"
+"Peugeot 5958LWK","188782","31/10/2025 19:37","0","Caja Cambios","","Victor Pavon","","","31/10/2025 18:38"
+"Peugeot 5958LWK","188782","31/10/2025 19:37","0","Cambio de Aceite","","Victor Pavon","","","31/10/2025 18:38"
+"Peugeot 5958LWK","188782","31/10/2025 19:37","0","Filtro de Aceite","","Victor Pavon","","","31/10/2025 18:38"
+"Peugeot 5958LWK","178385","29/08/2025 14:32","45","Cambio de Aceite","","Victor Pavon","","","29/08/2025 12:33"
+"Peugeot 5958LWK","178385","29/08/2025 14:32","15","Enfriador filtro aceite","","Victor Pavon","","","29/08/2025 12:33"
+"Peugeot 5958LWK","174000","10/06/2025 08:49","110","Neumaticos Traseros","Felipe Osuna","Victor Pavon","","","11/06/2025 06:50"
+"Peugeot 5958LWK","168368","26/05/2025 20:08","50","Pastillas Delanteras","","Victor Pavon","","","26/05/2025 18:09"
+"Peugeot 5958LWK","158683","11/04/2025 14:49","35","Pastillas Traseras","Victor","Victor Pavon","","","11/04/2025 12:49"
+"Peugeot 5958LWK","150989","11/03/2025 10:49","163.35","Cambio de Aceite","Hispasur","Victor Pavon","","","31/03/2025 08:50"
+"Peugeot 5958LWK","150989","11/03/2025 10:49","0","Filtro de Aceite","Hispasur","Victor Pavon","","","31/03/2025 08:50"
+"Peugeot 5958LWK","149784","04/03/2025 18:27","45","Pastillas Delanteras","Victor","Victor Pavon","","","09/03/2025 17:29"
+"Peugeot 5958LWK","141270","14/01/2025 22:13","0","Motor","","Victor Pavon","","Cambio de motor en garantía","14/01/2025 21:14"
+"Peugeot 5958LWK","138139","30/08/2024 18:12","211","Neumaticos Traseros","Felipe Osuna","Victor Pavon","","","31/08/2024 16:13"
+"Peugeot 5958LWK","132318","02/08/2024 13:05","51","Cambio de Aceite","Hispasur","Victor Pavon","","","16/08/2024 11:14"
+"Peugeot 5958LWK","132318","02/08/2024 13:05","4.07","Filtro de Aire","Hispasur","Victor Pavon","","","16/08/2024 11:14"
+"Peugeot 5958LWK","132318","02/08/2024 13:05","14.25","Filtro de Aire del habitáculo","Hispasur","Victor Pavon","","","16/08/2024 11:14"
+"Peugeot 5958LWK","132318","02/08/2024 13:05","10.18","Filtro de Combustible","Hispasur","Victor Pavon","","","16/08/2024 11:14"
+"Peugeot 5958LWK","132318","02/08/2024 13:05","85.5","Mano de Obra","Hispasur","Victor Pavon","","","16/08/2024 11:14"
+"Peugeot 5958LWK","132318","02/08/2024 13:05","26","Filtro de Aceite","Hispasur","Victor Pavon","","","16/08/2024 11:14"
+"Peugeot 5958LWK","132318","02/08/2024 13:05","5","Anticongelante","Hispasur","Victor Pavon","","","16/08/2024 11:14"
+"Peugeot 5958LWK","132318","02/08/2024 13:05","150.84","ELEMTO DE FILTROS","Hispasur","Victor Pavon","","","16/08/2024 11:14"
+"Peugeot 5958LWK","129758","23/07/2024 17:21","35","Pastillas Traseras","","Victor Pavon","","","25/07/2024 15:25"
+"Peugeot 5958LWK","129758","23/07/2024 17:21","50","Pastillas Delanteras","","Victor Pavon","","","25/07/2024 15:25"
+"Peugeot 5958LWK","113176","20/02/2024 19:00","30","Cambio de Aceite","","Victor Pavon","","","20/02/2024 18:01"
+"Peugeot 5958LWK","113176","20/02/2024 19:00","20","Filtro de Aceite","","Victor Pavon","","","20/02/2024 18:01"
+"Peugeot 5958LWK","100043","04/12/2023 21:27","30","Pastillas Traseras","Victor","Victor Pavon","","","04/12/2023 20:30"
+"Peugeot 5958LWK","92004","23/10/2023 14:25","0","Cambio de Aceite","Hispasur","Victor Pavon","","","23/10/2023 12:25"
+"Peugeot 5958LWK","92004","23/10/2023 14:25","0","Filtro de Aceite","Hispasur","Victor Pavon","","","23/10/2023 12:25"
+"Peugeot 5958LWK","80000","16/08/2023 19:08","176.86","Neumaticos Delanteros","Jose Manuel Rodriguez (CRS)","Victor Pavon","","","20/09/2023 17:17"
+"Peugeot 5958LWK","66648","13/04/2023 11:45","131.41","Cambio de Aceite","Hispasur","Victor Pavon","","","26/09/2023 09:47"
+"Peugeot 5958LWK","46632","19/11/2022 19:40","0","Motor","Hispasur","Victor Pavon","","Sustitucion de motor","22/04/2024 12:29"

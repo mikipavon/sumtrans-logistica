@@ -1,0 +1,46 @@
+
+#Vehículo
+
+"Nombre del vehículo","Activo","Tipo de vehículo","Marca","Modelo","Matrícula","Año","Capacidad del deposito(gal)","Odómetro (km)","Registro de vehículos","Identificación (VIN)","Notas",
+"Fiat 5493KKX Reserva","Si","Camión","Fiat","Ducato","5493KKX","2018","","Kilómetro (km)","","","",
+
+#Servicio
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de servicio","Local del servicio","Conductor","Método de pago","Notas","(System Date)"
+"Fiat 5493KKX Reserva","401367","26/10/2025 20:28","328","Cambio Distribución Y Bomba De Agua","","Victor Pavon","","","27/10/2025 19:29"
+"Fiat 5493KKX Reserva","400112","21/10/2025 13:03","42","Cambio de Aceite","","Victor Pavon","","","21/10/2025 11:04"
+"Fiat 5493KKX Reserva","400112","21/10/2025 13:03","15","Enfriador filtro aceite","","Victor Pavon","","","21/10/2025 11:04"
+"Fiat 5493KKX Reserva","396715","26/08/2025 09:36","55","Pastillas Delanteras","","Victor Pavon","","","26/08/2025 07:37"
+"Fiat 5493KKX Reserva","387894","02/07/2025 11:40","35","Discos Traseros","","Victor Pavon","","","02/07/2025 09:50"
+"Fiat 5493KKX Reserva","380172","14/05/2025 16:16","50","Pastillas Delanteras","","Victor Pavon","","","14/05/2025 14:17"
+"Fiat 5493KKX Reserva","372152","20/03/2025 14:32","40","Cambio de Aceite","Victor","Victor Pavon","","Ajuste de freno","20/03/2025 13:34"
+"Fiat 5493KKX Reserva","372152","20/03/2025 14:32","15","Filtro de Aceite","Victor","Victor Pavon","","Ajuste de freno","20/03/2025 13:34"
+"Fiat 5493KKX Reserva","359879","30/12/2024 19:17","50","Pastillas Delanteras","","Victor Pavon","","","01/01/2025 18:18"
+"Fiat 5493KKX Reserva","359879","30/12/2024 19:17","35","Pastillas Traseras","","Victor Pavon","","","01/01/2025 18:18"
+"Fiat 5493KKX Reserva","321053","03/06/2024 21:10","168.72","Neumaticos Traseros","Felipe Osuna","Victor Pavon","","","27/06/2024 15:35"
+"Fiat 5493KKX Reserva","310442","22/04/2024 14:23","35","Pastillas Traseras","Victor","Victor Pavon","","","22/04/2024 12:24"
+"Fiat 5493KKX Reserva","308500","15/04/2024 10:58","650","Filtro de particulas anular","Jesus","Victor Pavon","","","19/04/2024 08:59"
+"Fiat 5493KKX Reserva","308500","15/04/2024 10:58","450","Turbo","Jesus","Victor Pavon","","","19/04/2024 08:59"
+"Fiat 5493KKX Reserva","308000","27/02/2024 07:55","46","Cambio de Aceite","Victor","Victor Pavon","","","19/04/2024 08:57"
+"Fiat 5493KKX Reserva","308000","27/02/2024 07:55","25","Aditivos Motor","Victor","Victor Pavon","","","19/04/2024 08:57"
+"Fiat 5493KKX Reserva","308000","27/02/2024 07:55","22","Filtro de Aceite","Victor","Victor Pavon","","","19/04/2024 08:57"
+"Fiat 5493KKX Reserva","289364","24/10/2023 20:26","220","Neumaticos Delanteros","Felipe Osuna","Victor Pavon","","","22/04/2024 12:26"
+"Fiat 5493KKX Reserva","284635","23/09/2023 17:39","22.4","Cambio de Aceite","Tomas","Victor Pavon","","","24/09/2023 17:05"
+"Fiat 5493KKX Reserva","284635","23/09/2023 17:39","136.09","Cambio Distribución Y Bomba De Agua","Tomas","Victor Pavon","","","24/09/2023 17:05"
+"Fiat 5493KKX Reserva","284635","23/09/2023 17:39","21.4","Correa de accesorios","Tomas","Victor Pavon","","","24/09/2023 17:05"
+"Fiat 5493KKX Reserva","284635","23/09/2023 17:39","10.92","Filtro de Aceite","Tomas","Victor Pavon","","","24/09/2023 17:05"
+"Fiat 5493KKX Reserva","284635","23/09/2023 17:39","11.68","Filtro de Aire","Tomas","Victor Pavon","","","24/09/2023 17:05"
+"Fiat 5493KKX Reserva","284635","23/09/2023 17:39","8.69","Filtro de Aire del habitáculo","Tomas","Victor Pavon","","","24/09/2023 17:05"
+"Fiat 5493KKX Reserva","284635","23/09/2023 17:39","25.98","Filtro de Combustible","Tomas","Victor Pavon","","","24/09/2023 17:05"
+"Fiat 5493KKX Reserva","284635","23/09/2023 17:39","120","Mano de Obra","Tomas","Victor Pavon","","","24/09/2023 17:05"
+"Fiat 5493KKX Reserva","261308","05/07/2023 19:51","107.8","Tubo Intercooler","David Gomez","Victor Pavon","","","24/09/2023 17:56"
+"Fiat 5493KKX Reserva","261308","05/07/2023 19:51","55","Mano de Obra","David Gomez","Victor Pavon","","","24/09/2023 17:56"
+"Fiat 5493KKX Reserva","252365","04/05/2023 19:43","220","Neumaticos Delanteros","David Gomez","Victor Pavon","","","24/09/2023 17:50"
+"Fiat 5493KKX Reserva","252365","04/05/2023 19:43","96.62","Soporte Motor","David Gomez","Victor Pavon","","","24/09/2023 17:50"
+"Fiat 5493KKX Reserva","252365","04/05/2023 19:43","118","Enfriador filtro aceite","David Gomez","Victor Pavon","","","24/09/2023 17:50"
+"Fiat 5493KKX Reserva","252365","04/05/2023 19:43","574","Palieres","David Gomez","Victor Pavon","","","24/09/2023 17:50"
+"Fiat 5493KKX Reserva","252365","04/05/2023 19:43","24","Cambio aceite caja cambios","David Gomez","Victor Pavon","","","24/09/2023 17:50"
+"Fiat 5493KKX Reserva","252365","04/05/2023 19:43","194","Ventilador calefaccion","David Gomez","Victor Pavon","","","24/09/2023 17:50"
+"Fiat 5493KKX Reserva","252365","04/05/2023 19:43","16","Anticongelante","David Gomez","Victor Pavon","","","24/09/2023 17:50"
+"Fiat 5493KKX Reserva","252365","04/05/2023 19:43","278","Mano de Obra","David Gomez","Victor Pavon","","","24/09/2023 17:50"
+"Fiat 5493KKX Reserva","80389","09/01/2021 08:33","0","Cambio Distribución Y Bomba De Agua","Palcan","Victor Pavon","","","22/09/2023 07:04"

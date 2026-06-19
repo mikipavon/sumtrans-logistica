@@ -1,0 +1,29 @@
+
+#Vehículo
+
+"Nombre del vehículo","Activo","Tipo de vehículo","Marca","Modelo","Matrícula","Año","Capacidad del deposito(gal)","Odómetro (km)","Registro de vehículos","Identificación (VIN)","Notas",
+"Hyundai 9221KTX Reserva","Si","Camión","Hyundai","H350","9221KTX","","","Kilómetro (km)","","","",
+
+#Servicio
+
+"Nombre del vehículo","Odómetro (km)","Fecha","Costo total","Tipo de servicio","Local del servicio","Conductor","Método de pago","Notas","(System Date)"
+"Hyundai 9221KTX Reserva","416722","31/05/2024 19:19","42","Cambio de Aceite","","Victor Pavon","","","31/05/2024 17:19"
+"Hyundai 9221KTX Reserva","415478","08/05/2024 13:53","48","Cambio de Aceite","","Victor Pavon","","","08/05/2024 11:54"
+"Hyundai 9221KTX Reserva","415478","08/05/2024 13:53","15","Filtro de Aceite","","Victor Pavon","","","08/05/2024 11:54"
+"Hyundai 9221KTX Reserva","411742","24/03/2024 04:39","35","Pastillas traseras derecha","Victor","Victor Pavon","","","24/03/2024 03:40"
+"Hyundai 9221KTX Reserva","408242","09/03/2024 14:46","15","Pastillas traseras izquierda","Victor","Victor Pavon","","","09/03/2024 13:47"
+"Hyundai 9221KTX Reserva","401489","08/02/2024 19:34","0","Pastillas Delanteras","","Victor Pavon","","","08/02/2024 18:35"
+"Hyundai 9221KTX Reserva","392767","02/01/2024 13:23","35","Cambio de Aceite","","Victor Pavon","","","02/01/2024 12:24"
+"Hyundai 9221KTX Reserva","392767","02/01/2024 13:23","15","Filtro de Aire","","Victor Pavon","","","02/01/2024 12:24"
+"Hyundai 9221KTX Reserva","381673","10/11/2023 08:03","35","Pastillas Traseras","Victor","Victor Pavon","","","13/11/2023 07:04"
+"Hyundai 9221KTX Reserva","375421","07/10/2023 22:04","undefined","Vidrio/Espejos","","Victor Pavon","","","07/10/2023 20:05"
+"Hyundai 9221KTX Reserva","374212","03/10/2023 18:56","33","Pastillas Traseras","Victor","Victor Pavon","","","03/10/2023 16:56"
+"Hyundai 9221KTX Reserva","367000","26/08/2023 13:52","0","Cambio de Aceite","Tomas","Victor Pavon","","","20/09/2023 11:57"
+"Hyundai 9221KTX Reserva","367000","26/08/2023 13:52","0","Cambio Distribución Y Bomba De Agua","Tomas","Victor Pavon","","","20/09/2023 11:57"
+"Hyundai 9221KTX Reserva","367000","26/08/2023 13:52","0","Filtro de Aceite","Tomas","Victor Pavon","","","20/09/2023 11:57"
+"Hyundai 9221KTX Reserva","367000","26/08/2023 13:52","0","Filtro de Aire","Tomas","Victor Pavon","","","20/09/2023 11:57"
+"Hyundai 9221KTX Reserva","367000","26/08/2023 13:52","0","Filtro de Combustible","Tomas","Victor Pavon","","","20/09/2023 11:57"
+"Hyundai 9221KTX Reserva","367000","26/08/2023 13:52","700","Reparación de Motor","Tomas","Victor Pavon","","","20/09/2023 11:57"
+"Hyundai 9221KTX Reserva","366701","04/08/2023 08:15","103.14","Batería","David Gomez","Victor Pavon","","","21/09/2023 06:19"
+"Hyundai 9221KTX Reserva","366701","04/08/2023 08:15","161.42","Cambio Distribución Y Bomba De Agua","David Gomez","Victor Pavon","","","21/09/2023 06:19"
+"Hyundai 9221KTX Reserva","360462","31/07/2023 13:48","116.64","Neumaticos Delanteros","David Gomez","Victor Pavon","","","20/09/2023 15:55"
