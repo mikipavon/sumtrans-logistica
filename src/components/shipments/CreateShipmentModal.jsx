@@ -414,23 +414,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     const updateSuggestions = (value) => {
         if (!clients) return;
         const search = normalizeForSearch(value);
-        // Sort clients: approved first, then alphabetically
-        const sortedClients = [...clients].sort((a, b) => {
-            if (a.status === 'approved' && b.status !== 'approved') return -1;
-            if (a.status !== 'approved' && b.status === 'approved') return 1;
-            return (a.name || '').localeCompare(b.name || '');
-        });
-        // Deduplicar: si hay dos clientes con el mismo nombre normalizado,
-        // quedarse solo con el primero (que es el approved/configurado)
-        const seenNames = new Set();
-        const deduped = sortedClients.filter(c => {
-            const norm = normalizeForSearch(c.name);
-            if (seenNames.has(norm)) return false;
-            seenNames.add(norm);
-            return true;
-        });
+        // Solo mostrar clientes validados por administración
+        // (approved o sin status para compatibilidad con clientes antiguos)
+        const approvedClients = clients
+            .filter(c => !c.status || c.status === 'approved')
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         const results = [];
-        deduped.forEach(c => {
+        approvedClients.forEach(c => {
             const nameMatch = !search || normalizeForSearch(c.name).includes(search);
             // Collect matching branches (keeping user's saved order)
             const matchingBranches = [];
@@ -462,21 +452,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     const updateDestSuggestions = (value) => {
         if (!clients) return;
         const search = normalizeForSearch(value);
-        const sortedClients = [...clients].sort((a, b) => {
-            if (a.status === 'approved' && b.status !== 'approved') return -1;
-            if (a.status !== 'approved' && b.status === 'approved') return 1;
-            return (a.name || '').localeCompare(b.name || '');
-        });
-        // Deduplicar: mismo nombre normalizado → quedarse con el approved
-        const seenNames = new Set();
-        const deduped = sortedClients.filter(c => {
-            const norm = normalizeForSearch(c.name);
-            if (seenNames.has(norm)) return false;
-            seenNames.add(norm);
-            return true;
-        });
+        // Solo mostrar clientes validados por administración
+        const approvedClients = clients
+            .filter(c => !c.status || c.status === 'approved')
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         const results = [];
-        deduped.forEach(c => {
+        approvedClients.forEach(c => {
             const nameMatch = !search || normalizeForSearch(c.name).includes(search);
             const matchingBranches = [];
             if (Array.isArray(c.branches) && c.branches.length > 0) {
