@@ -89,8 +89,11 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
         const enReparto = allShipments.filter(s => s.status === 'En reparto').length;
         const entregados = allShipments.filter(s => s.status === 'Entregado').length;
         const pendientes = allShipments.filter(s => ['Pendiente', 'Asignado', 'Pendiente de asignar'].includes(s.status)).length;
+        // Helper to parse amounts safely, ignoring currency symbols
+        const safeParseAmount = (v) => parseFloat(String(v || '0').replace(',', '.').replace(/[^0-9.-]/g, '')) || 0;
+        
         // Ingresos sí usa el periodo seleccionado
-        const ingresosMes = filteredShipments.reduce((acc, s) => acc + (parseFloat(s.amount) || 0), 0);
+        const ingresosMes = filteredShipments.reduce((acc, s) => acc + safeParseAmount(s.customAmount || s.amount), 0);
         
         return [
             { title: 'En Reparto', value: enReparto.toString(), icon: Truck, color: 'bg-blue-500 dark:bg-blue-600', trend: '', filterKey: 'En reparto' },
