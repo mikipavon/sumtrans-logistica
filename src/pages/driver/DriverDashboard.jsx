@@ -3702,8 +3702,24 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 }
 
                 const updated = { ...ship };
-                if (isPorte) { updated.portePaid = true; updated.paidAt = new Date().toISOString(); }
-                else { updated.codPaid = true; updated.paidAt = new Date().toISOString(); }
+                if (isPorte) {
+                    updated.portePaid = true;
+                    updated.paidAt = new Date().toISOString();
+                    // Si el conductor modificó el importe del porte, guardar como customAmount
+                    // para que la Cuenta y la BD reflejen el importe real cobrado
+                    if (customAmounts[debtKey] !== undefined && parseAmount(customAmounts[debtKey]) !== parseAmount(originalAmount)) {
+                        updated.customAmount = parseAmount(customAmounts[debtKey]);
+                        console.log(`[DeliveryConfirm] Porte modificado para ${sid}: ${originalAmount} → ${customAmounts[debtKey]}`);
+                    }
+                } else {
+                    updated.codPaid = true;
+                    updated.paidAt = new Date().toISOString();
+                    // Si el conductor modificó el importe del reembolso, guardar también
+                    if (customAmounts[debtKey] !== undefined && parseAmount(customAmounts[debtKey]) !== parseAmount(originalAmount)) {
+                        updated.codAmount = parseAmount(customAmounts[debtKey]);
+                        console.log(`[DeliveryConfirm] Reembolso modificado para ${sid}: ${originalAmount} → ${customAmounts[debtKey]}`);
+                    }
+                }
                 updated.updatedAt = new Date().toISOString();
                 workingShipments.set(sid, updated);
             }
@@ -3836,10 +3852,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 if (shipData.portePaid && !original?.portePaid) {
                     flags.portePaid = true;
                     flags.porteCollectedById = currentDriverId;
+                    // Si el conductor cambió el importe del porte, persistir en la BD
+                    if (shipData.customAmount !== undefined && shipData.customAmount !== original?.customAmount) {
+                        flags.customAmount = shipData.customAmount;
+                    }
                 }
                 if (shipData.codPaid && !original?.codPaid) {
                     flags.codPaid = true;
                     flags.codCollectedById = currentDriverId;
+                    // Si el conductor cambió el importe del reembolso, persistir en la BD
+                    if (shipData.codAmount !== undefined && shipData.codAmount !== original?.codAmount) {
+                        flags.codAmount = shipData.codAmount;
+                    }
                 }
 
                 // Sync derived status and payment flags
