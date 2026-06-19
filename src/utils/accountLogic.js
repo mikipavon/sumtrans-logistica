@@ -219,10 +219,12 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     const totalPrepaid = uniquePrepaidCollections.reduce((sum, s) => sum + parseAmount(parseAmount(s.customAmount) > 0 ? s.customAmount : s.amount), 0);
     const totalDelivered = uniqueDeliveredCollections.reduce((sum, s) => sum + parseAmount(parseAmount(s.customAmount) > 0 ? s.customAmount : s.amount), 0);
     const totalManualPorte = manualPorteCollections.reduce((sum, c) => {
+        // Prioridad: importe del cobro (lo que realmente se cobró) > importe del envío
+        const collectedAmt = parseAmount(c.amount);
+        if (collectedAmt > 0) return sum + collectedAmt;
         const ship = (allShipments || []).find(s => s.id === c.shipmentId);
         const shipAmt = ship ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : null;
-        const amountToUse = (shipAmt !== null && parseAmount(shipAmt) > 0) ? shipAmt : c.amount;
-        return sum + parseAmount(amountToUse);
+        return sum + (shipAmt !== null ? parseAmount(shipAmt) : 0);
     }, 0);
     const totalPorteValue = totalPrepaid + totalDelivered + totalManualPorte;
 
@@ -296,8 +298,10 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         })),
         ...manualPorteCollections.map(c => {
             const ship = (allShipments || []).find(s => s.id === c.shipmentId);
+            // Prioridad: importe del cobro (lo que el conductor realmente cobró) > importe del envío
+            const collectedAmt = parseAmount(c.amount);
             const shipAmt = ship ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : null;
-            const amountToUse = (shipAmt !== null && parseAmount(shipAmt) > 0) ? shipAmt : c.amount;
+            const amountToUse = collectedAmt > 0 ? c.amount : ((shipAmt !== null && parseAmount(shipAmt) > 0) ? shipAmt : c.amount);
             return {
                 id: c.shipmentId || c.id,
                 key: `man-${c.id}`,
@@ -332,7 +336,9 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         })),
         ...collectedReembolsosRaw.map(c => {
             const ship = (allShipments || []).find(s => s.id === c.shipmentId);
-            const amountToUse = ship ? ship.codAmount : c.amount;
+            // Prioridad: importe del cobro (lo que realmente se cobró) > importe del envío
+            const collectedAmt = parseAmount(c.amount);
+            const amountToUse = collectedAmt > 0 ? c.amount : (ship ? ship.codAmount : c.amount);
             return {
                 id: c.shipmentId || c.id,
                 key: c.id,
