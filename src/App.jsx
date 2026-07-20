@@ -43,7 +43,11 @@ function usePersistentState(key, initialValue) {
   });
 
   useEffect(() => {
-    localStorage.setItem(key, JSON.stringify(state));
+    try {
+      localStorage.setItem(key, JSON.stringify(state));
+    } catch (e) {
+      console.warn(`[usePersistentState] Error persisting key "${key}":`, e);
+    }
   }, [key, state]);
 
   return [state, setState];
@@ -164,7 +168,11 @@ function App() {
   // --- OFFLINE / CONNECTIVITY ---
   const { isOnline, justReconnected } = useOnlineStatus();
   const [isSyncingQueue, setIsSyncingQueue] = useState(false);
-  const [pendingQueueCount, setPendingQueueCount] = useState(() => getQueueLength());
+  const [pendingQueueCount, setPendingQueueCount] = useState(0);
+  // Fix: getQueueLength is async — initialize to 0 and update on mount
+  useEffect(() => {
+    getQueueLength().then(len => setPendingQueueCount(len)).catch(() => {});
+  }, []);
 
   // Lifted state for drivers
   const [drivers, setDrivers] = useState([])
@@ -174,51 +182,51 @@ function App() {
 
 
 
-  // Lifted state for articles
-  const [articles, setArticles] = usePersistentState('articles', [
+  // Lifted state for articles — fuente de verdad: Supabase (no localStorage)
+  const [articles, setArticles] = useState([
     { id: 1, name: 'Hora de Espera', description: 'Cargo por hora adicional de espera en carga/descarga', price: '45.00', unit: 'Hora' },
     { id: 2, name: 'Palet Europeo', description: 'Transporte de palet estándar (120x80)', price: '65.00', unit: 'Unidad' },
     { id: 3, name: 'Kilometraje Extra', description: 'Tarifa por km fuera de ruta pactada', price: '1.20', unit: 'Km' },
     { id: 4, name: 'Servicio Urgente', description: 'Suplemento por entrega 24h', price: '150.00', unit: 'Servicio' },
   ])
 
-  // Lifted state for vehicles (Fleet)
-  const [vehicles, setVehicles] = usePersistentState('vehicles', [
+  // Lifted state for vehicles (Fleet) — fuente de verdad: Supabase
+  const [vehicles, setVehicles] = useState([
     { id: 'V-8921-GZ', model: 'Volvo FH16', assignedDriverId: 1, status: 'En Ruta', location: 'A-6 km 45, Madrid', fuel: '78%', maintenance: 'OK', documents: [] },
     { id: 'B-1234-XY', model: 'Scania R500', assignedDriverId: 2, status: 'Disponible', location: 'Base Central', fuel: '100%', maintenance: 'OK', documents: [] },
     { id: 'V-9999-BB', model: 'Iveco S-Way', assignedDriverId: 4, status: 'En Ruta', location: 'AP-7, Valencia', fuel: '62%', maintenance: 'OK', documents: [] },
   ])
 
-  // Lifted state for fuel logs
-  const [fuelLogs, setFuelLogs] = usePersistentState('fuelLogs', [])
+  // Lifted state for fuel logs — fuente de verdad: Supabase
+  const [fuelLogs, setFuelLogs] = useState([])
   const [routes, setRoutes] = useState([])
   const [routeKnowledge, setRouteKnowledge] = useState({}) // { masterByRoute: {routeId: {...}}, byDriver: {driverId: {...}} }
   
-  // Default COD configuration
-  const [defaultCodFee, setDefaultCodFee] = usePersistentState('defaultCodFee', '3.00')
+  // Default COD configuration — fuente de verdad: Supabase settings
+  const [defaultCodFee, setDefaultCodFee] = useState('3.00')
 
-  // GPS Interval for driver tracking (in minutes)
-  const [gpsIntervalMinutes, setGpsIntervalMinutes] = usePersistentState('gpsIntervalMinutes', 15)
+  // GPS Interval for driver tracking (in minutes) — fuente de verdad: Supabase settings
+  const [gpsIntervalMinutes, setGpsIntervalMinutes] = useState(15)
 
-  // Driver Alerts (configurable notifications for drivers)
-  const [driverAlerts, setDriverAlerts] = usePersistentState('driverAlerts', [
+  // Driver Alerts (configurable notifications for drivers) — fuente de verdad: Supabase settings
+  const [driverAlerts, setDriverAlerts] = useState([
     { id: 'monday_vehicle_check', title: '🔧 Revisión Semanal del Vehículo', message: '¡Buenos días! Es lunes. Antes de salir a ruta, confirma que has revisado los niveles de tu furgoneta:\n\n• Aceite del motor\n• Líquido refrigerante\n• Líquido de frenos\n• Presión de neumáticos\n• Luces y intermitentes', confirmText: '✅ Confirmo que he revisado los niveles', icon: '🚐', dayOfWeek: 1, enabled: true }
   ])
 
   // Driver Alert acknowledgements history
   const [alertAcknowledgements, setAlertAcknowledgements] = useState([])
 
-  // Family Order for articles
-  const [familyOrder, setFamilyOrder] = usePersistentState('familyOrder', [])
+  // Family Order for articles — fuente de verdad: Supabase settings
+  const [familyOrder, setFamilyOrder] = useState([])
 
-  // Driver Manual Order
-  const [driverOrder, setDriverOrder] = usePersistentState('driverOrder', [])
+  // Driver Manual Order — fuente de verdad: Supabase settings
+  const [driverOrder, setDriverOrder] = useState([])
 
-  // Driver name rendering preference ('both', 'name', 'alias')
-  const [driverNamePreference, setDriverNamePreference] = usePersistentState('driverNamePreference', 'both')
+  // Driver name rendering preference ('both', 'name', 'alias') — fuente de verdad: Supabase settings
+  const [driverNamePreference, setDriverNamePreference] = useState('both')
 
-  // Coverage Zones (Baremo 1 & 2)
-  const [coverageZones, setCoverageZones] = usePersistentState('coverageZones', [
+  // Coverage Zones (Baremo 1 & 2) — fuente de verdad: Supabase coverage_zones
+  const [coverageZones, setCoverageZones] = useState([
     ...(BAREMO_1_PUEBLOS || []), 
     ...(BAREMO_2_PUEBLOS || [])
   ])
@@ -271,6 +279,8 @@ function App() {
   const shipmentsRef = useRef(shipments);
   const driversRef = useRef(drivers);
   const clientsRef = useRef(clients);
+  // Guard to ensure initStorageBuckets only runs once per app session
+  const bucketsInitializedRef = useRef(false);
 
   useEffect(() => { shipmentsRef.current = shipments; }, [shipments]);
   useEffect(() => { driversRef.current = drivers; }, [drivers]);
@@ -669,8 +679,11 @@ function App() {
         return;
     }
 
-    // Non-blocking: init storage buckets in parallel (don't block data loading)
-    initStorageBuckets().catch(e => console.warn('initStorageBuckets background error:', e));
+    // Non-blocking: init storage buckets only once per app session
+    if (!bucketsInitializedRef.current) {
+      bucketsInitializedRef.current = true;
+      initStorageBuckets().catch(e => console.warn('initStorageBuckets background error:', e));
+    }
 
     let retryCount = 0;
     const MAX_RETRIES = 3;
@@ -1261,6 +1274,37 @@ function App() {
               setCurrentDriverId(driverInfo.id);
               setCurrentClientId(null);
               return true;
+            } else {
+              console.log('[LegacyLogin] Auth failed but legacy RPC succeeded. Sincronizando contraseña en Auth...');
+              try {
+                const res = await supabase.functions.invoke('create-auth-user', {
+                  body: {
+                    email: driverInfo.email,
+                    password: password,
+                    role: 'driver',
+                    linked_id: String(driverInfo.id),
+                    display_name: driverInfo.name || driverInfo.username,
+                  }
+                });
+                
+                if (!res.error) {
+                  console.log('[LegacyLogin] Contraseña sincronizada en Auth ✅. Reintentando signIn...');
+                  const { data: retryAuthData, error: retryAuthErr } = await supabase.auth.signInWithPassword({
+                    email: driverInfo.email,
+                    password: password,
+                  });
+                  if (!retryAuthErr && retryAuthData?.user) {
+                    console.log('[LegacyLogin] Driver auth session established after sync ✅');
+                    setIsAuthenticated(true);
+                    setUserRole(role);
+                    setCurrentDriverId(driverInfo.id);
+                    setCurrentClientId(null);
+                    return true;
+                  }
+                }
+              } catch (syncErr) {
+                console.warn('[LegacyLogin] Failed to sync auth password:', syncErr);
+              }
             }
           }
           
@@ -1277,8 +1321,11 @@ function App() {
       }
 
       // Último fallback: caché local
+      const normalize = (val) => String(val || '').toLowerCase().trim();
+      const normInputUser = normalize(username);
+
       const driverFound = drivers.find(
-        d => d.username === username && d.password === password
+        d => (normalize(d.username) === normInputUser || normalize(d.email) === normInputUser) && d.password === password
       );
       if (driverFound) {
         if (driverFound.isActive === false) {
@@ -1309,8 +1356,11 @@ function App() {
         }
       }
       
+      const normalize = (val) => String(val || '').toLowerCase().trim();
+      const normInputUser = normalize(username);
+
       const client = currentClients.find(c => 
-        (c.username === username || c.email === username || (c.name && c.name.toLowerCase().includes(username.toLowerCase()))) 
+        (normalize(c.username) === normInputUser || normalize(c.email) === normInputUser || normalize(c.name).includes(normInputUser)) 
         && c.password === password
       );
       if (client) {
@@ -1433,8 +1483,8 @@ function App() {
     try {
       const { data, error } = await supabase.from('drivers').insert([{ 
         id: newDriver.id, 
-        username: newDriver.username, 
-        password: newDriver.password, 
+        username: newDriver.username?.trim() || null, 
+        password: newDriver.password || null, 
         data: newDriver 
       }]).select();
       
@@ -1561,6 +1611,7 @@ function App() {
     const previousDriver = driversRef.current.find(d => String(d.id) === String(driverId));
     if (!previousDriver) {
       console.error('[UpdateDriver] Conductor no encontrado en estado:', driverId);
+      alert('Error: Conductor no encontrado. Recarga la página e inténtalo de nuevo.');
       return;
     }
 
@@ -1574,9 +1625,16 @@ function App() {
     console.log('[UpdateDriver] Guardando conductor', driverId, '| isTestMode:', mergedData.isTestMode);
 
     try {
+      // Verificar sesión Auth activa antes de intentar la operación
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Tu sesión ha caducado. Por favor, recarga la página y vuelve a iniciar sesión.');
+        return;
+      }
+
       const { data, error } = await supabase.from('drivers').update({ 
-        username: mergedData.username, 
-        password: mergedData.password, 
+        username: mergedData.username?.trim() || null, 
+        password: mergedData.password || null, 
         data: mergedData 
       }).eq('id', driverId).select();
       if (error) throw error;
@@ -1617,7 +1675,11 @@ function App() {
           console.warn('[UpdateDriver] No se pudo crear cuenta Auth:', authErr);
         }
       }
-    } catch (e) { alert('Error al actualizar transportista'); console.error(e); }
+    } catch (e) {
+      const msg = e?.message || e?.details || String(e);
+      console.error('[UpdateDriver] Error completo:', e);
+      alert(`Error al actualizar transportista:\n${msg}`);
+    }
   }
 
   const handleAssignDriver = async (shipmentId, driverId, scheduledDate = null) => {
@@ -2669,7 +2731,8 @@ function App() {
 
   // --- NUEVOS ESTADOS PARA COPIA DE SEGURIDAD (Movid@s tras TODAS las declaraciones de estado) ---
   const [backupDirHandle, setBackupDirHandle] = useState(null)
-  const [autoBackupInterval, setAutoBackupInterval] = usePersistentState('autoBackupInterval', '0') // '0' = desactivado, '15', '60', '360', '1440' (minutos)
+  // autoBackupInterval y lastBackupTime son preferencias LOCALES de UI → sí usan localStorage
+  const [autoBackupInterval, setAutoBackupInterval] = usePersistentState('autoBackupInterval', '0') // '0' = desactivado
   const [lastBackupTime, setLastBackupTime] = usePersistentState('lastBackupTime', null)
   const [backupStatus, setBackupStatus] = useState('idle') // 'idle', 'success', 'error'
 
@@ -2984,7 +3047,7 @@ function App() {
                     </div>
                 )}
       {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} driverNamePreference={driverNamePreference} />}
-      {currentView === 'shipments' && <Shipments shipments={visibleShipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} />}
+      {currentView === 'shipments' && <Shipments shipments={visibleShipments} allShipments={shipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} />}
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
       {currentView === 'maintenance-history' && <MaintenanceHistory vehicles={vehicles} onUpdateVehicle={handleUpdateVehicle} onNavigateToFleet={() => setCurrentView('fleet')} />}
       {currentView === 'fuel' && <FuelManagement fuelLogs={fuelLogs} onAddFuelLog={handleAddFuelLog} drivers={drivers} shipments={visibleShipments} />}
