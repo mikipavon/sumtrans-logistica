@@ -55,6 +55,12 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
     }, [driver, isOpen]);
 
     const handleSave = () => {
+        // Supabase Auth exige 6 caracteres. Con menos, la cuenta de acceso no
+        // se crea y el conductor entra en la app pero lo ve todo vacío.
+        if (formData.password && formData.password.length < 6) {
+            alert('La contraseña debe tener al menos 6 caracteres. Con menos, el conductor no podrá acceder a sus datos.');
+            return;
+        }
         if (onUpdateDriver) {
             onUpdateDriver(driver.id, formData);
         }
@@ -298,8 +304,9 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                             type={showPassword ? "text" : "password"}
                                             value={formData.password}
                                             onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                                            minLength={6}
                                             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-10"
-                                            placeholder="Contraseña"
+                                            placeholder="Contraseña (mínimo 6 caracteres)"
                                         />
                                         <button
                                             type="button"

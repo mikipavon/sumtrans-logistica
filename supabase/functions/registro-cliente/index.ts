@@ -57,37 +57,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<voi
   }
 }
 
-// ── HTML del email de bienvenida (cliente EXISTENTE → acceso inmediato) ──
-function emailAccesoInmediato(nombre: string, email: string, password: string): string {
-  return `
-<!DOCTYPE html>
-<html lang="es">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Arial,sans-serif">
-  <div style="max-width:600px;margin:40px auto;background:#fff;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10)">
-    <!-- Body -->
-    <div style="padding:40px 36px">
-      <p style="color:#1e293b;font-size:15px;line-height:1.7;margin:0 0 8px">Estimado/a <strong>${nombre}</strong>,</p>
-      <p style="color:#475569;font-size:15px;line-height:1.7;margin:0 0 24px">
-        Su solicitud de alta ha sido procesada. Como ya es cliente de SUM Transportes,
-        tiene acceso inmediato a su portal personal de clientes.
-      </p>
-      <!-- Credenciales -->
-      <div style="background:#f8fafc;border-left:4px solid #2563eb;border-radius:4px;padding:20px 24px;margin-bottom:28px">
-        <p style="color:#1e3a5f;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin:0 0 14px">Credenciales de acceso al portal</p>
-        <table style="border-collapse:collapse;width:100%">
-          <tr><td style="color:#64748b;font-size:13px;padding:4px 0;width:100px">Usuario:</td><td style="color:#1e293b;font-size:14px;font-weight:600">${email}</td></tr>
-          <tr><td style="color:#64748b;font-size:13px;padding:4px 0">Contraseña:</td><td style="color:#1e293b;font-size:14px;font-weight:600">${password}</td></tr>
-        </table>
-      </div>
-      <!-- CTA -->
-    </div>
-  </div>
-</body>
-</html>`
-}
-
-// ── HTML del email de solicitud recibida (cliente NUEVO → pendiente de aprobación) ──
+// ── HTML del email de solicitud recibida (todo registro queda pendiente) ──
 function emailSolicitudRecibida(nombre: string): string {
   return `
 <!DOCTYPE html>
@@ -127,17 +97,18 @@ function emailSolicitudRecibida(nombre: string): string {
 
 // ── HTML del email de aviso al admin ──
 function emailAvisoAdmin(
-  tipo: 'existente' | 'nuevo',
+  tipo: 'duplicado' | 'nuevo',
   nombre: string,
   cif: string,
   email: string,
   telefono: string,
-  ciudad: string
+  ciudad: string,
+  duplicadoDeNombre?: string
 ): string {
-  const color = tipo === 'existente' ? '#16a34a' : '#d97706'
-  const emoji = tipo === 'existente' ? '✅' : '🆕'
-  const titulo = tipo === 'existente'
-    ? 'Cliente EXISTENTE — Credenciales actualizadas automáticamente'
+  const color = tipo === 'duplicado' ? '#dc2626' : '#d97706'
+  const emoji = tipo === 'duplicado' ? '⚠️' : '🆕'
+  const titulo = tipo === 'duplicado'
+    ? 'ATENCIÓN: el CIF ya está en cartera — Pendiente de tu aprobación'
     : 'Cliente NUEVO — Pendiente de tu aprobación'
 
   return `
@@ -158,12 +129,20 @@ function emailAvisoAdmin(
         <tr style="background:#f8fafc"><td style="padding:8px 12px;color:#64748b;font-size:13px">Teléfono:</td><td style="padding:8px 12px;color:#1e293b;font-size:13px">${telefono || '—'}</td></tr>
         <tr><td style="padding:8px 0;color:#64748b;font-size:13px">Ciudad:</td><td style="padding:8px 0;color:#1e293b;font-size:13px">${ciudad || '—'}</td></tr>
       </table>
-      ${tipo === 'nuevo' ? `
+      ${tipo === 'duplicado' ? `
+      <div style="margin-top:20px;background:#fef2f2;border-left:4px solid #dc2626;border-radius:4px;padding:16px 20px">
+        <p style="color:#991b1b;font-size:13px;margin:0 0 6px;font-weight:700">Este CIF ya pertenece a un cliente en cartera:</p>
+        <p style="color:#7f1d1d;font-size:14px;margin:0 0 10px">${duplicadoDeNombre || '(cliente sin nombre)'}</p>
+        <p style="color:#991b1b;font-size:12px;margin:0;line-height:1.5">
+          No se ha modificado nada de la ficha existente ni se ha dado acceso.
+          Verifica que quien se registra pertenece realmente a esa empresa antes de aprobar.
+        </p>
+      </div>` : ''}
       <div style="margin-top:24px;text-align:center">
         <a href="${APP_URL}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:700;font-size:14px">
           Ir a la App → Validar Cliente
         </a>
-      </div>` : ''}
+      </div>
     </div>
   </div>
 </body>
@@ -230,200 +209,135 @@ serve(async (req: Request) => {
     // ── 3. Conectar a Supabase con service role (sin restricciones RLS) ──
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-    // ── 4. Buscar cliente existente por CIF ──
-    let existingClient: Record<string, unknown> | null = null
+    // ── 4. Buscar si el CIF ya corresponde a un cliente en cartera ──
+    // ⚠️ SOLO INFORMATIVO. Este endpoint es público (lo llama el formulario de
+    // la web, que no tiene sesión), así que NUNCA debe modificar la ficha de un
+    // cliente existente ni concederle acceso: un CIF es información pública y
+    // cualquiera podría suplantar a un cliente real. Todo registro entra como
+    // 'pending' y lo aprueba el admin desde la pantalla de Validar Clientes.
+    let duplicadoDe: { id: unknown; nombre: string } | null = null
 
     if (cif) {
-      // Buscar en la columna data JSONB por cif
       const { data: byJsonbCif } = await supabase
         .from('clients')
-        .select('*')
+        .select('id, name, data')
         .filter('data->>cif', 'ilike', cif)
-        .limit(5)
+        .limit(1)
 
-      if (byJsonbCif && byJsonbCif.length > 0) {
-        // Verificar también el nombre aproximadamente
-        const normFormName = normalize(nombreComercial || razonSocial)
-        const found = byJsonbCif.find((row: Record<string, unknown>) => {
-          const dbName = normalize((row.name as string) || (row.data as Record<string, unknown>)?.name as string || '')
-          // Si el CIF coincide exactamente ya es suficiente (el nombre es confirmación)
-          // Pero si el nombre es completamente distinto, igual lo aceptamos (CIF es el ID único)
-          return dbName.length > 0 || normFormName.length > 0
-        })
-        if (found) existingClient = found as Record<string, unknown>
+      const match = byJsonbCif?.[0] as Record<string, unknown> | undefined
+      if (match) {
+        duplicadoDe = {
+          id: match.id,
+          nombre: (match.name as string)
+            || ((match.data as Record<string, unknown>)?.name as string)
+            || '(sin nombre)',
+        }
+        console.log(`[registro-cliente] CIF ${cif} ya existe → cliente ${match.id}. Se marca como posible duplicado.`)
       }
     }
 
-    // ── 5. Crear o actualizar cliente ──
+    // ── 5. Crear la solicitud SIEMPRE como pendiente ──
+    // Nunca se toca una ficha existente ni se concede acceso automático:
+    // el admin aprueba desde la pantalla de Validar Clientes.
     const now = new Date().toISOString()
 
-    if (existingClient) {
-      // ─── CLIENTE EXISTENTE: actualizar credenciales y campos vacíos ───
-      const existingData = (existingClient.data as Record<string, unknown>) || {}
+    const newClientData: Record<string, unknown> = {
+      name: nombreComercial,
+      legalName: razonSocial,
+      cif: cif,
+      address: direccion,
+      city: poblacion,
+      zip: cp,
+      phone: telefono,
+      mobile: telefono,
+      email: email,
+      contactPerson: personaContacto,
+      username: email,
+      password: password,
+      type: 'Remitente',
+      billingType: 'Clientes Habituales',
+      tariffType: 'General',
+      status: 'pending',
+      createdFrom: 'web-registro',
+      createdAt: now,
+      lastInteraction: new Date().toLocaleDateString('es-ES'),
+      sector: sector,
+      color: '#3b82f6',
+      priority: 'normal',
+      requireSignature: true,
+      requireName: true,
+      // Pistas para el admin si el CIF ya estaba en cartera
+      ...(duplicadoDe ? {
+        possibleDuplicateOf: duplicadoDe.id,
+        possibleDuplicateName: duplicadoDe.nombre,
+      } : {}),
+    }
 
-      // Solo rellenar campos que están vacíos en la ficha existente
-      const updatedData: Record<string, unknown> = {
-        ...existingData,
-        // Credenciales → siempre se escriben (el cliente las ha elegido ahora)
-        username: email,
-        password: password,
-        email: existingData.email || email,
-        // Campos vacíos → rellenar con los del formulario
-        phone: existingData.phone || telefono,
-        mobile: existingData.mobile || telefono,
-        contactPerson: existingData.contactPerson || personaContacto,
-        address: existingData.address || direccion,
-        city: existingData.city || poblacion,
-        zip: existingData.zip || cp,
-        legalName: existingData.legalName || razonSocial,
-        // Marcar como activo
-        status: 'active',
-        portalRegisteredAt: now,
-      }
+    const { data: inserted, error: insertError } = await supabase
+      .from('clients')
+      .insert([{ name: nombreComercial, data: newClientData }])
+      .select('id')
+      .single()
 
-      const { error: updateError } = await supabase
-        .from('clients')
-        .update({ data: updatedData })
-        .eq('id', existingClient.id)
-
-      if (updateError) {
-        console.error('[registro-cliente] Error actualizando cliente:', updateError)
-        return new Response(JSON.stringify({ error: 'Error interno al actualizar la ficha.' }), {
-          status: 500,
-          headers: { ...CORS, 'Content-Type': 'application/json' },
-        })
-      }
-
-      // ── Crear cuenta Supabase Auth para el cliente existente ──
-      try {
-        if (password.length >= 6) {
-          const { error: authError } = await supabase.auth.admin.createUser({
-            email: email,
-            password: password,
-            email_confirm: true,
-            user_metadata: {
-              role: 'client',
-              linked_id: String(existingClient.id),
-              display_name: nombreComercial,
-            },
-          })
-          if (authError && !authError.message?.includes('already')) {
-            console.warn('[registro-cliente] Error creando Auth user (existente):', authError.message)
-          } else {
-            console.log(`[registro-cliente] Auth user creado/existente para ${email}`)
-          }
-        }
-      } catch (authErr) {
-        console.warn('[registro-cliente] Auth creation error:', authErr)
-      }
-
-      // Emails: acceso inmediato al cliente + aviso a Miguel
-      // NOTA: ya no enviamos la contraseña en el email por seguridad
-      await Promise.all([
-        sendEmail(
-          email,
-          '¡Ya tienes acceso al Portal de Clientes de Sumtrans! 🚛',
-          emailAccesoInmediato(nombreComercial, email, '(la contraseña que elegiste al registrarte)')
-        ),
-        sendEmail(
-          ADMIN_EMAIL,
-          `✅ Registro web: ${nombreComercial} (cliente existente, actualizado)`,
-          emailAvisoAdmin('existente', nombreComercial, cif, email, telefono, poblacion)
-        ),
-      ])
-
-      console.log(`[registro-cliente] Cliente existente actualizado: ${existingClient.id}`)
-      return new Response(JSON.stringify({ ok: true, tipo: 'existente', nombre: nombreComercial }), {
-        status: 200,
-        headers: { ...CORS, 'Content-Type': 'application/json' },
-      })
-
-    } else {
-      // ─── CLIENTE NUEVO: crear ficha con status pending ───
-      const newClientData: Record<string, unknown> = {
-        name: nombreComercial,
-        legalName: razonSocial,
-        cif: cif,
-        address: direccion,
-        city: poblacion,
-        zip: cp,
-        phone: telefono,
-        mobile: telefono,
-        email: email,
-        contactPerson: personaContacto,
-        username: email,
-        password: password,
-        type: 'Remitente',
-        billingType: 'Clientes Habituales',
-        tariffType: 'General',
-        status: 'pending',
-        createdFrom: 'web-registro',
-        createdAt: now,
-        lastInteraction: new Date().toLocaleDateString('es-ES'),
-        sector: sector,
-        color: '#3b82f6',
-        priority: 'normal',
-        requireSignature: true,
-        requireName: true,
-      }
-
-      const { data: inserted, error: insertError } = await supabase
-        .from('clients')
-        .insert([{ name: nombreComercial, data: newClientData }])
-        .select('id')
-        .single()
-
-      if (insertError) {
-        console.error('[registro-cliente] Error creando cliente:', insertError)
-        return new Response(JSON.stringify({ error: 'Error interno al crear la solicitud.' }), {
-          status: 500,
-          headers: { ...CORS, 'Content-Type': 'application/json' },
-        })
-      }
-
-      // ── Crear cuenta Supabase Auth para el nuevo cliente (desactivada hasta aprobación) ──
-      try {
-        if (password.length >= 6 && inserted?.id) {
-          const { error: authError } = await supabase.auth.admin.createUser({
-            email: email,
-            password: password,
-            email_confirm: false, // No confirmar hasta que el admin apruebe
-            user_metadata: {
-              role: 'client',
-              linked_id: String(inserted.id),
-              display_name: nombreComercial,
-            },
-          })
-          if (authError && !authError.message?.includes('already')) {
-            console.warn('[registro-cliente] Error creando Auth user (nuevo):', authError.message)
-          } else {
-            console.log(`[registro-cliente] Auth user creado para nuevo cliente ${email}`)
-          }
-        }
-      } catch (authErr) {
-        console.warn('[registro-cliente] Auth creation error:', authErr)
-      }
-
-      // Emails: aviso de espera al cliente + aviso a Miguel
-      await Promise.all([
-        sendEmail(
-          email,
-          'Solicitud de alta recibida — Sumtrans Transportes',
-          emailSolicitudRecibida(nombreComercial)
-        ),
-        sendEmail(
-          ADMIN_EMAIL,
-          `🆕 Nuevo cliente web: ${nombreComercial} (pendiente de aprobación)`,
-          emailAvisoAdmin('nuevo', nombreComercial, cif, email, telefono, poblacion)
-        ),
-      ])
-
-      console.log(`[registro-cliente] Nuevo cliente creado: ${inserted?.id}`)
-      return new Response(JSON.stringify({ ok: true, tipo: 'nuevo', nombre: nombreComercial }), {
-        status: 200,
+    if (insertError) {
+      console.error('[registro-cliente] Error creando cliente:', insertError)
+      return new Response(JSON.stringify({ error: 'Error interno al crear la solicitud.' }), {
+        status: 500,
         headers: { ...CORS, 'Content-Type': 'application/json' },
       })
     }
+
+    // ── Crear cuenta Supabase Auth SIN confirmar (no puede entrar aún) ──
+    // Si el email ya tiene cuenta, createUser falla con "already registered" y
+    // se ignora a propósito: así un registro web nunca puede pisar la
+    // contraseña de una cuenta que ya existe.
+    try {
+      if (password.length >= 6 && inserted?.id) {
+        const { error: authError } = await supabase.auth.admin.createUser({
+          email: email,
+          password: password,
+          email_confirm: false, // No confirmar hasta que el admin apruebe
+          user_metadata: {
+            role: 'client',
+            linked_id: String(inserted.id),
+            display_name: nombreComercial,
+          },
+        })
+        if (authError && !authError.message?.includes('already')) {
+          console.warn('[registro-cliente] Error creando Auth user:', authError.message)
+        } else {
+          console.log(`[registro-cliente] Auth user (sin confirmar) para ${email}`)
+        }
+      }
+    } catch (authErr) {
+      console.warn('[registro-cliente] Auth creation error:', authErr)
+    }
+
+    // Emails: aviso de espera al cliente + aviso a Miguel
+    await Promise.all([
+      sendEmail(
+        email,
+        'Solicitud de alta recibida — Sumtrans Transportes',
+        emailSolicitudRecibida(nombreComercial)
+      ),
+      sendEmail(
+        ADMIN_EMAIL,
+        duplicadoDe
+          ? `⚠️ Registro web: ${nombreComercial} — CIF YA EN CARTERA, revisar`
+          : `🆕 Nuevo cliente web: ${nombreComercial} (pendiente de aprobación)`,
+        emailAvisoAdmin(
+          duplicadoDe ? 'duplicado' : 'nuevo',
+          nombreComercial, cif, email, telefono, poblacion,
+          duplicadoDe?.nombre
+        )
+      ),
+    ])
+
+    console.log(`[registro-cliente] Solicitud creada: ${inserted?.id}${duplicadoDe ? ` (posible duplicado de ${duplicadoDe.id})` : ''}`)
+    return new Response(JSON.stringify({ ok: true, tipo: 'pendiente', nombre: nombreComercial }), {
+      status: 200,
+      headers: { ...CORS, 'Content-Type': 'application/json' },
+    })
 
   } catch (e) {
     console.error('[registro-cliente] Error inesperado:', e)

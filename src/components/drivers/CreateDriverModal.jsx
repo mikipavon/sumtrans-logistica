@@ -118,12 +118,17 @@ export default function CreateDriverModal({ isOpen, onClose, onSave }) {
                             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                             <input
                                 type="password"
-                                placeholder="Contraseña"
+                                placeholder="Contraseña (mínimo 6 caracteres)"
                                 required
+                                minLength={6}
+                                title="La contraseña debe tener al menos 6 caracteres"
                                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400 text-sm"
                                 value={formData.password}
                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                             />
+                            <p className="text-[10px] text-slate-400 mt-1 pl-1">
+                                El conductor inicia sesión con su <strong>email</strong>. Sin email o con menos de 6 caracteres no tendrá acceso.
+                            </p>
                         </div>
 
                         <div className="pt-2">

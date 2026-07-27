@@ -1502,6 +1502,58 @@ function App() {
     }
   };
 
+  // ── Crear/actualizar la cuenta Supabase Auth de un conductor ──
+  // Sin cuenta Auth no hay sesión, y sin sesión las políticas RLS bloquean
+  // TODAS las consultas: el conductor entra y lo ve todo en blanco. Por eso
+  // cualquier fallo aquí se avisa en pantalla en vez de quedarse en la consola.
+  const syncDriverAuthAccount = async ({ email, password, driverId, displayName }) => {
+    const motivo = !email
+      ? 'no tiene email'
+      : (!password || password.length < 6)
+        ? 'la contraseña tiene menos de 6 caracteres'
+        : null;
+
+    if (motivo) {
+      alert(
+        `⚠️ El conductor se ha guardado, pero NO tendrá acceso a la app porque ${motivo}.\n\n` +
+        `Sin cuenta de acceso podrá iniciar sesión pero lo verá todo vacío.\n\n` +
+        `Edita su ficha y añade email + contraseña de 6 caracteres o más.`
+      );
+      return false;
+    }
+
+    try {
+      const res = await supabase.functions.invoke('create-auth-user', {
+        body: {
+          email,
+          password,
+          role: 'driver',
+          linked_id: String(driverId),
+          display_name: displayName || email,
+        }
+      });
+
+      if (res.error) {
+        console.warn('[DriverAuth]', res.error.message);
+        alert(
+          `⚠️ El conductor se ha guardado, pero no se pudo crear su cuenta de acceso:\n\n${res.error.message}\n\n` +
+          `Hasta que se resuelva, entrará en la app pero lo verá todo vacío.`
+        );
+        return false;
+      }
+
+      console.log('[DriverAuth] Cuenta Auth creada/actualizada ✅');
+      return true;
+    } catch (authErr) {
+      console.error('[DriverAuth] Error inesperado:', authErr);
+      alert(
+        `⚠️ El conductor se ha guardado, pero no se pudo crear su cuenta de acceso:\n\n${authErr.message}\n\n` +
+        `Hasta que se resuelva, entrará en la app pero lo verá todo vacío.`
+      );
+      return false;
+    }
+  };
+
   const handleAddDriver = async (newDriver) => {
     try {
       const { data, error } = await supabase.from('drivers').insert([{ 
@@ -1518,23 +1570,12 @@ function App() {
       }
       
       // ── Crear cuenta Supabase Auth automáticamente ──
-      if (newDriver.email && newDriver.password && newDriver.password.length >= 4) {
-        try {
-          const res = await supabase.functions.invoke('create-auth-user', {
-            body: {
-              email: newDriver.email,
-              password: newDriver.password,
-              role: 'driver',
-              linked_id: String(data[0].id),
-              display_name: newDriver.name || newDriver.username,
-            }
-          });
-          if (res.error) console.warn('[AddDriver] Auth:', res.error.message);
-          else console.log('[AddDriver] Cuenta Auth creada ✅');
-        } catch (authErr) {
-          console.warn('[AddDriver] No se pudo crear cuenta Auth:', authErr);
-        }
-      }
+      await syncDriverAuthAccount({
+        email: newDriver.email,
+        password: newDriver.password,
+        driverId: data[0].id,
+        displayName: newDriver.name || newDriver.username,
+      });
 
       if (data && data[0]) setDrivers(prev => [...prev, { ...data[0].data, id: data[0].id, username: data[0].username, password: data[0].password }])
       return true
@@ -1680,24 +1721,13 @@ function App() {
         await handleDeactivateTestMode(driverId);
       }
 
-      // ── Crear/actualizar cuenta Supabase Auth si tiene email ──
-      if (mergedData.email && mergedData.password && mergedData.password.length >= 4) {
-        try {
-          const res = await supabase.functions.invoke('create-auth-user', {
-            body: {
-              email: mergedData.email,
-              password: mergedData.password,
-              role: 'driver',
-              linked_id: String(driverId),
-              display_name: mergedData.name || mergedData.username,
-            }
-          });
-          if (res.error) console.warn('[UpdateDriver] Auth:', res.error.message);
-          else console.log('[UpdateDriver] Cuenta Auth creada/actualizada ✅');
-        } catch (authErr) {
-          console.warn('[UpdateDriver] No se pudo crear cuenta Auth:', authErr);
-        }
-      }
+      // ── Crear/actualizar cuenta Supabase Auth ──
+      await syncDriverAuthAccount({
+        email: mergedData.email,
+        password: mergedData.password,
+        driverId,
+        displayName: mergedData.name || mergedData.username,
+      });
     } catch (e) {
       const msg = e?.message || e?.details || String(e);
       console.error('[UpdateDriver] Error completo:', e);

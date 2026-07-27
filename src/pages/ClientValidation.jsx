@@ -7,13 +7,18 @@ import { supabase } from '../lib/supabase';
 async function sendAccessEmail(clientId) {
     try {
         const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) {
+            alert('Tu sesión ha caducado. Vuelve a iniciar sesión para poder activar clientes.');
+            return;
+        }
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
         const res = await fetch(`${supabaseUrl}/functions/v1/confirmar-acceso`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${supabaseKey}`,
+                // Token de la sesión, no la anon key: la función comprueba que
+                // quien llama es admin antes de dar acceso al cliente.
+                'Authorization': `Bearer ${session.access_token}`,
             },
             body: JSON.stringify({ clientId }),
         });
@@ -22,6 +27,7 @@ async function sendAccessEmail(clientId) {
             console.log(`[Email] Email de acceso enviado a: ${result.emailSentTo}`);
         } else {
             console.warn('[Email] No se pudo enviar el email de acceso:', result.error);
+            alert(`El cliente se ha aprobado, pero no se le pudo enviar el email de acceso:\n\n${result.error}`);
         }
     } catch (e) {
         console.warn('[Email] Error al enviar email de acceso:', e);

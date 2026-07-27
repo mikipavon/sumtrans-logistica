@@ -32,6 +32,46 @@ serve(async (req: Request) => {
   }
 
   try {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+
+    // ── Autorización: SOLO un admin puede activar una cuenta de cliente ──
+    // Esta función confirma la cuenta Auth de un cliente, es decir, le concede
+    // el acceso al portal. Sin esta comprobación cualquiera podría aprobar a
+    // cualquier cliente pendiente enviando su id, saltándose la validación.
+    const authHeader = req.headers.get('Authorization') || ''
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim()
+
+    if (!token) {
+      return new Response(JSON.stringify({ error: 'No autorizado' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const { data: caller, error: callerError } = await supabase.auth.getUser(token)
+
+    if (callerError || !caller?.user) {
+      console.warn('[confirmar-acceso] Token inválido o anon key:', callerError?.message)
+      return new Response(JSON.stringify({ error: 'No autorizado' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const { data: callerProfile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', caller.user.id)
+      .single()
+
+    if (callerProfile?.role !== 'admin') {
+      console.warn(`[confirmar-acceso] Acceso denegado a ${caller.user.email} (rol: ${callerProfile?.role ?? 'ninguno'})`)
+      return new Response(JSON.stringify({ error: 'Solo un administrador puede activar clientes' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     const { clientId } = await req.json()
 
     if (!clientId) {
@@ -42,7 +82,6 @@ serve(async (req: Request) => {
     }
 
     // Obtener datos del cliente
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     const { data: clientRow, error } = await supabase
       .from('clients')
       .select('*')
