@@ -6,6 +6,7 @@ import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import CityAutocomplete from '../CityAutocomplete';
+import { supabase } from '../../lib/supabase';
 
 export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, clients, allPoblaciones, prefillData, onAddClient, onUpdateClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
     const [formData, setFormData] = useState({
@@ -50,6 +51,46 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
     // ── Ref para el input del destinatario (para auto-focus en creación múltiple) ──
     const destinationInputRef = useRef(null);
+
+    // ── Números de albarán ya emitidos en esta sesión del modal ──
+    // En Envío Múltiple el modal no se cierra entre albaranes, y la prop
+    // allShipments tarda en actualizarse (onSave → upsert en Supabase → setShipments
+    // → re-render). Si se guardan dos albaranes seguidos rápido, el segundo
+    // recalcularía el MISMO número correlativo y el upsert pisaría al primero.
+    // Guardamos aquí el último número emitido por serie para que no se repita.
+    const issuedNumbersRef = useRef({});
+
+    // ── Número más alto que hay realmente en la base de datos, por serie ──
+    // allShipments es el estado en memoria de ESTE dispositivo: no ve los
+    // albaranes que hayan creado otros mientras tanto. Se consulta una vez al
+    // abrir el modal (no en cada albarán, para no penalizar al conductor).
+    const dbMaxNumbersRef = useRef({});
+    useEffect(() => {
+        if (!isOpen) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const { data } = await supabase.from('shipments').select('id');
+                if (cancelled || !data) return;
+                const maxByPrefix = {};
+                for (const row of data) {
+                    const m = String(row.id || '').match(/^([A-Z]+)-(\d+)$/i);
+                    if (!m) continue;
+                    const key = m[1].toUpperCase();
+                    const num = parseInt(m[2], 10);
+                    if (!isNaN(num) && num < 100000 && num > (maxByPrefix[key] || 0)) {
+                        maxByPrefix[key] = num;
+                    }
+                }
+                dbMaxNumbersRef.current = maxByPrefix;
+            } catch (err) {
+                // Sin conexión: seguimos con allShipments. El peor caso es un
+                // número repetido, igual que antes de este cambio.
+                console.warn('[CreateShipment] No se pudo consultar el último nº de albarán:', err);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [isOpen]);
 
     // ── GPS silencioso: captura la ubicación del dispositivo al abrir el modal ──
     const capturedGpsRef = useRef('');
@@ -321,6 +362,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             setWeightKg(''); // Reset weight on open
             setValidationFailed(false); // Reset validation highlights
             setKeepOrigin(false); // Make sure Envío Múltiple resets by default
+            issuedNumbersRef.current = {}; // Nueva sesión → nadie ha emitido nada aún
 
             if (prefillData) {
                 // Pre-fill from Pickup (Recogida), Return or other source
@@ -957,12 +999,22 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         })();
         const prefix = isHabitual ? 'HAB' : 'SUM';
         // Calcular el siguiente número correlativo dentro de la misma serie (SUM o HAB)
-        const maxId = (allShipments || []).reduce((max, s) => {
+        const maxFromList = (allShipments || []).reduce((max, s) => {
             const sId = String(s.id || '');
             if (!sId.toUpperCase().startsWith(prefix + '-')) return max;
             const num = parseInt(sId.replace(/\D/g, ''), 10);
             return (!isNaN(num) && num < 100000 && num > max) ? num : max;
         }, 0);
+        // …combinado con lo que hay en la BD (otros dispositivos) y con lo ya
+        // emitido en esta sesión del modal (allShipments va por detrás cuando se
+        // encadenan albaranes en Envío Múltiple).
+        // El número se reserva en finalizeSubmit (al guardar de verdad), no aquí,
+        // para no dejar huecos en la numeración si se cancela el aviso de cobro.
+        const maxId = Math.max(
+            maxFromList,
+            dbMaxNumbersRef.current[prefix] || 0,
+            issuedNumbersRef.current[prefix] || 0
+        );
         const shipmentId = `${prefix}-${maxId + 1}`;
         let photoUrl = null;
 
@@ -1084,7 +1136,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                     isPendingByDefault = true;
                 }
             }
-            finalizeSubmit(shipmentData, isPendingByDefault ? 'Pending' : 'Paid');
+            await finalizeSubmit(shipmentData, isPendingByDefault ? 'Pending' : 'Paid');
         }
     };
 
@@ -1196,9 +1248,22 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             }
         }
 
-        onSave({ ...finalData, _capturedGps: capturedGpsRef.current });
+        // Reservar el número de albarán ANTES de guardar: si el usuario encadena
+        // otro en Envío Múltiple, no puede volver a salir el mismo (allShipments
+        // aún no lo refleja y el upsert pisaría al anterior).
+        const idMatch = String(finalData.id || '').match(/^([A-Z]+)-(\d+)$/i);
+        if (idMatch) {
+            const [, idPrefix, idNum] = idMatch;
+            const key = idPrefix.toUpperCase();
+            issuedNumbersRef.current[key] = Math.max(issuedNumbersRef.current[key] || 0, parseInt(idNum, 10));
+        }
+
+        // await: en Envío Múltiple el modal sigue abierto y el usuario puede
+        // encadenar el siguiente albarán. Sin esperar aquí, allShipments todavía
+        // no contiene el que se acaba de guardar.
+        await onSave({ ...finalData, _capturedGps: capturedGpsRef.current });
         setShowPaymentAlert(false);
-        
+
         if (keepOrigin) {
             setShowSuccessFeedback(true);
             setTimeout(() => setShowSuccessFeedback(false), 3000);
