@@ -1,5 +1,5 @@
 import { Search, Filter, MapPin, Building2, Calendar, Database, Lock, Edit2, Trash2, Check, X, Plus, Upload, FileSpreadsheet, Download, ChevronUp, ChevronDown, Copy } from 'lucide-react';
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import CreateClientModal from '../components/clients/CreateClientModal';
 

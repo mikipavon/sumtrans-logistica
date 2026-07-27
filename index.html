@@ -19,17 +19,32 @@
   <body style="overscroll-behavior:none">
     <div id="root"></div>
     <script>
-      // Bloquear pull-to-refresh en Android PWA
+      // Pull-to-refresh prevention for Android PWA.
+      // PRIMARY: CSS overscroll-behavior:none (on body and in index.css) handles this.
+      // FALLBACK: Minimal JS only for edge-case Android WebViews that ignore CSS.
+      // CRITICAL: We must NOT use {passive:false} on document-level touchmove,
+      // because Chrome Android blocks ALL native scrolling while waiting for
+      // non-passive touchmove handlers to execute.
       (function() {
-        var startY = 0;
+        var lastTouchY = 0;
+        var maybePrevent = false;
         document.addEventListener('touchstart', function(e) {
-          startY = e.touches[0].pageY;
+          lastTouchY = e.touches[0].pageY;
+          // Only flag for prevention if we're exactly at the top
+          maybePrevent = (window.scrollY <= 0 || document.documentElement.scrollTop <= 0);
         }, { passive: true });
-        document.addEventListener('touchmove', function(e) {
+        // Only attach non-passive listener to the BODY element (not document)
+        // and only preventDefault in the very specific pull-to-refresh scenario
+        document.body.addEventListener('touchmove', function(e) {
+          if (!maybePrevent) return;
           var y = e.touches[0].pageY;
-          // Si estamos en el top de la página y tiramos hacia abajo → bloquear
-          if (window.scrollY === 0 && y > startY && e.cancelable) {
+          var scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
+          // Only block if truly at top AND pulling down AND the event is cancelable
+          if (scrollTop <= 0 && y > lastTouchY + 5 && e.cancelable) {
             e.preventDefault();
+          } else {
+            // Once we've started scrolling, stop trying to prevent
+            maybePrevent = false;
           }
         }, { passive: false });
       })();

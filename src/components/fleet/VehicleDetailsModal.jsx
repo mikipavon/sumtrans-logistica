@@ -1,23 +1,49 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Truck, User, FileText, Upload, Download, Trash2, Shield, Cpu, AlertTriangle, CheckCircle, Clock, Wrench, Droplets, Circle, Plus, Euro, Camera, Pencil } from 'lucide-react';
+import { X, Truck, User, FileText, Upload, Download, Trash2, Shield, Cpu, AlertTriangle, CheckCircle, Clock, Wrench, Droplets, Circle, Plus, Euro, Camera, Pencil, Save } from 'lucide-react';
 import BrandLogo from './BrandLogo';
 import MaintenanceIcon, { getMaintenanceConfig } from './MaintenanceIcon';
 
-const DOC_TYPES = ['Seguro','ITV','Permiso de Circulación','Tarjeta de Transporte','Tacógrafo','Extintor / Seguridad','Otro'];
+const BRANDS = [
+    { key: 'fiat',       name: 'FIAT' },
+    { key: 'peugeot',    name: 'PEUGEOT' },
+    { key: 'hyundai',    name: 'HYUNDAI' },
+    { key: 'mercedes',   name: 'MERCEDES' },
+    { key: 'renault',    name: 'RENAULT' },
+    { key: 'volkswagen', name: 'VOLKSWAGEN' },
+    { key: 'iveco',      name: 'IVECO' },
+    { key: 'man',        name: 'MAN' },
+    { key: 'bmw',        name: 'BMW' },
+    { key: 'toyota',     name: 'TOYOTA' },
+    { key: 'ford',       name: 'FORD' },
+    { key: 'citroen',    name: 'CITROËN' },
+    { key: 'nissan',     name: 'NISSAN' },
+    { key: 'volvo',      name: 'VOLVO' },
+    { key: 'daf',        name: 'DAF' },
+    { key: 'scania',     name: 'SCANIA' },
+    { key: 'opel',       name: 'OPEL' },
+];
+
+const DOC_TYPES = ['Seguro','ITV','Ficha Técnica','Permiso de Circulación','Tarjeta de Transporte','Tacógrafo','Extintor / Seguridad','Otro'];
 
 const MAINTENANCE_TYPES = [
     { value: 'Aceite', label: 'Cambio de Aceite', icon: Droplets, color: 'text-amber-500 bg-amber-50' },
     { value: 'Correa', label: 'Correa Distribución', icon: Circle, color: 'text-red-500 bg-red-50' },
     { value: 'Ruedas', label: 'Neumáticos / Ruedas', icon: Circle, color: 'text-slate-500 bg-slate-100' },
     { value: 'Reparación', label: 'Reparación / Avería', icon: Wrench, color: 'text-red-500 bg-red-50' },
-    { value: 'Filtros', label: 'Filtros (aire, habitáculo…)', icon: Wrench, color: 'text-blue-500 bg-blue-50' },
-    { value: 'Frenos', label: 'Frenos / Pastillas', icon: Wrench, color: 'text-orange-500 bg-orange-50' },
+    { value: 'Filtro Aire', label: 'Filtro de Aire', icon: Wrench, color: 'text-sky-500 bg-sky-50' },
+    { value: 'Filtro Gasoil', label: 'Filtro de Gasoil', icon: Droplets, color: 'text-cyan-500 bg-cyan-50' },
+    { value: 'Filtro Aceite', label: 'Filtro de Aceite', icon: Droplets, color: 'text-yellow-600 bg-yellow-100' },
+    { value: 'Filtros', label: 'Otros Filtros (habitáculo…)', icon: Wrench, color: 'text-blue-500 bg-blue-50' },
+    { value: 'Frenos', label: 'Frenos (General)', icon: Wrench, color: 'text-orange-500 bg-orange-50' },
+    { value: 'Zapata Frenos', label: 'Zapata de Freno', icon: Wrench, color: 'text-orange-600 bg-orange-100' },
+    { value: 'Pastillas Delanteras', label: 'Pastillas Delanteras', icon: Wrench, color: 'text-orange-500 bg-orange-50' },
+    { value: 'Pastillas Traseras', label: 'Pastillas Traseras', icon: Wrench, color: 'text-orange-500 bg-orange-50' },
     { value: 'Revisión', label: 'Revisión General', icon: CheckCircle, color: 'text-emerald-500 bg-emerald-50' },
     { value: 'Otro', label: 'Otro', icon: Wrench, color: 'text-purple-500 bg-purple-50' },
 ];
 
 // Types that support km-based alerts
-const KM_ALERT_TYPES = ['Aceite', 'Correa', 'Ruedas', 'Filtros', 'Frenos'];
+const KM_ALERT_TYPES = ['Aceite', 'Correa', 'Ruedas', 'Filtros', 'Frenos', 'Zapata Frenos', 'Pastillas Delanteras', 'Pastillas Traseras', 'Filtro Aire', 'Filtro Gasoil', 'Filtro Aceite'];
 
 function getKmAlertStatus(log, currentOdometer) {
     if (!log.alertAtKm || !currentOdometer) return null;
@@ -55,19 +81,21 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
     // Maintenance form state
     const [showMaintForm, setShowMaintForm] = useState(false);
     const [editingLogId, setEditingLogId] = useState(null); // null = adding, id = editing
-    const [mType, setMType] = useState('Aceite');
+    const [selectedTypes, setSelectedTypes] = useState(['Aceite']);
+    const [mDetails, setMDetails] = useState({});
     const [mDate, setMDate] = useState(new Date().toISOString().split('T')[0]);
     const [mKm, setMKm] = useState('');
-    const [mCost, setMCost] = useState('');
-    const [mNotes, setMNotes] = useState('');
     const [mWorkshop, setMWorkshop] = useState('');
-    const [mNextKm, setMNextKm] = useState('');
-    const [mAlertAtKm, setMAlertAtKm] = useState('');
     const [mInvoicePhoto, setMInvoicePhoto] = useState(null);
     const invoiceInputRef = useRef(null);
 
     // Vehicle current odometer
     const [currentOdometer, setCurrentOdometer] = useState('');
+
+    // Editing brand/model
+    const [editingModel, setEditingModel] = useState(false);
+    const [modelBrand, setModelBrand] = useState('');
+    const [modelName, setModelName] = useState('');
 
     useEffect(() => {
         if (vehicle) {
@@ -76,6 +104,12 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
             setMaintenanceLogs(vehicle.maintenanceLogs || []);
             setCurrentOdometer(vehicle.currentOdometer || '');
             setActiveTab('detalles');
+            setEditingModel(false);
+            // Parse brand from model string
+            const m = vehicle.model || '';
+            const foundBrand = BRANDS.find(b => m.toUpperCase().startsWith(b.name));
+            setModelBrand(foundBrand ? foundBrand.name : '');
+            setModelName(foundBrand ? m.slice(foundBrand.name.length).trim() : m);
         }
     }, [vehicle]);
 
@@ -116,10 +150,38 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
     };
 
     const resetMaintForm = () => {
-        setMType('Aceite'); setMKm(''); setMCost(''); setMNotes(''); setMWorkshop(''); setMNextKm(''); setMAlertAtKm(''); setMInvoicePhoto(null);
+        setSelectedTypes(['Aceite']);
+        setMDetails({});
+        setMKm('');
+        setMWorkshop('');
+        setMInvoicePhoto(null);
         setMDate(new Date().toISOString().split('T')[0]);
         setEditingLogId(null);
         setShowMaintForm(false);
+    };
+
+    const handleToggleType = (type) => {
+        if (editingLogId) {
+            setSelectedTypes([type]);
+        } else {
+            if (selectedTypes.includes(type)) {
+                if (selectedTypes.length > 1) {
+                    setSelectedTypes(selectedTypes.filter(t => t !== type));
+                }
+            } else {
+                setSelectedTypes([...selectedTypes, type]);
+            }
+        }
+    };
+
+    const updateDetail = (type, field, val) => {
+        setMDetails(prev => ({
+            ...prev,
+            [type]: {
+                ...(prev[type] || { cost: '', nextKm: '', alertAtKm: '', notes: '' }),
+                [field]: val
+            }
+        }));
     };
 
     const handleAddMaintenance = (e) => {
@@ -127,13 +189,20 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
         let updated;
         if (editingLogId) {
             // Editing existing log
+            const type = selectedTypes[0] || 'Aceite';
+            const details = mDetails[type] || {};
             updated = maintenanceLogs.map(log => {
                 if (log.id === editingLogId) {
                     return {
                         ...log,
-                        type: mType, date: mDate, km: mKm,
-                        cost: mCost, notes: mNotes, workshop: mWorkshop, nextKm: mNextKm,
-                        alertAtKm: mAlertAtKm || null,
+                        type,
+                        date: mDate,
+                        km: mKm,
+                        cost: details.cost || '',
+                        notes: details.notes || '',
+                        workshop: mWorkshop,
+                        nextKm: details.nextKm || '',
+                        alertAtKm: details.alertAtKm || null,
                         invoicePhoto: mInvoicePhoto || log.invoicePhoto || null,
                         updatedAt: new Date().toISOString(),
                     };
@@ -141,15 +210,24 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                 return log;
             });
         } else {
-            // Adding new log
-            const newLog = {
-                id: Date.now(), type: mType, date: mDate, km: mKm,
-                cost: mCost, notes: mNotes, workshop: mWorkshop, nextKm: mNextKm,
-                alertAtKm: mAlertAtKm || null,
-                invoicePhoto: mInvoicePhoto || null,
-                createdAt: new Date().toISOString(),
-            };
-            updated = [newLog, ...maintenanceLogs];
+            // Adding multiple new logs (as separate independent entries)
+            const newLogs = selectedTypes.map((type, idx) => {
+                const details = mDetails[type] || {};
+                return {
+                    id: Date.now() + idx,
+                    type,
+                    date: mDate,
+                    km: mKm,
+                    cost: details.cost || '',
+                    notes: details.notes || '',
+                    workshop: mWorkshop,
+                    nextKm: details.nextKm || '',
+                    alertAtKm: details.alertAtKm || null,
+                    invoicePhoto: mInvoicePhoto || null,
+                    createdAt: new Date().toISOString(),
+                };
+            });
+            updated = [...newLogs, ...maintenanceLogs];
         }
         setMaintenanceLogs(updated);
         const updates = { maintenanceLogs: updated };
@@ -160,15 +238,19 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
 
     const handleEditMaint = (log) => {
         setEditingLogId(log.id);
-        setMType(log.type || 'Aceite');
+        setSelectedTypes([log.type || 'Aceite']);
         setMDate(log.date || new Date().toISOString().split('T')[0]);
         setMKm(log.km || '');
-        setMCost(log.cost || '');
-        setMNotes(log.notes || '');
         setMWorkshop(log.workshop || '');
-        setMNextKm(log.nextKm || '');
-        setMAlertAtKm(log.alertAtKm || '');
         setMInvoicePhoto(log.invoicePhoto || null);
+        setMDetails({
+            [log.type || 'Aceite']: {
+                cost: log.cost || '',
+                notes: log.notes || '',
+                nextKm: log.nextKm || '',
+                alertAtKm: log.alertAtKm || '',
+            }
+        });
         setShowMaintForm(true);
     };
 
@@ -263,6 +345,85 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                     </div>
                                 )}
                             </div>
+                            {/* Brand / Model editor */}
+                            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h4 className="font-bold text-slate-700 flex items-center gap-2"><Truck size={18} className="text-slate-400" /> Marca y Modelo</h4>
+                                    {!editingModel && (
+                                        <button
+                                            onClick={() => setEditingModel(true)}
+                                            className="flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded-lg transition-colors"
+                                        >
+                                            <Pencil size={12} /> Editar
+                                        </button>
+                                    )}
+                                </div>
+                                {editingModel ? (
+                                    <div className="space-y-3">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Marca</label>
+                                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                                                {BRANDS.map(b => (
+                                                    <button
+                                                        key={b.key}
+                                                        type="button"
+                                                        onClick={() => setModelBrand(b.name)}
+                                                        className={`flex flex-col items-center gap-1 p-2 rounded-lg border text-xs font-bold transition-all ${
+                                                            modelBrand === b.name
+                                                                ? 'border-blue-500 bg-blue-50 text-blue-700 shadow'
+                                                                : 'border-slate-200 text-slate-600 hover:border-blue-300'
+                                                        }`}
+                                                    >
+                                                        <img src={`/logos/brands/${b.key}.png`} alt={b.name} className="w-7 h-7 object-contain" />
+                                                        <span>{b.name}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Modelo</label>
+                                            <input
+                                                type="text"
+                                                value={modelName}
+                                                onChange={e => setModelName(e.target.value)}
+                                                placeholder="Ej: Ducato, Boxer, Sprinter..."
+                                                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            />
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const combined = modelBrand
+                                                        ? `${modelBrand} ${modelName}`.trim()
+                                                        : modelName.trim();
+                                                    onUpdateVehicle(vehicle.id, { model: combined });
+                                                    setEditingModel(false);
+                                                }}
+                                                className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg py-2 text-sm transition-colors"
+                                            >
+                                                <Save size={14} /> Guardar
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setEditingModel(false)}
+                                                className="px-4 text-slate-500 hover:bg-slate-100 rounded-lg font-medium text-sm transition-colors"
+                                            >
+                                                Cancelar
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-3">
+                                        <BrandLogo model={vehicle.model} size={40} />
+                                        <div>
+                                            <p className="font-bold text-slate-800">{vehicle.model || <span className="text-slate-400 italic">Sin marca asignada</span>}</p>
+                                            <p className="text-xs text-slate-400">Haz clic en "Editar" para cambiar la marca</p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
                             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
                                 <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Truck size={18} className="text-slate-400" /> Estado del Vehículo</h4>
                                 <select
@@ -351,25 +512,7 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                         <button type="button" onClick={resetMaintForm} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
                                     </div>
 
-                                    {/* Type selector */}
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Tipo de Intervención</label>
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                            {MAINTENANCE_TYPES.map(t => {
-                                                const Icon = t.icon;
-                                                return (
-                                                    <button key={t.value} type="button"
-                                                        onClick={() => setMType(t.value)}
-                                                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-bold transition-all ${mType === t.value ? 'border-blue-500 bg-blue-50 text-blue-700 shadow' : 'border-slate-200 text-slate-600 hover:border-blue-300'}`}
-                                                    >
-                                                        <MaintenanceIcon type={t.value} size={14} withBg={false} />
-                                                        {t.label.split('/')[0].trim()}
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-
+                                    {/* General Fields */}
                                     <div className="grid grid-cols-2 gap-3">
                                         <div>
                                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Fecha</label>
@@ -379,40 +522,89 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Kilómetros en el momento</label>
                                             <input type="number" placeholder="Ej: 125000" value={mKm} onChange={e => setMKm(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                                         </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Coste sin IVA (€)</label>
-                                            <input type="number" step="0.01" placeholder="0.00" value={mCost} onChange={e => setMCost(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Próx. cambio referencia (km)</label>
-                                            <input type="number" placeholder="Ej: 135000" value={mNextKm} onChange={e => setMNextKm(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                                        </div>
                                     </div>
 
-                                    {/* Alert threshold - only for km-sensitive types */}
-                                    {KM_ALERT_TYPES.includes(mType) && (
-                                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                                            <label className="block text-xs font-bold text-amber-700 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                                                <AlertTriangle size={12}/> Alertarme cuando el odómetro llegue a (km)
-                                            </label>
-                                            <input
-                                                type="number"
-                                                placeholder={mNextKm ? `Sugerencia: ${mNextKm} km` : 'Ej: 135000'}
-                                                value={mAlertAtKm}
-                                                onChange={e => setMAlertAtKm(e.target.value)}
-                                                className="w-full border border-amber-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold"
-                                            />
-                                            <p className="text-xs text-amber-600 mt-1">La campana 🔔 te avisará cuando el vehículo se acerque a esos km</p>
-                                        </div>
-                                    )}
                                     <div>
                                         <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Taller / Proveedor</label>
                                         <input type="text" placeholder="Nombre del taller o mecánico" value={mWorkshop} onChange={e => setMWorkshop(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                                     </div>
+
+                                    {/* Type selector */}
                                     <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Notas / Descripción</label>
-                                        <textarea rows={2} placeholder="Describe el trabajo realizado, piezas cambiadas, observaciones..." value={mNotes} onChange={e => setMNotes(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
+                                            {editingLogId ? 'Tipo de Intervención' : 'Tipos de Intervención (puedes elegir varios)'}
+                                        </label>
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                            {MAINTENANCE_TYPES.map(t => {
+                                                const isSelected = selectedTypes.includes(t.value);
+                                                return (
+                                                    <button key={t.value} type="button"
+                                                        onClick={() => handleToggleType(t.value)}
+                                                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-bold transition-all ${isSelected ? 'border-blue-500 bg-blue-50 text-blue-700 shadow' : 'border-slate-200 text-slate-600 hover:border-blue-300'}`}
+                                                    >
+                                                        <MaintenanceIcon type={t.value} size={14} withBg={false} />
+                                                        {t.label.split('/')[0].trim()}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
+
+                                    {/* Per-type specific details */}
+                                    {selectedTypes.length > 0 && (
+                                        <div className="space-y-3 pt-2">
+                                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Detalles específicos por intervención</p>
+                                            {selectedTypes.map(type => {
+                                                const config = MAINTENANCE_TYPES.find(t => t.value === type) || { label: type };
+                                                const details = mDetails[type] || {};
+                                                return (
+                                                    <div key={type} className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3 shadow-sm">
+                                                        <div className="flex items-center gap-2 font-bold text-slate-700 text-sm">
+                                                            <MaintenanceIcon type={type} size={14} withBg={true} bgSize={24} />
+                                                            <span>{config.label}</span>
+                                                        </div>
+                                                        <div className="grid grid-cols-2 gap-3">
+                                                            <div>
+                                                                <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Coste sin IVA (€)</label>
+                                                                <input type="number" step="0.01" placeholder="0.00"
+                                                                    value={details.cost || ''}
+                                                                    onChange={e => updateDetail(type, 'cost', e.target.value)}
+                                                                    className="w-full border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                                            </div>
+                                                            <div>
+                                                                <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Próx. cambio ref (km)</label>
+                                                                <input type="number" placeholder="Ej: 135000"
+                                                                    value={details.nextKm || ''}
+                                                                    onChange={e => updateDetail(type, 'nextKm', e.target.value)}
+                                                                    className="w-full border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                                            </div>
+                                                        </div>
+                                                        {KM_ALERT_TYPES.includes(type) && (
+                                                            <div className="bg-amber-50/60 border border-amber-200/60 rounded-lg p-2.5">
+                                                                <label className="block text-xxs font-bold text-amber-700 uppercase tracking-wider mb-1 flex items-center gap-1">
+                                                                    <AlertTriangle size={10}/> Alertar en (km)
+                                                                </label>
+                                                                <input
+                                                                    type="number"
+                                                                    placeholder={details.nextKm ? `Sugerencia: ${details.nextKm} km` : 'Ej: 135000'}
+                                                                    value={details.alertAtKm || ''}
+                                                                    onChange={e => updateDetail(type, 'alertAtKm', e.target.value)}
+                                                                    className="w-full border border-amber-300 bg-white rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold"
+                                                                />
+                                                            </div>
+                                                        )}
+                                                        <div>
+                                                            <label className="block text-xxs font-bold text-slate-400 uppercase tracking-wider mb-1">Notas / Descripción</label>
+                                                            <textarea rows={1} placeholder="Notas particulares..."
+                                                                value={details.notes || ''}
+                                                                onChange={e => updateDetail(type, 'notes', e.target.value)}
+                                                                className="w-full border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
 
                                     {/* Invoice photo */}
                                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">

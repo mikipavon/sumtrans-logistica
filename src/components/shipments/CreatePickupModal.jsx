@@ -104,19 +104,41 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
     const updateSuggestions = (value) => {
         if (!clients) return;
         const search = normalizeForSearch(value);
-        const matches = clients.filter(c => {
-            // Allow searching ALL clients, regardless of type
-            if (!search) return true;
-            return normalizeForSearch(c.name).includes(search);
-        }).sort((a, b) => {
+        const sortedClients = [...clients].sort((a, b) => {
             // Priority 1: Approved users first
             if (a.status === 'approved' && b.status !== 'approved') return -1;
             if (a.status !== 'approved' && b.status === 'approved') return 1;
             // Priority 2: Alphabetical
             return (a.name || '').localeCompare(b.name || '');
         });
-        setFilteredClients(matches);
-        setShowSuggestions(matches.length > 0);
+
+        const results = [];
+        sortedClients.forEach(c => {
+            const nameMatch = !search || normalizeForSearch(c.name).includes(search);
+            const matchingBranches = [];
+            if (Array.isArray(c.branches) && c.branches.length > 0) {
+                c.branches.forEach(branch => {
+                    const branchMatch = !search || 
+                        normalizeForSearch(c.name).includes(search) ||
+                        normalizeForSearch(branch.name).includes(search) ||
+                        normalizeForSearch(branch.city).includes(search);
+                    if (branchMatch) {
+                        matchingBranches.push({
+                            ...c,
+                            _type: 'branch',
+                            _branch: branch,
+                            _displayName: branch.name,
+                            id: `${c.id}_${branch.id}`,
+                        });
+                    }
+                });
+            }
+            if (nameMatch) results.push({ ...c, _type: 'client' });
+            results.push(...matchingBranches);
+        });
+
+        setFilteredClients(results);
+        setShowSuggestions(results.length > 0);
     };
 
     const handleFocus = () => updateSuggestions(formData.clientName);
@@ -127,15 +149,27 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
         updateSuggestions(value);
     };
 
-    const selectClient = (client) => {
-        setFormData(prev => ({
-            ...prev,
-            clientName: client.name,
-            originAddress: client.address,
-            originZip: client.zip || '',
-            originCity: client.city || '',
-            originCoordinates: client.coordinates || ''
-        }));
+    const selectClient = (item) => {
+        if (item._type === 'branch' && item._branch) {
+            const branch = item._branch;
+            setFormData(prev => ({
+                ...prev,
+                clientName: item.name,
+                originAddress: branch.address || item.address || '',
+                originZip: branch.zip || item.zip || '',
+                originCity: branch.city || item.city || '',
+                originCoordinates: branch.coordinates || ''
+            }));
+        } else {
+            setFormData(prev => ({
+                ...prev,
+                clientName: item.name,
+                originAddress: item.address || '',
+                originZip: item.zip || '',
+                originCity: item.city || '',
+                originCoordinates: item.coordinates || ''
+            }));
+        }
         setShowSuggestions(false);
     };
 
@@ -231,15 +265,20 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                                 />
                                 {showSuggestions && filteredClients.length > 0 && (
                                     <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-100 rounded-lg shadow-xl z-[100] max-h-40 overflow-y-auto">
-                                        {filteredClients.map(client => (
+                                        {filteredClients.map(item => (
                                             <button
-                                                key={client.id}
+                                                key={item.id}
                                                 type="button"
-                                                className="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-50 last:border-0"
-                                                onClick={() => selectClient(client)}
+                                                className={`w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-50 last:border-0 ${item._type === 'branch' ? 'bg-blue-50/30' : ''}`}
+                                                onClick={() => selectClient(item)}
                                             >
-                                                <div className="font-bold text-slate-800 text-xs">{client.name}</div>
-                                                <div className="text-[10px] text-slate-500 truncate">{client.address}</div>
+                                                <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                                                    {item._type === 'branch' && <span className="text-blue-500 text-[10px]">📍</span>}
+                                                    {item._displayName || item.name}
+                                                </div>
+                                                <div className="text-[10px] text-slate-500 truncate">
+                                                    {item._type === 'branch' && item._branch ? (item._branch.address || item._branch.city || '') : item.address}
+                                                </div>
                                             </button>
                                         ))}
                                     </div>

@@ -48,19 +48,93 @@ const TYPES = {
       </svg>
     ),
   },
+  'Filtro Aire': {
+    label: 'Filtro de Aire',
+    color: '#0EA5E9',      // sky-600
+    bgColor: '#F0F9FF',    // sky-100
+    borderColor: '#E0F2FE', // sky-200
+    icon: (size) => (
+      <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" opacity="0.1" fill="currentColor"/>
+        <path d="M12 2v20M17 5H7M17 19H7M20 12H4M16 8H8M16 16H8"/>
+      </svg>
+    ),
+  },
+  'Filtro Gasoil': {
+    label: 'Filtro de Gasoil',
+    color: '#06B6D4',      // cyan-600
+    bgColor: '#ECFEFF',    // cyan-100
+    borderColor: '#CFFAFE', // cyan-200
+    icon: (size) => (
+      <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2C12 2 6 9 6 14a6 6 0 0 0 12 0c0-5-6-12-6-12Z" fill="currentColor" opacity="0.15"/>
+        <path d="M12 2C12 2 6 9 6 14a6 6 0 0 0 12 0c0-5-6-12-6-12Z"/>
+        <path d="M6 14h12" strokeWidth="2"/>
+      </svg>
+    ),
+  },
+  'Filtro Aceite': {
+    label: 'Filtro de Aceite',
+    color: '#CA8A04',      // yellow-600
+    bgColor: '#FEF9C3',    // yellow-100
+    borderColor: '#FEF08A', // yellow-200
+    icon: (size) => (
+      <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="8" y="4" width="8" height="16" rx="1"/>
+        <path d="M8 8h8M8 12h8M8 16h8"/>
+        <path d="M10 2v2M14 2v2M10 20v2M14 20v2"/>
+      </svg>
+    ),
+  },
   Frenos: {
-    label: 'Frenos / Pastillas',
+    label: 'Frenos (General)',
     color: '#DC2626',      // red-600
     bgColor: '#FEE2E2',    // red-100
     borderColor: '#FECACA', // red-200
     icon: (size) => (
       <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        {/* Brake disc */}
         <circle cx="12" cy="12" r="10"/>
         <circle cx="12" cy="12" r="6" strokeDasharray="3 2"/>
         <circle cx="12" cy="12" r="2.5" fill="currentColor" opacity="0.3"/>
-        {/* Brake caliper */}
         <path d="M2 12h3" strokeWidth="3"/>
+      </svg>
+    ),
+  },
+  'Zapata Frenos': {
+    label: 'Zapata de Freno',
+    color: '#EA580C',      // orange-600
+    bgColor: '#FFF7ED',    // orange-50
+    borderColor: '#FED7AA', // orange-200
+    icon: (size) => (
+      <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 12a7 7 0 0 1 14 0" strokeWidth="3"/>
+        <path d="M3 12h18"/>
+      </svg>
+    ),
+  },
+  'Pastillas Delanteras': {
+    label: 'Pastillas Delanteras',
+    color: '#F97316',      // orange-500
+    bgColor: '#FFF7ED',    // orange-50
+    borderColor: '#FED7AA', // orange-200
+    icon: (size) => (
+      <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 12v-2a8 8 0 0 1 16 0v2" strokeWidth="2"/>
+        <path d="M3 12h5" strokeWidth="3"/>
+        <path d="M16 12h5" strokeWidth="3"/>
+      </svg>
+    ),
+  },
+  'Pastillas Traseras': {
+    label: 'Pastillas Traseras',
+    color: '#F97316',      // orange-500
+    bgColor: '#FFF7ED',    // orange-50
+    borderColor: '#FED7AA', // orange-200
+    icon: (size) => (
+      <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 12v2a8 8 0 0 0 16 0v-2" strokeWidth="2"/>
+        <path d="M3 12h5" strokeWidth="3"/>
+        <path d="M16 12h5" strokeWidth="3"/>
       </svg>
     ),
   },

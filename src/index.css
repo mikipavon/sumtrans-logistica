@@ -12,14 +12,11 @@ html, body, #root, .lista-repartos {
   /* Evita el refresco de página al tirar hacia abajo (pull-to-refresh Android) */
   overscroll-behavior-y: none;
   overscroll-behavior: none;
-  /* Evita gestos del sistema que interfieran con el drag */
-  touch-action: pan-x pan-y;
+  /* 'manipulation' = enables pan + pinch, disables double-tap zoom (removes 300ms delay on Android) */
+  touch-action: manipulation;
+  -webkit-overflow-scrolling: touch;
 }
 
-/* Bloquear pull-to-refresh en TODOS los contenedores scrollables */
-* {
-  overscroll-behavior: none;
-}
 
 /* Bloqueo extra para PWA standalone en Android */
 @media all and (display-mode: standalone) {
@@ -32,6 +29,8 @@ html, body, #root, .lista-repartos {
   /* Mejora el rendimiento de la animación */
   transition: transform 200ms cubic-bezier(0.2, 0, 0, 1);
   user-select: none;
+  /* Allow vertical scroll, JS handles horizontal swipe */
+  touch-action: pan-y;
 }
 
 /* Efecto visual al arrastrar (Ghost class) */

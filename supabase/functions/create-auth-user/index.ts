@@ -62,9 +62,29 @@ serve(async (req: Request) => {
     if (createError) {
       // Si ya existe, actualizar la contraseña y metadata
       if (createError.message?.includes('already') || createError.message?.includes('exists')) {
-        // Buscar el usuario existente
-        const { data: listData } = await supabase.auth.admin.listUsers()
-        const existingUser = listData?.users?.find((u: any) => u.email === email)
+        // Buscar el usuario existente (manejando paginación si hay muchos usuarios)
+        let existingUser = null;
+        let page = 1;
+        let hasMore = true;
+        
+        while (hasMore) {
+          const { data: listData, error: listError } = await supabase.auth.admin.listUsers({ page, perPage: 1000 })
+          if (listError || !listData?.users || listData.users.length === 0) {
+            hasMore = false;
+            break;
+          }
+          
+          existingUser = listData.users.find((u: any) => u.email === email)
+          if (existingUser) {
+            break;
+          }
+          
+          if (listData.users.length < 1000) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        }
         
         if (existingUser) {
           const { error: updateError } = await supabase.auth.admin.updateUserById(existingUser.id, {

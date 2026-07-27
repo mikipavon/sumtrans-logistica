@@ -96,6 +96,9 @@ function App() {
   const [shipmentStatusFilter, setShipmentStatusFilter] = useState(null) // Filter passed from Dashboard KPI cards
   const [isRestoringSession, setIsRestoringSession] = useState(!savedSession) // Skip waiting if we have a local session
 
+  // ── Nombre del conductor guardado en sesión para mostrarlo instantáneamente ──
+  const [cachedDriverName, setCachedDriverName] = useState(savedSession?.driverName || null)
+
   // ── Persistir sesión local cada vez que cambie el estado de login ──
   useEffect(() => {
     if (isAuthenticated && userRole) {
@@ -105,13 +108,14 @@ function App() {
           driverId: currentDriverId,
           clientId: currentClientId,
           view: currentView,
+          driverName: cachedDriverName,
           savedAt: Date.now()
         }));
       } catch {}
     } else {
       sessionStorage.removeItem('sumtrans_session');
     }
-  }, [isAuthenticated, userRole, currentDriverId, currentClientId, currentView]);
+  }, [isAuthenticated, userRole, currentDriverId, currentClientId, currentView, cachedDriverName]);
 
   // ── Restaurar sesión de Supabase Auth al cargar la app ──
   useEffect(() => {
@@ -1076,6 +1080,20 @@ function App() {
           } else {
             console.warn(`[OfflineQueue] Failed to sync statusChange ${op.shipmentId}:`, error);
           }
+        } else if (op.type === 'createShipment') {
+          // Envío creado mientras el conductor no tenía sesión Auth (error RLS 42501)
+          const { error } = await supabase.from('shipments').upsert([{
+            id: op.shipmentData.id,
+            status: op.shipmentData.status,
+            assignedDriverId: op.shipmentData.assignedDriverId || null,
+            data: op.shipmentData
+          }]);
+          if (!error) {
+            await dequeue(op.id);
+            console.log(`[OfflineQueue] Synced createShipment: ${op.shipmentId}`);
+          } else {
+            console.warn(`[OfflineQueue] Failed to sync createShipment ${op.shipmentId}:`, error);
+          }
         }
       } catch (e) {
         console.error(`[OfflineQueue] Error processing op ${op.id}:`, e);
@@ -1228,6 +1246,8 @@ function App() {
       if (profile.role === 'driver') {
         setCurrentDriverId(profile.linked_id);
         setCurrentClientId(null);
+        // Guardar nombre del conductor para mostrarlo instantáneamente al recargar
+        if (profile.display_name) setCachedDriverName(profile.display_name);
       } else if (profile.role === 'client') {
         setCurrentClientId(profile.linked_id);
         setCurrentDriverId(null);
@@ -1260,6 +1280,9 @@ function App() {
         });
         
         if (driverInfo && driverInfo.found) {
+          // Guardar nombre del conductor para mostrarlo de inmediato
+          if (driverInfo.name) setCachedDriverName(driverInfo.name);
+
           // Si tiene email, intentar login con Supabase Auth para tener sesión
           if (driverInfo.email) {
             const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
@@ -1268,7 +1291,6 @@ function App() {
             });
             if (!authErr && authData?.user) {
               console.log('[LegacyLogin] Driver auth session established ✅');
-              // setIsAuthenticated se llamará en el handleLogin principal
               setIsAuthenticated(true);
               setUserRole(role);
               setCurrentDriverId(driverInfo.id);
@@ -1332,6 +1354,7 @@ function App() {
           alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
           return false;
         }
+        if (driverFound.name) setCachedDriverName(driverFound.name);
         setIsAuthenticated(true);
         setUserRole(role);
         setCurrentDriverId(driverFound.id);
@@ -1844,6 +1867,22 @@ function App() {
       
       if (error) {
         console.error('Supabase Error Details:', error)
+        // Error 42501 = RLS: el conductor no tiene sesión Auth activa.
+        // En lugar de mostrar error, guardamos el envío en la cola offline
+        // para que se sincronice automáticamente en cuanto se renueve la sesión.
+        if (error.code === '42501') {
+          console.warn('[handleAddShipment] RLS error — encolando envío para reintento automático');
+          await enqueue({
+            id: `create_${shipmentWithMeta.id}_${Date.now()}`,
+            type: 'createShipment',
+            shipmentId: shipmentWithMeta.id,
+            shipmentData: shipmentWithMeta,
+            timestamp: Date.now(),
+          });
+          // Actualizar estado local para que el conductor vea el envío creado
+          setShipments(prev => [{ ...shipmentWithMeta }, ...prev]);
+          return true; // No bloquear al conductor
+        }
         alert(`Error Supabase: ${error.message} (${error.code})`)
         return false
       }
@@ -3019,6 +3058,7 @@ function App() {
       isInitialLoading={isSyncing}
       driverNamePreference={driverNamePreference}
       isTestMode={activeTestMode}
+      cachedDriverName={cachedDriverName}
     />
   }
 

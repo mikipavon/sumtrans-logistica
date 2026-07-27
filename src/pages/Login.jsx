@@ -9,6 +9,7 @@ export default function Login({ onLogin }) {
     const [error, setError] = useState('');
     const [isShaking, setIsShaking] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const [rememberMe, setRememberMe] = useState(false);
     
     const initializedRef = useRef(false);
     const activeTabRef = useRef(activeTab);
@@ -51,7 +52,7 @@ export default function Login({ onLogin }) {
                                 const success = await onLogin(activeTabRef.current, currentEmail, currentPassword);
                                 if (success) {
                                     console.log(`[AutoLogin] ✅ Login exitoso en intento ${attempt}`);
-                                    localStorage.setItem(`lastLoginUser_${activeTabRef.current}`, currentEmail);
+                                    try { localStorage.setItem(`lastLoginUser_${activeTabRef.current}`, currentEmail); } catch (_) {}
                                     setIsLoading(false);
                                     return;
                                 }
@@ -79,10 +80,16 @@ export default function Login({ onLogin }) {
                 return;
             }
 
-            // Normal flow fallback
+            // Cargar usuario guardado si existe (la contraseña la gestiona el propio navegador)
             if (activeTabRef.current && emailRef.current) {
-                const savedUser = localStorage.getItem(`lastLoginUser_${activeTabRef.current}`);
-                if (savedUser) emailRef.current.value = savedUser;
+                const savedUser = localStorage.getItem(`sum_saved_user_${activeTabRef.current}`);
+                if (savedUser) {
+                    emailRef.current.value = savedUser;
+                    setRememberMe(true);
+                } else {
+                    emailRef.current.value = '';
+                    setRememberMe(false);
+                }
             }
         }, 100);
     }, []);
@@ -105,7 +112,12 @@ export default function Login({ onLogin }) {
         try {
             const success = await onLogin(activeTabRef.current, currentEmail, currentPassword);
             if (success) {
-                localStorage.setItem(`lastLoginUser_${activeTab}`, currentEmail);
+                // Guardar solo el usuario si marcó la casilla (la contraseña la gestiona el navegador)
+                if (rememberMe) {
+                    try { localStorage.setItem(`sum_saved_user_${activeTabRef.current}`, currentEmail); } catch (_) {}
+                } else {
+                    try { localStorage.removeItem(`sum_saved_user_${activeTabRef.current}`); } catch (_) {}
+                }
             } else {
                 setError(activeTab === 'driver' ? 'Usuario o contraseña incorrectos' : 'Credenciales inválidas');
                 triggerShake();
@@ -126,21 +138,21 @@ export default function Login({ onLogin }) {
 
     const handleTabChange = (tab) => {
         setActiveTab(tab);
-        localStorage.setItem('lastLoginTab', tab);
-        setError('');
-        
-        if (emailRef.current) {
-            const savedUser = localStorage.getItem(`lastLoginUser_${tab}`);
+        try { localStorage.setItem('lastLoginTab', tab); } catch (_) {}
+        if (emailRef.current && passwordRef.current) {
+            const savedUser = localStorage.getItem(`sum_saved_user_${tab}`);
+            passwordRef.current.value = '';
             if (savedUser) {
                 emailRef.current.value = savedUser;
+                setRememberMe(true);
             } else {
                 emailRef.current.value = '';
+                setRememberMe(false);
+                emailRef.current.focus();
             }
         }
-        
-        if (passwordRef.current) {
-            passwordRef.current.value = '';
-        }
+        setError('');
+        setShowPassword(false);
     };
 
     const getTabConfig = () => {
@@ -269,6 +281,18 @@ export default function Login({ onLogin }) {
                                     {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
                                 </button>
                             </div>
+                        </div>
+
+                        <div className="flex items-center">
+                            <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 font-medium">
+                                <input 
+                                    type="checkbox" 
+                                    checked={rememberMe}
+                                    onChange={(e) => setRememberMe(e.target.checked)}
+                                    className={`w-4 h-4 rounded border-slate-300 ${config.activeColor} focus:ring-${config.activeColor.split('-')[1]}-500`}
+                                />
+                                Recordar mi usuario
+                            </label>
                         </div>
 
                         <button

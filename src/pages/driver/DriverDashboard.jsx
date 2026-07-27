@@ -8,7 +8,6 @@ import {
   closestCorners,
   KeyboardSensor,
   PointerSensor,
-  TouchSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
@@ -243,6 +242,12 @@ const ShipmentCardUI = React.memo(({
                                                             : 'bg-orange-500 text-white'
                                                     }`}>
                                                         {stop.scannedPackages.length}/{getPackagesCount(stop)} BULTOS ESCANEADOS
+                                                    </span>
+                                                )}
+                                                {stop.hasReturn && (
+                                                    <span className="text-[9px] font-bold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1 shadow-sm">
+                                                        <RotateCcw size={10} />
+                                                        RETORNO
                                                     </span>
                                                 )}
                                                 {stop.needsSignatureReturn && (
@@ -503,7 +508,13 @@ const SortableItem = React.memo((props) => {
     const [swipeX, setSwipeX] = useState(0);
     const [isSwiping, setIsSwiping] = useState(false);
     const [showDocActions, setShowDocActions] = useState(false);
+    const cardRef = useRef(null);
     const startX = useRef(0);
+    const startY = useRef(0);
+    // 'undecided' | 'horizontal' | 'vertical'
+    const gestureDirection = useRef('undecided');
+    const swipeXRef = useRef(0); // mirror for use inside native listeners
+    const DIRECTION_THRESHOLD = 10; // px before we lock direction
 
     const sortable = useSortable({ id: stop.id, disabled: isSwiping });
     const {
@@ -515,37 +526,86 @@ const SortableItem = React.memo((props) => {
         isDragging
     } = sortable;
 
-    const handleTouchStart = (e) => { startX.current = e.touches[0].clientX; };
-    const handleTouchMove = (e) => {
-        const deltaX = e.touches[0].clientX - startX.current;
-        if (deltaX > 0 && !isDragging) {
-            setIsSwiping(true);
-            setSwipeX(deltaX);
-        }
-    };
-    const handleTouchEnd = () => {
-        if (swipeX > 150) {
-            if (window.navigator.vibrate) window.navigator.vibrate(50);
-            props.onUnassign(stop);
-        }
-        setSwipeX(0);
-        setIsSwiping(false);
-    };
+    // Combine refs: dnd-kit's setNodeRef + our cardRef
+    const combinedRef = useCallback((node) => {
+        cardRef.current = node;
+        setNodeRef(node);
+    }, [setNodeRef]);
+
+    // Use fully PASSIVE native event listeners — Android Chrome scroll fix.
+    // CSS touch-action:pan-y already tells the browser to only scroll vertically,
+    // so we NEVER need preventDefault(). All listeners are passive → Chrome can
+    // start scrolling immediately on the compositor thread without waiting for JS.
+    useEffect(() => {
+        const el = cardRef.current;
+        if (!el) return;
+
+        const onTouchStart = (e) => {
+            startX.current = e.touches[0].clientX;
+            startY.current = e.touches[0].clientY;
+            gestureDirection.current = 'undecided';
+        };
+
+        const onTouchMove = (e) => {
+            const deltaX = e.touches[0].clientX - startX.current;
+            const deltaY = e.touches[0].clientY - startY.current;
+            const absDeltaX = Math.abs(deltaX);
+            const absDeltaY = Math.abs(deltaY);
+
+            // Phase 1: decide direction once we pass the threshold
+            if (gestureDirection.current === 'undecided') {
+                if (absDeltaX < DIRECTION_THRESHOLD && absDeltaY < DIRECTION_THRESHOLD) {
+                    return; // not enough movement to decide
+                }
+                // Lock horizontal only if X clearly dominates AND moving right
+                gestureDirection.current = (absDeltaX > absDeltaY * 1.5 && deltaX > 0)
+                    ? 'horizontal' : 'vertical';
+            }
+
+            // Phase 2: only update swipe state for horizontal gestures
+            if (gestureDirection.current === 'horizontal') {
+                const clampedX = Math.max(0, deltaX);
+                swipeXRef.current = clampedX;
+                setIsSwiping(true);
+                setSwipeX(clampedX);
+            }
+            // vertical → do nothing, browser scrolls natively via touch-action:pan-y
+        };
+
+        const onTouchEnd = () => {
+            if (swipeXRef.current > 150) {
+                if (window.navigator.vibrate) window.navigator.vibrate(50);
+                props.onUnassign(stop);
+            }
+            swipeXRef.current = 0;
+            setSwipeX(0);
+            setIsSwiping(false);
+            gestureDirection.current = 'undecided';
+        };
+
+        // ALL passive:true → Chrome compositor handles scroll without waiting for JS
+        el.addEventListener('touchstart', onTouchStart, { passive: true });
+        el.addEventListener('touchmove', onTouchMove, { passive: true });
+        el.addEventListener('touchend', onTouchEnd, { passive: true });
+
+        return () => {
+            el.removeEventListener('touchstart', onTouchStart);
+            el.removeEventListener('touchmove', onTouchMove);
+            el.removeEventListener('touchend', onTouchEnd);
+        };
+    }, [stop, props.onUnassign]);
 
     const style = {
         transform: isSwiping ? `translateX(${swipeX}px)` : CSS.Transform.toString(transform),
         transition: isDragging || isSwiping ? 'none' : transition,
         zIndex: isDragging ? 2 : undefined,
         willChange: 'transform, opacity',
-        touchAction: 'pan-y'
+        // Allow vertical scroll natively; horizontal swipe is managed by JS
+        touchAction: 'pan-y',
     };
 
     return (
-        <div ref={setNodeRef} style={style} 
-             onTouchStart={handleTouchStart} 
-             onTouchMove={(e) => { handleTouchMove(e); if (swipeX > 30) e.stopPropagation(); }}
-             onTouchEnd={handleTouchEnd}
-        >
+        <div ref={combinedRef} style={style}>
             <ShipmentCardUI 
                 {...props} 
                 isDragging={isDragging} 
@@ -1416,7 +1476,7 @@ const DriverTimeLogAlerts = ({ currentDriverId }) => {
     );
 };
 
-function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both', isTestMode = false }) {
+function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both', isTestMode = false, cachedDriverName = null }) {
     console.log('DriverDashboard Render', { currentDriverId, drivers: drivers?.length, shipments: allShipments?.length, clients: clients?.length });
 
     const getDriverDisplayName = (driver) => {
@@ -1611,7 +1671,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const handleDismissYesterday = () => {
         if (!yesterdayPending) return;
         const dismissKey = `yest_confirm_dismissed_${currentDriverId}_${yesterdayPending.date}`;
-        localStorage.setItem(dismissKey, '1');
+        try { localStorage.setItem(dismissKey, '1'); } catch (_) {}
         setShowYesterdayModal(false);
         setYesterdayPending(null);
     };
@@ -2067,7 +2127,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     });
 
     useEffect(() => {
-        localStorage.setItem('drv_zoom', zoom.toString());
+        try { localStorage.setItem('drv_zoom', zoom.toString()); } catch (_) {}
     }, [zoom]);
 
     const [whatsappPrompt, setWhatsappPrompt] = useState(null); // { shipment, phone }
@@ -2217,10 +2277,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
     // Tracks which collection items are being processed (Optimistic UI)
 
-    // dnd-kit Sensors
+    // dnd-kit Sensors — Only PointerSensor (handles both mouse + touch via Pointer Events API).
+    // IMPORTANT: We do NOT use TouchSensor because its setup() registers a global
+    // window-level touchmove listener with {passive:false} that blocks ALL native
+    // scrolling on Android Chrome.
     const sensors = useSensors(
-        useSensor(PointerSensor),
-        useSensor(TouchSensor, {
+        useSensor(PointerSensor, {
             activationConstraint: {
                 delay: 200,
                 tolerance: 5,
@@ -4267,7 +4329,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         </div>
                         <div>
                             <h1 className="font-bold text-lg leading-tight text-white flex items-center gap-2">
-                                Hola, {drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name || 'Conductor'}
+                                Hola, {drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name || cachedDriverName || 'Conductor'}
                                 
                                 {/* GPS Status Button */}
                                 <button 

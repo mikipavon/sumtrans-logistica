@@ -18,10 +18,10 @@ export default function Layout({ children, onLogout, currentView, onNavigate, pe
     useEffect(() => {
         if (isDarkMode) {
             document.documentElement.classList.add('dark');
-            localStorage.setItem('darkMode', 'true');
+            try { localStorage.setItem('darkMode', 'true'); } catch (_) {}
         } else {
             document.documentElement.classList.remove('dark');
-            localStorage.setItem('darkMode', 'false');
+            try { localStorage.setItem('darkMode', 'false'); } catch (_) {}
         }
     }, [isDarkMode]);
 
@@ -197,7 +197,7 @@ export default function Layout({ children, onLogout, currentView, onNavigate, pe
     const markAllRead = () => {
         const allIds = notifications.map(n => n.id);
         setReadIds(allIds);
-        localStorage.setItem('readNotifIds', JSON.stringify(allIds));
+        try { localStorage.setItem('readNotifIds', JSON.stringify(allIds)); } catch (_) {}
     };
 
     const urgencyBorder = (u) => {

@@ -3,7 +3,7 @@
 CREATE OR REPLACE FUNCTION get_driver_email_by_username(p_username text)
 RETURNS text AS $$
   SELECT data->>'email' FROM public.drivers 
-  WHERE lower(username) = lower(p_username) LIMIT 1;
+  WHERE lower(username) = lower(p_username) OR lower(data->>'email') = lower(p_username) LIMIT 1;
 $$ LANGUAGE SQL SECURITY DEFINER;
 
 -- Grant execute to anon and authenticated roles
@@ -23,7 +23,7 @@ RETURNS json AS $$
     'found', true
   )
   FROM public.drivers 
-  WHERE lower(username) = lower(p_username) AND password = p_password
+  WHERE (lower(username) = lower(p_username) OR lower(data->>'email') = lower(p_username)) AND password = p_password
   LIMIT 1;
 $$ LANGUAGE SQL SECURITY DEFINER;
 

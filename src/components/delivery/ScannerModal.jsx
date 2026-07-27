@@ -103,7 +103,7 @@ const ScannerModal = ({ isOpen, onClose, onScan }) => {
 
         // Guardar cámara exitosa
         if (currentCameraId) {
-            localStorage.setItem('drv_default_camera', currentCameraId);
+            try { localStorage.setItem('drv_default_camera', currentCameraId); } catch (_) {}
         }
 
         // Vibración
@@ -216,7 +216,7 @@ const ScannerModal = ({ isOpen, onClose, onScan }) => {
     };
 
     const resetCamera = () => {
-        localStorage.removeItem('drv_default_camera');
+        try { localStorage.removeItem('drv_default_camera'); } catch (_) {}
         setCurrentCameraId(null);
         setError(null);
         initScanner();
