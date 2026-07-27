@@ -60,6 +60,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     // Guardamos aquí el último número emitido por serie para que no se repita.
     const issuedNumbersRef = useRef({});
 
+    // ── ¿Se ha creado ya algún albarán con Envío Múltiple activo? ──
+    // Cambiar el remitente desactiva el Envío Múltiple, pero SOLO una vez
+    // encadenada la serie: si no, marcar la casilla y escribir después el
+    // remitente (el orden natural, la casilla está justo encima del campo)
+    // la desmarcaba sola y el modal se cerraba al guardar.
+    const multipleChainStartedRef = useRef(false);
+
     // ── Número más alto que hay realmente en la base de datos, por serie ──
     // allShipments es el estado en memoria de ESTE dispositivo: no ve los
     // albaranes que hayan creado otros mientras tanto. Se consulta una vez al
@@ -363,6 +370,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             setValidationFailed(false); // Reset validation highlights
             setKeepOrigin(false); // Make sure Envío Múltiple resets by default
             issuedNumbersRef.current = {}; // Nueva sesión → nadie ha emitido nada aún
+            multipleChainStartedRef.current = false;
 
             if (prefillData) {
                 // Pre-fill from Pickup (Recogida), Return or other source
@@ -576,7 +584,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         const value = e.target.value;
         setFormData(prev => ({ ...prev, clientName: value, selectedClientBillingType: null }));
         updateSuggestions(value);
-        if (keepOrigin) setKeepOrigin(false);
+        if (keepOrigin && multipleChainStartedRef.current) setKeepOrigin(false);
     };
 
     const handleDestinationNameChange = (e) => {
@@ -586,7 +594,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     };
 
     const selectClient = (item) => {
-        if (keepOrigin) setKeepOrigin(false);
+        if (keepOrigin && multipleChainStartedRef.current) setKeepOrigin(false);
         if (item._type === 'branch' && item._branch) {
             const branch = item._branch;
             setFormData(prev => ({
@@ -1265,6 +1273,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         setShowPaymentAlert(false);
 
         if (keepOrigin) {
+            // A partir de aquí sí: cambiar el remitente rompe la cadena y
+            // desactiva el Envío Múltiple.
+            multipleChainStartedRef.current = true;
             setShowSuccessFeedback(true);
             setTimeout(() => setShowSuccessFeedback(false), 3000);
             
