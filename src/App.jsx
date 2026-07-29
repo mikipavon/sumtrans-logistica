@@ -23,6 +23,7 @@ import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { initStorageBuckets } from './utils/storage';
 import { getIrregularReasons } from './utils/shipmentUtils';
+import { fusionarConocimiento } from './utils/routeKnowledge';
 import { BAREMO_1_PUEBLOS, BAREMO_2_PUEBLOS } from './data/baremos';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { enqueue, getQueue, dequeue, getQueueLength } from './utils/offlineQueue';
@@ -1663,12 +1664,43 @@ function App() {
     } catch(e) { console.error('Error saving routes:', e); alert('Error al guardar rutas'); }
   }
 
-  const handleUpdateRouteKnowledge = async (newKnowledge) => {
+  // opciones.fusionar = false para órdenes deliberadas del administrador (borrar o
+  // recuperar aprendizaje): ahí el objeto que llega ES el definitivo, y fusionarlo con
+  // lo que hay en la nube resucitaría justo lo que se acaba de borrar.
+  const handleUpdateRouteKnowledge = async (newKnowledge, opciones = {}) => {
+    const fusionar = opciones.fusionar !== false;
     try {
-      const { error } = await supabase.from('settings').upsert({ key: 'route_knowledge', value: JSON.stringify(newKnowledge) });
+      let valorFinal = newKnowledge;
+
+      if (fusionar) {
+        // route_knowledge es UN solo JSON compartido por todos los repartidores, y cada
+        // dispositivo guarda la copia que cargó al abrir la app. Si escribiéramos esa
+        // copia tal cual, el segundo en guardar borraría el aprendizaje que el primero
+        // acabase de sincronizar. Por eso releemos y fusionamos justo antes de escribir.
+        const { data: actual, error: errorLectura } = await supabase
+          .from('settings')
+          .select('value')
+          .eq('key', 'route_knowledge')
+          .maybeSingle();
+        if (errorLectura) throw errorLectura;
+
+        let base = {};
+        if (actual?.value) {
+          try { base = JSON.parse(actual.value) || {}; }
+          catch(e) { console.warn('route_knowledge ilegible en la nube, se reescribe:', e); }
+        }
+
+        valorFinal = fusionarConocimiento(base, newKnowledge);
+      }
+
+      const { error } = await supabase.from('settings').upsert({ key: 'route_knowledge', value: JSON.stringify(valorFinal) });
       if (error) throw error;
-      setRouteKnowledge(newKnowledge);
-    } catch(e) { console.error('Error saving route knowledge:', e); }
+      setRouteKnowledge(valorFinal);
+    } catch(e) {
+      // Supabase devuelve un objeto, no un Error: sin desglosarlo la consola solo
+      // muestra "[object Object]" y no hay forma de saber si es permisos o red.
+      console.error('Error saving route knowledge:', e?.code || '', e?.message || e, e?.details || '');
+    }
   }
 
   const handleUpdateDriver = async (driverId, updatedData) => {

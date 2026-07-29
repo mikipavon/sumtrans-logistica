@@ -1,6 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { X, Plus, Trash2, Save, MapPin, Search, Sun, Moon, ChevronDown, ChevronUp, GripVertical, Brain, Copy, RotateCcw, Crown, ChevronRight } from 'lucide-react';
 import { BAREMO_1_PUEBLOS, BAREMO_2_PUEBLOS } from '../../data/baremos';
+import {
+    contarPueblos,
+    contarClientes,
+    borrarAprendizaje,
+    recuperarAprendizaje,
+    eliminarDeLaPapelera,
+} from '../../utils/routeKnowledge';
 
 const ALL_TOWNS = [
     ...BAREMO_1_PUEBLOS.map(p => ({ ...p, baremoLabel: 'Baremo 1' })),
@@ -18,6 +25,7 @@ export default function RoutesManagerModal({ isOpen, onClose, routes = [], onUpd
     const [knowledgeRoute, setKnowledgeRoute] = useState(null); // route id
     const [copyFromDriver, setCopyFromDriver] = useState('');
     const [copyToDriver, setCopyToDriver] = useState('');
+    const [borrarDriver, setBorrarDriver] = useState('');
     const dragItem = useRef(null);
     const dragOverItem = useRef(null);
     
@@ -30,6 +38,9 @@ export default function RoutesManagerModal({ isOpen, onClose, routes = [], onUpd
             setSearchTerm('');
         }
     }, [isOpen, routes]);
+
+    const nombreDeConductor = (id) => drivers.find(d => String(d.id) === String(id))?.name || `Conductor ${id}`;
+    const plural = (n, singular, plural_) => `${n} ${n === 1 ? singular : plural_}`;
 
     const filteredTowns = useMemo(() => {
         const term = searchTerm.toLowerCase().trim();
@@ -598,6 +609,95 @@ export default function RoutesManagerModal({ isOpen, onClose, routes = [], onUpd
                                                 >
                                                     <RotateCcw size={12} /> Resetear
                                                 </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Borrar aprendizaje */}
+                                    <div className="bg-white rounded-xl p-3 border border-red-100">
+                                        <p className="text-xs font-bold text-slate-700 mb-2">🗑️ Borrar Aprendizaje</p>
+                                        <p className="text-xs text-slate-500 mb-2">
+                                            Deja a cero el aprendizaje del conductor, también en su móvil. Se guarda una copia en la papelera por si te arrepientes.
+                                        </p>
+                                        <div className="flex gap-2 items-center">
+                                            <select
+                                                className="text-xs border border-slate-200 rounded-lg px-3 py-2 flex-1"
+                                                value={borrarDriver}
+                                                onChange={e => setBorrarDriver(e.target.value)}
+                                            >
+                                                <option value="">Seleccionar conductor...</option>
+                                                {driversWithKnowledge.map(({ id, driver }) => (
+                                                    <option key={id} value={id}>
+                                                        {driver.name} ({plural(contarPueblos(routeKnowledge?.byDriver?.[id]), 'pueblo', 'pueblos')})
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <button
+                                                disabled={!borrarDriver}
+                                                onClick={() => {
+                                                    const datos = routeKnowledge?.byDriver?.[borrarDriver];
+                                                    if (!datos || Object.keys(datos).length === 0) {
+                                                        alert('Este conductor no tiene aprendizaje que borrar.');
+                                                        return;
+                                                    }
+                                                    const nombre = nombreDeConductor(borrarDriver);
+                                                    if (!confirm(
+                                                        `¿Borrar el aprendizaje de ${nombre}?\n\n` +
+                                                        `Se perderán ${plural(contarPueblos(datos), 'pueblo', 'pueblos')} y ${plural(contarClientes(datos), 'cliente', 'clientes')} memorizados.\n` +
+                                                        `Podrás recuperarlo desde la papelera.`
+                                                    )) return;
+
+                                                    // Sin fusionar: es una orden, no una sincronización
+                                                    onUpdateRouteKnowledge(borrarAprendizaje(routeKnowledge, borrarDriver), { fusionar: false });
+                                                    setBorrarDriver('');
+                                                    alert(`🗑️ Aprendizaje de ${nombre} borrado. Está en la papelera.`);
+                                                }}
+                                                className="px-3 py-2 text-xs font-bold bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 whitespace-nowrap"
+                                            >
+                                                <Trash2 size={12} /> Borrar
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Papelera */}
+                                    {Object.keys(routeKnowledge?.trashByDriver || {}).length > 0 && (
+                                        <div className="bg-white rounded-xl p-3 border border-slate-200">
+                                            <p className="text-xs font-bold text-slate-700 mb-2">♻️ Papelera</p>
+                                            <p className="text-xs text-slate-500 mb-2">Aprendizajes borrados. Recuperarlos los devuelve al conductor tal y como estaban.</p>
+                                            <div className="space-y-2">
+                                                {Object.entries(routeKnowledge.trashByDriver).map(([id, entrada]) => (
+                                                    <div key={id} className="flex items-center gap-2 bg-slate-50 rounded-lg p-2 border border-slate-100">
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-xs font-bold text-slate-700 truncate">{nombreDeConductor(id)}</p>
+                                                            <p className="text-[10px] text-slate-400">
+                                                                {plural(contarPueblos(entrada?.datos), 'pueblo', 'pueblos')} · {plural(contarClientes(entrada?.datos), 'cliente', 'clientes')}
+                                                                {entrada?.borradoEl && ` · borrado el ${new Date(entrada.borradoEl).toLocaleDateString('es')}`}
+                                                            </p>
+                                                        </div>
+                                                        <button
+                                                            onClick={() => {
+                                                                const nombre = nombreDeConductor(id);
+                                                                if (!confirm(`¿Devolver a ${nombre} el aprendizaje borrado?\n\nSustituirá a lo que haya aprendido desde entonces.`)) return;
+                                                                onUpdateRouteKnowledge(recuperarAprendizaje(routeKnowledge, id), { fusionar: false });
+                                                                alert(`♻️ Aprendizaje de ${nombre} recuperado.`);
+                                                            }}
+                                                            className="px-3 py-1.5 text-xs font-bold bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 flex items-center gap-1 whitespace-nowrap"
+                                                        >
+                                                            <RotateCcw size={12} /> Recuperar
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                const nombre = nombreDeConductor(id);
+                                                                if (!confirm(`¿Eliminar definitivamente el aprendizaje de ${nombre}?\n\nEsto ya no tiene vuelta atrás.`)) return;
+                                                                onUpdateRouteKnowledge(eliminarDeLaPapelera(routeKnowledge, id), { fusionar: false });
+                                                            }}
+                                                            title="Eliminar definitivamente"
+                                                            className="p-1.5 text-slate-300 hover:text-red-500 transition-colors"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    </div>
+                                                ))}
                                             </div>
                                         </div>
                                     )}
