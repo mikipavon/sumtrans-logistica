@@ -20,6 +20,8 @@ const MAINTENANCE_TYPES = [
     { value: 'Zapata Frenos', label: 'Zapata de Freno',     icon: Wrench,       color: 'text-orange-600 bg-orange-100 border-orange-300' },
     { value: 'Pastillas Delanteras', label: 'Pastillas Delanteras', icon: Wrench, color: 'text-orange-500 bg-orange-50 border-orange-200' },
     { value: 'Pastillas Traseras', label: 'Pastillas Traseras', icon: Wrench,   color: 'text-orange-500 bg-orange-50 border-orange-200' },
+    { value: 'Discos Delanteros', label: 'Discos Delanteros', icon: Circle,    color: 'text-slate-600 bg-slate-100 border-slate-300' },
+    { value: 'Discos Traseros', label: 'Discos Traseros',   icon: Circle,      color: 'text-slate-500 bg-slate-50 border-slate-200' },
     { value: 'Revisión',  label: 'Revisión General',        icon: CheckCircle,  color: 'text-emerald-500 bg-emerald-50 border-emerald-200' },
     { value: 'Otro',      label: 'Otro',                    icon: Wrench,       color: 'text-purple-500 bg-purple-50 border-purple-200' },
 ];

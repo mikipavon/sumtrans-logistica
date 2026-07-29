@@ -1787,7 +1787,15 @@ function App() {
 
   const handleUpdateVehicle = async (id, updatedData) => {
     try {
-      const { data, error } = await supabase.from('vehicles').update({ data: updatedData }).eq('id', id).select();
+      // `updatedData` trae solo los campos que cambian (ej: { documents }), así que hay que
+      // combinarlo con la ficha guardada. Si se escribiera tal cual, el resto de la ficha
+      // (marca, modelo, estado, conductor, odómetro, mantenimientos...) se perdería.
+      const { data: current, error: readError } = await supabase
+        .from('vehicles').select('data').eq('id', id).single();
+      if (readError) throw readError;
+
+      const merged = { ...(current?.data || {}), ...updatedData };
+      const { data, error } = await supabase.from('vehicles').update({ data: merged }).eq('id', id).select();
       if (error) throw error;
       setVehicles(prev => prev.map(v => v.id === id ? { ...data[0].data, id: data[0].id } : v));
     } catch (e) { alert('Error al actualizar vehículo'); console.error(e); }

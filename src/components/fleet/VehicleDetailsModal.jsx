@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Truck, User, FileText, Upload, Download, Trash2, Shield, Cpu, AlertTriangle, CheckCircle, Clock, Wrench, Droplets, Circle, Plus, Euro, Camera, Pencil, Save } from 'lucide-react';
+import { X, Truck, User, FileText, Upload, Download, Trash2, Shield, Cpu, AlertTriangle, CheckCircle, Clock, Wrench, Droplets, Circle, Plus, Euro, Camera, Pencil, Save, Eye, Image as ImageIcon, ExternalLink, Loader2 } from 'lucide-react';
 import BrandLogo from './BrandLogo';
 import MaintenanceIcon, { getMaintenanceConfig } from './MaintenanceIcon';
+import PdfPreview from './PdfPreview';
+import { uploadFileToBucket } from '../../utils/storage';
 
 const BRANDS = [
     { key: 'fiat',       name: 'FIAT' },
@@ -25,6 +27,17 @@ const BRANDS = [
 
 const DOC_TYPES = ['Seguro','ITV','Ficha Técnica','Permiso de Circulación','Tarjeta de Transporte','Tacógrafo','Extintor / Seguridad','Otro'];
 
+// Los documentos van al almacén de archivos; en la ficha del vehículo solo se guarda el enlace.
+const DOCS_BUCKET   = 'vehicle_docs';
+const MAX_UPLOAD_MB = 20;   // límite al subir al almacén
+const MAX_INLINE_MB = 2;    // límite del respaldo, que sí ocupa espacio en la ficha
+
+function formatSize(bytes) {
+    return bytes >= 1024 * 1024
+        ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+        : `${(bytes / 1024).toFixed(1)} KB`;
+}
+
 const MAINTENANCE_TYPES = [
     { value: 'Aceite', label: 'Cambio de Aceite', icon: Droplets, color: 'text-amber-500 bg-amber-50' },
     { value: 'Correa', label: 'Correa Distribución', icon: Circle, color: 'text-red-500 bg-red-50' },
@@ -38,12 +51,14 @@ const MAINTENANCE_TYPES = [
     { value: 'Zapata Frenos', label: 'Zapata de Freno', icon: Wrench, color: 'text-orange-600 bg-orange-100' },
     { value: 'Pastillas Delanteras', label: 'Pastillas Delanteras', icon: Wrench, color: 'text-orange-500 bg-orange-50' },
     { value: 'Pastillas Traseras', label: 'Pastillas Traseras', icon: Wrench, color: 'text-orange-500 bg-orange-50' },
+    { value: 'Discos Delanteros', label: 'Discos Delanteros', icon: Circle, color: 'text-slate-600 bg-slate-100' },
+    { value: 'Discos Traseros', label: 'Discos Traseros', icon: Circle, color: 'text-slate-500 bg-slate-50' },
     { value: 'Revisión', label: 'Revisión General', icon: CheckCircle, color: 'text-emerald-500 bg-emerald-50' },
     { value: 'Otro', label: 'Otro', icon: Wrench, color: 'text-purple-500 bg-purple-50' },
 ];
 
 // Types that support km-based alerts
-const KM_ALERT_TYPES = ['Aceite', 'Correa', 'Ruedas', 'Filtros', 'Frenos', 'Zapata Frenos', 'Pastillas Delanteras', 'Pastillas Traseras', 'Filtro Aire', 'Filtro Gasoil', 'Filtro Aceite'];
+const KM_ALERT_TYPES = ['Aceite', 'Correa', 'Ruedas', 'Filtros', 'Frenos', 'Zapata Frenos', 'Pastillas Delanteras', 'Pastillas Traseras', 'Discos Delanteros', 'Discos Traseros', 'Filtro Aire', 'Filtro Gasoil', 'Filtro Aceite'];
 
 function getKmAlertStatus(log, currentOdometer) {
     if (!log.alertAtKm || !currentOdometer) return null;
@@ -54,6 +69,18 @@ function getKmAlertStatus(log, currentOdometer) {
     if (remaining <= 1000) return { label: `${remaining} km para alerta`, color: 'text-amber-600 bg-amber-50 border-amber-200', icon: 'warning', remaining };
     if (remaining <= 3000) return { label: `${remaining} km para alerta`, color: 'text-yellow-600 bg-yellow-50 border-yellow-200', icon: 'notice', remaining };
     return { label: `Faltan ${remaining.toLocaleString('es-ES')} km`, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', icon: 'ok', remaining };
+}
+
+// Detecta si un documento se puede previsualizar (imagen, PDF o ninguno)
+function getDocKind(doc) {
+    if (!doc) return 'other';
+    const mime = (doc.type || '').toLowerCase();
+    const url  = (doc.dataUrl || '').toLowerCase();
+    // Ruta sin query string, tanto del nombre como de la URL remota
+    const paths = [(doc.name || '').toLowerCase(), url.split('?')[0]];
+    if (mime.startsWith('image/') || url.startsWith('data:image/') || paths.some(p => /\.(jpe?g|png|gif|webp|bmp|heic)$/.test(p))) return 'image';
+    if (mime === 'application/pdf' || url.startsWith('data:application/pdf') || paths.some(p => /\.pdf$/.test(p))) return 'pdf';
+    return 'other';
 }
 
 function getExpiryStatus(expiryDate) {
@@ -77,6 +104,12 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
     const [uploadDocType, setUploadDocType] = useState('Seguro');
     const [uploadExpiry, setUploadExpiry] = useState('');
     const [uploadLabel, setUploadLabel] = useState('');
+    const [uploading, setUploading] = useState(false);
+    const [uploadError, setUploadError] = useState('');
+
+    // Vista previa de documentos
+    const [previewDoc, setPreviewDoc] = useState(null);
+    const [previewBlobUrl, setPreviewBlobUrl] = useState(null);
 
     // Maintenance form state
     const [showMaintForm, setShowMaintForm] = useState(false);
@@ -113,6 +146,32 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
         }
     }, [vehicle]);
 
+    // El navegador bloquea las data: URL en iframes y al abrirlas en una pestaña nueva,
+    // así que las convertimos a blob: para poder previsualizarlas y abrirlas.
+    useEffect(() => {
+        setPreviewBlobUrl(null);
+        if (!previewDoc?.dataUrl?.startsWith('data:')) return;
+        let cancelled = false;
+        let url = null;
+        fetch(previewDoc.dataUrl)
+            .then(r => r.blob())
+            .then(blob => {
+                if (cancelled) return;
+                url = URL.createObjectURL(blob);
+                setPreviewBlobUrl(url);
+            })
+            .catch(() => {});
+        return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
+    }, [previewDoc]);
+
+    // Cerrar la vista previa con la tecla Escape
+    useEffect(() => {
+        if (!previewDoc) return;
+        const onKey = (e) => { if (e.key === 'Escape') setPreviewDoc(null); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [previewDoc]);
+
     if (!isOpen || !vehicle) return null;
 
     const handleDriverChange = (e) => {
@@ -121,24 +180,64 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
         onUpdateVehicle(vehicle.id, { assignedDriverId: newDriverId });
     };
 
-    const handleFileUpload = (e) => {
+    const saveDocument = (newDoc) => {
+        const updatedDocs = [...documents, newDoc];
+        setDocuments(updatedDocs);
+        onUpdateVehicle(vehicle.id, { documents: updatedDocs });
+        setUploadLabel(''); setUploadExpiry(''); setUploadDocType('Seguro');
+    };
+
+    const handleFileUpload = async (e) => {
         const file = e.target.files[0];
+        e.target.value = '';
         if (!file) return;
-        if (file.size > 2 * 1024 * 1024) { alert('El archivo es demasiado grande. Límite: 2MB.'); return; }
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const newDoc = {
-                id: Date.now(), name: uploadLabel || file.name,
-                docType: uploadDocType, expiryDate: uploadExpiry || null,
-                type: file.type, size: (file.size / 1024).toFixed(1) + ' KB',
-                date: new Date().toLocaleDateString('es-ES'), dataUrl: event.target.result,
-            };
-            const updatedDocs = [...documents, newDoc];
-            setDocuments(updatedDocs);
-            onUpdateVehicle(vehicle.id, { documents: updatedDocs });
-            setUploadLabel(''); setUploadExpiry(''); setUploadDocType('Seguro'); e.target.value = '';
+        if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+            setUploadError(`El archivo es demasiado grande. Límite: ${MAX_UPLOAD_MB} MB.`);
+            return;
+        }
+
+        setUploading(true);
+        setUploadError('');
+        const baseDoc = {
+            id: Date.now(), name: uploadLabel || file.name,
+            docType: uploadDocType, expiryDate: uploadExpiry || null,
+            type: file.type, size: formatSize(file.size),
+            date: new Date().toLocaleDateString('es-ES'),
         };
-        reader.readAsDataURL(file);
+
+        try {
+            // El archivo va al almacén y en la ficha solo queda el enlace: así no
+            // engorda la ficha del vehículo ni se corta al guardar.
+            const url = await uploadFileToBucket(`${vehicle.id}_${file.name}`, file, DOCS_BUCKET);
+            saveDocument({ ...baseDoc, dataUrl: url, storage: DOCS_BUCKET });
+        } catch (err) {
+            console.error('[Documentos] Fallo al subir al almacén:', err);
+            // Respaldo: guardar el archivo dentro de la ficha (solo si es pequeño)
+            if (file.size > MAX_INLINE_MB * 1024 * 1024) {
+                setUploadError(`No se pudo subir al almacén (${err.message}). Para guardarlo dentro de la ficha el archivo no puede pasar de ${MAX_INLINE_MB} MB.`);
+                setUploading(false);
+                return;
+            }
+            await new Promise(resolve => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    saveDocument({ ...baseDoc, dataUrl: event.target.result });
+                    setUploadError(`Guardado dentro de la ficha: no se pudo usar el almacén (${err.message}).`);
+                    resolve();
+                };
+                reader.onerror = () => { setUploadError('No se pudo leer el archivo.'); resolve(); };
+                reader.readAsDataURL(file);
+            });
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    // Solo guarda si el valor ha cambiado respecto a lo que hay en la ficha
+    const saveOdometer = () => {
+        const saved = vehicle.currentOdometer || '';
+        if (String(currentOdometer) === String(saved)) return;
+        onUpdateVehicle(vehicle.id, { currentOdometer });
     };
 
     const handleDeleteDocument = (docId) => {
@@ -146,6 +245,7 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
             const updatedDocs = documents.filter(d => d.id !== docId);
             setDocuments(updatedDocs);
             onUpdateVehicle(vehicle.id, { documents: updatedDocs });
+            setPreviewDoc(prev => (prev && prev.id === docId ? null : prev));
         }
     };
 
@@ -280,6 +380,7 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
     const getTypeConfig = (val) => MAINTENANCE_TYPES.find(t => t.value === val) || MAINTENANCE_TYPES[MAINTENANCE_TYPES.length - 1];
 
     return (
+        <>
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex justify-center items-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
 
@@ -488,10 +589,10 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                         type="number"
                                         placeholder="Ej: 125000"
                                         value={currentOdometer}
-                                        onChange={e => {
-                                            setCurrentOdometer(e.target.value);
-                                            onUpdateVehicle(vehicle.id, { currentOdometer: e.target.value });
-                                        }}
+                                        onChange={e => setCurrentOdometer(e.target.value)}
+                                        // Se guarda al salir del campo (o con Enter), no en cada tecla
+                                        onBlur={saveOdometer}
+                                        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                                         className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold"
                                     />
                                 </div>
@@ -717,10 +818,22 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                         <input type="date" value={uploadExpiry} onChange={e => setUploadExpiry(e.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                                     </div>
                                 </div>
-                                <label className="cursor-pointer w-full flex items-center justify-center gap-2 border-2 border-dashed border-blue-200 hover:border-blue-400 bg-blue-50/50 hover:bg-blue-50 text-blue-600 font-bold rounded-xl py-3 text-sm transition-all">
-                                    <Upload size={16} /> Seleccionar archivo y subir
-                                    <input type="file" className="hidden" onChange={handleFileUpload} accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" />
+                                <label className={`w-full flex items-center justify-center gap-2 border-2 border-dashed rounded-xl py-3 text-sm font-bold transition-all ${
+                                    uploading
+                                        ? 'cursor-wait border-slate-200 bg-slate-50 text-slate-400'
+                                        : 'cursor-pointer border-blue-200 hover:border-blue-400 bg-blue-50/50 hover:bg-blue-50 text-blue-600'
+                                }`}>
+                                    {uploading
+                                        ? <><Loader2 size={16} className="animate-spin" /> Subiendo documento…</>
+                                        : <><Upload size={16} /> Seleccionar archivo y subir</>}
+                                    <input type="file" className="hidden" disabled={uploading} onChange={handleFileUpload} accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" />
                                 </label>
+                                <p className="text-xs text-slate-400 text-center">Hasta {MAX_UPLOAD_MB} MB por archivo</p>
+                                {uploadError && (
+                                    <p className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-start gap-2">
+                                        <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {uploadError}
+                                    </p>
+                                )}
                             </div>
 
                             {documents.length === 0 ? (
@@ -733,10 +846,41 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                 <div className="space-y-3">
                                     {documents.map((doc) => {
                                         const expStatus = getExpiryStatus(doc.expiryDate);
+                                        const kind = getDocKind(doc);
+                                        const canPreview = kind !== 'other' && !!doc.dataUrl;
                                         return (
                                             <div key={doc.id} className={`bg-white border rounded-xl p-4 shadow-sm flex items-center justify-between group hover:border-blue-300 transition-colors ${expStatus?.icon === 'critical' ? 'border-red-300' : expStatus?.icon === 'warning' ? 'border-amber-300' : 'border-slate-200'}`}>
                                                 <div className="flex items-center gap-4 flex-1 min-w-0">
-                                                    <div className={`p-3 rounded-lg shrink-0 ${expStatus?.icon === 'critical' ? 'bg-red-50 text-red-500' : expStatus?.icon === 'warning' ? 'bg-amber-50 text-amber-500' : 'bg-blue-50 text-blue-600'}`}><FileText size={20} /></div>
+                                                    {/* Miniatura / vista previa */}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => canPreview && setPreviewDoc(doc)}
+                                                        disabled={!canPreview}
+                                                        title={canPreview ? 'Ver vista previa' : 'Este formato no se puede previsualizar'}
+                                                        className={`relative w-14 h-14 rounded-lg shrink-0 overflow-hidden border flex items-center justify-center transition-all ${
+                                                            canPreview ? 'cursor-pointer hover:ring-2 hover:ring-blue-400 hover:border-blue-300' : 'cursor-default'
+                                                        } ${
+                                                            expStatus?.icon === 'critical' ? 'bg-red-50 text-red-500 border-red-200'
+                                                            : expStatus?.icon === 'warning' ? 'bg-amber-50 text-amber-500 border-amber-200'
+                                                            : 'bg-blue-50 text-blue-600 border-blue-100'
+                                                        }`}
+                                                    >
+                                                        {kind === 'image' ? (
+                                                            <img src={doc.dataUrl} alt={doc.name} className="w-full h-full object-cover" />
+                                                        ) : kind === 'pdf' ? (
+                                                            <>
+                                                                <FileText size={22} />
+                                                                <span className="absolute bottom-0 inset-x-0 bg-red-600 text-white text-[8px] font-bold text-center leading-3 py-0.5">PDF</span>
+                                                            </>
+                                                        ) : (
+                                                            <FileText size={22} />
+                                                        )}
+                                                        {canPreview && (
+                                                            <span className="absolute inset-0 bg-slate-900/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                                                <Eye size={18} />
+                                                            </span>
+                                                        )}
+                                                    </button>
                                                     <div className="min-w-0">
                                                         <div className="flex items-center gap-2 flex-wrap">
                                                             <p className="font-bold text-slate-700 truncate">{doc.name}</p>
@@ -753,7 +897,14 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-2">
+                                                <div className="flex items-center gap-1 shrink-0 ml-2">
+                                                    {canPreview && (
+                                                        <button
+                                                            onClick={() => setPreviewDoc(doc)}
+                                                            className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                                                            title="Vista previa"
+                                                        ><Eye size={18} /></button>
+                                                    )}
                                                     <a
                                                         href={doc.dataUrl}
                                                         target="_blank"
@@ -774,5 +925,76 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                 </div>
             </div>
         </div>
+
+        {/* ── VISOR / VISTA PREVIA DE DOCUMENTO ── */}
+        {previewDoc && (() => {
+            const kind = getDocKind(previewDoc);
+            const expStatus = getExpiryStatus(previewDoc.expiryDate);
+            const isDataUrl = previewDoc.dataUrl?.startsWith('data:');
+            // Las data: URL no se pueden abrir en una pestaña nueva: usamos el blob:
+            const openHref = (isDataUrl ? previewBlobUrl : previewDoc.dataUrl) || previewDoc.dataUrl;
+            return (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4"
+                    onClick={() => setPreviewDoc(null)}>
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[92vh] flex flex-col overflow-hidden"
+                        onClick={e => e.stopPropagation()}>
+                        {/* Cabecera */}
+                        <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-slate-50">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <div className="p-2 bg-blue-50 text-blue-600 rounded-lg shrink-0">
+                                    {kind === 'image' ? <ImageIcon size={18} /> : <FileText size={18} />}
+                                </div>
+                                <div className="min-w-0">
+                                    <p className="font-bold text-slate-800 truncate">{previewDoc.name}</p>
+                                    <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                                        {previewDoc.docType && <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">{previewDoc.docType}</span>}
+                                        <span className="text-xs text-slate-400">{previewDoc.date} · {previewDoc.size}</span>
+                                        {previewDoc.expiryDate && expStatus && (
+                                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${expStatus.color}`}>
+                                                {expStatus.icon === 'critical' ? <AlertTriangle size={10} /> : expStatus.icon === 'ok' ? <CheckCircle size={10} /> : <Clock size={10} />}
+                                                {expStatus.label} · {new Date(previewDoc.expiryDate).toLocaleDateString('es-ES')}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            <button onClick={() => setPreviewDoc(null)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors shrink-0"><X size={20} /></button>
+                        </div>
+
+                        {/* Contenido */}
+                        <div className="flex-1 min-h-0 bg-slate-100 flex flex-col">
+                            {kind === 'image' ? (
+                                <div className="flex-1 min-h-0 overflow-auto flex items-center justify-center p-4">
+                                    <img src={previewDoc.dataUrl} alt={previewDoc.name} className="max-w-full max-h-full object-contain rounded-lg shadow-lg bg-white" />
+                                </div>
+                            ) : kind === 'pdf' ? (
+                                <PdfPreview src={previewDoc.dataUrl} />
+                            ) : (
+                                <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-500 p-4">
+                                    <div className="bg-slate-200 p-4 rounded-full inline-flex mb-3 text-slate-400"><FileText size={32} /></div>
+                                    <p className="font-medium">Este formato no admite vista previa</p>
+                                    <p className="text-sm text-slate-400 mt-1">Descárgalo para abrirlo en tu equipo</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Pie */}
+                        <div className="p-3 border-t border-slate-100 bg-white flex justify-end gap-2">
+                            <a href={openHref} target="_blank" rel="noreferrer"
+                                className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-medium text-sm transition-colors">
+                                <ExternalLink size={16} className="shrink-0" />
+                                <span className="hidden sm:inline">Abrir en pestaña nueva</span>
+                                <span className="sm:hidden">Abrir</span>
+                            </a>
+                            <a href={previewDoc.dataUrl} download={previewDoc.name}
+                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium text-sm transition-colors shadow-sm">
+                                <Download size={16} /> Descargar
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            );
+        })()}
+        </>
     );
 }

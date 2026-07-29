@@ -138,6 +138,38 @@ const TYPES = {
       </svg>
     ),
   },
+  'Discos Delanteros': {
+    label: 'Discos Delanteros',
+    color: '#475569',      // slate-600
+    bgColor: '#F1F5F9',    // slate-100
+    borderColor: '#E2E8F0', // slate-200
+    icon: (size) => (
+      <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {/* Brake disc */}
+        <circle cx="12" cy="12" r="9"/>
+        <circle cx="12" cy="12" r="6" strokeDasharray="2 2" strokeWidth="1.5"/>
+        <circle cx="12" cy="12" r="2.5" fill="currentColor" opacity="0.3"/>
+        {/* Front marker */}
+        <path d="M6 5.5a9 9 0 0 1 12 0" strokeWidth="2.5" opacity="0.9"/>
+      </svg>
+    ),
+  },
+  'Discos Traseros': {
+    label: 'Discos Traseros',
+    color: '#64748B',      // slate-500
+    bgColor: '#F8FAFC',    // slate-50
+    borderColor: '#E2E8F0', // slate-200
+    icon: (size) => (
+      <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {/* Brake disc */}
+        <circle cx="12" cy="12" r="9"/>
+        <circle cx="12" cy="12" r="6" strokeDasharray="2 2" strokeWidth="1.5"/>
+        <circle cx="12" cy="12" r="2.5" fill="currentColor" opacity="0.3"/>
+        {/* Rear marker */}
+        <path d="M6 18.5a9 9 0 0 0 12 0" strokeWidth="2.5" opacity="0.9"/>
+      </svg>
+    ),
+  },
   Ruedas: {
     label: 'Neumáticos / Ruedas',
     color: '#374151',      // gray-700
