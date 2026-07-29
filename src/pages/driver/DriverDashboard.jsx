@@ -1767,7 +1767,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         drivers?.find(d => String(d.id) === String(currentDriverId)),
     [drivers, currentDriverId]);
 
-    const [gpsStatus, setGpsStatus] = useState('idle'); // 'idle', 'requesting', 'success', 'denied', 'error_unsecure'
+    // 'idle' | 'requesting' | 'success' | 'denied' (permiso denegado) | 'timeout' (no dio tiempo a fijar posición)
+    // | 'unavailable' (sin cobertura de satélites) | 'db_error' (GPS OK pero no se guardó) | 'error_unsecure'
+    const [gpsStatus, setGpsStatus] = useState('idle');
 
     // === RASTREADOR GPS AUTOMÁTICO + BAJO DEMANDA ===
     // Envía GPS automáticamente cada 2 min + al entrar + al volver a la app
@@ -1792,49 +1794,116 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
 
         if (!silent) setGpsStatus('requesting');
-        navigator.geolocation.getCurrentPosition(
-            async (position) => {
-                const { latitude, longitude } = position.coords;
-                try {
-                    const drv = driversRef.current.find(d => String(d.id) === String(currentDriverId));
-                    if (!drv) return;
 
-                    const updatedData = { 
-                        ...drv, 
-                        currentLat: latitude, 
-                        currentLng: longitude, 
-                        lastGpsUpdate: new Date().toISOString() 
-                    };
-                    await supabase.from('drivers').update({
-                        data: updatedData
-                    }).eq('id', currentDriverId);
-                    
-                    setGpsStatus('success');
-                    if (!silent) addLog("✅ Ubicación enviada con éxito");
-                } catch (e) {
-                   console.error("Fallo al sincronizar GPS:", e);
-                   if (!silent) { setGpsStatus('denied'); addLog("❌ Error al guardar en base de datos"); }
-                }
-            },
-            (error) => {
-                console.warn("GPS ERROR:", error.message);
-                if (!silent) {
-                    setGpsStatus('denied');
-                    addLog("❌ Error GPS: " + error.message);
-                }
-                if (error.code === error.PERMISSION_DENIED && !gpsDeniedRef.current) {
-                    gpsDeniedRef.current = true;
-                    setGpsStatus('denied');
-                    alert("Aviso: Has denegado el permiso de ubicación. El mapa de la oficina no podrá localizarte.");
-                }
-            },
-            {
-                enableHighAccuracy: true,
-                timeout: 15000,
-                maximumAge: 30000 
+        const handleSuccess = async (position) => {
+            const { latitude, longitude } = position.coords;
+            try {
+                const drv = driversRef.current.find(d => String(d.id) === String(currentDriverId));
+                if (!drv) return;
+
+                const updatedData = {
+                    ...drv,
+                    currentLat: latitude,
+                    currentLng: longitude,
+                    lastGpsUpdate: new Date().toISOString()
+                };
+                // Supabase NO lanza excepción: devuelve el fallo dentro de .error.
+                // Sin este chequeo, un guardado fallido se mostraba como "enviado con éxito".
+                const { error: dbError } = await supabase.from('drivers').update({
+                    data: updatedData
+                }).eq('id', currentDriverId);
+                if (dbError) throw dbError;
+
+                gpsDeniedRef.current = false; // El GPS ha vuelto: permitir avisar de nuevo si falla más adelante
+                setGpsStatus('success');
+                if (!silent) addLog("✅ Ubicación enviada con éxito");
+            } catch (e) {
+               console.error("Fallo al sincronizar GPS:", e);
+               setGpsStatus('db_error');
+               if (!silent) addLog("❌ GPS leído, pero no se pudo guardar en el servidor");
             }
-        );
+        };
+
+        // highAccuracy=false es el reintento: tarda más pero usa antenas/wifi, funciona bajo techo
+        const attempt = (highAccuracy) => {
+            navigator.geolocation.getCurrentPosition(
+                handleSuccess,
+                (error) => {
+                    // Si no es un rechazo de permiso, dar una segunda oportunidad en modo rápido
+                    if (highAccuracy && error.code !== error.PERMISSION_DENIED) {
+                        if (!silent) addLog("↻ Sin señal fina, reintentando por antenas...");
+                        attempt(false);
+                        return;
+                    }
+
+                    console.warn("GPS ERROR:", error.code, error.message);
+
+                    let status = 'unavailable';
+                    if (error.code === error.PERMISSION_DENIED) status = 'denied';
+                    else if (error.code === error.TIMEOUT) status = 'timeout';
+
+                    if (!silent) {
+                        setGpsStatus(status);
+                        addLog("❌ Error GPS: " + error.message);
+                    }
+
+                    if (status === 'denied' && !gpsDeniedRef.current) {
+                        gpsDeniedRef.current = true;
+                        setGpsStatus('denied');
+                        alert("Aviso: Has denegado el permiso de ubicación. El mapa de la oficina no podrá localizarte.");
+                    }
+                },
+                highAccuracy
+                    ? { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
+                    : { enableHighAccuracy: false, timeout: 30000, maximumAge: 120000 }
+            );
+        };
+
+        attempt(true);
     }, [currentDriverId]);
+
+    // Diagnóstico real al pulsar el icono: pregunta al navegador si el permiso está
+    // concedido antes de acusar al conductor de haberlo denegado.
+    const handleGpsClick = useCallback(async () => {
+        if (gpsStatus === 'error_unsecure') {
+            alert("⚠ GPS BLOQUEADO: Estás usando una conexión 'http://' sin certificado de seguridad válido o 'localhost'. Chrome o Safari no permiten leer antenas de GPS en conexiones inseguras. \nDebes usar tu dominio oficial seguro (HTTPS) para que funcione el GPS.");
+            return;
+        }
+
+        if (!['denied', 'timeout', 'unavailable', 'db_error'].includes(gpsStatus)) {
+            sendLocation();
+            return;
+        }
+
+        if (gpsStatus === 'db_error') {
+            alert("⚠ SIN CONEXIÓN AL SERVIDOR\n\nEl GPS del móvil funciona, pero la posición no llegó a la oficina. Suele ser falta de cobertura de datos.\n\nReintentando ahora.");
+            sendLocation();
+            return;
+        }
+
+        let permiso = null;
+        try {
+            if (navigator.permissions?.query) {
+                permiso = (await navigator.permissions.query({ name: 'geolocation' })).state;
+            }
+        } catch {
+            // Safari antiguo no sabe consultar este permiso: nos quedamos con el código de error
+        }
+
+        if (permiso === 'denied' || (permiso === null && gpsStatus === 'denied')) {
+            alert("⚠ PERMISO DE UBICACIÓN BLOQUEADO\n\nHay que activarlo en los ajustes del móvil:\n\n• iPhone: Ajustes → Privacidad y seguridad → Localización → Safari → 'Al usar la app', y activa 'Ubicación precisa'.\n\n• Android: Ajustes → Aplicaciones → Chrome → Permisos → Ubicación → Permitir.");
+            return;
+        }
+
+        if (permiso === 'prompt') {
+            alert("📍 Falta conceder el permiso.\n\nPulsa 'Permitir' en la pregunta que va a aparecer ahora.");
+            sendLocation();
+            return;
+        }
+
+        alert("⚠ SIN SEÑAL GPS\n\nEl permiso está concedido, pero el móvil no consigue fijar la posición. Suele pasar dentro de naves, sótanos o aparcamientos.\n\nComprueba que la Localización del móvil esté encendida, sal a cielo abierto unos segundos y vuelve a pulsar.\n\nReintentando ahora.");
+        sendLocation();
+    }, [gpsStatus, sendLocation]);
 
     // Inicio + GPS automático cada 2 min + al volver del background
     useEffect(() => {
@@ -4332,21 +4401,23 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                 Hola, {drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name || cachedDriverName || 'Conductor'}
                                 
                                 {/* GPS Status Button */}
-                                <button 
+                                <button
                                     onClick={(e) => {
                                         e.preventDefault();
-                                        if (gpsStatus === 'error_unsecure') {
-                                            alert("⚠ GPS BLOQUEADO: Estás usando una conexión 'http://' sin certificado de seguridad válido o 'localhost'. Chrome o Safari no permiten leer antenas de GPS en conexiones inseguras. \nDebes usar tu dominio oficial seguro (HTTPS) para que funcione el GPS.");
-                                        } else if (gpsStatus === 'denied') {
-                                            alert("⚠ GPS DENEGADO: El móvil denegó el permiso para leer la antena. Revisa los permisos de Chrome/Safari.");
-                                        } else {
-                                            sendLocation();
-                                        }
+                                        handleGpsClick();
                                     }}
+                                    title={
+                                        gpsStatus === 'success' ? 'Ubicación enviada' :
+                                        gpsStatus === 'denied' ? 'Permiso de ubicación bloqueado' :
+                                        gpsStatus === 'timeout' || gpsStatus === 'unavailable' ? 'Sin señal GPS — pulsa para reintentar' :
+                                        gpsStatus === 'db_error' ? 'GPS OK, pero no se pudo enviar' :
+                                        'Enviar ubicación'
+                                    }
                                     className={`ml-1 flex items-center justify-center p-1 rounded-full transition-colors ${
-                                        gpsStatus === 'success' ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30' : 
+                                        gpsStatus === 'success' ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30' :
                                         gpsStatus === 'requesting' ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 animate-spin' :
                                         (gpsStatus === 'error_unsecure' || gpsStatus === 'denied') ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 animate-pulse' :
+                                        (gpsStatus === 'timeout' || gpsStatus === 'unavailable' || gpsStatus === 'db_error') ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30' :
                                         'bg-slate-700 text-slate-400 hover:text-white'
                                     }`}
                                 >
