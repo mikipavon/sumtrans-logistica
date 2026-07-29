@@ -301,8 +301,8 @@ export default function PayrollUploadModal({ isOpen, onClose, drivers = [], onUp
                       unmatchedFiles.filter(f => f.selectedDriverId && f.status === 'ready').length;
 
     return (
-        <div className="fixed inset-0 bg-slate-900/90 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
-            <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
+        <div className="fixed inset-0 bg-slate-900/90 z-[100] flex items-center justify-center sm:p-4 backdrop-blur-md">
+            <div className="bg-white sm:rounded-2xl w-full max-w-2xl modal-mobile-full flex flex-col shadow-2xl">
                 <div className="border-b border-gray-100 p-4 flex items-center justify-between shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="p-2 rounded-lg bg-blue-100 text-blue-600">

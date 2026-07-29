@@ -188,8 +188,8 @@ export default function CreateVehicleModal({ isOpen, onClose, onSave }) {
     };
 
     return (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex justify-center items-center z-50 sm:p-4">
+            <div className="bg-white sm:rounded-xl shadow-xl w-full max-w-md overflow-hidden flex flex-col modal-mobile-full">
                 <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                     <h3 className="font-bold text-slate-800 flex items-center gap-2">
                         <Truck className="text-blue-600" size={20} />

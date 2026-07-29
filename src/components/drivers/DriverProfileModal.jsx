@@ -168,8 +168,8 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
     if (!isOpen || !driver) return null;
 
     return (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white sm:rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col modal-mobile-full">
 
                 {/* Header */}
                 <div className="bg-slate-50 border-b border-slate-100 p-6 flex justify-between items-start">

@@ -876,8 +876,8 @@ export default function Articles({
 
             {/* Modal Zonas de Cobertura B1/B2 */}
             {isZonesModalOpen && (
-                <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[100] p-4 backdrop-blur-sm animate-in fade-in zoom-in duration-200">
-                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+                <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[100] sm:p-4 backdrop-blur-sm animate-in fade-in zoom-in duration-200">
+                    <div className="bg-white sm:rounded-2xl shadow-xl w-full max-w-4xl modal-mobile-full overflow-hidden flex flex-col">
                         <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                             <div className="flex items-center gap-4">
                                 <div>

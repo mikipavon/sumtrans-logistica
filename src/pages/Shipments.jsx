@@ -1151,8 +1151,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
             {/* Import Excel Modal */}
             {isImportModalOpen && (
-                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-xl animate-in zoom-in-95 duration-200">
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center sm:p-4">
+                    <div className="bg-white sm:rounded-2xl w-full max-w-2xl modal-mobile-full overflow-y-auto shadow-xl animate-in zoom-in-95 duration-200">
                         <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center sticky top-0 z-10">
                             <h3 className="font-bold text-slate-800 flex items-center gap-2">
                                 <Plus size={16} className="text-indigo-500" />

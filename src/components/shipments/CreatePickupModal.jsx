@@ -219,8 +219,8 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
     const labelClass = "block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1";
 
     return (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-[9999] sm:p-4 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white sm:rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col modal-mobile-full">
                 <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100 bg-amber-50">
                     <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                         <Package className="text-amber-600" size={20} />

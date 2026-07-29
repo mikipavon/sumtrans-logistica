@@ -381,8 +381,8 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
 
     return (
         <>
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex justify-center items-center z-50 sm:p-4">
+            <div className="bg-white sm:rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col modal-mobile-full">
 
                 {/* Header */}
                 <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
