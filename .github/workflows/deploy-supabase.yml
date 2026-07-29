@@ -6,10 +6,16 @@ on:
       - main
     paths:
       - 'supabase/functions/**'
+  # Permite relanzar el despliegue a mano desde la pestaña Actions sin tener
+  # que inventarse un commit (p. ej. tras renovar SUPABASE_ACCESS_TOKEN).
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
 
@@ -27,3 +33,40 @@ jobs:
           supabase functions deploy create-auth-user --project-ref mottccbalzdzrgqzfkdl
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      # Si el despliegue falla, el codigo queda en GitHub pero NO en Supabase, y
+      # eso pasa desapercibido porque Vercel si publica el frontend. Abrimos una
+      # incidencia para que se vea en el repo (una sola, se reutiliza si ya existe).
+      - name: Avisar si el despliegue ha fallado
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create deploy-fallido --color B60205 \
+            --description "Despliegue de edge functions fallido" 2>/dev/null || true
+
+          ABIERTA=$(gh issue list --state open --label deploy-fallido --limit 1 --json number --jq '.[0].number // empty')
+
+          if [ -n "$ABIERTA" ]; then
+            gh issue comment "$ABIERTA" --body "Ha vuelto a fallar el despliegue: $RUN_URL"
+            exit 0
+          fi
+
+          CUERPO=$(printf '%s\n' \
+            "El workflow de despliegue ha fallado, asi que Supabase sigue con la version anterior" \
+            "de las edge functions aunque el codigo ya este en main. Ojo: esto pasa desapercibido," \
+            "porque Vercel si publica el frontend y la app parece actualizada." \
+            "" \
+            "Log del fallo: $RUN_URL" \
+            "" \
+            "Causa mas habitual: SUPABASE_ACCESS_TOKEN caducado (error \`401 Unauthorized\`)." \
+            "" \
+            "1. Renovar el token en https://supabase.com/dashboard/account/tokens" \
+            "2. Guardarlo en Settings > Secrets and variables > Actions > SUPABASE_ACCESS_TOKEN" \
+            "3. Relanzar este workflow desde la pestana Actions con \"Run workflow\"")
+
+          gh issue create \
+            --title "Las edge functions NO se han desplegado en Supabase" \
+            --label deploy-fallido \
+            --body "$CUERPO"
