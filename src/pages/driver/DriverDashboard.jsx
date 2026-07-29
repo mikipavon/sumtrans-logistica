@@ -35,6 +35,7 @@ import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { getPackagesCount } from '../../utils/shipmentUtils';
+import { mejorPuebloParaCiudad, esElMismoPueblo } from '../../utils/townMatch';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import RouteMapModal from '../../components/driver/RouteMapModal';
 import DriverGuidedTour from '../../components/DriverGuidedTour';
@@ -532,6 +533,14 @@ const SortableItem = React.memo((props) => {
         setNodeRef(node);
     }, [setNodeRef]);
 
+    // Espejo de isDragging para los listeners nativos (se registran una sola vez y
+    // capturarían un valor obsoleto). Sin esto, desviarte a la derecha mientras
+    // arrastras activa el swipe, que a su vez desactiva el sortable y mata el arrastre.
+    const isDraggingRef = useRef(false);
+    useEffect(() => {
+        isDraggingRef.current = isDragging;
+    }, [isDragging]);
+
     // Use fully PASSIVE native event listeners — Android Chrome scroll fix.
     // CSS touch-action:pan-y already tells the browser to only scroll vertically,
     // so we NEVER need preventDefault(). All listeners are passive → Chrome can
@@ -547,6 +556,9 @@ const SortableItem = React.memo((props) => {
         };
 
         const onTouchMove = (e) => {
+            // Si dnd-kit ya está reordenando, el swipe no debe interferir
+            if (isDraggingRef.current) return;
+
             const deltaX = e.touches[0].clientX - startX.current;
             const deltaY = e.touches[0].clientY - startY.current;
             const absDeltaX = Math.abs(deltaX);
@@ -2350,11 +2362,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     // IMPORTANT: We do NOT use TouchSensor because its setup() registers a global
     // window-level touchmove listener with {passive:false} that blocks ALL native
     // scrolling on Android Chrome.
+    // Activación por distancia, no por tiempo: el arrastre sale solo del asa de
+    // puntitos, que ya lleva touch-action:none y nunca hace scroll, así que no hay
+    // que distinguir "arrastrar" de "deslizar la lista". Con delay+tolerance el dedo
+    // se pasaba de los 5px antes de los 200ms y el gesto se cancelaba siempre.
     const sensors = useSensors(
         useSensor(PointerSensor, {
             activationConstraint: {
-                delay: 200,
-                tolerance: 5,
+                distance: 8,
             },
         })
     );
@@ -3018,6 +3033,40 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const deliveredTodayRef = useRef([]); // Track today's deliveries in order for learning
     const syncTimeoutRef = useRef(null); // Debounce cloud sync
 
+    // Órdenes de administración sobre el aprendizaje (borrar / recuperar).
+    // El aprendizaje real vive en localStorage, así que tocarlo solo en la nube no
+    // serviría de nada: hay que aplicar la orden también aquí. La fecha de la orden
+    // hace de marcador para no repetirla en cada arranque.
+    useEffect(() => {
+        const id = String(currentDriverId || '');
+        const orden = routeKnowledge?.actionByDriver?.[id];
+        if (!id || !orden?.fecha) return;
+
+        const yaAplicada = localStorage.getItem(`drv_pos_learn_orden_${id}`) === orden.fecha;
+        if (yaAplicada) return;
+
+        // Corta cualquier sincronización pendiente, que subiría lo que vamos a tirar
+        clearTimeout(syncTimeoutRef.current);
+
+        try {
+            if (orden.accion === 'borrado') {
+                localStorage.removeItem(`drv_pos_learn_${id}`);
+                setPositionLearning({});
+                console.log('🧹 Aprendizaje borrado por administración');
+            } else if (orden.accion === 'recuperado') {
+                const recuperado = routeKnowledge?.byDriver?.[id] || {};
+                localStorage.setItem(`drv_pos_learn_${id}`, JSON.stringify(recuperado));
+                setPositionLearning(recuperado);
+                console.log('♻️ Aprendizaje recuperado por administración');
+            } else {
+                return; // orden desconocida: no marcamos nada
+            }
+            localStorage.setItem(`drv_pos_learn_orden_${id}`, orden.fecha);
+        } catch (e) {
+            console.warn('No se pudo aplicar la orden de aprendizaje:', e);
+        }
+    }, [routeKnowledge, currentDriverId]);
+
     // Called after each delivery to record position
     const recordDeliveryPosition = (shipment) => {
         if (!shipment) return;
@@ -3204,16 +3253,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     const secondaryTowns = isMorningShift ? afternoonTowns : morningTowns;
                     const allRouteTowns = [...primaryTowns, ...secondaryTowns];
 
-                    // Helper: Find which route town a city matches (flexible matching)
-                    const matchTown = (city) => {
-                        if (!city) return null;
-                        const c = norm(city);
-                        for (const town of allRouteTowns) {
-                            const t = norm(town);
-                            if (c === t || c.includes(t) || t.includes(c)) return town;
-                        }
-                        return null;
-                    };
+                    // Helper: Find which route town a city matches (flexible matching).
+                    // Devuelve el pueblo MÁS específico que encaje: quedándose con el primero,
+                    // los envíos de "Montalbán de Córdoba" caían en el grupo de "Córdoba"
+                    // y se ordenaban como si fueran de la capital.
+                    const matchTown = (city) => mejorPuebloParaCiudad(city, allRouteTowns);
 
                     // ── FASE 2: Agrupar envíos en buckets por pueblo ──
                     const townBuckets = new Map(); // townName -> [shipments]
@@ -4794,22 +4838,32 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                     {(() => {
                                                         const cityText = shipment.type === 'Recogida' ? (shipment.originCity || '') : (shipment.destinationCity || '');
                                                         if (!cityText) return null;
-                                                        const normCity = normalizeClientName(cityText);
                                                         const activeR = routes && routes.length > 0 ? routes : [];
-                                                        
+
+                                                        // Primero decidimos a qué pueblo de las rutas corresponde el envío, y solo
+                                                        // después miramos quién lo lleva. Comparando "a trozos" ruta por ruta,
+                                                        // "Montalbán de Córdoba" contenía "Córdoba" y el envío se le ofrecía a todo
+                                                        // el que pasara por Córdoba capital.
+                                                        const todosLosPueblos = activeR.flatMap(r => [
+                                                            ...(r.poblacionesManana || []),
+                                                            ...(r.poblacionesTarde || [])
+                                                        ]);
+                                                        const puebloDelEnvio = mejorPuebloParaCiudad(cityText, todosLosPueblos);
+                                                        if (!puebloDelEnvio) return null;
+
                                                         const sugs = [];
                                                         activeR.forEach(r => {
                                                             if (!r.conductorId) return;
                                                             const driver = drivers?.find(d => String(d.id) === String(r.conductorId));
                                                             if (!driver) return; // Skip if driver was deleted or not found
                                                             const dName = driver.alias?.trim() || driver.name?.trim().split(' ')[0] || 'Conductor';
-                                                            
-                                                            const inManana = (r.poblacionesManana || []).some(p => normCity.includes(normalizeClientName(p)));
+
+                                                            const inManana = (r.poblacionesManana || []).some(p => esElMismoPueblo(p, puebloDelEnvio));
                                                             if (inManana && !sugs.some(s => s.driverId === r.conductorId && s.turno === 'manana')) {
                                                                 sugs.push({ driverId: r.conductorId, turno: 'manana', name: dName });
                                                             }
-                                                            
-                                                            const inTarde = (r.poblacionesTarde || []).some(p => normCity.includes(normalizeClientName(p)));
+
+                                                            const inTarde = (r.poblacionesTarde || []).some(p => esElMismoPueblo(p, puebloDelEnvio));
                                                             if (inTarde && !sugs.some(s => s.driverId === r.conductorId && s.turno === 'tarde')) {
                                                                 sugs.push({ driverId: r.conductorId, turno: 'tarde', name: dName });
                                                             }
