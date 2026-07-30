@@ -186,20 +186,17 @@ html, body, #root, .lista-repartos {
 
 /* Modales a pantalla completa en el móvil (iPhone y Android) y tarjeta centrada
    en escritorio. Se usa junto a `sm:p-4` en el fondo y `sm:rounded-2xl` en el
-   panel, para que en móvil no queden ni márgenes ni esquinas redondeadas. */
+   panel, para que en móvil no queden ni márgenes ni esquinas redondeadas.
+   Del notch y la barra de gestos se encarga iOS, porque el meta viewport NO
+   lleva viewport-fit=cover (ver el comentario en index.html). */
 .modal-mobile-full {
   height: 100vh; /* fallback para navegadores sin dvh */
   height: 100dvh; /* la barra dinámica de Safari/Chrome no recorta el modal */
   max-height: 100dvh;
-  /* Respeta el notch y la barra de gestos (necesita viewport-fit=cover) */
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 @media (min-width: 640px) {
   .modal-mobile-full {
     height: auto;
     max-height: 90dvh;
-    padding-top: 0;
-    padding-bottom: 0;
   }
 }

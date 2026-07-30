@@ -13,9 +13,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="SumTrans" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
-    <!-- viewport-fit=cover: activa env(safe-area-inset-*) para que los modales a
-         pantalla completa respeten el notch y la barra de gestos del iPhone -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- NO añadir viewport-fit=cover: junto a apple-mobile-web-app-status-bar-style
+         black-translucent, mete TODA la app debajo de la barra de estado del iPhone.
+         La cabecera se solapa con el reloj y la batería, y esos botones dejan de
+         responder porque los toques se los queda la barra del sistema. Sin cover, iOS
+         ya deja la app dentro de la zona segura. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Sumtrans Logística</title>
   </head>
   <body style="overscroll-behavior:none">
