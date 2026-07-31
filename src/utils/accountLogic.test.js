@@ -236,3 +236,75 @@ describe('calculateDailyAccount logic - Los 7 Casos de Negocio', () => {
         expect(result.dailyTotal).toBe(150);
     });
 });
+
+describe('Cobros cuyo envío no está en la lista cargada', () => {
+    const driverId = 1;
+    const hoy = new Date().toISOString();
+
+    // `allShipments` solo trae los envíos activos y los finalizados de los últimos 90
+    // días. Antes, no encontrar el envío se interpretaba como "lo borró el admin" y el
+    // cobro se descontaba de la caja: dinero que el conductor lleva encima y que
+    // desaparecía de la cuenta del día sin ningún aviso.
+    it('cuenta el cobro aunque su envío no esté cargado', () => {
+        const cobros = [
+            { id: 'COL-1', type: 'Porte', amount: '25.00', shipmentId: 'FUERA-DE-VENTANA', date: hoy },
+            { id: 'COL-2', type: 'Reembolso', amount: '100.00', shipmentId: 'FUERA-DE-VENTANA-2', date: hoy }
+        ];
+        const result = calculateDailyAccount({
+            allShipments: [], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.collectedPorte).toBe(25);
+        expect(result.collectedReembolsos).toBe(100);
+        expect(result.dailyTotal).toBe(125);
+    });
+
+    it('marca esos cobros para que la oficina vea que no se pueden contrastar', () => {
+        const cobros = [{ id: 'COL-1', type: 'Porte', amount: '25.00', shipmentId: 'NO-CARGADO', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.allPorteDetail[0].shipmentMissing).toBe(true);
+    });
+
+    it('no marca los cobros cuyo envío sí está cargado', () => {
+        const envio = { id: 'S1', porteType: 'Debido', status: 'Pendiente', assignedDriverId: driverId, amount: '25.00' };
+        const cobros = [{ id: 'COL-1', type: 'Porte', amount: '25.00', shipmentId: 'S1', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [envio], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.allPorteDetail[0].shipmentMissing).toBe(false);
+    });
+
+    // El descarte sigue existiendo, pero solo con constancia real del borrado.
+    it('descarta el cobro cuando consta que el envío fue borrado', () => {
+        const cobros = [
+            { id: 'COL-1', type: 'Porte', amount: '25.00', shipmentId: 'BORRADO', date: hoy },
+            { id: 'COL-2', type: 'Reembolso', amount: '100.00', shipmentId: 'BORRADO', date: hoy }
+        ];
+        const result = calculateDailyAccount({
+            allShipments: [], driverId, clients: [], collectedCollections: cobros,
+            deletedShipmentIds: ['BORRADO']
+        });
+        expect(result.collectedPorte).toBe(0);
+        expect(result.collectedReembolsos).toBe(0);
+        expect(result.dailyTotal).toBe(0);
+    });
+
+    it('acepta deletedShipmentIds como Set', () => {
+        const cobros = [{ id: 'COL-1', type: 'Porte', amount: '25.00', shipmentId: 'BORRADO', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [], driverId, clients: [], collectedCollections: cobros,
+            deletedShipmentIds: new Set(['BORRADO'])
+        });
+        expect(result.collectedPorte).toBe(0);
+    });
+
+    it('un cobro sin shipmentId nunca se descarta', () => {
+        const cobros = [{ id: 'COL-SUELTO', type: 'Porte', amount: '40.00', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [], driverId, clients: [], collectedCollections: cobros,
+            deletedShipmentIds: ['BORRADO']
+        });
+        expect(result.collectedPorte).toBe(40);
+    });
+});

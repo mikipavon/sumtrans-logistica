@@ -118,7 +118,7 @@ export const isCashClient = (clientName, clientsOrMap = [], fallbackBillingType 
     return true; // Por defecto si no sabemos nada es contado
 };
 
-export const calculateDailyAccount = ({ allShipments, driverId, clients, collectedCollections, targetDate = new Date() }) => {
+export const calculateDailyAccount = ({ allShipments, driverId, clients, collectedCollections, targetDate = new Date(), deletedShipmentIds = null }) => {
     const driverIdNum = Number(driverId);
 
     /**
@@ -183,13 +183,26 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     });
 
     // 3. Cobros Manuales (desde pestaña Cobros o generados en entrega)
-    // Primero, crear un Set con los IDs de envíos que existen para filtrar rápido
+    //
+    // Un cobro es dinero que el conductor lleva encima. Solo se descarta cuando CONSTA
+    // que el envío fue borrado (`deletedShipmentIds`), nunca por no encontrarlo en
+    // `allShipments`: esa lista trae los envíos activos y los finalizados de los últimos
+    // 90 días, así que un envío fuera de esa ventana —o que no llegó por un fallo de
+    // carga— no es un envío borrado, y darlo por borrado hacía desaparecer el dinero de
+    // la caja del día sin ningún aviso.
+    const deletedIds = deletedShipmentIds instanceof Set
+        ? deletedShipmentIds
+        : new Set(deletedShipmentIds || []);
+    const isDeletedShipment = (c) => Boolean(c.shipmentId) && deletedIds.has(c.shipmentId);
+
+    // El envío no está cargado: el cobro cuenta igual, pero se marca para que la oficina
+    // vea que no se puede contrastar con su albarán.
     const existingShipmentIds = new Set((allShipments || []).map(s => s.id));
+    const isShipmentMissing = (c) => Boolean(c.shipmentId) && !existingShipmentIds.has(c.shipmentId);
 
     const manualPorteCollections = (collectedCollections || [])
         .filter(c => {
-            // Ignorar cobros de envíos que ya no existen (borrados por admin)
-            if (c.shipmentId && !existingShipmentIds.has(c.shipmentId)) return false;
+            if (isDeletedShipment(c)) return false;
             const matchType = (c.type === 'Porte' || c.type === 'Efectivo');
             const matchDate = isToday(c.date, targetDate);
             if (matchType && (c.date === todayStr || matchDate)) return true;
@@ -231,11 +244,7 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     // 5. Reembolsos
     const collectedReembolsosRaw = (collectedCollections || [])
         .filter(c => c.type === 'Reembolso' && isToday(c.date, targetDate))
-        .filter(c => {
-            // Ignorar cobros de envíos que ya no existen (borrados por admin)
-            if (c.shipmentId && !existingShipmentIds.has(c.shipmentId)) return false;
-            return true;
-        })
+        .filter(c => !isDeletedShipment(c))
         .filter((c, index, self) => 
             !c.shipmentId || index === self.findIndex(t => t.shipmentId === c.shipmentId && t.type === c.type)
         );
@@ -315,7 +324,8 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
                 amountDisplay: `€${parseAmount(amountToUse).toFixed(2)}`,
                 colorClass: 'text-amber-600',
                 sourceTitle: 'Cobro Manual',
-                source: 'collected'
+                source: 'collected',
+                shipmentMissing: isShipmentMissing(c)
             };
         })
     ];
@@ -350,7 +360,8 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
                 amountDisplay: `€${parseAmount(amountToUse).toFixed(2)}`,
                 colorClass: 'text-indigo-600',
                 source: 'collected',
-                original: c
+                original: c,
+                shipmentMissing: isShipmentMissing(c)
             };
         })
     ];

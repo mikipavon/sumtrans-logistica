@@ -202,7 +202,7 @@ const AUDIO_SCRIPTS = [
   },
   {
     id: 'reparto_02b_reasignar_deslizar',
-    text: 'Si te asignan por error un reparto que no es tuyo, desliza la tarjeta hacia la derecha. Aparecerá el botón de Devolver a Asignar. Al pulsarlo, el albarán desaparece de tu lista y vuelve al panel, ve a Asignación y se lo asignas al conductor correcto.',
+    text: 'Si te asignan por error un reparto que no es tuyo, desliza la tarjeta hacia la derecha. Detrás asoma un panel azul de Devolver a Asignar. Sigue deslizando hasta que ponga Suelta ya, y levanta el dedo: no hay que pulsar nada. El albarán desaparece de tu lista y te aparece a ti en la pestaña Asignar, para que se lo mandes al conductor correcto.',
   },
   {
     id: 'reparto_02c_reasignar_asignar',

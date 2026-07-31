@@ -26,8 +26,8 @@ const TOUR_STEPS = [
   {
     emoji: '🔄',
     title: '¿Te asignaron un reparto que no es tuyo?',
-    description: 'Desliza la tarjeta hacia la derecha con el dedo — aparecerá el botón rojo “Devolver a Asignar”. Al pulsarlo, el albarán desaparece de tu lista de Reparto y vuelve al panel de Asignación, ve a Asignación y se lo asignas al conductor correcto.',
-    audio: 'Si te asignan por error un reparto que no es tuyo, desliza la tarjeta hacia la derecha. Aparecerá el botón de Devolver a Asignar. Al pulsarlo, el albarán desaparece de tu lista y vuelve al panel, ve a Asignación y se lo asignas al conductor correcto.',
+    description: 'Desliza la tarjeta hacia la derecha con el dedo. Detrás asoma un panel azul “Devolver a Asignar”: sigue deslizando hasta que ponga “Suelta ya” y levanta el dedo. No hay que pulsar nada.\n\nEl albarán desaparece de tu lista de Reparto y te aparece a ti en la pestaña “Asignar”, para que se lo mandes al conductor correcto.',
+    audio: 'Si te asignan por error un reparto que no es tuyo, desliza la tarjeta hacia la derecha. Detrás asoma un panel azul de Devolver a Asignar. Sigue deslizando hasta que ponga Suelta ya, y levanta el dedo: no hay que pulsar nada. El albarán desaparece de tu lista y te aparece a ti en la pestaña Asignar, para que se lo mandes al conductor correcto.',
     audioId: 'reparto_02b_reasignar_deslizar',
     tab: 'route',
     inlineDemo: 'swipe_reasignar',
@@ -292,17 +292,18 @@ function DragDemo() {
 const SWIPE_CSS = `
 @keyframes swipe-card {
   0%   { transform: translateX(0);    box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-  20%  { transform: translateX(30%);  box-shadow: 0 8px 24px rgba(220,38,38,0.25); }
-  55%  { transform: translateX(65%);  box-shadow: 0 8px 24px rgba(220,38,38,0.35); }
-  72%  { transform: translateX(65%);  box-shadow: 0 8px 24px rgba(220,38,38,0.35); }
+  20%  { transform: translateX(30%);  box-shadow: 0 8px 24px rgba(37,99,235,0.25); }
+  55%  { transform: translateX(65%);  box-shadow: 0 8px 24px rgba(37,99,235,0.35); }
+  72%  { transform: translateX(65%);  box-shadow: 0 8px 24px rgba(37,99,235,0.35); }
   90%  { transform: translateX(0);    box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
   100% { transform: translateX(0);    box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
 }
+/* El panel no "aparece": está siempre detrás y lo destapa la tarjeta al moverse,
+   igual que en la app. Solo se apaga al final del bucle, cuando la tarjeta vuelve. */
 @keyframes swipe-btn-appear {
-  0%,18%  { opacity:0; transform: scaleX(0.3); }
-  35%,70% { opacity:1; transform: scaleX(1); }
-  88%     { opacity:0; }
-  100%    { opacity:0; }
+  0%,10%  { opacity:0; }
+  14%,80% { opacity:1; }
+  90%,100%{ opacity:0; }
 }
 @keyframes swipe-finger {
   0%,10%  { opacity:0; left: 55%; }
@@ -333,12 +334,13 @@ function SwipeReasignarDEMO() {
       {/* Contenedor con overflow hidden para el efecto swipe */}
       <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', marginBottom: 12 }}>
 
-        {/* Botón rojo que aparece detrás */}
+        {/* Panel azul que queda detrás, por la izquierda: mismo sitio y mismos
+            colores que en la app, para que el conductor reconozca lo que ve. */}
         <div className="swipe-btn-anim" style={{
-          position: 'absolute', right: 0, top: 0, bottom: 0,
-          width: '68%', background: 'linear-gradient(90deg,#fee2e2,#dc2626)',
-          display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
-          paddingRight: 14, gap: 6, borderRadius: 14,
+          position: 'absolute', left: 0, top: 0, bottom: 0,
+          width: '68%', background: 'linear-gradient(90deg,#3b82f6,#4338ca)',
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-start',
+          paddingLeft: 12, gap: 6, borderRadius: 14,
         }}>
           <span style={{ fontSize: 14 }}>↩️</span>
           <span style={{ fontSize: 10, fontWeight: 900, color: 'white', letterSpacing: 0.3 }}>

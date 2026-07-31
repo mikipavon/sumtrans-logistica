@@ -6,6 +6,11 @@ import {
     recuperarAprendizaje,
     eliminarDeLaPapelera,
     fusionarConocimiento,
+    claveAprendizaje,
+    esClaveAprendizaje,
+    driverIdDeClave,
+    ensamblarConocimiento,
+    conductoresConCambios,
 } from './routeKnowledge';
 
 const conocimientoDeEjemplo = () => ({
@@ -37,6 +42,28 @@ describe('recuento', () => {
     it('aguanta datos vacíos o nulos', () => {
         expect(contarPueblos(null)).toBe(0);
         expect(contarClientes(undefined)).toBe(0);
+    });
+
+    // El formato nuevo parte cada pueblo por turnos. Contando a lo bruto salía "2".
+    it('cuenta los clientes del formato partido por turnos', () => {
+        const datos = {
+            _v: 2,
+            cabra: {
+                manana: { mamaki: { orden: 0, count: 3 }, ferreteria: { orden: 1, count: 3 } },
+                tarde: { mamaki: { orden: 0.5, count: 2 } },
+            },
+        };
+        expect(contarPueblos(datos)).toBe(1);
+        expect(contarClientes(datos)).toBe(2); // mamaki cuenta una vez, no dos
+    });
+
+    it('los dos formatos conviven mientras se van migrando los móviles', () => {
+        const mezcla = {
+            cabra: { manana: { mamaki: { orden: 0, count: 3 } } },
+            lucena: { panaderia: { avg: 1.5, count: 4 } },
+        };
+        expect(contarPueblos(mezcla)).toBe(2);
+        expect(contarClientes(mezcla)).toBe(2);
     });
 });
 
@@ -153,6 +180,98 @@ describe('fusionarConocimiento', () => {
     it('aguanta objetos vacíos', () => {
         expect(fusionarConocimiento(null, null)).toEqual({
             masterByRoute: {}, byDriver: {}, trashByDriver: {}, actionByDriver: {}
+        });
+    });
+});
+
+describe('Una fila de aprendizaje por conductor', () => {
+    describe('claves', () => {
+        it('compone y descompone la clave de un conductor', () => {
+            expect(claveAprendizaje(7)).toBe('route_knowledge_driver_7');
+            expect(driverIdDeClave('route_knowledge_driver_7')).toBe('7');
+        });
+
+        it('distingue las filas de aprendizaje del resto de settings', () => {
+            expect(esClaveAprendizaje('route_knowledge_driver_7')).toBe(true);
+            expect(esClaveAprendizaje('route_knowledge')).toBe(false);
+            expect(esClaveAprendizaje('routes')).toBe(false);
+            expect(esClaveAprendizaje('admin_pass')).toBe(false);
+        });
+    });
+
+    describe('ensamblarConocimiento', () => {
+        it('la fila del conductor manda sobre el byDriver antiguo', () => {
+            const base = { byDriver: { '1': { cabra: 'viejo' } } };
+            const salida = ensamblarConocimiento(base, { '1': { cabra: 'nuevo' } });
+            expect(salida.byDriver['1']).toEqual({ cabra: 'nuevo' });
+        });
+
+        it('conserva el aprendizaje viejo de quien todavía no tiene fila propia', () => {
+            const base = { byDriver: { '1': { cabra: 'viejo' }, '2': { lucena: 'viejo' } } };
+            const salida = ensamblarConocimiento(base, { '1': { cabra: 'nuevo' } });
+            expect(salida.byDriver['2']).toEqual({ lucena: 'viejo' });
+        });
+
+        it('una fila vacía borra de verdad: así se ve un borrado del administrador', () => {
+            const base = { byDriver: { '1': { cabra: 'viejo' } } };
+            const salida = ensamblarConocimiento(base, { '1': {} });
+            expect(salida.byDriver['1']).toEqual({});
+        });
+
+        it('respeta el resto del objeto (maestro, papelera, buzón)', () => {
+            const base = {
+                masterByRoute: { r1: { cabra: {} } },
+                trashByDriver: { '9': { datos: {}, borradoEl: 'ayer' } },
+                actionByDriver: { '9': { accion: 'borrado' } },
+                byDriver: {}
+            };
+            const salida = ensamblarConocimiento(base, { '1': { cabra: 'x' } });
+            expect(salida.masterByRoute).toEqual(base.masterByRoute);
+            expect(salida.trashByDriver).toEqual(base.trashByDriver);
+            expect(salida.actionByDriver).toEqual(base.actionByDriver);
+        });
+
+        it('aguanta que no haya nada de nada', () => {
+            expect(ensamblarConocimiento(null, null)).toEqual({ byDriver: {} });
+        });
+    });
+
+    describe('conductoresConCambios', () => {
+        it('no ve cambios donde no los hay', () => {
+            const igual = { byDriver: { '1': { cabra: 'x' } } };
+            expect(conductoresConCambios(igual, { byDriver: { '1': { cabra: 'x' } } })).toEqual({});
+        });
+
+        it('detecta el aprendizaje modificado de un conductor', () => {
+            const antes = { byDriver: { '1': { cabra: 'x' }, '2': { lucena: 'y' } } };
+            const despues = { byDriver: { '1': { cabra: 'z' }, '2': { lucena: 'y' } } };
+            expect(conductoresConCambios(antes, despues)).toEqual({ '1': { cabra: 'z' } });
+        });
+
+        // Es el caso que importa: borrar quita la clave del objeto, y si eso no se
+        // tradujera en vaciar su fila, al recargar reaparecería lo borrado.
+        it('traduce un borrado en la fila vaciada, no en la fila intacta', () => {
+            const antes = { byDriver: { '1': { cabra: 'x' } } };
+            const despues = { byDriver: {} };
+            expect(conductoresConCambios(antes, despues)).toEqual({ '1': {} });
+        });
+
+        it('detecta una recuperación desde la papelera', () => {
+            const antes = { byDriver: {} };
+            const despues = { byDriver: { '1': { cabra: 'x' } } };
+            expect(conductoresConCambios(antes, despues)).toEqual({ '1': { cabra: 'x' } });
+        });
+
+        it('un borrado seguido de recuperación deja la fila como estaba', () => {
+            const original = { byDriver: { '1': { cabra: 'x' } } };
+            const borrado = borrarAprendizaje(original, '1');
+            const recuperado = recuperarAprendizaje(borrado, '1');
+            expect(conductoresConCambios(borrado, recuperado)).toEqual({ '1': { cabra: 'x' } });
+        });
+
+        it('aguanta objetos vacíos', () => {
+            expect(conductoresConCambios(null, null)).toEqual({});
+            expect(conductoresConCambios({}, {})).toEqual({});
         });
     });
 });

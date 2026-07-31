@@ -99,6 +99,11 @@ export default class Shipment {
     this.pickedUpById = data.pickedUpById || null;
     this.pickedUpAt = data.pickedUpAt || null;
 
+    // Conductor que devolvió el albarán a Asignar deslizando la tarjeta. Mientras
+    // esté sellado, el albarán solo aparece en SU pestaña de Asignar: el que detecta
+    // el error es el que lo reasigna. Se limpia al asignarlo o al escanear los bultos.
+    this.returnedToAssignById = data.returnedToAssignById || null;
+
     // Paquetes
     this.packages = data.packages || null;
     this.originName = data.originName || data.client || '';

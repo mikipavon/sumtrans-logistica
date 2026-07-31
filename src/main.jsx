@@ -2,6 +2,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
+import { registrarError, engancharErroresGlobales } from './utils/errorLog'
 
 // --- EMERGENCY GLOBAL ERROR HANDLER ---
 const displayError = (msg) => {
@@ -35,16 +37,23 @@ window.onunhandledrejection = (event) => {
   displayError(`Promesa fallida: ${event.reason}`);
 };
 
+// Se engancha DESPUÉS de los de arriba para no sustituirlos: la pantalla roja se
+// sigue viendo igual, y además queda constancia del error en la nube.
+engancharErroresGlobales();
+
 try {
   const container = document.getElementById('root');
   if (!container) throw new Error('No se encontró el elemento #root en el DOM');
-  
+
   createRoot(container).render(
     <StrictMode>
-      <App />
+      <ErrorBoundary origen="app">
+        <App />
+      </ErrorBoundary>
     </StrictMode>,
   )
 } catch (e) {
+  registrarError(e, { origen: 'arranque' });
   displayError(e.message);
 }
 

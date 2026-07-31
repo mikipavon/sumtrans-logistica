@@ -451,10 +451,12 @@ export default function RoutesManagerModal({ isOpen, onClose, routes = [], onUpd
                             const routeDriverId = route?.conductorId;
                             const routeDriver = drivers.find(d => String(d.id) === String(routeDriverId));
 
-                            const masterTownCount = master ? Object.keys(master).length : 0;
-                            const masterClientCount = master
-                                ? Object.values(master).reduce((sum, town) => sum + Object.keys(town).length, 0)
-                                : 0;
+                            // Los mismos contadores que la papelera. Contando a mano se
+                            // colaban `_setBy` y `_setAt` como si fueran pueblos, y como
+                            // sus valores son texto, `Object.keys` de una fecha sumaba
+                            // una veintena de "clientes" inventados.
+                            const masterTownCount = contarPueblos(master);
+                            const masterClientCount = contarClientes(master);
 
                             return (
                                 <div className="space-y-4">

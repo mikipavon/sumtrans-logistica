@@ -22,8 +22,17 @@ import NotificationCenter from './pages/NotificationCenter'
 import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { initStorageBuckets } from './utils/storage';
+import { fetchAllRows } from './utils/fetchAllRows';
+import { establecerContextoDeError } from './utils/errorLog';
 import { getIrregularReasons } from './utils/shipmentUtils';
-import { fusionarConocimiento } from './utils/routeKnowledge';
+import {
+  fusionarConocimiento,
+  claveAprendizaje,
+  esClaveAprendizaje,
+  driverIdDeClave,
+  ensamblarConocimiento,
+  conductoresConCambios
+} from './utils/routeKnowledge';
 import { BAREMO_1_PUEBLOS, BAREMO_2_PUEBLOS } from './data/baremos';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { enqueue, getQueue, dequeue, getQueueLength } from './utils/offlineQueue';
@@ -284,12 +293,26 @@ function App() {
   const shipmentsRef = useRef(shipments);
   const driversRef = useRef(drivers);
   const clientsRef = useRef(clients);
+  // Para saber qué aprendizaje había ANTES de un cambio del administrador y deducir
+  // qué filas por conductor hay que reescribir.
+  const routeKnowledgeRef = useRef(routeKnowledge);
   // Guard to ensure initStorageBuckets only runs once per app session
   const bucketsInitializedRef = useRef(false);
 
   useEffect(() => { shipmentsRef.current = shipments; }, [shipments]);
   useEffect(() => { driversRef.current = drivers; }, [drivers]);
   useEffect(() => { clientsRef.current = clients; }, [clients]);
+  useEffect(() => { routeKnowledgeRef.current = routeKnowledge; }, [routeKnowledge]);
+
+  // Sin esto, un error registrado desde la nube es un mensaje sin dueño: hace falta
+  // saber en qué móvil y de quién, o no se puede ir a mirarlo.
+  useEffect(() => {
+    establecerContextoDeError({
+      role: userRole,
+      driverId: currentDriverId,
+      driverName: cachedDriverName
+    });
+  }, [userRole, currentDriverId, cachedDriverName]);
   // =========================================================================
 
   // Admin credentials (loaded from Supabase settings, with secure defaults)
@@ -338,6 +361,7 @@ function App() {
           const { error: errS } = await supabase.from('shipments').delete().in('id', testShipmentIds);
           if (errS) throw errS;
           setShipments(prev => prev.filter(s => !testShipmentIds.includes(s.id)));
+          await purgeCollectionsForShipments(testShipmentIds);
         }
 
         if (testClientIds.length > 0) {
@@ -353,13 +377,18 @@ function App() {
         if (err1) throw err1;
 
         // 2. Limpiar coordenadas de todos los clientes
-        const { data: allCli, error: err2 } = await supabase.from('clients').select('*');
+        const { data: allCli, error: err2 } = await fetchAllRows(
+          () => supabase.from('clients').select('*').order('id'),
+          { label: 'clients_reset' }
+        );
         if (err2) throw err2;
 
         for (const cli of (allCli || [])) {
           const updatedData = { ...cli.data, coordinates: '' };
           await supabase.from('clients').update({ data: updatedData }).eq('id', cli.id);
         }
+
+        await purgeCollectionsForShipments([], { all: true });
 
         setShipments([]);
         setClients(prev => prev.map(c => ({ ...c, coordinates: '' })));
@@ -393,6 +422,59 @@ function App() {
       }
     }
   }, [isGhostModeUnlocked, adminCreds.pass]);
+
+  /**
+   * Borra los cobros de unos envíos de la caja de todos los conductores.
+   *
+   * Va emparejado con el cálculo de la cuenta diaria: allí un cobro ya NO se descarta
+   * por no encontrar su envío en memoria (esa lista solo trae los activos y 90 días de
+   * histórico, así que la ausencia no probaba nada y se perdía dinero real). La única
+   * forma legítima de que un cobro desaparezca es que se borre aquí, cuando de verdad
+   * se borra el envío.
+   *
+   * Los cobros viven dentro de `drivers.data`, en una clave por día
+   * (`collectedCollections_YYYY-MM-DD`), así que hay que recorrerlas todas.
+   *
+   * Con `{ all: true }` se vacían todos los cobros, para el reseteo a cero: allí se
+   * borran también envíos que no estaban cargados y no hay lista de ids que valga.
+   */
+  const purgeCollectionsForShipments = useCallback(async (shipmentIds, { all = false } = {}) => {
+    const ids = new Set((shipmentIds || []).filter(Boolean));
+    if (!all && ids.size === 0) return;
+
+    try {
+      const { data: driverRows, error } = await supabase.from('drivers').select('id, data');
+      if (error) throw error;
+
+      for (const row of (driverRows || [])) {
+        const data = row.data || {};
+        let touched = false;
+        const nextData = { ...data };
+
+        for (const key of Object.keys(data)) {
+          if (!key.startsWith('collectedCollections_')) continue;
+          const cobros = data[key];
+          if (!Array.isArray(cobros)) continue;
+
+          const quedan = all ? [] : cobros.filter(c => !(c?.shipmentId && ids.has(c.shipmentId)));
+          if (quedan.length !== cobros.length) {
+            nextData[key] = quedan;
+            touched = true;
+          }
+        }
+
+        if (touched) {
+          const { error: upErr } = await supabase.from('drivers').update({ data: nextData }).eq('id', row.id);
+          if (upErr) throw upErr;
+          console.log(`[Cobros] Purgados cobros de envíos borrados en el conductor ${row.id}`);
+        }
+      }
+    } catch (e) {
+      // No bloquea el borrado del envío: como mucho queda un cobro huérfano, que ahora
+      // aparece marcado en la cuenta en vez de descontarse a escondidas.
+      console.error('[Cobros] No se pudieron purgar los cobros de los envíos borrados:', e);
+    }
+  }, []);
 
   const getSecretShipments = useCallback(() => {
      return shipments.filter(s => {
@@ -517,13 +599,14 @@ function App() {
       if (error) throw error;
 
       setShipments(prev => prev.filter(s => !idsToDelete.includes(s.id)));
-      
+      await purgeCollectionsForShipments(idsToDelete);
+
       alert(`✅ ¡Operación confidencial completada con éxito!\nSe han evaporado ${secrets.length} envíos. El rastro contable de estos portes está limpio.`);
     } catch (err) {
       console.error(err);
       alert('Error crítico intentando borrar en Supabase.');
     }
-  }, [getSecretShipments]);
+  }, [getSecretShipments, purgeCollectionsForShipments]);
 
   const handleCleanOrphanedFiles = useCallback(async () => {
     let confirmMessage = "¿Seguro que quieres buscar y eliminar de la nube TODAS las fotos y firmas que ya no tienen un envío asociado en tu panel?";
@@ -714,6 +797,9 @@ function App() {
         // 1. Select ONLY the columns we actually use (not select('*'))
         // 2. ALL settings in ONE query instead of 8+2 separate queries
         // 3. Shipments split: active (all) + finished (last 90 days only)
+        // 4. Todas van por `fetchAllRows`: Supabase corta en 1.000 filas sin devolver
+        //    error, así que una consulta directa daba por buenos históricos truncados.
+        //    El `.order('id')` no es decorativo, es lo que hace estable el paginado.
         const queryNames = [
           'drivers', 'shipments_active', 'shipments_finished', 'clients',
           'articles', 'vehicles', 'fuel_logs', 'tariffs',
@@ -721,19 +807,19 @@ function App() {
         ];
 
         const results = await Promise.allSettled([
-          supabase.from('drivers').select('id, data, username, password'),                    // 0
-          supabase.from('shipments').select('id, data')                                       // 1 - active
-            .not('status', 'in', '("Entregado","Anulado")'),
-          supabase.from('shipments').select('id, data')                                       // 2 - finished recent
+          fetchAllRows(() => supabase.from('drivers').select('id, data, username, password').order('id'), { label: 'drivers' }),
+          fetchAllRows(() => supabase.from('shipments').select('id, data')                    // 1 - active
+            .not('status', 'in', '("Entregado","Anulado")').order('id'), { label: 'shipments_active' }),
+          fetchAllRows(() => supabase.from('shipments').select('id, data')                    // 2 - finished recent
             .in('status', ['Entregado', 'Anulado'])
-            .gte('data->>createdAt', cutoffISO),
-          supabase.from('clients').select('id, data'),                                        // 3
-          supabase.from('articles').select('id, data'),                                       // 4
-          supabase.from('vehicles').select('id, data'),                                       // 5
-          supabase.from('fuel_logs').select('id, data'),                                      // 6
-          supabase.from('tariffs').select('id, data'),                                        // 7
-          supabase.from('settings').select('key, value'),                                     // 8 - ALL settings in 1 query
-          supabase.from('coverage_zones').select('id, data'),                                 // 9
+            .gte('data->>createdAt', cutoffISO).order('id'), { label: 'shipments_finished' }),
+          fetchAllRows(() => supabase.from('clients').select('id, data').order('id'), { label: 'clients' }),
+          fetchAllRows(() => supabase.from('articles').select('id, data').order('id'), { label: 'articles' }),
+          fetchAllRows(() => supabase.from('vehicles').select('id, data').order('id'), { label: 'vehicles' }),
+          fetchAllRows(() => supabase.from('fuel_logs').select('id, data').order('id'), { label: 'fuel_logs' }),
+          fetchAllRows(() => supabase.from('tariffs').select('id, data').order('id'), { label: 'tariffs' }),
+          fetchAllRows(() => supabase.from('settings').select('key, value').order('key'), { label: 'settings' }),
+          fetchAllRows(() => supabase.from('coverage_zones').select('id, data').order('id'), { label: 'coverage_zones' }),
         ]);
 
         // Helper to safely extract data from settled results
@@ -846,11 +932,32 @@ function App() {
           try { setAlertAcknowledgements(JSON.parse(ackValue)) } catch(e) { console.error('Error parsing alert acknowledgements:', e) }
         }
 
+        // ── Aprendizaje de rutas: fila principal + una fila por conductor ──
+        // Las filas por conductor ya vienen en esta misma consulta de settings, así que
+        // ensamblarlas no cuesta ni una llamada más. Mandan sobre el `byDriver` viejo,
+        // que se conserva como respaldo del aprendizaje que aún no se ha regrabado.
         const rkValue = getSetting('route_knowledge');
+        let baseConocimiento = {};
         if (rkValue) {
-          try { setRouteKnowledge(JSON.parse(rkValue)) } catch(e) { console.error('Error parsing route_knowledge:', e) }
+          try { baseConocimiento = JSON.parse(rkValue) || {}; }
+          catch(e) { console.error('Error parsing route_knowledge:', e) }
         }
-        
+
+        const aprendizajePorConductor = {};
+        for (const fila of (allSettings || [])) {
+          if (!esClaveAprendizaje(fila.key)) continue;
+          try {
+            aprendizajePorConductor[driverIdDeClave(fila.key)] = JSON.parse(fila.value) || {};
+          } catch(e) {
+            console.error(`Error parsing ${fila.key}:`, e);
+          }
+        }
+
+        if (rkValue || Object.keys(aprendizajePorConductor).length > 0) {
+          setRouteKnowledge(ensamblarConocimiento(baseConocimiento, aprendizajePorConductor));
+        }
+
+
         // Admin credentials (from the same single settings query — no extra network calls)
         setAdminCreds({
           user: getSetting('admin_user') || 'info@sumtransportes.com',
@@ -981,10 +1088,13 @@ function App() {
 
     const refreshActiveShipments = async () => {
       try {
-        const { data, error } = await supabase
-          .from('shipments')
-          .select('id, data')
-          .not('status', 'in', '("Entregado","Anulado")');
+        // Paginado: este refresco SUSTITUYE los activos en memoria, así que una
+        // respuesta truncada a 1.000 filas haría desaparecer envíos del panel.
+        const { data, error } = await fetchAllRows(
+          () => supabase.from('shipments').select('id, data')
+            .not('status', 'in', '("Entregado","Anulado")').order('id'),
+          { label: 'refresh_activos' }
+        );
         if (error || !data) return;
         const fresh = data.map(s => ({ ...s.data, id: s.id }));
         setShipments(prev => {
@@ -1370,7 +1480,12 @@ function App() {
       if (!currentClients || currentClients.length === 0) {
         // Solo consultar Supabase si la caché local está vacía (arranque frío)
         try {
-          const { data } = await supabase.from('clients').select('*');
+          // Paginado: aquí se busca al cliente que intenta entrar. Truncar a 1.000
+          // filas dejaría fuera del login a los clientes que caigan más abajo.
+          const { data } = await fetchAllRows(
+            () => supabase.from('clients').select('*').order('id'),
+            { label: 'clients_login' }
+          );
           if (data && data.length > 0) {
             currentClients = data.map(c => ({ ...c.data, id: c.id }));
             setClients(currentClients);
@@ -1664,19 +1779,41 @@ function App() {
     } catch(e) { console.error('Error saving routes:', e); alert('Error al guardar rutas'); }
   }
 
+  // opciones.driverId  → guardado desde el móvil de un repartidor: escribe SOLO su
+  //                      fila. Nadie más la toca, así que no hay carrera que perder.
   // opciones.fusionar = false para órdenes deliberadas del administrador (borrar o
-  // recuperar aprendizaje): ahí el objeto que llega ES el definitivo, y fusionarlo con
-  // lo que hay en la nube resucitaría justo lo que se acaba de borrar.
+  //                      recuperar aprendizaje): ahí el objeto que llega ES el
+  //                      definitivo, y fusionarlo con lo que hay en la nube
+  //                      resucitaría justo lo que se acaba de borrar.
   const handleUpdateRouteKnowledge = async (newKnowledge, opciones = {}) => {
     const fusionar = opciones.fusionar !== false;
+    const driverId = opciones.driverId ?? null;
+
     try {
+      // ── Camino del repartidor ──
+      // Su aprendizaje vive en `route_knowledge_driver_<id>`, una fila que solo escribe
+      // su propio móvil. Antes esto iba al JSON común y dos repartidores sincronizando
+      // a la vez se pisaban el aprendizaje: releer antes de escribir estrechaba la
+      // ventana, pero entre la lectura y la escritura seguía cabiendo la del otro.
+      if (driverId != null) {
+        const suAprendizaje = newKnowledge?.byDriver?.[String(driverId)] || {};
+        const { error } = await supabase.from('settings').upsert({
+          key: claveAprendizaje(driverId),
+          value: JSON.stringify(suAprendizaje)
+        });
+        if (error) throw error;
+
+        // En memoria sí se refleja el objeto completo, que es lo que consume la UI.
+        setRouteKnowledge(prev => ensamblarConocimiento(prev, { [String(driverId)]: suAprendizaje }));
+        return;
+      }
+
+      // ── Camino del administrador ──
       let valorFinal = newKnowledge;
 
       if (fusionar) {
-        // route_knowledge es UN solo JSON compartido por todos los repartidores, y cada
-        // dispositivo guarda la copia que cargó al abrir la app. Si escribiéramos esa
-        // copia tal cual, el segundo en guardar borraría el aprendizaje que el primero
-        // acabase de sincronizar. Por eso releemos y fusionamos justo antes de escribir.
+        // La fila principal sigue siendo compartida (maestro por ruta, papelera y buzón
+        // de órdenes), así que aquí la relectura + fusión sigue haciendo falta.
         const { data: actual, error: errorLectura } = await supabase
           .from('settings')
           .select('value')
@@ -1695,6 +1832,19 @@ function App() {
 
       const { error } = await supabase.from('settings').upsert({ key: 'route_knowledge', value: JSON.stringify(valorFinal) });
       if (error) throw error;
+
+      // Borrar o recuperar el aprendizaje de un conductor se decide sobre el objeto
+      // entero, pero quien manda al cargar es su fila: hay que materializar el cambio
+      // ahí también o al recargar reaparecería lo borrado.
+      const cambios = conductoresConCambios(routeKnowledgeRef.current, valorFinal);
+      for (const [id, datos] of Object.entries(cambios)) {
+        const { error: errFila } = await supabase.from('settings').upsert({
+          key: claveAprendizaje(id),
+          value: JSON.stringify(datos)
+        });
+        if (errFila) throw errFila;
+      }
+
       setRouteKnowledge(valorFinal);
     } catch(e) {
       // Supabase devuelve un objeto, no un Error: sin desglosarlo la consola solo
@@ -1776,7 +1926,11 @@ function App() {
     const updatedShipment = {
       ...shipment,
       assignedDriverId: isUnassigning || isSendingToAdmin ? null : Number(driverId),
-      status: isUnassigning ? 'Pendiente de asignar' : (isSendingToAdmin ? 'Administración' : 'En reparto')
+      status: isUnassigning ? 'Pendiente de asignar' : (isSendingToAdmin ? 'Administración' : 'En reparto'),
+      // Cualquier asignación deliberada cierra el "lo devolví yo, lo reasigno yo": si no
+      // se limpiara, un albarán devuelto por un conductor y luego liberado por oficina
+      // seguiría apareciendo solo en la pestaña de aquel conductor.
+      returnedToAssignById: null
     };
     
     if (scheduledDate !== null) {
@@ -2112,7 +2266,7 @@ function App() {
   const handleDeleteShipment = async (shipmentId) => {
     try {
       const shipmentToDelete = shipmentsRef.current.find(s => s.id === shipmentId);
-      
+
       // ── PROTECCIÓN: Albarán cobrado ──
       if (shipmentToDelete) {
         const hasPaidPorte = shipmentToDelete.portePaid;
@@ -2165,6 +2319,7 @@ function App() {
       const { error } = await supabase.from('shipments').delete().eq('id', shipmentId);
       if (error) throw error;
       setShipments(prev => prev.filter(s => s.id !== shipmentId));
+      await purgeCollectionsForShipments([shipmentId]);
     } catch (e) {
       alert('Error al borrar el envío');
       console.error(e);
@@ -2176,6 +2331,7 @@ function App() {
       const { error } = await supabase.from('shipments').delete().in('id', shipmentIds);
       if (error) throw error;
       setShipments(prev => prev.filter(s => !shipmentIds.includes(s.id)));
+      await purgeCollectionsForShipments(shipmentIds);
     } catch (e) {
       alert('Error al borrar los envíos');
       console.error(e);

@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { X, CheckCircle, PenTool, Camera, Image as ImageIcon, Mic, MicOff, Wallet, MapPin, RotateCcw, AlertTriangle, FileText, ShieldCheck, Package } from 'lucide-react';
+import { X, CheckCircle, PenTool, Camera, Image as ImageIcon, Mic, MicOff, Wallet, MapPin, RotateCcw, AlertTriangle, FileText, Package } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import Shipment from '../../models/Shipment';
 import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 
-export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, shipment, collectionAlert, pendingDebts = [], clients = [] }) {
+export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, shipment, collectionAlert, pendingDebts = [], clients = [], sameClientStops = [] }) {
     const labelClass = "block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1";
     const inputClass = "w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all shadow-sm";
     const [isSignatureCaptured, setIsSignatureCaptured] = useState(false);
@@ -19,6 +19,9 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
     const [deliveryCoordinates, setDeliveryCoordinates] = useState('');
     const [customAmounts, setCustomAmounts] = useState({});
     const [selectedDebts, setSelectedDebts] = useState([]);
+    // Otras paradas de hoy para el mismo destinatario que se cerrarán en este mismo
+    // gesto. El conductor las puede desmarcar si el cliente solo se queda una parte.
+    const [selectedStopIds, setSelectedStopIds] = useState([]);
     const [showReturnPrompt, setShowReturnPrompt] = useState(false);
     const [initialReturnAlert, setInitialReturnAlert] = useState(false);
     const [initialSignatureAlert, setInitialSignatureAlert] = useState(false);
@@ -142,26 +145,79 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
         return parts;
     }, [shipment, shipmentModel]);
 
-    const allSelectableDebts = useMemo(() => {
-        return [...currentParts, ...pendingDebts];
-    }, [currentParts, pendingDebts]);
+    // Paradas extra realmente marcadas por el conductor.
+    const selectedStops = useMemo(
+        () => sameClientStops.filter(st => selectedStopIds.includes(st.shipment?.id)),
+        [sameClientStops, selectedStopIds]
+    );
 
-    // Auto-select ALL pending debts by default (current + anteriores). El conductor desmarca lo que no cobra.
+    // Si se cierran varios albaranes en el mismo gesto manda la regla más estricta de
+    // todos. Pedir el DNI una vez y guardarlo en los dos es correcto; cerrar en silencio
+    // un albarán que exigía DNI sin haberlo pedido, no.
+    const effectiveRules = useMemo(() => {
+        const merged = { ...(shipment?.deliveryRules || {}) };
+        selectedStops.forEach(st => {
+            const r = st.shipment?.deliveryRules || {};
+            if (r.requireDNI) merged.requireDNI = true;
+            if (r.requirePhoto) merged.requirePhoto = true;
+            // Firma y nombre se dan por obligatorios salvo que se desactiven a propósito,
+            // así que basta con que uno de los albaranes no los desactive.
+            if (r.requireSignature !== false && merged.requireSignature === false) merged.requireSignature = true;
+            if (r.requireName !== false && merged.requireName === false) merged.requireName = true;
+        });
+        return merged;
+    }, [shipment, selectedStops]);
+
+    const allSelectableDebts = useMemo(() => {
+        const extras = selectedStops.flatMap(st => st.debts || []);
+        return [...currentParts, ...pendingDebts, ...extras];
+    }, [currentParts, pendingDebts, selectedStops]);
+
+    // Al abrir, se marcan todas las paradas del mismo destinatario. Sólo se reinicia si
+    // cambia el conjunto de paradas, no en cada refresco: si no, una actualización en
+    // tiempo real volvería a marcar lo que el conductor acababa de desmarcar.
+    const stopIdsKey = sameClientStops.map(st => st.shipment?.id).join('|');
     useEffect(() => {
-        if (isOpen) {
-            setSelectedDebts(allSelectableDebts.map(d => d.id));
-            // Initialize custom amounts for ALL selectable debts
-            const initialAmounts = {};
-            allSelectableDebts.forEach(d => {
-                initialAmounts[d.id] = (d.needsManualAmount || d.amount === 'Tarifa') ? '' : d.amount;
-            });
-            setCustomAmounts(initialAmounts);
-        } else {
+        if (!isOpen) { setSelectedStopIds([]); return; }
+        setSelectedStopIds(stopIdsKey ? stopIdsKey.split('|') : []);
+    }, [isOpen, stopIdsKey]);
+
+    // Los cobros se marcan solos según van apareciendo: los del albarán actual al abrir,
+    // y los de una parada extra en cuanto se marca. Lo que el conductor haya desmarcado
+    // o escrito a mano se respeta, porque este efecto se vuelve a ejecutar cada vez que
+    // se marca o desmarca una parada y reiniciarlo entero borraría los importes.
+    const seenDebtIdsRef = useRef(new Set());
+    useEffect(() => {
+        if (!isOpen) {
+            seenDebtIdsRef.current = new Set();
             setSelectedDebts([]);
             setCustomAmounts({});
             setClientGives('');
+            return;
         }
-    }, [isOpen, currentParts, allSelectableDebts]);
+
+        const vigentes = new Set(allSelectableDebts.map(d => d.id));
+        const nuevos = allSelectableDebts.filter(d => !seenDebtIdsRef.current.has(d.id));
+
+        setSelectedDebts(prev => {
+            const vivos = prev.filter(id => vigentes.has(id));
+            if (nuevos.length === 0) return vivos.length === prev.length ? prev : vivos;
+            return [...vivos, ...nuevos.map(d => d.id)];
+        });
+
+        setCustomAmounts(prev => {
+            const sobran = Object.keys(prev).filter(id => !vigentes.has(id));
+            if (nuevos.length === 0 && sobran.length === 0) return prev;
+            const next = { ...prev };
+            sobran.forEach(id => delete next[id]);
+            nuevos.forEach(d => {
+                next[d.id] = (d.needsManualAmount || d.amount === 'Tarifa') ? '' : d.amount;
+            });
+            return next;
+        });
+
+        seenDebtIdsRef.current = vigentes;
+    }, [isOpen, allSelectableDebts]);
 
     // Calculate Dynamic Total using custom amounts (Separating Porte from Reembolso)
     const basePorteTotal = allSelectableDebts
@@ -217,7 +273,8 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
     if (!isOpen || !shipment) return null;
 
-    const rules = shipment.deliveryRules || {};
+    // Las reglas ya vienen fusionadas con las de las paradas extra marcadas.
+    const rules = effectiveRules;
     const requiresPhoto1 = !!(rules.requirePhoto || shipment.needsSignatureReturn);
     const requiresPhoto2 = !!(rules.requirePhoto && shipment.needsSignatureReturn);
 
@@ -311,7 +368,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
         // Validation: At least name + (signature OR photo) if status is 'Entregado' and NOT a pickup
         if (status === 'Entregado' && shipment?.type !== 'Recogida') {
-            const rules = shipment.deliveryRules || {};
+            const rules = effectiveRules;
             let hasError = false;
             
             // Check required DNI
@@ -408,7 +465,11 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             });
         }
         
-        onConfirm(shipId, pData, stat, fDebts, cAmts, shouldGen, extraFlags);
+        // Las paradas extra sólo se arrastran en una entrega efectiva. Al aplazar el
+        // porte el paquete también se entrega (sólo queda la deuda), así que también
+        // se cierran; los cobros ya vienen vaciados en fDebts.
+        const extraStopIds = stat === 'Entregado' ? selectedStopIds : [];
+        onConfirm(shipId, pData, stat, fDebts, cAmts, shouldGen, extraFlags, extraStopIds);
     };
 
     const handleConfirmReturn = (shouldGenerate) => {
@@ -433,6 +494,54 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                         <X size={20} />
                     </button>
                 </div>
+
+                {/* Otras paradas de hoy para el mismo destinatario. Se cierran con esta
+                    misma firma y ubicación, pero cada albarán guarda su propia prueba.
+                    Van marcadas de salida porque el caso normal es entregarlo todo; se
+                    desmarcan si el cliente sólo se queda una parte. */}
+                {sameClientStops.length > 0 && (
+                    <div className="bg-blue-50 border-b border-blue-100 p-3 sm:p-4 shrink-0">
+                        <div className="flex items-center gap-2 mb-1">
+                            <Package className="text-blue-600 shrink-0" size={18} />
+                            <h4 className="text-sm font-black text-blue-700 uppercase tracking-tighter">
+                                Más entregas para {shipment.destinationName || shipment.client}
+                            </h4>
+                        </div>
+                        <p className="text-[11px] text-blue-700/80 mb-3 leading-snug">
+                            Se cerrarán con esta misma firma y ubicación. Desmarca lo que no entregues.
+                        </p>
+                        <div className="space-y-2">
+                            {sameClientStops.map(st => {
+                                const marcada = selectedStopIds.includes(st.shipment.id);
+                                return (
+                                    <label
+                                        key={st.shipment.id}
+                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer ${marcada ? 'bg-white border-blue-200 shadow-sm' : 'bg-blue-50/50 border-blue-100 opacity-60'}`}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={marcada}
+                                            onChange={(e) => {
+                                                if (e.target.checked) setSelectedStopIds([...selectedStopIds, st.shipment.id]);
+                                                else setSelectedStopIds(selectedStopIds.filter(sid => sid !== st.shipment.id));
+                                            }}
+                                            className="w-5 h-5 accent-blue-600 shrink-0"
+                                        />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-bold text-slate-800 leading-tight">{st.resumen}</p>
+                                            <p className="text-[10px] text-slate-400 font-mono">{st.shipment.id}</p>
+                                        </div>
+                                        {st.totalCobro > 0 && (
+                                            <span className="text-sm font-black text-red-600 shrink-0">
+                                                {st.totalCobro.toFixed(2)}€
+                                            </span>
+                                        )}
+                                    </label>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
 
                 {/* Unified Cobros Section (The "Alarma") */}
                 {allSelectableDebts.length > 0 && (
@@ -630,10 +739,18 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                     </button>
                                 </div>
                             </div>
-                            {/* DNI: solo se muestra si el cliente lo exige */}
-                            {rules.requireDNI && (
+                            {/* DNI: siempre a la vista para poder anotarlo aunque el cliente no
+                                lo pida. Antes solo aparecía con requireDNI, y como esa regla es
+                                una foto congelada del cliente al crear el albarán, el conductor
+                                se quedaba sin sitio donde apuntarlo. Obligatorio (asterisco rojo
+                                y bloqueo al confirmar) sigue siéndolo solo si el cliente lo exige. */}
                             <div>
-                                <label className={labelClass}>DNI / NIE / ID <span className="text-red-500">*</span></label>
+                                <label className={labelClass}>
+                                    DNI / NIE / ID{' '}
+                                    {rules.requireDNI
+                                        ? <span className="text-red-500">*</span>
+                                        : <span className="text-slate-400 font-medium normal-case tracking-normal">(opcional)</span>}
+                                </label>
                                 <input
                                     type="text"
                                     placeholder="12345678X"
@@ -642,10 +759,14 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                     onChange={(e) => setReceiverId(e.target.value)}
                                 />
                             </div>
-                            )}
                         </div>
 
-                        {/* BANNER DE BULTOS — siempre visible antes de firmar */}
+                        {/* BULTOS — recordatorio de qué hay que entregar. Antes ocupaba tres
+                            pisos (cabecera, lista de artículos y aviso de verificación) y se
+                            comía la pantalla por delante de los campos que sí hay que rellenar.
+                            Se mantiene el naranja para que siga cantando, pero en una sola
+                            línea, y con el nombre del artículo además del recuento: saber que
+                            va "1 bulto" no dice qué se entrega, que es justo para lo que sirve. */}
                         {(() => {
                             const arts = shipment.articles || [];
                             const pkgText = shipment.packages || '';
@@ -654,38 +775,25 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                 ? arts.reduce((s, a) => s + (parseInt(a.quantity) || 1), 0)
                                 : null;
                             if (!hasArts && !pkgText) return null;
+
+                            const detalle = hasArts
+                                ? arts.map(a => {
+                                    const cantidad = parseInt(a.quantity) || 1;
+                                    return cantidad > 1 ? `${cantidad}× ${a.name}` : a.name;
+                                }).join(', ')
+                                : pkgText;
+
                             return (
-                                <div className="rounded-2xl overflow-hidden border-2 border-orange-300 shadow-lg shadow-orange-100">
-                                    {/* Header */}
-                                    <div className="bg-gradient-to-r from-orange-500 to-amber-500 px-4 py-2.5 flex items-center gap-2">
-                                        <Package size={18} className="text-white" />
-                                        <span className="text-white font-black text-xs uppercase tracking-widest flex-1">Verificar Bultos Antes de Firmar</span>
-                                        {totalBultos !== null && (
-                                            <span className="bg-white text-orange-600 font-black text-sm px-3 py-0.5 rounded-full shadow">
-                                                {totalBultos} {totalBultos === 1 ? 'bulto' : 'bultos'}
-                                            </span>
-                                        )}
-                                    </div>
-                                    {/* Lista de artículos */}
-                                    <div className="bg-orange-50 px-4 py-3 space-y-1.5">
-                                        {hasArts ? (
-                                            arts.map((a, i) => (
-                                                <div key={i} className="flex items-center gap-2">
-                                                    <span className="w-8 h-8 flex items-center justify-center bg-orange-500 text-white font-black text-sm rounded-lg shrink-0">
-                                                        {parseInt(a.quantity) || 1}
-                                                    </span>
-                                                    <span className="text-sm font-bold text-slate-800 leading-tight">{a.name}</span>
-                                                </div>
-                                            ))
-                                        ) : (
-                                            <p className="text-sm font-bold text-slate-700 whitespace-pre-wrap">{pkgText}</p>
-                                        )}
-                                    </div>
-                                    {/* Pie de confirmación */}
-                                    <div className="bg-orange-100 px-4 py-2 flex items-center gap-1.5">
-                                        <ShieldCheck size={13} className="text-orange-600 shrink-0" />
-                                        <span className="text-[10px] text-orange-700 font-bold uppercase tracking-wide">Confirma que la mercancía coincide antes de pedir la firma</span>
-                                    </div>
+                                <div className="flex items-center gap-2 rounded-xl border-2 border-orange-300 bg-orange-50 px-3 py-2">
+                                    <Package size={16} className="text-orange-500 shrink-0" />
+                                    {totalBultos !== null && (
+                                        <span className="bg-orange-500 text-white font-black text-[11px] px-2 py-0.5 rounded-full shrink-0">
+                                            {totalBultos} {totalBultos === 1 ? 'bulto' : 'bultos'}
+                                        </span>
+                                    )}
+                                    <span className="min-w-0 text-sm font-bold text-slate-800 leading-tight whitespace-pre-wrap">
+                                        {detalle}
+                                    </span>
                                 </div>
                             );
                         })()}

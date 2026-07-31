@@ -34,8 +34,12 @@ import ScannerModal from '../../components/delivery/ScannerModal';
 import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
-import { getPackagesCount } from '../../utils/shipmentUtils';
-import { mejorPuebloParaCiudad, esElMismoPueblo } from '../../utils/townMatch';
+import { getPackagesCount, puedeAsignarloEsteConductor, ciudadDeEnvio, nombreDeParada } from '../../utils/shipmentUtils';
+import { mejorPuebloParaCiudad, esElMismoPueblo, normalizarPueblo } from '../../utils/townMatch';
+import { optimizarRuta } from '../../utils/optimizadorRuta';
+import { adaptarConocimiento, registrarEntrega, contarPueblosMemorizados } from '../../utils/aprendizajeRuta';
+import { turnoQueSeAsignaAhora, turnoQueSeRepartaAhora, etiquetaTurno } from '../../utils/turnos';
+import { resolverLogo, insigniaDeAgencia, buscarClienteDeEnvio } from '../../utils/marca';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import RouteMapModal from '../../components/driver/RouteMapModal';
 import DriverGuidedTour from '../../components/DriverGuidedTour';
@@ -108,10 +112,19 @@ class ErrorBoundary extends React.Component {
         return this.props.children;
     }
 }
-const ShipmentCardUI = React.memo(({ 
-    stop, 
-    index, 
-    clients, 
+
+// Píxeles que hay que arrastrar la tarjeta a la derecha para devolver el albarán a
+// Asignar. Lo comparten el gesto (decide si dispara al soltar) y la tarjeta (avisa
+// de que ya se puede soltar), para que no se separen nunca.
+const SWIPE_UNASSIGN_THRESHOLD = 150;
+
+// Exportada para poder probar la tarjeta por su cuenta: el logo y los distintivos
+// se calculaban aquí con reglas propias y no había forma de comprobar que dijeran lo
+// mismo que el optimizador.
+export const ShipmentCardUI = React.memo(({
+    stop,
+    index,
+    clients,
     Shipment, 
     parseAmount, 
     setSelectedShipment, 
@@ -132,24 +145,38 @@ const ShipmentCardUI = React.memo(({
     attributes,
     showDocActions,
     setShowDocActions,
+    esDeCamino = false,
     dragOverlay = false
 }) => {
+    // El cliente de la parada, resuelto una sola vez: de él salen el logo y el
+    // distintivo de agencia, que antes se calculaban a mano ahí abajo con reglas
+    // distintas de las que usaba el optimizador para ordenar la ruta.
+    const clienteDeLaParada = buscarClienteDeEnvio(stop, clients);
+    const insignia = insigniaDeAgencia(stop, clienteDeLaParada);
     return (
         <div id={index === 0 && !dragOverlay ? 'tour-first-card' : undefined} className={`relative ${dragOverlay ? 'w-full' : 'mb-3'} group overflow-hidden rounded-xl`}>
              {!dragOverlay && (
-                 <div 
-                    className="absolute inset-0 bg-gradient-to-r from-blue-600 to-indigo-700 flex items-center pl-6 transition-all duration-200"
-                    style={{ 
-                        opacity: isSwiping ? Math.min(swipeX / 100, 1) : 0,
-                        transform: isSwiping ? 'scale(1)' : 'scale(0.95)'
-                    }}
+                 <div
+                    // Este panel se queda quieto y lo destapa la tarjeta al apartarse, así
+                    // que va opaco del tirón: la opacidad ya no marca el avance del gesto,
+                    // lo marca cuánto azul se ve. Antes subía de 0 a 1 a lo largo de 100px,
+                    // pero daba igual porque el envoltorio entero se movía a la vez y la
+                    // tarjeta blanca tapaba el panel al 100% en todo momento.
+                    className={`absolute inset-0 flex items-center pl-3 transition-colors duration-150 bg-gradient-to-r ${
+                        swipeX > SWIPE_UNASSIGN_THRESHOLD
+                            ? 'from-blue-700 to-indigo-900'
+                            : 'from-blue-500 to-indigo-700'
+                    }`}
+                    style={{ opacity: isSwiping ? 1 : 0 }}
                 >
                     <div className="flex items-center gap-3 text-white">
                         <div className="bg-white/20 p-2 rounded-full animate-spin-slow">
                             <RotateCcw size={22} />
                         </div>
                         <div className="flex flex-col">
-                            <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">Acción Directa</span>
+                            <span className="text-[10px] font-bold uppercase tracking-widest opacity-80">
+                                {swipeX > SWIPE_UNASSIGN_THRESHOLD ? 'Suelta ya' : 'Sigue deslizando'}
+                            </span>
                             <span className="text-sm font-extrabold uppercase tracking-tight">Devolver a Asignar</span>
                         </div>
                     </div>
@@ -169,6 +196,13 @@ const ShipmentCardUI = React.memo(({
                     ${isDragging && !dragOverlay ? 'opacity-0' : 'opacity-100'}
                     ${dragOverlay ? 'shadow-2xl ring-1 ring-blue-200 scale-[1.02] bg-white border-blue-200' : 'border-slate-100'}
                     ${isSwiping ? 'shadow-xl ring-1 ring-blue-500/20' : ''}`}
+                style={{
+                    // Se aparta solo la tarjeta, destapando el panel azul que hay detrás.
+                    // Mientras el dedo está encima no puede haber transición o la tarjeta
+                    // iría 200ms por detrás; al soltar se devuelve para que vuelva sola.
+                    transform: isSwiping ? `translateX(${swipeX}px)` : undefined,
+                    transition: isSwiping ? 'none' : undefined
+                }}
             >
                 <div
                     className="absolute left-0 top-0 bottom-0 w-1"
@@ -183,29 +217,8 @@ const ShipmentCardUI = React.memo(({
                 ></div>
                 
                 <div className="absolute right-0 top-1/2 -translate-y-1/2 w-20 h-12 opacity-70 pointer-events-none flex items-center justify-end z-10 pr-2">
-                    <img 
-                        src={(() => {
-                            const normalize = (n) => String(n || '').toLowerCase().trim();
-                            const sName = normalize(stop.client);
-                            const dName = normalize(stop.destinationName || stop.client);
-                            const aLabel = normalize(stop.agencyLabel);
-                            if (stop.agencyLogoUrl && stop.agencyLogoUrl !== '/logo-sum.svg') return stop.agencyLogoUrl;
-                            if (clients && clients.length > 0) {
-                                const clientMatch = clients.find(c => {
-                                    const cName = normalize(c.name);
-                                    const cLegal = normalize(c.legalName);
-                                    const cTag = normalize(c.agencyLabel);
-                                    return (cName && (cName === sName || cName === dName)) || 
-                                           (cLegal && (cLegal === sName || cLegal === dName)) ||
-                                           (aLabel && cTag === aLabel && aLabel !== 'sum especial');
-                                });
-                                if (clientMatch?.agencyLogoUrl) return clientMatch.agencyLogoUrl;
-                            }
-                            if (aLabel.includes('tsb') || sName.includes('tsb') || dName.includes('tsb')) return '/logos/tsb_logo.png'; 
-                            if (aLabel.includes('xpo') || sName.includes('xpo') || dName.includes('xpo')) return '/logos/xpo_logo.png';
-                            if (aLabel.includes('txt') || sName.includes('txt') || dName.includes('txt')) return '/logos/txt_logo.png';
-                            return '/logo-sum.svg';
-                        })()} 
+                    <img
+                        src={resolverLogo(stop, clienteDeLaParada)}
                         alt="Branding" 
                         className="max-w-full max-h-full object-contain"
                         onError={(e) => { e.target.src = '/logo-sum.svg'; }} 
@@ -226,16 +239,27 @@ const ShipmentCardUI = React.memo(({
                                 <div className="flex flex-wrap items-center gap-2 mb-1">
                                     <span className="text-xs font-bold text-blue-600">PARADA #{index + 1}</span>
                                     {(() => {
-                                        const label = (stop.agencyLabel || '').toUpperCase();
-                                        const isTSB = label.includes('TSB') || (stop.client || '').toUpperCase().includes('TSB');
-                                        const isXPO = label.includes('XPO') || (stop.client || '').toUpperCase().includes('XPO');
-                                        const isTXT = label.includes('TXT') || (stop.client || '').toUpperCase().includes('TXT');
-                                        
+                                        const colorInsignia = {
+                                            TSB: 'bg-blue-600 text-white',
+                                            XPO: 'bg-amber-400 text-black',
+                                            TXT: 'bg-red-600 text-white',
+                                        }[insignia] || 'bg-slate-600 text-white';
+
                                         return (
                                             <>
-                                                {isTSB && <span className="text-[9px] font-extrabold bg-blue-600 text-white px-1.5 py-0.5 rounded shadow-sm">AGENCIA TSB</span>}
-                                                {isXPO && <span className="text-[9px] font-extrabold bg-amber-400 text-black px-1.5 py-0.5 rounded shadow-sm">AGENCIA XPO</span>}
-                                                {isTXT && <span className="text-[9px] font-extrabold bg-red-600 text-white px-1.5 py-0.5 rounded shadow-sm">AGENCIA TXT</span>}
+                                                {insignia && (
+                                                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded shadow-sm ${colorInsignia}`}>
+                                                        AGENCIA {insignia}
+                                                    </span>
+                                                )}
+                                                {esDeCamino && (
+                                                    <span
+                                                        className="text-[9px] font-extrabold bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded border border-teal-300 shadow-sm"
+                                                        title="El optimizador la ha adelantado porque queda de camino. Arrástrala si prefieres dejarla para después."
+                                                    >
+                                                        DE CAMINO
+                                                    </span>
+                                                )}
                                                 {Array.isArray(stop.scannedPackages) && stop.scannedPackages.length > 0 && (
                                                     <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded shadow-sm ${
                                                         stop.scannedPackages.length >= getPackagesCount(stop)
@@ -585,7 +609,7 @@ const SortableItem = React.memo((props) => {
         };
 
         const onTouchEnd = () => {
-            if (swipeXRef.current > 150) {
+            if (swipeXRef.current > SWIPE_UNASSIGN_THRESHOLD) {
                 if (window.navigator.vibrate) window.navigator.vibrate(50);
                 props.onUnassign(stop);
             }
@@ -608,7 +632,11 @@ const SortableItem = React.memo((props) => {
     }, [stop, props.onUnassign]);
 
     const style = {
-        transform: isSwiping ? `translateX(${swipeX}px)` : CSS.Transform.toString(transform),
+        // El arrastre lateral NO se aplica aquí: movería el envoltorio entero, panel
+        // azul incluido, y la tarjeta blanca lo seguiría tapando al 100%. El panel
+        // tiene que quedarse quieto y ser la tarjeta la que se aparte (ver la tarjeta
+        // en ShipmentCardUI). Aquí solo va la transformación de reordenar de dnd-kit.
+        transform: CSS.Transform.toString(transform),
         transition: isDragging || isSwiping ? 'none' : transition,
         zIndex: isDragging ? 2 : undefined,
         willChange: 'transform, opacity',
@@ -2220,10 +2248,13 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             // Optimistic UI update
             setLocalRoute(prev => prev.filter(s => s.id !== shipment.id));
             
-            // Persist the unassignment
+            // Persist the unassignment. Sellamos quién lo devuelve para que reaparezca
+            // en SU pestaña de Asignar y pueda mandárselo al conductor correcto, en vez
+            // de volver al creador (que es quien se equivocó al asignarlo).
             await onUpdateShipment(shipment.id, {
                 status: 'Pendiente de asignar',
                 assignedDriverId: null,
+                returnedToAssignById: currentDriverId,
                 updatedAt: new Date().toISOString()
             });
 
@@ -2322,8 +2353,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         const priceBase = parseAmt(shipment.customAmount || shipment.amount);
         const priceIva = +(priceBase * 0.21).toFixed(2);
         const priceTotal = +(priceBase + priceIva).toFixed(2);
+
+        // Serie HAB- = clientes al contado: pagan un precio cerrado en mano, así que
+        // el justificante muestra ese importe tal cual, sin desglose de IVA.
+        // Los albaranes antiguos sin prefijo caen en isSecret.
+        const idUpper = String(shipment.id || '').toUpperCase();
+        const isContado = idUpper.startsWith('HAB-') || (!idUpper.startsWith('SUM-') && isSecret);
+
+        const fmt = (n) => n.toFixed(2).replace('.', ',');
         const priceText = priceBase > 0
-            ? `*Precio:* ${priceBase.toFixed(2)} € + IVA = *${priceTotal.toFixed(2)} €*%0A`
+            ? (isContado
+                ? `*Precio:* ${fmt(priceBase)} €%0A`
+                : `*Precio:* ${fmt(priceBase)} € + IVA = *${fmt(priceTotal)} €*%0A`)
             : '';
 
         const message = `${titleText}%0A%0A` +
@@ -2355,6 +2396,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const [showRouteMap, setShowRouteMap] = useState(false);
     const [routeOptimized, setRouteOptimized] = useState(false);
     const [learningMessage, setLearningMessage] = useState(null);
+    // Paradas de agencia que el optimizador ha colado por delante de las nuestras
+    // porque quedaban de camino. Se marcan en la tarjeta: la última palabra sobre si
+    // conviene entregarlas ahí es del transportista, y para eso tiene que verlo.
+    const [paradasDeCamino, setParadasDeCamino] = useState(() => new Set());
 
     // Tracks which collection items are being processed (Optimistic UI)
 
@@ -2391,7 +2436,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             
             const newRoute = arrayMove(localRoute, oldIndex, newIndex);
             setLocalRoute(newRoute);
-            
+
+            // Si el transportista mueve a mano una parada que el optimizador había
+            // adelantado por quedar de camino, la etiqueta ya no describe nada: la
+            // decisión pasa a ser suya, así que se le quita el aviso.
+            setParadasDeCamino(prev => {
+                if (!prev.has(active.id)) return prev;
+                const siguiente = new Set(prev);
+                siguiente.delete(active.id);
+                return siguiente;
+            });
+
+
             // --- PERSIST ORDER: localStorage (inmediato) + Supabase (nube) ---
             if (currentDriverId) {
                 const idsToSave = newRoute.filter(Boolean).map(s => s.id);
@@ -2968,15 +3024,6 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             })
             .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
     }, [allShipments, currentDriverId]);
-    const availableShipments = (allShipments || []).filter(s => 
-        s && 
-        s.status === 'Pendiente de asignar' && 
-        (
-            Number(s.createdById) === Number(currentDriverId) ||
-            Number(s.pickedUpById) === Number(currentDriverId)
-        )
-    );
-    
     const [activeId, setActiveId] = useState(null);
     const [clientPriorities, setClientPriorities] = useState(() => {
         const saved = localStorage.getItem('drv_priorities');
@@ -2997,34 +3044,34 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         });
     };
 
-    // --- APRENDIZAJE POR POSICIÓN MEDIA ---
-    // Formato: { "cabra": { "mamaki": { avg: 1.5, count: 10 }, "ferreteria": { avg: 2.3, count: 8 } } }
+    // --- APRENDIZAJE DEL ORDEN DE ENTREGA ---
+    // Formato en utils/aprendizajeRuta.js. `adaptarConocimiento` se encarga de que lo
+    // que hay guardado del formato antiguo (posición absoluta, pueblo sin normalizar)
+    // siga valiendo, así que nadie pierde lo que llevaba aprendido.
     const [positionLearning, setPositionLearning] = useState(() => {
         try {
-            // 1. Try local cache first
+            // 1. La copia del propio móvil
             const saved = localStorage.getItem(`drv_pos_learn_${currentDriverId}`);
             if (saved) {
-                const parsed = JSON.parse(saved);
-                if (Object.keys(parsed).length > 0) return parsed;
+                const parsed = adaptarConocimiento(JSON.parse(saved));
+                if (contarPueblosMemorizados(parsed) > 0) return parsed;
             }
-            // 2. Try cloud data for this driver
+            // 2. Lo que haya en la nube de este conductor
             const cloudData = routeKnowledge?.byDriver?.[String(currentDriverId)];
-            if (cloudData && Object.keys(cloudData).length > 0) {
-                localStorage.setItem(`drv_pos_learn_${currentDriverId}`, JSON.stringify(cloudData));
-                return cloudData;
+            if (contarPueblosMemorizados(cloudData) > 0) {
+                const adaptado = adaptarConocimiento(cloudData);
+                localStorage.setItem(`drv_pos_learn_${currentDriverId}`, JSON.stringify(adaptado));
+                return adaptado;
             }
-            // 3. Inherit route master if available
-            const activeRoutes = routes && routes.length > 0 ? routes : [];
-            const myRoute = activeRoutes.find(r => String(r.conductorId) === String(currentDriverId));
+            // 3. Heredar el maestro de su ruta, si lo hay
+            const myRoute = (routes || []).find(r => String(r.conductorId) === String(currentDriverId));
             if (myRoute) {
                 const masterData = routeKnowledge?.masterByRoute?.[myRoute.id];
-                if (masterData) {
-                    const { _setBy, _setAt, ...cleanMaster } = masterData;
-                    if (Object.keys(cleanMaster).length > 0) {
-                        localStorage.setItem(`drv_pos_learn_${currentDriverId}`, JSON.stringify(cleanMaster));
-                        console.log('📚 Inherited master knowledge for route:', myRoute.nombre);
-                        return cleanMaster;
-                    }
+                if (contarPueblosMemorizados(masterData) > 0) {
+                    const adaptado = adaptarConocimiento(masterData);
+                    localStorage.setItem(`drv_pos_learn_${currentDriverId}`, JSON.stringify(adaptado));
+                    console.log('📚 Heredado el conocimiento maestro de la ruta:', myRoute.nombre);
+                    return adaptado;
                 }
             }
             return {};
@@ -3067,51 +3114,60 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
     }, [routeKnowledge, currentDriverId]);
 
-    // Called after each delivery to record position
+    /**
+     * Apunta en qué orden confirma el transportista las entregas de cada pueblo.
+     *
+     * Lo que se guarda es el orden RELATIVO (el 1º de 4, el 3º de 4...), no la
+     * posición a secas: si un día Cabra tiene 3 paradas y otro 9, "el último" no puede
+     * valer 3 un día y 9 el otro, porque la media los mezcla como si fueran lo mismo.
+     * Para eso hace falta saber cuántas paradas tenía el pueblo ESE día, que es la
+     * suma de las ya entregadas más las que siguen pendientes en la ruta.
+     */
     const recordDeliveryPosition = (shipment) => {
         if (!shipment) return;
-        const norm = (v) => String(v || '').trim().toLowerCase();
-        const clientName = norm(shipment.destinationName || shipment.client);
-        const city = norm(shipment.destinationCity || shipment.originCity || '');
-        if (!clientName || !city) return;
+        const pueblo = ciudadDeEnvio(shipment);
+        const cliente = nombreDeParada(shipment);
+        const clavePueblo = normalizarPueblo(pueblo);
+        if (!clavePueblo || !cliente) return;
 
-        // Add to today's list
-        deliveredTodayRef.current.push({ clientName, city });
+        if (!deliveredTodayRef.current.some(d => d.id === shipment.id)) {
+            deliveredTodayRef.current.push({ id: shipment.id, pueblo: clavePueblo, cliente });
+        }
+        const entregadas = deliveredTodayRef.current.filter(d => d.pueblo === clavePueblo);
+        const posicion = entregadas.findIndex(d => d.id === shipment.id) + 1;
 
-        // Calculate this client's position within their city today
-        const cityDeliveries = deliveredTodayRef.current.filter(d => d.city === city);
-        const positionInCity = cityDeliveries.length; // 1-based position
+        const yaContadas = new Set(entregadas.map(d => d.id));
+        const pendientes = (localRoute || []).filter(s =>
+            s && !yaContadas.has(s.id) && normalizarPueblo(ciudadDeEnvio(s)) === clavePueblo
+        ).length;
 
         setPositionLearning(prev => {
-            const cityData = prev[city] || {};
-            const existing = cityData[clientName] || { avg: positionInCity, count: 0 };
-            const newCount = existing.count + 1;
-            // Weighted moving average (recent deliveries weigh more)
-            const newAvg = existing.avg + (positionInCity - existing.avg) / Math.min(newCount, 20);
-            const updated = {
-                ...prev,
-                [city]: {
-                    ...cityData,
-                    [clientName]: { avg: Math.round(newAvg * 100) / 100, count: newCount }
-                }
-            };
+            const updated = registrarEntrega(prev, {
+                pueblo,
+                turno: turnoQueSeRepartaAhora(),
+                cliente,
+                posicion,
+                total: entregadas.length + pendientes,
+            });
+
             try {
                 localStorage.setItem(`drv_pos_learn_${currentDriverId}`, JSON.stringify(updated));
-            } catch (e) { console.warn('Position learning save error:', e); }
+            } catch (e) { console.warn('No se pudo guardar el aprendizaje:', e); }
 
-            // Debounced sync to cloud (every 30 seconds max)
+            // Subida a la nube con retardo, para no llamar en cada entrega
             if (onUpdateRouteKnowledge) {
                 clearTimeout(syncTimeoutRef.current);
                 syncTimeoutRef.current = setTimeout(() => {
-                    const newKnowledge = {
+                    // `driverId` hace que se escriba solo la fila de este repartidor,
+                    // sin tocar la de los demás ni el JSON común.
+                    onUpdateRouteKnowledge({
                         ...routeKnowledge,
                         byDriver: {
                             ...(routeKnowledge?.byDriver || {}),
                             [String(currentDriverId)]: updated
                         }
-                    };
-                    onUpdateRouteKnowledge(newKnowledge);
-                    console.log('☁️ Learning synced to cloud');
+                    }, { driverId: currentDriverId });
+                    console.log('☁️ Aprendizaje sincronizado');
                 }, 30000);
             }
             return updated;
@@ -3128,455 +3184,120 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
     }, [currentDriverId]);
 
-    // Sync learning on unmount (driver closes app)
+    // Espejo del aprendizaje para poder volcarlo al cerrar la app.
+    // El efecto de abajo se monta una sola vez, así que su closure se quedaba con el
+    // valor del PRIMER render: al cerrar subía el aprendizaje tal y como estaba al
+    // abrir, tirando lo aprendido durante la jornada y pudiendo pisar en la nube algo
+    // más reciente que hubiera subido el propio móvil.
+    const positionLearningRef = useRef(positionLearning);
+    useEffect(() => { positionLearningRef.current = positionLearning; }, [positionLearning]);
+
+    // Volcado del aprendizaje al cerrar la app
     useEffect(() => {
         return () => {
             clearTimeout(syncTimeoutRef.current);
-            if (onUpdateRouteKnowledge && positionLearning && Object.keys(positionLearning).length > 0) {
-                const newKnowledge = {
+            const aprendido = positionLearningRef.current;
+            // `contarPueblosMemorizados` y no `Object.keys`: un aprendizaje vacío lleva
+            // la marca de versión, así que contando claves parecía que había algo.
+            if (onUpdateRouteKnowledge && contarPueblosMemorizados(aprendido) > 0) {
+                onUpdateRouteKnowledge({
                     ...routeKnowledge,
                     byDriver: {
                         ...(routeKnowledge?.byDriver || {}),
-                        [String(currentDriverId)]: positionLearning
+                        [String(currentDriverId)]: aprendido
                     }
-                };
-                onUpdateRouteKnowledge(newKnowledge);
+                }, { driverId: currentDriverId });
             }
         };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const getDistance = (lat1, lon1, lat2, lon2) => {
-        if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
-        const R = 6371; // km
-        const dLat = (lat2 - lat1) * Math.PI / 180;
-        const dLon = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-            Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
-    };
-
     // ═══════════════════════════════════════════════════════════════════
-    // OPTIMIZADOR DE RUTA v4 - Agrupación por pueblos + prioridad + aprendizaje
+    // OPTIMIZADOR DE RUTA
+    // La lógica vive en utils/optimizadorRuta.js, que es una función pura y con
+    // tests. Aquí solo queda pedir el GPS, llamar y guardar el resultado.
     // ═══════════════════════════════════════════════════════════════════
     const handleSmartSort = () => {
+        if (!localRoute || localRoute.length === 0) return;
+
         setIsOptimizing(true);
-        setLearningMessage("Optimizando ruta v4...");
+        setLearningMessage("Optimizando ruta...");
 
-        // Try to get GPS first
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                const { latitude, longitude } = pos.coords;
-                proceedWithSort(latitude, longitude);
-            },
-            () => {
-                // Fallback if GPS disabled
-                proceedWithSort(null, null);
-            },
-            { timeout: 5000, enableHighAccuracy: true }
-        );
-
-        function proceedWithSort(myLat, myLon) {
+        const terminar = () => {
             setTimeout(() => {
-                try {
-                    if (!localRoute || localRoute.length === 0) return;
+                setLearningMessage("");
+                setIsOptimizing(false);
+            }, 3000);
+        };
 
-                    const norm = (val) => String(val || '').trim().toLowerCase();
+        const ordenar = (gps) => {
+            try {
+                const { orden, deCamino, resumen } = optimizarRuta({
+                    envios: localRoute,
+                    rutas: routes,
+                    conductorId: currentDriverId,
+                    routeId: currentDriver?.routeId,
+                    resolverCliente: (envio) => clientsMap.get(normalizeClientName(nombreDeParada(envio))) || null,
+                    aprendizaje: positionLearning,
+                    conocimiento: routeKnowledge,
+                    gps,
+                });
 
-                    // ── Helpers ──
-                    const getClientData = (s) => {
-                        const targetName = s.type === 'Recogida' ? s.client : (s.destinationName || s.client);
-                        if (!targetName) return null;
-                        return clientsMap.get(norm(targetName));
-                    };
+                setLocalRoute(orden);
+                setParadasDeCamino(deCamino);
+                setRouteOptimized(true);
+                guardarOrdenEnLaNube(orden);
+                setLearningMessage(mensajeDeOptimizacion(resumen));
+            } catch (error) {
+                console.error("Falló la optimización de la ruta:", error);
+                setLearningMessage("No se ha podido optimizar la ruta.");
+            } finally {
+                // Pase lo que pase, el botón se desbloquea. Antes, si la ruta estaba
+                // vacía se salía sin quitar el spinner y el botón se quedaba muerto.
+                terminar();
+            }
+        };
 
-                    const getResolvedCoords = (s, clientRecord) => {
-                        if (clientRecord?.coordinates && String(clientRecord.coordinates).trim().length > 0) return clientRecord.coordinates;
-                        if (s.deliveryCoordinates) return s.deliveryCoordinates;
-                        const sCoords = s.type === 'Recogida' ? s.originCoordinates : s.destinationCoordinates;
-                        if (sCoords && String(sCoords).includes(',')) return sCoords;
-                        return null;
-                    };
+        if (!navigator.geolocation) { ordenar(null); return; }
 
-                    const parseCoords = (coordStr) => {
-                        if (!coordStr || !String(coordStr).includes(',')) return null;
-                        const [lat, lon] = String(coordStr).split(',').map(Number);
-                        if (isNaN(lat) || isNaN(lon)) return null;
-                        return { lat, lon };
-                    };
+        // Sin alta precisión: en el móvil tarda de más y acaba cayendo al plan B casi
+        // siempre. Para elegir por dónde empezar, la posición aproximada sobra.
+        navigator.geolocation.getCurrentPosition(
+            (pos) => ordenar({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+            () => ordenar(null),
+            { timeout: 5000, enableHighAccuracy: false, maximumAge: 60000 }
+        );
+    };
 
-                    const isAgency = (s, clientRecord) => {
-                        const label = norm(s.agencyLabel || '');
-                        if (label && label !== 'sum especial') return true;
-                        if (clientRecord?.priority === 'normal') return true;
-                        return false;
-                    };
+    const mensajeDeOptimizacion = (resumen) => {
+        const partes = [`${etiquetaTurno(resumen.turno)}: ${resumen.pueblos} pueblo${resumen.pueblos !== 1 ? 's' : ''}`];
+        if (resumen.sinRuta) partes.push('sin ruta asignada, ordenados por cercanía');
+        if (resumen.extras > 0) partes.push(`${resumen.extras} fuera de ruta`);
+        if (resumen.deCamino > 0) partes.push(`${resumen.deCamino} de camino`);
+        partes.push(resumen.pueblosMemorizados > 0
+            ? `aprendidos: ${resumen.pueblosMemorizados}`
+            : 'sin historial aún');
+        return partes.join(' · ');
+    };
 
-                    // ── Enrich all shipments ──
-                    const enriched = localRoute.map(s => {
-                        const clientRecord = getClientData(s);
-                        const coords = getResolvedCoords(s, clientRecord);
-                        return {
-                            ...s,
-                            _coords: coords,
-                            _parsedCoords: parseCoords(coords),
-                            _priority: clientRecord?.priority || 'urgent',
-                            _isAgency: isAgency(s, clientRecord),
-                            _city: norm(s.destinationCity || s.originCity || ''),
-                        };
-                    });
-
-                    // ── Punto de inicio para nearest-neighbor ──
-                    // Si hay GPS del conductor, úsalo. Si no, usa el centroide de todos los puntos GPS de la ruta.
-                    const allParsed = enriched.filter(s => s._parsedCoords).map(s => s._parsedCoords);
-                    let startLat = myLat;
-                    let startLon = myLon;
-                    if ((!startLat || !startLon) && allParsed.length > 0) {
-                        startLat = allParsed.reduce((s, c) => s + c.lat, 0) / allParsed.length;
-                        startLon = allParsed.reduce((s, c) => s + c.lon, 0) / allParsed.length;
-                    }
-
-                    // ── FASE 1: Determinar turno y orden de pueblos ──
-                    const currentHour = new Date().getHours();
-                    const isMorningShift = currentHour < 14;
-                    const activeRoutes = routes && routes.length > 0 ? routes : DEFAULT_RUTAS;
-                    const activeRoute = activeRoutes.find(r => 
-                        String(r.conductorId) === String(currentDriverId) || r.id === currentDriver?.routeId
-                    );
-
-                    const morningTowns = (activeRoute?.poblacionesManana || activeRoute?.poblaciones || []).map(t => t.trim());
-                    const afternoonTowns = (activeRoute?.poblacionesTarde || []).map(t => t.trim());
-
-                    // Ordered town list: current shift first, then opposite shift
-                    const primaryTowns = isMorningShift ? morningTowns : afternoonTowns;
-                    const secondaryTowns = isMorningShift ? afternoonTowns : morningTowns;
-                    const allRouteTowns = [...primaryTowns, ...secondaryTowns];
-
-                    // Helper: Find which route town a city matches (flexible matching).
-                    // Devuelve el pueblo MÁS específico que encaje: quedándose con el primero,
-                    // los envíos de "Montalbán de Córdoba" caían en el grupo de "Córdoba"
-                    // y se ordenaban como si fueran de la capital.
-                    const matchTown = (city) => mejorPuebloParaCiudad(city, allRouteTowns);
-
-                    // ── FASE 2: Agrupar envíos en buckets por pueblo ──
-                    const townBuckets = new Map(); // townName -> [shipments]
-                    const orphans = []; // shipments with no matching route town
-
-                    enriched.forEach(s => {
-                        const matched = matchTown(s._city);
-                        if (matched) {
-                            if (!townBuckets.has(matched)) townBuckets.set(matched, []);
-                            townBuckets.get(matched).push(s);
-                        } else {
-                            orphans.push(s);
-                        }
-                    });
-
-                    // ── FASE 2b: Insert orphan towns by GPS proximity ──
-                    // Calculate a "center" GPS for each route town from its shipments
-                    const townCenters = new Map(); // townName -> {lat, lon}
-                    for (const [town, items] of townBuckets) {
-                        const withCoords = items.filter(s => s._parsedCoords);
-                        if (withCoords.length > 0) {
-                            const avgLat = withCoords.reduce((sum, s) => sum + s._parsedCoords.lat, 0) / withCoords.length;
-                            const avgLon = withCoords.reduce((sum, s) => sum + s._parsedCoords.lon, 0) / withCoords.length;
-                            townCenters.set(town, { lat: avgLat, lon: avgLon });
-                        }
-                    }
-
-                    // Group orphans by their own city
-                    const orphanGroups = new Map(); // cityName -> [shipments]
-                    orphans.forEach(s => {
-                        const cityKey = s._city || '__sin_ciudad__';
-                        if (!orphanGroups.has(cityKey)) orphanGroups.set(cityKey, []);
-                        orphanGroups.get(cityKey).push(s);
-                    });
-
-                    // For each orphan group, find best insertion position
-                    const orphanInsertions = []; // { afterTownIndex, orphanCity, items, distance }
-                    for (const [orphanCity, items] of orphanGroups) {
-                        // Try to get GPS center from orphan items
-                        const orphanWithCoords = items.filter(s => s._parsedCoords);
-                        let orphanCenter = null;
-                        if (orphanWithCoords.length > 0) {
-                            orphanCenter = {
-                                lat: orphanWithCoords.reduce((s, i) => s + i._parsedCoords.lat, 0) / orphanWithCoords.length,
-                                lon: orphanWithCoords.reduce((s, i) => s + i._parsedCoords.lon, 0) / orphanWithCoords.length,
-                            };
-                        }
-
-                        if (orphanCenter && allRouteTowns.length > 0) {
-                            // Find the route town it's closest to
-                            let bestIdx = allRouteTowns.length; // default: end
-                            let bestDist = Infinity;
-
-                            allRouteTowns.forEach((town, idx) => {
-                                const center = townCenters.get(town);
-                                if (center) {
-                                    const dist = getDistance(orphanCenter.lat, orphanCenter.lon, center.lat, center.lon);
-                                    if (dist < bestDist) {
-                                        bestDist = dist;
-                                        // Insert AFTER the closest town if orphan is farther from start,
-                                        // or BEFORE if it's closer to start (check driver position)
-                                        if (myLat && myLon) {
-                                            const distDriverToOrphan = getDistance(myLat, myLon, orphanCenter.lat, orphanCenter.lon);
-                                            const distDriverToTown = getDistance(myLat, myLon, center.lat, center.lon);
-                                            bestIdx = distDriverToOrphan < distDriverToTown ? idx : idx + 1;
-                                        } else {
-                                            bestIdx = idx + 1; // After the closest town by default
-                                        }
-                                        bestDist = dist;
-                                    }
-                                }
-                            });
-
-                            orphanInsertions.push({ afterTownIndex: bestIdx, orphanCity, items, distance: bestDist });
-                        } else {
-                            // No GPS data for orphan → place at the very end
-                            orphanInsertions.push({ afterTownIndex: allRouteTowns.length + 999, orphanCity, items, distance: Infinity });
-                        }
-                    }
-
-                    // Sort orphan insertions by their position
-                    orphanInsertions.sort((a, b) => a.afterTownIndex - b.afterTownIndex || a.distance - b.distance);
-
-                    // ── FASE 3: Ordenar dentro de cada grupo de pueblo ──
-                    const sortWithinTown = (items, townName) => {
-                        const townKey = norm(townName || '');
-                        let townLearn = positionLearning[townKey] || {};
-                        
-                        // Fallback: if driver has no data for this town, check route masters
-                        if (Object.keys(townLearn).length === 0 && routeKnowledge?.masterByRoute) {
-                            for (const [, masterData] of Object.entries(routeKnowledge.masterByRoute)) {
-                                if (masterData[townKey] && Object.keys(masterData[townKey]).length > 0) {
-                                    townLearn = masterData[townKey];
-                                    break;
-                                }
-                            }
-                        }
-                        // Also check other drivers' knowledge as last resort
-                        if (Object.keys(townLearn).length === 0 && routeKnowledge?.byDriver) {
-                            for (const [dId, driverData] of Object.entries(routeKnowledge.byDriver)) {
-                                if (String(dId) === String(currentDriverId)) continue;
-                                if (driverData[townKey] && Object.keys(driverData[townKey]).length > 0) {
-                                    townLearn = driverData[townKey];
-                                    break;
-                                }
-                            }
-                        }
-                        const hasLearning = Object.keys(townLearn).length > 0;
-
-                        // Split: urgent vs agency
-                        const urgents = items.filter(s => !s._isAgency);
-                        const agencies = items.filter(s => s._isAgency);
-
-                        const smartSort = (list) => {
-                            // Separar los que tienen coords GPS de los que no
-                            const withCoords = list.filter(s => s._parsedCoords);
-                            const withoutCoords = list.filter(s => !s._parsedCoords);
-
-                            if (!hasLearning || list.length <= 1) {
-                                // Sin historial: vecino más cercano encadenado desde startLat/startLon
-                                // (startLat/startLon = GPS del conductor o centroide de los puntos)
-                                if (withCoords.length > 0 && startLat && startLon) {
-                                    const result = [];
-                                    const remaining = [...withCoords];
-                                    let curLat = startLat;
-                                    let curLon = startLon;
-
-                                    while (remaining.length > 0) {
-                                        let bestIdx = 0;
-                                        let bestDist = Infinity;
-                                        for (let i = 0; i < remaining.length; i++) {
-                                            const d = getDistance(curLat, curLon, remaining[i]._parsedCoords.lat, remaining[i]._parsedCoords.lon);
-                                            if (d < bestDist) { bestDist = d; bestIdx = i; }
-                                        }
-                                        const next = remaining.splice(bestIdx, 1)[0];
-                                        result.push(next);
-                                        curLat = next._parsedCoords.lat;
-                                        curLon = next._parsedCoords.lon;
-                                    }
-
-                                    withoutCoords.sort((a, b) => norm(a.destinationAddress || '').localeCompare(norm(b.destinationAddress || '')));
-                                    return [...result, ...withoutCoords];
-                                }
-
-                                // Sin GPS en absoluto: ordenar alfabéticamente
-                                list.sort((a, b) => norm(a.destinationAddress || '').localeCompare(norm(b.destinationAddress || '')));
-                                return list;
-                            }
-
-                            // Nearest-neighbor encadenado con historial como desempate
-
-                            // Pesos de posición aprendida (normalizar entre 0 y 1 para usar como bonus)
-                            const maxLearnPos = Math.max(
-                                ...Object.values(townLearn).map(v => v.avg || 0), 1
-                            );
-                            const learnScore = (s) => {
-                                const name = norm(s.destinationName || s.client);
-                                const entry = townLearn[name];
-                                // Cuanto menor posición aprendida, menor penalización (0 = primero)
-                                return entry ? (entry.avg - 1) / maxLearnPos : 0.5; // desconocido = posición media
-                            };
-
-                            // Nearest-neighbor greedy con desempate por historial
-                            // Usa startLat/startLon (GPS conductor o centroide) como punto de inicio
-                            const nnResult = [];
-                            const remaining = [...withCoords];
-                            let curLat = startLat || null;
-                            let curLon = startLon || null;
-
-                            while (remaining.length > 0) {
-                                let bestIdx = 0;
-                                let bestScore = Infinity;
-
-                                for (let i = 0; i < remaining.length; i++) {
-                                    const s = remaining[i];
-                                    const distKm = (curLat && curLon)
-                                        ? getDistance(curLat, curLon, s._parsedCoords.lat, s._parsedCoords.lon)
-                                        : 0;
-                                    // Combinar distancia con posición aprendida:
-                                    // Si la diferencia de distancia es < 1 km, el historial desempata
-                                    const score = distKm + learnScore(s) * 0.8; // 0.8 km máximo de bonus por historial
-                                    if (score < bestScore) {
-                                        bestScore = score;
-                                        bestIdx = i;
-                                    }
-                                }
-
-                                const next = remaining.splice(bestIdx, 1)[0];
-                                nnResult.push(next);
-                                if (next._parsedCoords) {
-                                    curLat = next._parsedCoords.lat;
-                                    curLon = next._parsedCoords.lon;
-                                }
-                            }
-
-                            // Los sin coordenadas al final, ordenados por posición aprendida o alfabético
-                            withoutCoords.sort((a, b) => {
-                                const pa = townLearn[norm(a.destinationName || a.client)]?.avg ?? 999;
-                                const pb = townLearn[norm(b.destinationName || b.client)]?.avg ?? 999;
-                                if (pa !== pb) return pa - pb;
-                                return norm(a.destinationAddress || '').localeCompare(norm(b.destinationAddress || ''));
-                            });
-
-                            return [...nnResult, ...withoutCoords];
-                        };
-
-                        const sortedUrgents = smartSort(urgents);
-                        const sortedAgencies = smartSort(agencies);
-                        const merged = [...sortedUrgents, ...sortedAgencies];
-
-                        // Final pass: "De camino" — pull items within 500m
-                        const DE_CAMINO_THRESHOLD = 0.5;
-                        const reordered = [];
-                        const remaining = [...merged];
-
-                        while (remaining.length > 0) {
-                            const current = remaining.shift();
-                            reordered.push(current);
-
-                            if (current._parsedCoords && remaining.length > 0) {
-                                let pulledSomething = true;
-                                while (pulledSomething) {
-                                    pulledSomething = false;
-                                    for (let i = 0; i < remaining.length; i++) {
-                                        const candidate = remaining[i];
-                                        if (candidate._parsedCoords) {
-                                            const dist = getDistance(
-                                                current._parsedCoords.lat, current._parsedCoords.lon,
-                                                candidate._parsedCoords.lat, candidate._parsedCoords.lon
-                                            );
-                                            if (dist <= DE_CAMINO_THRESHOLD) {
-                                                reordered.push(remaining.splice(i, 1)[0]);
-                                                pulledSomething = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        return reordered;
-                    };
-
-                    // ── FASE 4: Ensamblar la ruta final ──
-                    const finalRoute = [];
-
-                    // Build ordered list: route towns + orphans interleaved
-                    let orphanIdx = 0;
-                    for (let i = 0; i < allRouteTowns.length; i++) {
-                        // Insert any orphans that should go BEFORE this town
-                        while (orphanIdx < orphanInsertions.length && orphanInsertions[orphanIdx].afterTownIndex <= i) {
-                            const orphanGroup = orphanInsertions[orphanIdx];
-                            finalRoute.push(...sortWithinTown(orphanGroup.items, orphanGroup.orphanCity));
-                            orphanIdx++;
-                        }
-
-                        const town = allRouteTowns[i];
-                        const bucket = townBuckets.get(town);
-                        if (bucket && bucket.length > 0) {
-                            finalRoute.push(...sortWithinTown(bucket, town));
-                        }
-                    }
-
-                    // Add remaining orphans at the end
-                    while (orphanIdx < orphanInsertions.length) {
-                        const orphanGroup = orphanInsertions[orphanIdx];
-                        finalRoute.push(...sortWithinTown(orphanGroup.items, orphanGroup.orphanCity));
-                        orphanIdx++;
-                    }
-
-                    // Safety: Add any shipments that weren't matched at all (shouldn't happen)
-                    const placedIds = new Set(finalRoute.map(s => s.id));
-                    const missed = enriched.filter(s => !placedIds.has(s.id));
-                    if (missed.length > 0) finalRoute.push(...missed);
-
-                    // ── Guardar resultado ──
-                    const cleanedRoute = finalRoute.map(({ _coords, _parsedCoords, _priority, _isAgency, _city, _id, ...rest }) => rest);
-                    setLocalRoute(cleanedRoute);
-
-                    // ── Sincronizar orden con Supabase para que el admin lo vea ──
-                    if (currentDriverId) {
-                        const idsToSave = cleanedRoute.map(s => s.id);
-                        try {
-                            localStorage.setItem(`drv_route_${currentDriverId}`, JSON.stringify(idsToSave));
-                        } catch (e) {}
-                        (async () => {
-                            try {
-                                const { data: drvData } = await supabase.from('drivers').select('data').eq('id', currentDriverId).single();
-                                if (drvData) {
-                                    await supabase.from('drivers').update({ data: { ...drvData.data, routeOrder: idsToSave } }).eq('id', currentDriverId);
-                                    console.log('[SmartSort] routeOrder synced to cloud:', idsToSave.length, 'stops');
-                                }
-                            } catch (err) {
-                                console.warn('[SmartSort] Failed to sync routeOrder to cloud:', err);
-                            }
-                        })();
-                    }
-
-                    const shiftLabel = isMorningShift ? '☀️ Mañana' : '🌙 Tarde';
-                    const townCount = [...townBuckets.keys()].length;
-                    const orphanCount = orphanInsertions.reduce((s, g) => s + g.items.length, 0);
-                    const learnedTowns = Object.keys(positionLearning).length;
-                    setRouteOptimized(true);
-                    setLearningMessage(
-                        `Ruta v4 (${shiftLabel}): ${townCount} pueblo${townCount !== 1 ? 's' : ''} en ruta` +
-                        (orphanCount > 0 ? ` + ${orphanCount} extra${orphanCount !== 1 ? 's' : ''}` : '') +
-                        (learnedTowns > 0 ? ` · Aprendizaje: ${learnedTowns} pueblos memorizados` : ' · Sin historial aún')
-                    );
-                    setTimeout(() => {
-                        setLearningMessage("");
-                        setIsOptimizing(false);
-                    }, 3000);
-                } catch (error) {
-                    console.error("Optimization v4 failed:", error);
-                    setIsOptimizing(false);
-                }
-            }, 800);
+    // El admin ve el orden del conductor desde su pantalla, así que hay que subirlo.
+    const guardarOrdenEnLaNube = (orden) => {
+        if (!currentDriverId) return;
+        const ids = orden.map(s => s.id);
+        try {
+            localStorage.setItem(`drv_route_${currentDriverId}`, JSON.stringify(ids));
+        } catch (e) {
+            console.warn('[SmartSort] No se pudo guardar el orden en el móvil:', e);
         }
+        (async () => {
+            try {
+                const { data: drvData } = await supabase.from('drivers').select('data').eq('id', currentDriverId).single();
+                if (!drvData) return;
+                await supabase.from('drivers').update({ data: { ...drvData.data, routeOrder: ids } }).eq('id', currentDriverId);
+                console.log('[SmartSort] Orden sincronizado:', ids.length, 'paradas');
+            } catch (err) {
+                console.warn('[SmartSort] No se pudo sincronizar el orden:', err);
+            }
+        })();
     };
 
     // Calculate Daily Totals
@@ -3618,6 +3339,73 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
 
 
+    // Otras paradas de HOY para el mismo destinatario, para poder entregarlas y cobrarlas
+    // en un solo gesto. Se agrupa por NOMBRE, no por dirección: dos albaranes de "MIKI"
+    // son el mismo cliente aunque la dirección esté escrita distinta en cada uno.
+    // El motivo de fondo no es la comodidad: hacer firmar dos veces por la misma entrega
+    // física acaba con el conductor firmando él el segundo albarán, y eso sí deja el
+    // albarán sin prueba.
+    const sameClientStops = useMemo(() => {
+        if (!deliveryModalShipment) return [];
+        if (deliveryModalShipment.type === 'Recogida') return [];
+
+        const objetivo = normalizeClientName(deliveryModalShipment.destinationName || deliveryModalShipment.client);
+        if (!objetivo) return [];
+
+        return (localRoute || [])
+            .filter(s => s
+                && s.id !== deliveryModalShipment.id
+                && s.type !== 'Recogida'
+                && s.status !== 'Entregado'
+                && normalizeClientName(s.destinationName || s.client) === objetivo)
+            .map(s => {
+                const isDebido = s.porteType === 'Debido';
+                const porteVal = parseAmount(s.customAmount) || parseAmount(s.amount);
+                const codVal = s.hasCod ? parseAmount(s.codAmount) : 0;
+                const portePayer = isDebido ? (s.destinationName || s.client) : (s.originName || s.client);
+                const porteFallback = isDebido ? (s.destinationBillingType || null) : s.billingType;
+
+                // Se entregan ahora mismo, así que su porte entra en el cobro aunque sea
+                // Debido y todavía no conste como entregado.
+                const debts = [];
+                if (porteVal > 0 && !s.portePaid && isCashClient(portePayer, clientsMap, porteFallback)) {
+                    debts.push({
+                        id: `${s.id}-porte`,
+                        shipmentId: s.id,
+                        type: 'Porte',
+                        amount: porteVal.toFixed(2),
+                        label: `Porte · Albarán ${s.id}`,
+                        detail: portePayer || 'N/A'
+                    });
+                }
+                if (s.hasCod && codVal > 0 && !s.codPaid && isCashClient(s.destinationName || s.client, clientsMap, s.destinationBillingType || null)) {
+                    debts.push({
+                        id: `${s.id}-reembolso`,
+                        shipmentId: s.id,
+                        type: 'Reembolso',
+                        amount: codVal.toFixed(2),
+                        label: `Reembolso · Albarán ${s.id}`,
+                        detail: s.destinationName || s.client || 'N/A'
+                    });
+                }
+
+                const arts = s.articles || [];
+                const resumen = arts.length > 0
+                    ? arts.map(a => {
+                        const cantidad = parseInt(a.quantity) || 1;
+                        return cantidad > 1 ? `${cantidad}× ${a.name}` : a.name;
+                    }).join(', ')
+                    : (s.packages || `Albarán ${s.id}`);
+
+                return {
+                    shipment: s,
+                    debts,
+                    resumen,
+                    totalCobro: debts.reduce((sum, d) => sum + parseAmount(d.amount), 0)
+                };
+            });
+    }, [deliveryModalShipment, localRoute, clientsMap]);
+
     // Safe calculations for Modal Props - Optimized to only run when modal is open
     const pendingDebts = useMemo(() => {
         if (!deliveryModalShipment) return [];
@@ -3645,8 +3433,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             // Pre-normalize target name once
             const targetNameClean = targetName.trim().toLowerCase();
             
+            // Las paradas de hoy del mismo destinatario van por su propia lista, con su
+            // casilla de "entregar también". Si además entraran por aquí, el mismo cobro
+            // saldría dos veces en pantalla y contaría doble en el total.
+            const idsParadasDeHoy = new Set(sameClientStops.map(st => st.shipment.id));
+
             const otherPendingShipments = (allShipments || []).filter(s => {
                 if (!s || s.id === deliveryModalShipment.id) return false;
+                if (idsParadasDeHoy.has(s.id)) return false;
 
                 // Simple status check first
                 const isPending = s.status === 'Entrega aplazada' || s.status === 'Pendiente de asignar' || s.status === 'Entregado' || s.paymentStatus === 'Pending';
@@ -3739,7 +3533,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
             return debtParts;
         } catch (err) { console.error('Debts Logic Error', err); return []; }
-    }, [deliveryModalShipment, allShipments]);
+    }, [deliveryModalShipment, allShipments, sameClientStops]);
 
     const collectionAlert = useMemo(() => {
         try {
@@ -3786,9 +3580,13 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const [isUploading, setIsUploading] = useState(false);
 
     // Helper to Add to Collections
-    const handleDeliveryConfirm = async (id, proof, status, selectedDebtIds = [], customAmounts = {}, generateReturn = false, extraFlags = null) => {
+    const handleDeliveryConfirm = async (id, proof, status, selectedDebtIds = [], customAmounts = {}, generateReturn = false, extraFlags = null, extraStopIds = []) => {
         const currentShip = (allShipments || []).find(s => s.id === id) || deliveryModalShipment;
         if (!currentShip) return;
+
+        // Paradas del mismo destinatario que el conductor ha marcado para cerrar en este
+        // mismo gesto. Se cierran como entregas completas, no como simples cobros.
+        const paradasExtra = new Set((extraStopIds || []).filter(sid => sid && sid !== id));
 
         // Si el conductor eligió "Saltar Cobros" en una recogida, solo abrimos el modal de recogida
         if (status === 'skip_pickup') {
@@ -3900,48 +3698,59 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             }
         }
 
-        // 2. Handle Proof Uploads for the main shipment if needed
-        let finalProofForCurrent = { ...proof };
-        const pendingUploads = {}; // Holds base64 data to be uploaded when back online
-        if (status === 'Entregado' && proof?.type === 'multi') {
+        // 2. Prueba de entrega. Cada albarán sube SU PROPIA copia a Storage con su id:
+        //    la firma es la misma imagen, pero el registro no se comparte. Así, si mañana
+        //    reclaman uno de los albaranes, ese albarán tiene su fichero, y se puede
+        //    anular o rectificar sin arrastrar al otro.
+        const construirPruebaPara = async (sid) => {
+            const finalProof = { ...proof };
+            const uploads = {}; // Holds base64 data to be uploaded when back online
+            if (!(status === 'Entregado' && proof?.type === 'multi')) return { finalProof, uploads };
+
             if (!isOnline) {
                 // ---- MODO OFFLINE ----
                 // Guardamos el base64 puro para que sea inmediatamente visible en la UI
                 // (data: URLs son válidas en <img src>). Las subimos a Storage al reconectar.
                 if (proof.signatureData) {
-                    finalProofForCurrent.signatureUrl = proof.signatureData; // base64 válido para <img>
-                    pendingUploads.signatureData = proof.signatureData;       // para el flush al reconectar
+                    finalProof.signatureUrl = proof.signatureData; // base64 válido para <img>
+                    uploads.signatureData = proof.signatureData;   // para el flush al reconectar
                 }
                 if (proof.photoData) {
-                    finalProofForCurrent.photoUrl = proof.photoData;         // base64 válido para <img>
-                    pendingUploads.photoData = proof.photoData;              // para el flush al reconectar
+                    finalProof.photoUrl = proof.photoData;         // base64 válido para <img>
+                    uploads.photoData = proof.photoData;           // para el flush al reconectar
                 }
                 if (proof.photoData2) {
-                    finalProofForCurrent.photoUrl2 = proof.photoData2;       // base64 válido para <img>
-                    pendingUploads.photoData2 = proof.photoData2;            // para el flush al reconectar
+                    finalProof.photoUrl2 = proof.photoData2;       // base64 válido para <img>
+                    uploads.photoData2 = proof.photoData2;         // para el flush al reconectar
                 }
-                delete finalProofForCurrent.signatureData;
-                delete finalProofForCurrent.photoData;
-                delete finalProofForCurrent.photoData2;
-                console.log('[Offline] Firma/fotos guardadas como base64 local para', id);
+                delete finalProof.signatureData;
+                delete finalProof.photoData;
+                delete finalProof.photoData2;
+                console.log('[Offline] Firma/fotos guardadas como base64 local para', sid);
             } else {
                 // ---- MODO ONLINE: subir a Supabase Storage normalmente ----
                 try {
                     if (proof.signatureData) {
-                        finalProofForCurrent.signatureUrl = await uploadProof(id, proof.signatureData, 'signatures');
+                        finalProof.signatureUrl = await uploadProof(sid, proof.signatureData, 'signatures');
                     }
                     if (proof.photoData) {
-                        finalProofForCurrent.photoUrl = await uploadProof(id, proof.photoData, 'delivery_photos');
+                        finalProof.photoUrl = await uploadProof(sid, proof.photoData, 'delivery_photos');
                     }
                     if (proof.photoData2) {
-                        finalProofForCurrent.photoUrl2 = await uploadProof(id, proof.photoData2, 'delivery_photos');
+                        finalProof.photoUrl2 = await uploadProof(sid, proof.photoData2, 'delivery_photos');
                     }
-                    delete finalProofForCurrent.signatureData;
-                    delete finalProofForCurrent.photoData;
-                    delete finalProofForCurrent.photoData2;
+                    delete finalProof.signatureData;
+                    delete finalProof.photoData;
+                    delete finalProof.photoData2;
                 } catch (err) { console.error("Proof upload error:", err); }
             } // end isOnline else
-        } // end if (status === 'Entregado' && proof?.type === 'multi')
+
+            return { finalProof, uploads };
+        };
+
+        const pruebaPrincipal = await construirPruebaPara(id);
+        const finalProofForCurrent = pruebaPrincipal.finalProof;
+        const pendingUploads = pruebaPrincipal.uploads;
 
         // ── Auto-aprendizaje de coords del DESTINATARIO en la entrega ──
         // Se ejecuta SIEMPRE que se entrega (independientemente del tipo de proof).
@@ -3995,7 +3804,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
 
         // 4. Sync each affected shipment to Database
-        const affectedIds = Array.from(new Set([...workingShipments.keys(), id]));
+        // Las paradas extra entran aunque no lleven cobro: hay que cerrarlas igual.
+        const affectedIds = Array.from(new Set([...workingShipments.keys(), id, ...paradasExtra]));
         
         // Optimistic UI: Add all affected IDs to processing set
         setProcessingIds(prev => {
@@ -4012,6 +3822,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         try {
             for (const sid of affectedIds) {
                 const isMain = sid === id;
+                const esParadaExtra = !isMain && paradasExtra.has(sid);
                 const shipData = getLatestShip(sid);
                 if (!shipData) continue;
 
@@ -4053,7 +3864,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 const pf = shipData.portePaid || !isPayerCash || parseAmount(shipData.amount) === 0;
                 const cf = (shipData.hasCod ? shipData.codPaid : true) || !isCodCash || parseAmount(shipData.codAmount) === 0;
 
-                let targetStatus = isMain ? status : (shipData.status || original?.status || 'Pendiente');
+                // Las paradas extra se entregan de verdad, así que toman el estado de la
+                // entrega igual que la principal. Si el porte se aplaza, pf será false y
+                // se quedan en 'Entregado' con la deuda viva, que es lo correcto.
+                let targetStatus = (isMain || esParadaExtra) ? status : (shipData.status || original?.status || 'Pendiente');
                 if (pf && cf) {
                     targetStatus = 'Entregado';
                     flags.paymentStatus = 'Paid';
@@ -4074,6 +3888,17 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     if (targetStatus === 'Entregado') {
                         recordDeliveryPosition(currentShip);
                     }
+                } else if (esParadaExtra) {
+                    // Entrega completa con la misma firma, ubicación y datos de quien
+                    // recibe, pero con su propia copia de la prueba subida bajo su id.
+                    // No se llama a recordDeliveryPosition: es la misma parada física que
+                    // ya ha registrado el albarán principal, y contarla dos veces sesgaría
+                    // el aprendizaje de dónde está el cliente.
+                    if (!shipData.assignedDriverId) {
+                        flags.assignedDriverId = Number(currentDriverId);
+                    }
+                    const pruebaExtra = await construirPruebaPara(sid);
+                    await onStatusChange(sid, targetStatus, proof?.coordinates || null, null, null, pruebaExtra.finalProof, flags, pruebaExtra.uploads);
                 } else {
                     // Envíos secundarios (ya entregados, solo pendientes de cobro):
                     // NO pasamos por onStatusChange (que re-ejecuta el modelo de entrega
@@ -4639,6 +4464,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                 onWhatsAppShare={handleWhatsAppShare}
                                                 onUnassign={handleUnassignShipment}
                                                 onPickupClick={handlePickupClick}
+                                                esDeCamino={paradasDeCamino.has(stop.id)}
                                             />
                                         ))}
                                     </SortableContext>
@@ -4667,6 +4493,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                     onWhatsAppShare={handleWhatsAppShare}
                                                     onUnassign={handleUnassignShipment}
                                                     onPickupClick={handlePickupClick}
+                                                    esDeCamino={paradasDeCamino.has(activeStop.id)}
                                                     dragOverlay={true}
                                                 />
                                             );
@@ -4686,15 +4513,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Disponibles en Zona</h3>
                         </div>
                         {(() => {
-                            // Filter logic: Only show shipments that are explicitly assigned to this driver,
-                            // OR are 'Pendiente de asignar' AND were created by this driver.
-                            const availableShipments = (allShipments || []).filter(s =>
-                                s &&
-                                s.status === 'Pendiente de asignar' &&
-                                (
-                                    Number(s.createdById) === Number(currentDriverId) ||
-                                    Number(s.pickedUpById) === Number(currentDriverId)
-                                )
+                            const availableShipments = (allShipments || []).filter(
+                                s => puedeAsignarloEsteConductor(s, currentDriverId)
                             );
 
                             return (
@@ -4869,13 +4689,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                             }
                                                         });
                                                         
-                                                        const now = new Date();
-                                                        const currentHour = now.getHours();
-                                                        const currentMinute = now.getMinutes();
-                                                        const isMorningNow = currentHour < 15 || (currentHour === 15 && currentMinute <= 30);
-                                                        
+                                                        // El turno que se está despachando ahora, que va por delante del
+                                                        // reloj: a la una se pasa el reparto de la tarde, y a partir de
+                                                        // las 16:30 el de la mañana siguiente. Ojo, NO es el mismo corte
+                                                        // que usa el optimizador del móvil (ver utils/turnos.js).
+                                                        const turnoQueToca = turnoQueSeAsignaAhora();
+
                                                         return sugs.map((sug, i) => {
-                                                            const shouldBlink = (isMorningNow && sug.turno === 'tarde') || (!isMorningNow && sug.turno === 'manana');
+                                                            const shouldBlink = sug.turno === turnoQueToca;
                                                             
                                                             return (
                                                                 <button
@@ -5887,6 +5708,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 shipment={deliveryModalShipment}
                 collectionAlert={collectionAlert}
                 pendingDebts={pendingDebts}
+                sameClientStops={sameClientStops}
                 clients={clients}
                 onConfirm={handleDeliveryConfirm}
             />
@@ -6025,12 +5847,16 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             || ship.incidentStatus === 'active' 
                             || ship.incidentStatus === 'resolved';
                         
-                        await onUpdateShipment(ship.id, { 
-                            pickedUpBy: `Cond. ${driverName}`, 
+                        await onUpdateShipment(ship.id, {
+                            pickedUpBy: `Cond. ${driverName}`,
                             pickedUpById: currentDriverId,
                             scannedPackages: currentScannedPackages,
                             status: shouldResetStatus ? 'Pendiente de asignar' : ship.status,
-                            incidentStatus: 'resolved'
+                            incidentStatus: 'resolved',
+                            // Quien tiene los bultos en la mano manda: si otro conductor había
+                            // devuelto este albarán a Asignar, deja de ser suyo en exclusiva y
+                            // pasa a verlo el que acaba de escanearlo.
+                            returnedToAssignById: null
                         });
                         
                         setLearningMessage(`¡Bulto registrado! Envío ${baseId}.`);
