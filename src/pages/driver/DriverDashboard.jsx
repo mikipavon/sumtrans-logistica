@@ -5182,8 +5182,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                         
                                                         if (isPorte) {
                                                             updates.portePaid = true;
+                                                            updates.porteCollectedById = currentDriverId;
                                                         } else {
                                                             updates.codPaid = true;
+                                                            updates.codCollectedById = currentDriverId;
                                                         }
 
                                                         // Check if this makes the shipment fully paid
