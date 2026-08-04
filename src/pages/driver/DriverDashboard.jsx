@@ -153,6 +153,14 @@ export const ShipmentCardUI = React.memo(({
     // distintas de las que usaba el optimizador para ordenar la ruta.
     const clienteDeLaParada = buscarClienteDeEnvio(stop, clients);
     const insignia = insigniaDeAgencia(stop, clienteDeLaParada);
+    // Recuadro que recuerda al conductor que este envío tuvo una incidencia:
+    // rojo mientras está activa, intermitente si administración ha respondido,
+    // verde cuando administración la ha resuelto.
+    const incidentBorderClass = stop.incidentStatus === 'resolved'
+        ? 'border-emerald-400 border-2 shadow-emerald-100'
+        : stop.incidentStatus === 'active'
+            ? `border-red-400 border-2 shadow-red-100 ${stop.incidentReply ? 'animate-pulse' : ''}`
+            : '';
     return (
         <div id={index === 0 && !dragOverlay ? 'tour-first-card' : undefined} className={`relative ${dragOverlay ? 'w-full' : 'mb-3'} group overflow-hidden rounded-xl`}>
              {!dragOverlay && (
@@ -194,7 +202,8 @@ export const ShipmentCardUI = React.memo(({
                 }}
                 className={`item-reparto bg-white p-4 rounded-xl shadow-sm border relative mb-0 select-none transition-all duration-200
                     ${isDragging && !dragOverlay ? 'opacity-0' : 'opacity-100'}
-                    ${dragOverlay ? 'shadow-2xl ring-1 ring-blue-200 scale-[1.02] bg-white border-blue-200' : 'border-slate-100'}
+                    ${dragOverlay ? 'shadow-2xl ring-1 ring-blue-200 scale-[1.02] bg-white' : ''}
+                    ${incidentBorderClass || (dragOverlay ? 'border-blue-200' : 'border-slate-100')}
                     ${isSwiping ? 'shadow-xl ring-1 ring-blue-500/20' : ''}`}
                 style={{
                     // Se aparta solo la tarjeta, destapando el panel azul que hay detrás.
@@ -273,6 +282,16 @@ export const ShipmentCardUI = React.memo(({
                                                     <span className="text-[9px] font-bold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1 shadow-sm">
                                                         <RotateCcw size={10} />
                                                         RETORNO
+                                                    </span>
+                                                )}
+                                                {stop.incidentStatus === 'active' && (
+                                                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded border shadow-sm ${stop.incidentReply ? 'bg-red-100 text-red-700 border-red-300 animate-pulse' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                                                        ⚠️ {stop.incidentReply ? 'RESPUESTA ADMIN' : 'INCIDENCIA'}
+                                                    </span>
+                                                )}
+                                                {stop.incidentStatus === 'resolved' && (
+                                                    <span className="text-[9px] font-extrabold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-300 shadow-sm">
+                                                        ✅ INCIDENCIA RESUELTA
                                                     </span>
                                                 )}
                                                 {stop.needsSignatureReturn && (
@@ -4590,13 +4609,26 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                         <div 
                                             key={shipment.id}
                                             onClick={() => { setSelectedShipment(shipment); setIsDetailsModalOpen(true); }} 
-                                            className={`bg-white px-4 py-2.5 rounded-xl shadow-sm border cursor-pointer transition-colors ${shipment.incidentStatus === 'active' ? 'border-red-400 border-2 shadow-red-100' : 'border-slate-100 hover:border-blue-300'}`}
+                                            className={`bg-white px-4 py-2.5 rounded-xl shadow-sm border cursor-pointer transition-colors ${
+                                                shipment.incidentStatus === 'resolved'
+                                                    ? 'border-emerald-400 border-2 shadow-emerald-100'
+                                                    : shipment.incidentStatus === 'active'
+                                                        ? `border-red-400 border-2 shadow-red-100 ${shipment.incidentReply ? 'animate-pulse' : ''}`
+                                                        : 'border-slate-100 hover:border-blue-300'
+                                            }`}
                                         >
                                             {shipment.incidentStatus === 'active' && (
-                                                <div className="w-full bg-red-100 text-red-700 font-extrabold text-[11px] py-1.5 px-2 rounded mb-2 text-center animate-pulse border border-red-300 shadow-sm flex items-center justify-center gap-2">
+                                                <div className={`w-full font-extrabold text-[11px] py-1.5 px-2 rounded mb-2 text-center border shadow-sm flex items-center justify-center gap-2 ${shipment.incidentReply ? 'bg-red-100 text-red-700 border-red-300 animate-pulse' : 'bg-red-50 text-red-600 border-red-200'}`}>
                                                     <span>⚠️</span>
-                                                    <span>EN INCIDENCIA</span>
+                                                    <span>{shipment.incidentReply ? 'RESPUESTA DE ADMINISTRACIÓN' : 'EN INCIDENCIA'}</span>
                                                     <span>⚠️</span>
+                                                </div>
+                                            )}
+                                            {shipment.incidentStatus === 'resolved' && (
+                                                <div className="w-full bg-emerald-100 text-emerald-700 font-extrabold text-[11px] py-1.5 px-2 rounded mb-2 text-center border border-emerald-300 shadow-sm flex items-center justify-center gap-2">
+                                                    <span>✅</span>
+                                                    <span>INCIDENCIA RESUELTA</span>
+                                                    <span>✅</span>
                                                 </div>
                                             )}
                                             <div className="flex justify-between items-start mb-1">

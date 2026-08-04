@@ -253,9 +253,13 @@ export default class Shipment {
 
     // ── INCIDENCIA ────────────────────────────────────────────────────────────
     if (newStatus === 'Incidencia') {
+      // Sellamos quién la reporta para que reaparezca en SU pestaña de Asignar
+      // (misma lógica que handleUnassignShipment), y no en la de quien lo creó.
+      this.returnedToAssignById = this.assignedDriverId;
       this.status = 'Pendiente de asignar';
       this.assignedDriverId = null;
       this.incidentStatus = 'active';
+      this.incidentReply = '';
       if (comment) this.incidentReason = comment;
       if (photo) this.incidentPhoto = photo;
       return result;
