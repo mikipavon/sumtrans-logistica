@@ -32,11 +32,39 @@ describe('fetchAllRows', () => {
         expect(data[2499].id).toBe('S2499');
     });
 
-    it('pide páginas consecutivas sin solaparlas ni saltarse filas', async () => {
+    it('pide todas las páginas necesarias sin saltarse filas', async () => {
         const { construirConsulta, rangos } = tablaFalsa(2500);
         await fetchAllRows(construirConsulta);
 
-        expect(rangos).toEqual([[0, 999], [1000, 1999], [2000, 2999]]);
+        // Las páginas necesarias (0-999, 1000-1999, 2000-2999) se piden sí o sí.
+        // Puede haber alguna página de más pedida por adelantado en paralelo cerca
+        // del final (se descarta al no hacer falta), pero nunca huecos ni repetidas.
+        expect(rangos).toContainEqual([0, 999]);
+        expect(rangos).toContainEqual([1000, 1999]);
+        expect(rangos).toContainEqual([2000, 2999]);
+        const unicas = new Set(rangos.map(r => r.join('-')));
+        expect(unicas.size).toBe(rangos.length);
+    });
+
+    it('pide varias páginas EN PARALELO cuando la tabla es grande, no de una en una', async () => {
+        const total = 5000; // 5 páginas de 1000
+        const todas = Array.from({ length: total }, (_, i) => ({ id: `S${i}` }));
+        let enVuelo = 0;
+        let maxEnVuelo = 0;
+        const construirConsulta = () => ({
+            range: async (desde, hasta) => {
+                enVuelo++;
+                maxEnVuelo = Math.max(maxEnVuelo, enVuelo);
+                await new Promise(r => setTimeout(r, 5)); // simula latencia de red
+                enVuelo--;
+                return { data: todas.slice(desde, Math.min(hasta + 1, desde + TAMANO_PAGINA)), error: null };
+            }
+        });
+
+        const { data } = await fetchAllRows(construirConsulta);
+
+        expect(data).toHaveLength(total);
+        expect(maxEnVuelo).toBeGreaterThan(1);
     });
 
     it('para en cuanto una página viene incompleta', async () => {
@@ -57,12 +85,12 @@ describe('fetchAllRows', () => {
 
     it('pide una página de más cuando el total es múltiplo exacto del tamaño', async () => {
         // Con 2000 filas la segunda página viene llena: no hay forma de saber que se
-        // acabó sin preguntar una vez más.
+        // acabó sin preguntar (al menos) una vez más.
         const { construirConsulta, rangos } = tablaFalsa(2000);
         const { data } = await fetchAllRows(construirConsulta);
 
         expect(data).toHaveLength(2000);
-        expect(rangos).toHaveLength(3);
+        expect(rangos.length).toBeGreaterThanOrEqual(3);
     });
 
     it('propaga el error de Supabase y no devuelve datos a medias', async () => {
@@ -86,7 +114,11 @@ describe('fetchAllRows', () => {
         const { data } = await fetchAllRows(construirConsulta, { pageSize: 100 });
 
         expect(data).toHaveLength(250);
-        expect(rangos).toEqual([[0, 99], [100, 199], [200, 299]]);
+        expect(data[0].id).toBe('S0');
+        expect(data[249].id).toBe('S249');
+        expect(rangos).toContainEqual([0, 99]);
+        expect(rangos).toContainEqual([100, 199]);
+        expect(rangos).toContainEqual([200, 299]);
     });
 
     it('corta y avisa si la consulta nunca deja de devolver páginas llenas', async () => {

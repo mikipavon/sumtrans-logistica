@@ -35,17 +35,36 @@ const MAX_PAGINAS = 500;
 export const fetchAllRows = async (construirConsulta, { pageSize = TAMANO_PAGINA, label = '' } = {}) => {
     const filas = [];
 
-    for (let pagina = 0; pagina < MAX_PAGINAS; pagina++) {
+    const pedirPagina = (pagina) => {
         const desde = pagina * pageSize;
-        const { data, error } = await construirConsulta().range(desde, desde + pageSize - 1);
+        return construirConsulta().range(desde, desde + pageSize - 1);
+    };
 
-        if (error) return { data: null, error };
+    let pagina = 0;
+    while (pagina < MAX_PAGINAS) {
+        // La primera página se pide sola: no sabemos aún si hace falta una segunda,
+        // y la mayoría de tablas caben en una sola (no queremos disparar peticiones
+        // de más para las pequeñas). En cuanto una página sale llena, ya sabemos que
+        // hay volumen, así que a partir de ahí se piden varias páginas A LA VEZ en
+        // vez de esperar cada una por turnos — esto es lo que hacía lento el login
+        // y las recargas cuando `shipments` o `clients` superan las 1000 filas.
+        const tamanoLote = pagina === 0 ? 1 : Math.min(4, MAX_PAGINAS - pagina);
+        const paginasLote = Array.from({ length: tamanoLote }, (_, i) => pagina + i);
+        const resultados = await Promise.all(paginasLote.map(pedirPagina));
 
-        const lote = data || [];
-        filas.push(...lote);
+        let terminado = false;
+        for (const { data, error } of resultados) {
+            if (error) return { data: null, error };
 
-        // Página incompleta = no hay más que pedir.
-        if (lote.length < pageSize) return { data: filas, error: null };
+            const lote = data || [];
+            filas.push(...lote);
+            pagina++;
+
+            // Página incompleta = no hay más que pedir. Se descartan los resultados
+            // de páginas posteriores ya pedidas en este mismo lote (si las hubiera).
+            if (lote.length < pageSize) { terminado = true; break; }
+        }
+        if (terminado) return { data: filas, error: null };
     }
 
     console.warn(`[fetchAllRows] ${label || 'consulta'}: alcanzado el tope de ${MAX_PAGINAS} páginas (${filas.length} filas). Puede faltar información.`);

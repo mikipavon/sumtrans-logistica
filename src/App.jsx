@@ -2119,8 +2119,10 @@ function App() {
       const newShipmentFromDB = (data && data[0]) ? { ...data[0].data, id: data[0].id } : { ...shipmentWithMeta };
 
       // 2. Update local state
+      // (el pickup original ya se borró en el paso 1, antes del upsert — repetir el
+      // delete aquí era una llamada de red redundante, y si el nuevo albarán reutiliza
+      // el mismo id que el pickup, borraba la fila que se acababa de crear)
       if (originalPickupId) {
-        await supabase.from('shipments').delete().eq('id', originalPickupId);
         setShipments(prev => {
           const filtered = prev.filter(s => s.id !== originalPickupId);
           return [...filtered, newShipmentFromDB];
