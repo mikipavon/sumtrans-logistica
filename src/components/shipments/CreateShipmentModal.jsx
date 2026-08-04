@@ -613,7 +613,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                 originCity: branch.city || item.opCity || item.city || '',
                 originPhone: branch.phone || item.phone || '',
                 originCoordinates: branch.coordinates || '',
-                selectedClientBillingType: item.billingType || 'Facturación',
+                // Sin tipo de cobro conocido (p. ej. cliente aun pendiente de validar) →
+                // se trata como Clientes Habituales, igual que un cliente desconocido.
+                selectedClientBillingType: item.billingType || 'Clientes Habituales',
                 agencyLabel: item.agencyLabel || 'SUM ESPECIAL',
                 agencyLogoUrl: item.agencyLogoUrl || null,
                 branchId: branch.id,
@@ -627,7 +629,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                 originZip: item.opZip || item.zip || '',
                 originCity: item.opCity || item.city || '',
                 originPhone: item.phone || '',
-                selectedClientBillingType: item.billingType || 'Facturación',
+                selectedClientBillingType: item.billingType || 'Clientes Habituales',
                 agencyLabel: item.agencyLabel || 'SUM ESPECIAL',
                 agencyLogoUrl: item.agencyLogoUrl || null,
                 branchId: null,
@@ -1087,13 +1089,15 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                 const sName = normalize(formData.clientName);
                 // Buscar primero en clientes principales
                 const client = clients?.find(c => normalize(c.name) === sName || normalize(c.legalName) === sName);
-                if (client) return client.billingType || 'Facturación';
+                // Sin tipo de cobro conocido (p. ej. cliente aun pendiente de validar) →
+                // Clientes Habituales, igual que un cliente desconocido: se cobra en el momento.
+                if (client) return client.billingType || 'Clientes Habituales';
                 // Buscar en sedes/sucursales (branches)
                 for (const c of (clients || [])) {
                     if (Array.isArray(c.branches)) {
                         for (const b of c.branches) {
                             if (normalize(b.name) === sName) {
-                                return c.billingType || 'Facturación';
+                                return c.billingType || 'Clientes Habituales';
                             }
                         }
                     }
@@ -1113,12 +1117,14 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                 const normalize = (val) => String(val || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/\s+/g, " ");
                 const dName = normalize(formData.destinationName);
                 const client = clients?.find(c => normalize(c.name) === dName || normalize(c.legalName) === dName);
-                if (client) return client.billingType || 'Facturación';
+                // Sin tipo de cobro conocido (p. ej. cliente aun pendiente de validar) →
+                // Clientes Habituales, igual que un cliente desconocido: se cobra en el momento.
+                if (client) return client.billingType || 'Clientes Habituales';
                 for (const c of (clients || [])) {
                     if (Array.isArray(c.branches)) {
                         for (const b of c.branches) {
                             if (normalize(b.name) === dName) {
-                                return c.billingType || 'Facturación';
+                                return c.billingType || 'Clientes Habituales';
                             }
                         }
                     }
