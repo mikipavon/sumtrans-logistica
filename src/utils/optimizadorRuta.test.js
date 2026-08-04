@@ -34,6 +34,7 @@ const MANANA = alas(10);
 const TARDE = alas(16);
 
 const nombres = (resultado) => resultado.orden.map(e => e.destinationName);
+const pueblos = (resultado) => resultado.orden.map(e => e.destinationCity);
 
 const memoriaFirme = (pueblo, turno, ordenes) => ({
     _v: 2,
@@ -104,6 +105,35 @@ describe('elegirRuta', () => {
         expect(elegirRuta([], 7)).toBeNull();
         expect(elegirRuta(null, 7)).toBeNull();
     });
+
+    // El día que un conductor cubre a otro se le asigna la ruta del que falta y se
+    // queda con dos. Antes ganaba la primera del array —la suya de siempre— y el
+    // reparto de hoy salía entero "fuera de ruta", colocado por geografía.
+    describe('cuando cubre la ruta de otro y tiene dos', () => {
+        const dos = [
+            { id: 'suya', conductorId: 7, nombre: 'La de Antonio', poblacionesManana: ['Lucena', 'Cabra'] },
+            { id: 'cubre', conductorId: 7, nombre: 'La del que falta', poblacionesManana: ['Rute', 'Iznájar'] },
+        ];
+
+        it('gana la que cubre los pueblos que hay que repartir hoy', () => {
+            expect(elegirRuta(dos, 7, null, ['Rute', 'Iznájar', 'Iznájar'])?.id).toBe('cubre');
+            expect(elegirRuta(dos, 7, null, ['Lucena', 'Cabra'])?.id).toBe('suya');
+        });
+
+        it('sin pueblos con los que decidir, se queda la primera de siempre', () => {
+            expect(elegirRuta(dos, 7)?.id).toBe('suya');
+            expect(elegirRuta(dos, 7, null, [])?.id).toBe('suya');
+        });
+
+        it('también entra en la comparación la ruta que diga su ficha', () => {
+            const mixtas = [
+                { id: 'suya', conductorId: 7, poblacionesManana: ['Lucena'] },
+                { id: 'ficha', conductorId: null, poblacionesManana: ['Rute', 'Iznájar'] },
+            ];
+            expect(elegirRuta(mixtas, 7, 'ficha', ['Rute', 'Iznájar'])?.id).toBe('ficha');
+            expect(elegirRuta(mixtas, 7, 'ficha', ['Lucena'])?.id).toBe('suya');
+        });
+    });
 });
 
 // ── Regla 1: el turno decide el orden de los pueblos ──────────────────────────
@@ -138,6 +168,46 @@ describe('el turno ordena los pueblos', () => {
     it('los pueblos del otro turno no se pierden, van detrás', () => {
         const r = optimizarRuta({ envios: hacerEnvios(), rutas, conductorId: 7, ahora: MANANA });
         expect(r.orden).toHaveLength(2);
+    });
+});
+
+// ── El suplente que cubre la ruta de otro ─────────────────────────────────────
+// Falta el conductor habitual, se le pasan sus pueblos a Antonio y Antonio se queda
+// con dos rutas. La ruta buena es la que tiene los pueblos que hoy hay que repartir.
+
+describe('un conductor con dos rutas asignadas', () => {
+    const rutas = [
+        { id: 'suya', conductorId: 7, nombre: 'Antonio de siempre', poblacionesManana: ['Lucena', 'Cabra'] },
+        { id: 'cubre', conductorId: 7, nombre: 'La del que falta', poblacionesManana: ['Rute', 'Iznájar'] },
+    ];
+
+    const enviosDeHoy = () => {
+        contador = 0;
+        return [
+            // A propósito en el orden equivocado y con Iznájar más cerca del centro:
+            // si mandara la geografía saldría Iznájar primero, como en el móvil.
+            envio({ ciudad: 'Iznájar', coords: punto(2), nombre: 'iznajar1' }),
+            envio({ ciudad: 'Iznájar', coords: punto(3), nombre: 'iznajar2' }),
+            envio({ ciudad: 'Rute', coords: punto(12), nombre: 'rute1' }),
+        ];
+    };
+
+    it('ordena con la ruta que se está haciendo hoy, no con la suya de siempre', () => {
+        const r = optimizarRuta({ envios: enviosDeHoy(), rutas, conductorId: 7, ahora: MANANA });
+        expect(pueblos(r)).toEqual(['Rute', 'Iznájar', 'Iznájar']);
+        expect(r.resumen.ruta).toBe('La del que falta');
+        expect(r.resumen.extras).toBe(0);   // ningún envío se queda fuera de ruta
+        expect(r.resumen.sinRuta).toBe(false);
+    });
+
+    it('con la ruta equivocada sale justo lo que se quejaba el transportista', () => {
+        // Mismo escenario, pero con la ruta que no toca: los envíos de hoy quedan
+        // todos fuera de ella y los coloca la geografía, que mete primero Iznájar
+        // (más cerca del centro del día) y obliga a volver luego a Rute.
+        const soloLaSuya = [rutas[0]];
+        const r = optimizarRuta({ envios: enviosDeHoy(), rutas: soloLaSuya, conductorId: 7, ahora: MANANA });
+        expect(r.resumen.extras).toBe(3);
+        expect(pueblos(r)).toEqual(['Iznájar', 'Iznájar', 'Rute']);
     });
 });
 

@@ -334,3 +334,29 @@ describe('Modal de Alerta de Pago - Los 7 Casos', () => {
     expect(s.needsPaymentAlert(clientCod)).toBe(false);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// customAmount por defecto: `amount` casi siempre lleva el símbolo € o es "Tarifa"
+// ──────────────────────────────────────────────────────────────────────────────
+describe('customAmount por defecto (sin venir explícito)', () => {
+    it('limpia el símbolo € del amount de creación', () => {
+        const s = new Shipment({ amount: '€7.00' });
+        expect(s.customAmount).toBe(7);
+    });
+
+    it('con coma decimal también', () => {
+        const s = new Shipment({ amount: '€12,50' });
+        expect(s.customAmount).toBe(12.5);
+    });
+
+    it('"Tarifa" sin número da 0, no NaN', () => {
+        const s = new Shipment({ amount: 'Tarifa' });
+        expect(s.customAmount).toBe(0);
+        expect(Number.isNaN(s.customAmount)).toBe(false);
+    });
+
+    it('un customAmount explícito manda siempre, aunque sea 0', () => {
+        const s = new Shipment({ amount: '€7.00', customAmount: 0 });
+        expect(s.customAmount).toBe(0);
+    });
+});

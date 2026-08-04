@@ -2036,8 +2036,13 @@ function App() {
     let creatorId = null;
 
     if (userRole === 'driver') {
-      const driver = drivers.find(d => d.id === currentDriverId);
-      creatorName = driver ? `Cond.${driver.name} ` : 'Conductor';
+      // Comparar con String() como en el resto de la app: el id del conductor llega
+      // unas veces como número (tabla drivers) y otras como texto (perfil de Supabase
+      // o sesión guardada). Con `===` la búsqueda fallaba y el albarán se guardaba
+      // como "Conductor" a secas, sin saber quién lo había hecho.
+      const driver = drivers.find(d => String(d.id) === String(currentDriverId));
+      const nombre = driver?.name || cachedDriverName;
+      creatorName = nombre ? `Cond.${nombre} ` : 'Conductor';
       creatorId = currentDriverId;
     } else if (userRole === 'client') {
       const client = clients.find(c => c.id === currentClientId);

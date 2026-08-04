@@ -4,7 +4,14 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 export default function Dashboard({ onSync, isSyncing, shipments = [], clients = [], vehicles = [], isGhostModeUnlocked = false, onNavigate }) {
     const normalize = (val) => String(val || '').toLowerCase().trim();
-    
+    // `amount` casi siempre lleva el símbolo € ("€7.00") o es literalmente "Tarifa";
+    // customAmount manda si está puesto. Un `parseFloat` a pelo sobre cualquiera de
+    // los dos da NaN con el símbolo delante, así que se usa siempre este parser en
+    // vez de repetirlo suelto por el componente — el desglose de "Ingresos por
+    // periodo" (revenueData) contaba 0€ en casi todos los envíos por tener su propio
+    // parseFloat sin limpiar, mientras el KPI de arriba (stats) sí usaba uno robusto.
+    const safeParseAmount = (v) => parseFloat(String(v || '0').replace(',', '.').replace(/[^0-9.-]/g, '')) || 0;
+
     const [timeGrouping, setTimeGrouping] = useState('days'); 
     const [dateRange, setDateRange] = useState('7'); 
     const [customStart, setCustomStart] = useState('');
@@ -89,9 +96,7 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
         const enReparto = allShipments.filter(s => s.status === 'En reparto').length;
         const entregados = allShipments.filter(s => s.status === 'Entregado').length;
         const pendientes = allShipments.filter(s => ['Pendiente', 'Asignado', 'Pendiente de asignar'].includes(s.status)).length;
-        // Helper to parse amounts safely, ignoring currency symbols
-        const safeParseAmount = (v) => parseFloat(String(v || '0').replace(',', '.').replace(/[^0-9.-]/g, '')) || 0;
-        
+
         // Ingresos sí usa el periodo seleccionado
         const ingresosMes = filteredShipments.reduce((acc, s) => acc + safeParseAmount(s.customAmount || s.amount), 0);
         
@@ -158,8 +163,8 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
 
             const bucket = buckets.get(key);
             if (bucket) {
-                const amount = parseFloat(s.amount) || 0;
-                
+                const amount = safeParseAmount(s.customAmount || s.amount);
+
                 const remitente = clientsMap.get(normalize(s.client));
                 const destinatario = clientsMap.get(normalize(s.destinationName || s.client));
                 

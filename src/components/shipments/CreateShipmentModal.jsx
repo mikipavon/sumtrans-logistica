@@ -171,6 +171,14 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     // Weight-based pricing state (for agencies like XPO, TSB, TXT)
     const [weightKg, setWeightKg] = useState('');
 
+    // Retorno generado al entregar. Viene con las observaciones ya rellenas
+    // ("[RETORNO DE SUM-xxxx]", que es lo que enlaza el retorno con la entrega de la
+    // que sale y se imprime en el albarán y en la etiqueta), así que la comprobación
+    // general de "artículo u observación" pasaba sola y el retorno salía sin que nadie
+    // dijera qué se recoge ni cuántos bultos son. En los retornos el artículo es
+    // obligatorio.
+    const isReturn = !!prefillData?.isReturn;
+
     // Merchandise Photo State
     const [merchandisePhoto, setMerchandisePhoto] = useState(null);
     const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
@@ -965,6 +973,15 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             return;
         }
 
+        // En un retorno las observaciones vienen rellenas de serie ("[RETORNO DE ...]"),
+        // así que la comprobación de abajo pasaba sola y el retorno salía sin decir qué
+        // se recoge. Aquí el artículo es obligatorio: la observación ya no vale.
+        if (isReturn && selectedArticles.length === 0) {
+            setValidationFailed(true);
+            alert("📦 FALTA EL ARTÍCULO\n\nEn un retorno hay que añadir el artículo que recoges (los bultos que te llevas de vuelta).\n\nSin él no se pueden imprimir bien las etiquetas.");
+            return;
+        }
+
         if (!weightClientData && selectedArticles.length === 0 && (!formData.observations || formData.observations.trim() === '')) {
             alert("⚠️ Atención: Debes añadir al menos un artículo o escribir una observación para describir qué se transporta.");
             return;
@@ -1621,7 +1638,21 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                 Artículos y Servicios
                                 {weightClientData && <span className="ml-2 px-2 py-0.5 bg-indigo-100 text-indigo-600 rounded-full text-[9px] font-black">⚖️ TARIFA POR KILOS</span>}
                                 {!weightClientData && clientRules.requireWeight && <span className="ml-2 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-[9px] font-black">⚖️ PESO OBLIGATORIO</span>}
+                                {isReturn && <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[9px] font-black">🔄 RETORNO</span>}
                             </h4>
+
+                            {/* En un retorno las observaciones ya vienen puestas, así que hay
+                                que decir aquí qué se recoge: de ahí salen los bultos de la
+                                etiqueta. */}
+                            {isReturn && selectedArticles.length === 0 && (
+                                <div className={`flex items-center gap-2 rounded-lg border p-3 ${validationFailed ? 'bg-red-50 border-red-300 animate-pulse' : 'bg-blue-50 border-blue-200'}`}>
+                                    <Package size={16} className={validationFailed ? 'text-red-500 shrink-0' : 'text-blue-500 shrink-0'} />
+                                    <p className={`text-[11px] leading-snug ${validationFailed ? 'text-red-700' : 'text-blue-700'}`}>
+                                        <span className="font-black uppercase">Añade el artículo del retorno.</span>{' '}
+                                        Es lo que se lleva de vuelta, y de ahí salen los bultos de la etiqueta.
+                                    </p>
+                                </div>
+                            )}
 
                             {/* ── STANDARD ARTICLE SELECTOR (always shown) ── */}
                             <div className="flex gap-2 items-end mb-3">

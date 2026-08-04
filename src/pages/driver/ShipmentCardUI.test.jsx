@@ -108,3 +108,55 @@ describe('ShipmentCardUI: aviso de "de camino"', () => {
         expect(aviso).toHaveAttribute('title', expect.stringContaining('Arrástrala'));
     });
 });
+
+// ── Etiqueta "COBRAR" en la tarjeta ────────────────────────────────────────────
+// La ficha del admin (ShipmentDetailsModal) podía corromper `customAmount` a NaN
+// al guardar cualquier cambio si el campo "amount" seguía llevando el símbolo €
+// ("€7.00" → parseFloat da NaN). El modal de entrega se defiende de eso cayendo a
+// `amount`; esta tarjeta antes NO lo hacía (miraba `!== undefined`, y NaN no es
+// undefined), así que la etiqueta desaparecía aunque el porte siguiera pendiente.
+describe('ShipmentCardUI: etiqueta COBRAR', () => {
+    const debido = (props = {}) => envio({
+        porteType: 'Debido',
+        amount: '€7.00',
+        hasCod: false,
+        portePaid: false,
+        ...props,
+    });
+
+    it('con el precio normal, sale la etiqueta', () => {
+        pintar(debido({ customAmount: 7 }));
+        expect(screen.getByText(/COBRAR: Porte: 7€/)).toBeInTheDocument();
+    });
+
+    it('con customAmount corrompido a NaN, cae a `amount` y la etiqueta sigue saliendo', () => {
+        pintar(debido({ customAmount: NaN }));
+        expect(screen.getByText(/COBRAR: Porte: 7€/)).toBeInTheDocument();
+    });
+
+    it('con customAmount a 0 (no null), también cae a `amount`', () => {
+        pintar(debido({ customAmount: 0 }));
+        expect(screen.getByText(/COBRAR: Porte: 7€/)).toBeInTheDocument();
+    });
+
+    it('sin customAmount (nunca se tocó), usa `amount` como siempre', () => {
+        pintar(debido({ customAmount: undefined }));
+        expect(screen.getByText(/COBRAR: Porte: 7€/)).toBeInTheDocument();
+    });
+
+    it('si customAmount trae un precio distinto y válido, manda él sobre `amount`', () => {
+        pintar(debido({ customAmount: 12, amount: '€7.00' }));
+        expect(screen.getByText(/COBRAR: Porte: 12€/)).toBeInTheDocument();
+    });
+
+    it('ya cobrado, no sale (aunque el precio sea válido)', () => {
+        pintar(debido({ customAmount: 7, portePaid: true }));
+        expect(screen.queryByText(/COBRAR/)).toBeNull();
+    });
+
+    it('destinatario de Facturación, no sale (el porte va a su factura)', () => {
+        const stop = debido({ customAmount: 7 });
+        pintar(stop, { clients: [{ name: stop.destinationName, billingType: 'Facturación' }] });
+        expect(screen.queryByText(/COBRAR/)).toBeNull();
+    });
+});

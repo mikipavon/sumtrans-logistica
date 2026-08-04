@@ -196,8 +196,24 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
                 // Forzar que el customAmount coincida con el importe final real del albarán,
                 // de esta forma las cajas y recaudaciones tomarán este nuevo valor si el admin lo cambia.
+                //
+                // El campo "Precio Final Porte" se edita como texto libre y se inicializa con
+                // el valor tal cual viene del albarán, que suele llevar el símbolo de moneda
+                // ("€7.00") o ser literalmente "Tarifa". parseFloat("€7.00") da NaN —no puede
+                // con el símbolo por delante— así que al guardar CUALQUIER cambio de la ficha
+                // (aunque no se tocara el precio) customAmount se corrompía a NaN en silencio.
+                // El resto de la app (el modelo, el modal de entrega) se defiende de eso cayendo
+                // a `amount`, pero la etiqueta "COBRAR" de la tarjeta de reparto no lo hacía y
+                // desaparecía aunque el porte siguiera pendiente de cobro.
+                // Se limpia el símbolo antes de parsear, y si no queda ningún número (p.ej.
+                // "Tarifa"), NO se toca customAmount — mejor dejarlo como estaba que corromperlo.
                 if (finalFormData.amount !== undefined && finalFormData.amount !== null) {
-                    finalFormData.customAmount = parseFloat(finalFormData.amount);
+                    const importeLimpio = parseFloat(
+                        String(finalFormData.amount).replace(/[^0-9.,-]+/g, '').replace(',', '.')
+                    );
+                    if (Number.isFinite(importeLimpio)) {
+                        finalFormData.customAmount = importeLimpio;
+                    }
                 }
 
                 // Si hay una foto nueva seleccionada, la subimos
@@ -970,7 +986,15 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     <User size={10} /> Creado por
                                 </span>
                                 <p className="text-sm font-semibold text-slate-700">
-                                    {shipment.createdBy || <span className="text-slate-300 italic text-xs">—</span>}
+                                    {(() => {
+                                        // El texto de createdBy se congela al crear el albarán, y los
+                                        // creados antes del arreglo se guardaron como "Conductor" a
+                                        // secas. Si tenemos el id, se resuelve el nombre real al
+                                        // pintarlo, para que los albaranes viejos también salgan bien.
+                                        const generico = ['conductor', 'driver'].includes(String(shipment.createdBy || '').trim().toLowerCase());
+                                        if (generico && shipment.createdById) return resolveDriver(shipment.createdById);
+                                        return shipment.createdBy || <span className="text-slate-300 italic text-xs">—</span>;
+                                    })()}
                                 </p>
                             </div>
                         </div>

@@ -88,16 +88,38 @@ const resolverCoordenadas = (envio, cliente) => {
  * quedaba con los pueblos de otro o, más habitualmente, con ninguno. Mejor devolver
  * null y ordenar los pueblos por geografía.
  */
-export const elegirRuta = (rutas, conductorId, routeId) => {
+export const elegirRuta = (rutas, conductorId, routeId, ciudadesDeHoy = []) => {
     const lista = Array.isArray(rutas) ? rutas : [];
-    const porConductor = lista.find(r =>
+    const suyas = lista.filter(r =>
         r?.conductorId != null && String(r.conductorId) === String(conductorId));
-    if (porConductor) return porConductor;
-    if (routeId != null && routeId !== '') {
-        const porId = lista.find(r => r?.id != null && String(r.id) === String(routeId));
-        if (porId) return porId;
-    }
-    return null;
+
+    const porFicha = (routeId != null && routeId !== '')
+        ? lista.find(r => r?.id != null && String(r.id) === String(routeId))
+        : null;
+
+    const candidatas = [...suyas];
+    if (porFicha && !candidatas.includes(porFicha)) candidatas.push(porFicha);
+
+    if (candidatas.length === 0) return null;
+    if (candidatas.length === 1) return candidatas[0];
+
+    // Varias rutas apuntan al mismo conductor. Pasa cuando alguien cubre la ruta de
+    // otro: se le asigna la del que falta y se queda además con la suya de siempre.
+    // Antes ganaba la primera del array, que podía ser la de todos los días, así que
+    // los pueblos que hoy hay que hacer salían como "fuera de ruta" y se colocaban
+    // por geografía en cualquier sitio. Gana la que más pueblos del reparto de HOY
+    // cubre, que es la que se está haciendo.
+    let mejor = candidatas[0];
+    let mejorCobertura = -1;
+    candidatas.forEach(ruta => {
+        const pueblos = [
+            ...(ruta.poblacionesManana || ruta.poblaciones || []),
+            ...(ruta.poblacionesTarde || []),
+        ];
+        const cobertura = ciudadesDeHoy.filter(c => mejorPuebloParaCiudad(c, pueblos)).length;
+        if (cobertura > mejorCobertura) { mejorCobertura = cobertura; mejor = ruta; }
+    });
+    return mejor;
 };
 
 /**
@@ -408,12 +430,9 @@ export const optimizarRuta = ({
         return {
             orden: [],
             deCamino: new Set(),
-            resumen: { turno, pueblos: 0, extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0 },
+            resumen: { turno, ruta: null, pueblos: 0, extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0 },
         };
     }
-
-    const ruta = elegirRuta(rutas, conductorId, routeId);
-    const pueblosRuta = pueblosDelTurno(ruta, turno);
 
     const items = lista.map(envio => {
         const cliente = resolverCliente(envio);
@@ -427,6 +446,11 @@ export const optimizarRuta = ({
             direccion: envio.destinationAddress || '',
         };
     });
+
+    // Los pueblos del reparto de hoy se calculan ANTES de elegir la ruta: cuando hay
+    // más de una candidata, son los que dicen cuál se está haciendo.
+    const ruta = elegirRuta(rutas, conductorId, routeId, items.map(i => i.ciudad));
+    const pueblosRuta = pueblosDelTurno(ruta, turno);
 
     // Punto de partida de la cadena: el GPS del conductor si lo hay, y si no el
     // centro de las paradas del día.
@@ -473,6 +497,10 @@ export const optimizarRuta = ({
         deCamino,
         resumen: {
             turno,
+            // Con qué ruta se ha ordenado. Va en el resumen para que el conductor lo
+            // vea al terminar: si hoy cubre la de otro, es la única forma de saber si
+            // ha cogido la buena sin tener que abrir el Gestor de Rutas.
+            ruta: ruta?.nombre || null,
             pueblos: grupos.length,
             extras,
             sinRuta,

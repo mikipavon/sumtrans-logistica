@@ -425,8 +425,14 @@ export const ShipmentCardUI = React.memo(({
                                     destinationBillingType: destClient?.billingType || stop.destinationBillingType || null
                                 });
                                 const isDebido = stop.porteType === 'Debido';
-                                const customAmt = stop.customAmount !== undefined ? stop.customAmount : stop.amount;
-                                const porteValNum = parseAmount(customAmt);
+                                // Igual que amountToCollectAtDelivery() en el modelo: si customAmount
+                                // no da un número válido (0, NaN, vacío...) se cae a `amount`, nunca se
+                                // para en cero. Antes se miraba `!== undefined`, así que un customAmount
+                                // puesto a NaN por la ficha del admin (ver el arreglo en
+                                // ShipmentDetailsModal, la conversión de "€7.00" con parseFloat) dejaba
+                                // esta tarjeta sin la etiqueta COBRAR aunque el modal de entrega sí
+                                // pedía el cobro tirando de `amount`.
+                                const porteValNum = parseAmount(stop.customAmount) || parseAmount(stop.amount) || 0;
                                 const porteVal = porteValNum > 0 ? porteValNum : (String(stop.amount).toLowerCase() === 'tarifa' ? 'Tarifa' : null);
                                 const hasCod = stop.hasCod && parseAmount(stop.codAmount) > 0;
                                 let toCollectStrings = [];
@@ -3270,6 +3276,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
     const mensajeDeOptimizacion = (resumen) => {
         const partes = [`${etiquetaTurno(resumen.turno)}: ${resumen.pueblos} pueblo${resumen.pueblos !== 1 ? 's' : ''}`];
+        // El nombre de la ruta usada: cuando un conductor cubre la de otro es lo único
+        // que le dice si ha ordenado con la ruta buena o con la suya de siempre.
+        if (resumen.ruta) partes.push(`ruta: ${resumen.ruta}`);
         if (resumen.sinRuta) partes.push('sin ruta asignada, ordenados por cercanía');
         if (resumen.extras > 0) partes.push(`${resumen.extras} fuera de ruta`);
         if (resumen.deCamino > 0) partes.push(`${resumen.deCamino} de camino`);
@@ -3620,7 +3629,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     destinationCoordinates: currentShip.originCoordinates,
                     amount: currentShip.amount,
                     observations: `[RETORNO DE ${currentShip.id}] ${currentShip.observations || ''}`,
-                    agencyLabel: currentShip.agencyLabel || 'SUM ESPECIAL'
+                    agencyLabel: currentShip.agencyLabel || 'SUM ESPECIAL',
+                    // Marca para que el formulario exija artículo: las observaciones ya van
+                    // rellenas con el "[RETORNO DE ...]", así que la comprobación normal de
+                    // "artículo u observación" pasaba sola y el retorno salía sin decir qué
+                    // se recoge.
+                    isReturn: true
                 };
                 setPickupToConvert(returnPrefill);
                 setIsNoteModalOpen(true);
@@ -3637,6 +3651,21 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
         // 1. Process all selected collections (Current + Others)
         if (selectedDebtIds && selectedDebtIds.length > 0) {
+            // Comprobación anti-duplicado: la lista de "otros pendientes" se calcula sobre
+            // `allShipments`, que puede llevar hasta 60s desatrasada (el poll) o venir de una
+            // sesión que no ha refrescado. Si un envío YA consta cobrado en el servidor,
+            // seleccionarlo aquí duplicaría el dinero en la Cuenta sin que nadie se entere
+            // (el albarán seguiría mostrando la fecha de cobro real, pero la caja del día
+            // sumaría el importe otra vez). Se comprueba contra Supabase justo antes de cobrar.
+            const debtSids = [...new Set(selectedDebtIds.map(fullId => fullId.substring(0, fullId.lastIndexOf('-'))))];
+            const freshPaidState = new Map();
+            try {
+                const { data: freshRows } = await supabase.from('shipments').select('id, data').in('id', debtSids);
+                (freshRows || []).forEach(r => freshPaidState.set(r.id, r.data));
+            } catch (e) {
+                console.warn('[DeliveryConfirm] No se pudo verificar el estado real de los envíos antes de cobrar, se usará el estado local:', e);
+            }
+
             for (const fullId of selectedDebtIds) {
                 // El ID tiene formato "SUM-2026254-porte" o "SUM-2026254-reembolso" (también soporta TR- antiguos)
                 // No podemos usar split('-') porque el ID del envío ya contiene guiones.
@@ -3648,6 +3677,13 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 if (!ship) continue;
 
                 const isPorte = partType === 'porte';
+
+                const freshShip = freshPaidState.get(sid);
+                if (freshShip && ((isPorte && freshShip.portePaid) || (!isPorte && freshShip.codPaid))) {
+                    console.warn(`[DeliveryConfirm] Omitido ${sid}-${partType}: ya figura cobrado en el servidor (evitado cobro duplicado).`);
+                    continue;
+                }
+
                 const debtKey = `${sid}-${partType}`;
                 const originalAmount = isPorte ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : ship.codAmount;
                 const finalAmount = customAmounts[debtKey] !== undefined ? customAmounts[debtKey] : originalAmount;
@@ -3677,6 +3713,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 const updated = { ...ship };
                 if (isPorte) {
                     updated.portePaid = true;
+                    // Quién se lleva el dinero encima. Sin esto, tanto la Cuenta
+                    // (accountLogic) como el "Porte Cobrado Por" de la oficina caen al
+                    // conductor ASIGNADO al albarán, que no siempre es el que ha
+                    // cobrado: el día que uno cubre la ruta de otro, su dinero se le
+                    // apuntaba al que faltaba.
+                    updated.porteCollectedById = currentDriverId;
                     updated.paidAt = new Date().toISOString();
                     // Si el conductor modificó el importe del porte, guardar como customAmount
                     // para que la Cuenta y la BD reflejen el importe real cobrado
@@ -3686,6 +3728,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     }
                 } else {
                     updated.codPaid = true;
+                    updated.codCollectedById = currentDriverId;
                     updated.paidAt = new Date().toISOString();
                     // Si el conductor modificó el importe del reembolso, guardar también
                     if (customAmounts[debtKey] !== undefined && parseAmount(customAmounts[debtKey]) !== parseAmount(originalAmount)) {
@@ -3752,32 +3795,53 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         const finalProofForCurrent = pruebaPrincipal.finalProof;
         const pendingUploads = pruebaPrincipal.uploads;
 
-        // ── Auto-aprendizaje de coords del DESTINATARIO en la entrega ──
+        // ── Auto-aprendizaje del DESTINATARIO en la entrega ──
         // Se ejecuta SIEMPRE que se entrega (independientemente del tipo de proof).
-        // La ubicación capturada en el modal de entrega (proof.coordinates) se guarda
-        // en la ficha del destinatario si aún no tiene coordenadas.
-        if (status === 'Entregado' && proof?.coordinates && currentShip && onUpdateClient) {
+        // Dos cosas distintas:
+        //  · La ubicación capturada (proof.coordinates) se guarda si aún no tiene.
+        //  · Quién recibió (nombre y DNI) se guarda SIEMPRE, pisando lo anterior: es
+        //    una chuleta para la próxima entrega, y la que vale es la última. En el
+        //    modal sale en gris como sugerencia, nunca rellenado a la fuerza.
+        if (status === 'Entregado' && (proof?.coordinates || proof?.name?.trim()) && currentShip && onUpdateClient) {
             const isPickupType = currentShip.type === 'Recogida';
             const clientName = isPickupType
                 ? currentShip.client
                 : (currentShip.destinationName || currentShip.client);
+
+            const receptorAprendido = proof?.name?.trim()
+                ? {
+                    lastReceiver: {
+                        name: proof.name.trim(),
+                        dni: (proof.id || '').trim(),
+                        at: new Date().toISOString(),
+                    },
+                }
+                : null;
 
             if (clientName) {
                 const destClientObj = clientsMap.get(normalizeClientName(clientName));
                 if (destClientObj) {
                     if (destClientObj._isBranch) {
                         const branch = destClientObj._branch;
-                        if (!(branch.coordinates && String(branch.coordinates).trim().length > 0)) {
-                            onUpdateClient(destClientObj.id, { coordinates: proof.coordinates }, branch.id);
-                            console.log(`[AutoCoords] Destinatario (Sede) "${clientName}" → ${proof.coordinates}`);
+                        const cambios = { ...(receptorAprendido || {}) };
+                        if (proof?.coordinates && !(branch.coordinates && String(branch.coordinates).trim().length > 0)) {
+                            cambios.coordinates = proof.coordinates;
+                        }
+                        if (Object.keys(cambios).length > 0) {
+                            onUpdateClient(destClientObj.id, cambios, branch.id);
+                            console.log(`[AutoAprendizaje] Destinatario (Sede) "${clientName}"`, cambios);
                         }
                     } else {
-                        if (!(destClientObj.coordinates && String(destClientObj.coordinates).trim().length > 0)) {
-                            onUpdateClient(destClientObj.id, { coordinates: proof.coordinates });
-                            console.log(`[AutoCoords] Destinatario "${clientName}" → ${proof.coordinates}`);
+                        const cambios = { ...(receptorAprendido || {}) };
+                        if (proof?.coordinates && !(destClientObj.coordinates && String(destClientObj.coordinates).trim().length > 0)) {
+                            cambios.coordinates = proof.coordinates;
+                        }
+                        if (Object.keys(cambios).length > 0) {
+                            onUpdateClient(destClientObj.id, cambios);
+                            console.log(`[AutoAprendizaje] Destinatario "${clientName}"`, cambios);
                         }
                     }
-                } else if (!destClientObj && !isPickupType && onAddClient) {
+                } else if (!destClientObj && !isPickupType && onAddClient && proof?.coordinates) {
                     // Destinatario no existe en BD → crear ficha pendiente de validar con GPS incluido
                     onAddClient({
                         name: currentShip.destinationName,
@@ -3793,6 +3857,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         status: 'pending',
                         createdFrom: 'Reparto (Driver)',
                         createdBy: currentDriver?.name || 'Driver',
+                        // Quien ha recibido hoy, para sugerirlo en la próxima entrega.
+                        ...(receptorAprendido || {}),
                     });
                 }
             }
@@ -4009,6 +4075,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     collectionAlert={false}
                     pendingDebts={getDemoPendingDebts(tourDemoMode)}
                     clients={clients}
+                    zoom={zoom}
                     onConfirm={() => setTourDemoMode(null)}
                 />
             )}
@@ -5047,9 +5114,30 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
                                                     try {
                                                         const isPorte = item.type === 'porte';
+
+                                                        // Guarda anti-duplicado: esta lista sale de `allShipments`, que puede
+                                                        // llevar hasta 60s sin refrescar (o venir de una sesión vieja). Si el
+                                                        // envío YA consta cobrado en el servidor, cobrarlo otra vez aquí sumaría
+                                                        // el importe dos veces en la Cuenta del día sin que el albarán cambie
+                                                        // (su fecha de cobro real no se toca), así que el duplicado pasaría
+                                                        // desapercibido. Se comprueba contra Supabase justo antes de cobrar.
+                                                        const { data: freshRow } = await supabase.from('shipments').select('data').eq('id', shipment.id).maybeSingle();
+                                                        const freshShip = freshRow?.data;
+                                                        if (freshShip && ((isPorte && freshShip.portePaid) || (!isPorte && freshShip.codPaid))) {
+                                                            const fecha = freshShip.paidAt || freshShip.updatedAt;
+                                                            alert(`Este ${isPorte ? 'porte' : 'reembolso'} ya figura cobrado (${fecha ? new Date(fecha).toLocaleString() : 'fecha desconocida'}). No se ha duplicado el cobro.`);
+                                                            onUpdateShipment(shipment.id, { ...freshShip, id: shipment.id });
+                                                            setProcessingIds(prev => {
+                                                                const next = new Set(prev);
+                                                                next.delete(item.key);
+                                                                return next;
+                                                            });
+                                                            return;
+                                                        }
+
                                                         const debtKey = `${shipment.id}-${item.type}`;
                                                         const finalAmount = parseAmount(currentAmount).toFixed(2);
-                                                        
+
                                                         // 1. Determine local time-based date (using our standardized todayStr)
                                                         const collectionDate = todayStr;
 
@@ -5710,6 +5798,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 pendingDebts={pendingDebts}
                 sameClientStops={sameClientStops}
                 clients={clients}
+                zoom={zoom}
                 onConfirm={handleDeliveryConfirm}
             />
 

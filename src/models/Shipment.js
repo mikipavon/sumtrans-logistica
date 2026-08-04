@@ -48,7 +48,15 @@ export default class Shipment {
     this.createdAt = data.createdAt || new Date().toISOString();
     this.address = data.address || '';
     this.amount = data.amount || 0;
-    this.customAmount = data.customAmount !== undefined ? data.customAmount : (parseFloat(data.amount) || 0);
+    // `amount` suele llevar el símbolo de moneda ("€7.00") o ser "Tarifa": parseFloat
+    // directo da NaN y aquí se guardaba tal cual. No provocaba el síntoma porque el
+    // resto del modelo vuelve a caer en `amount` cuando `customAmount` no es un número
+    // válido (ver amountToCollectAtDelivery), pero cualquier código que leyera
+    // this.customAmount sin ese respaldo se encontraría con NaN. Se limpia el símbolo
+    // antes de parsear.
+    this.customAmount = data.customAmount !== undefined
+      ? data.customAmount
+      : (parseFloat(String(data.amount || '0').replace(/[^0-9.,-]+/g, '').replace(',', '.')) || 0);
     this.hasCod = !!data.hasCod;
     this.codAmount = parseFloat(data.codAmount) || 0;
     this.codCommission = parseFloat(data.codCommission) || 0;

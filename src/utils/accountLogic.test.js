@@ -308,3 +308,47 @@ describe('Cobros cuyo envío no está en la lista cargada', () => {
         expect(result.collectedPorte).toBe(40);
     });
 });
+
+// ── El suplente que cubre la ruta de otro ─────────────────────────────────────
+// El albarán sigue asignado al conductor habitual —el que hoy no ha venido— pero lo
+// entrega y lo cobra el suplente. El dinero es de quien lo lleva en el bolsillo.
+
+describe('cobros de un conductor que cubre la ruta de otro', () => {
+    const HABITUAL = 1;   // el dueño de la ruta, hoy ausente
+    const SUPLENTE = 9;   // el que la cubre
+    const hoy = new Date().toISOString();
+    const clientes = [{ name: 'Cash Client', billingType: 'Clientes Habituales' }];
+
+    const albaran = (extra = {}) => ({
+        id: 'S1', porteType: 'Debido', status: 'Entregado', portePaid: true,
+        client: 'Cash Client', destinationName: 'Cash Client',
+        assignedDriverId: HABITUAL, paidAt: hoy, amount: '7.00', ...extra,
+    });
+
+    const cuentaDe = (envios, driverId) => calculateDailyAccount({
+        allShipments: envios, driverId, clients: clientes, collectedCollections: [],
+    });
+
+    it('el porte es de quien lo cobra, no de quien tenía asignado el albarán', () => {
+        const envios = [albaran({ porteCollectedById: SUPLENTE })];
+        expect(cuentaDe(envios, SUPLENTE).collectedPorte).toBe(7);
+        expect(cuentaDe(envios, HABITUAL).collectedPorte).toBe(0);
+    });
+
+    // Lo que pasaba antes de guardar porteCollectedById en la entrega: el dinero se le
+    // apuntaba al conductor que no lo tenía.
+    it('sin ese campo, los 7 € se le apuntan al conductor equivocado', () => {
+        const envios = [albaran()];
+        expect(cuentaDe(envios, SUPLENTE).collectedPorte).toBe(0);
+        expect(cuentaDe(envios, HABITUAL).collectedPorte).toBe(7);
+    });
+
+    it('lo mismo con el reembolso', () => {
+        const envios = [albaran({
+            porteCollectedById: SUPLENTE,
+            hasCod: true, codAmount: '50.00', codPaid: true, codCollectedById: SUPLENTE,
+        })];
+        expect(cuentaDe(envios, SUPLENTE).collectedReembolsos).toBe(50);
+        expect(cuentaDe(envios, HABITUAL).collectedReembolsos).toBe(0);
+    });
+});

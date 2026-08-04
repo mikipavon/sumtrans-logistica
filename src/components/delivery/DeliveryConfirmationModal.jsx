@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { X, CheckCircle, PenTool, Camera, Image as ImageIcon, Mic, MicOff, Wallet, MapPin, RotateCcw, AlertTriangle, FileText, Package } from 'lucide-react';
 import SignatureCanvas from 'react-signature-canvas';
 import Shipment from '../../models/Shipment';
 import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 
-export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, shipment, collectionAlert, pendingDebts = [], clients = [], sameClientStops = [] }) {
+export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, shipment, collectionAlert, pendingDebts = [], clients = [], sameClientStops = [], zoom = 1 }) {
     const labelClass = "block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1";
     const inputClass = "w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all shadow-sm";
     const [isSignatureCaptured, setIsSignatureCaptured] = useState(false);
@@ -70,6 +71,33 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
         });
     }, [shipment, clients]);
 
+    /**
+     * Quién recibió la última vez en esta dirección. Se guarda al confirmar la entrega
+     * (ver el auto-aprendizaje del destinatario en DriverDashboard) y aquí sale como
+     * chuleta: en gris, y sólo se escribe en los campos si el conductor la toca. No se
+     * rellena solo a propósito — la prueba de entrega dice quién ha recibido HOY, y un
+     * nombre que nadie ha mirado es peor que uno en blanco.
+     */
+    const receptorHabitual = useMemo(() => {
+        if (!shipment) return null;
+        const sinTildes = new RegExp('[\\u0300-\\u036f]', 'g');
+        const norm = (v) => String(v || '').trim().toLowerCase().normalize('NFD').replace(sinTildes, '');
+        const destNorm = norm(shipment.destinationName);
+        if (!destNorm) return null;
+
+        for (const c of (clients || [])) {
+            if (norm(c.name) === destNorm) return c.lastReceiver || null;
+            for (const b of (Array.isArray(c.branches) ? c.branches : [])) {
+                // La sede tiene su propia chuleta; si no la tiene, la de la casa madre
+                // no vale: quien firma en un almacén no es quien firma en otro.
+                if (norm(b.name) === destNorm) return b.lastReceiver || null;
+            }
+        }
+        return null;
+    }, [shipment, clients]);
+
+    const haySugerencia = !!(receptorHabitual?.name || '').trim();
+
     // Build list of current shipment cobros using the MODEL logic
     const currentParts = useMemo(() => {
         if (!shipment || !shipmentModel) return [];
@@ -97,16 +125,14 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                         label: 'Porte Debido',
                         detail: shipment.destinationName || 'Destinatario'
                     });
-                } else if (!shipment.portePaid && shipment.paymentStatus !== 'Paid') {
-                    parts.push({
-                        id: `${shipment.id}-porte`,
-                        shipmentId: shipment.id,
-                        type: 'Porte',
-                        amount: porte.toFixed(2),
-                        label: 'Porte Debido',
-                        detail: shipment.destinationName || 'Destinatario'
-                    });
                 }
+                // Si porteACobrar no es positivo con porte > 0, es porque el destinatario
+                // factura (amountToCollectAtDelivery() sólo devuelve el reembolso — ver
+                // Shipment.js, Caso 7): el porte va a su factura y el conductor no cobra
+                // nada en mano por él. Antes había aquí un "por si acaso" que volvía a
+                // meter el porte completo como pendiente, y eso es justo lo contrario de
+                // la regla: el listado de la ruta ya no muestra "COBRAR" para estos
+                // clientes, así que este modal tampoco debe pedirlo.
             } else if (isTarifaText && !shipment.portePaid) {
                 // El precio es "Tarifa" sin valor → permitir al conductor poner el importe manualmente
                 parts.push({
@@ -485,10 +511,17 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
         );
         setShowReturnPrompt(false);
     };
-    return (
+    // El modal se saca del árbol del dashboard con un portal a propósito. El dashboard
+    // del conductor va envuelto en `style={{ zoom }}` (la lupa A+/A-) y el zoom de CSS
+    // NO ajusta las unidades de viewport: dentro de un zoom 1.3, un alto de 94vh se
+    // dibuja al 122% de la pantalla y los botones de abajo se salen. Fuera del zoom,
+    // `fixed inset-0` y `100dvh` valen exactamente lo que mide la pantalla.
+    // El zoom del conductor se vuelve a aplicar más abajo, pero sólo al CONTENIDO de
+    // cada bloque, nunca al armazón que mide con dvh.
+    return createPortal(
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[100] flex items-end sm:items-center justify-center sm:p-4 animate-in fade-in duration-300">
-            <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col h-[94vh] sm:h-auto sm:max-h-[95vh]">
-                <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0">
+            <div className="bg-white sm:rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col modal-mobile-full">
+                <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center shrink-0" style={{ zoom }}>
                     <h3 className="font-bold text-slate-800">{shipment?.type === 'Recogida' ? 'Cobros Pendientes' : 'Confirmar Entrega'}</h3>
                     <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
                         <X size={20} />
@@ -500,7 +533,10 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                     Van marcadas de salida porque el caso normal es entregarlo todo; se
                     desmarcan si el cliente sólo se queda una parte. */}
                 {sameClientStops.length > 0 && (
-                    <div className="bg-blue-50 border-b border-blue-100 p-3 sm:p-4 shrink-0">
+                    <div
+                        className="bg-blue-50 border-b border-blue-100 p-3 sm:p-4 shrink-0 overflow-y-auto max-h-[calc(28dvh/var(--z,1))] custom-scrollbar"
+                        style={{ zoom, '--z': zoom }}
+                    >
                         <div className="flex items-center gap-2 mb-1">
                             <Package className="text-blue-600 shrink-0" size={18} />
                             <h4 className="text-sm font-black text-blue-700 uppercase tracking-tighter">
@@ -543,9 +579,15 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                     </div>
                 )}
 
-                {/* Unified Cobros Section (The "Alarma") */}
+                {/* Unified Cobros Section (The "Alarma").
+                    El alto máximo se divide entre el zoom porque este bloque se dibuja
+                    escalado: 35dvh/1.4 escalado por 1.4 vuelve a ser 35dvh de pantalla
+                    real. Si no, con la lupa a tope los cobros se comen la pantalla. */}
                 {allSelectableDebts.length > 0 && (
-                    <div className="bg-red-50 border-b border-orange-100 p-3 sm:p-4 shrink-0 overflow-y-auto max-h-[35vh] sm:max-h-[40vh] custom-scrollbar">
+                    <div
+                        className="bg-red-50 border-b border-orange-100 p-3 sm:p-4 shrink-0 overflow-y-auto max-h-[calc(35dvh/var(--z,1))] sm:max-h-[calc(40dvh/var(--z,1))] custom-scrollbar"
+                        style={{ zoom, '--z': zoom }}
+                    >
                         {shipment.hasReturn && (
                             <div className="mb-3 flex items-center gap-3 bg-red-600 text-white p-3 rounded-xl animate-pulse shadow-lg shadow-red-600/20">
                                 <RotateCcw size={18} className="shrink-0" />
@@ -687,7 +729,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                     </div>
                 )}
 
-                <div className="p-6 flex-1 overflow-y-auto custom-scrollbar">
+                <div className="p-6 flex-1 overflow-y-auto custom-scrollbar" style={{ zoom }}>
                     <div className="mb-4 space-y-1">
                         <p className="text-sm text-slate-500">
                             Envia: <span className="font-bold text-slate-800">{shipment.client}</span>
@@ -719,12 +761,36 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                 <FileText size={14} className="text-blue-500" />
                                 Datos de quien recibe
                             </h4>
+
+                            {/* Chuleta de la última entrega en esta dirección. Se toca y
+                                rellena los dos campos; si no, no escribe nada. */}
+                            {haySugerencia && !receiverName?.trim() && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setReceiverName(receptorHabitual.name);
+                                        if (receptorHabitual.dni) setReceiverId(receptorHabitual.dni);
+                                    }}
+                                    className="w-full flex items-center gap-2 text-left bg-white border border-dashed border-slate-300 rounded-xl px-3 py-2 active:bg-slate-100 transition-colors"
+                                >
+                                    <RotateCcw size={14} className="text-slate-400 shrink-0" />
+                                    <span className="flex-1 min-w-0">
+                                        <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">La última vez recibió</span>
+                                        <span className="block text-sm font-bold text-slate-500 truncate">
+                                            {receptorHabitual.name}
+                                            {receptorHabitual.dni ? ` · ${receptorHabitual.dni}` : ''}
+                                        </span>
+                                    </span>
+                                    <span className="text-[10px] font-black uppercase text-blue-600 shrink-0">Usar</span>
+                                </button>
+                            )}
+
                             <div>
                                 <label className={labelClass}>Nombre Completo {rules.requireName !== false && <span className="text-red-500">*</span>}</label>
                                 <div className="relative">
                                     <input
                                         type="text"
-                                        placeholder="Pulsa el micro y habla..."
+                                        placeholder={haySugerencia ? receptorHabitual.name : "Pulsa el micro y habla..."}
                                         className={`${inputClass} pr-10 ${validationFailed && rules.requireName !== false && !receiverName?.trim() ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
                                         value={receiverName}
                                         onChange={(e) => setReceiverName(e.target.value)}
@@ -753,7 +819,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                 </label>
                                 <input
                                     type="text"
-                                    placeholder="12345678X"
+                                    placeholder={receptorHabitual?.dni || "12345678X"}
                                     className={`${inputClass} ${validationFailed && rules.requireDNI && !receiverId?.trim() ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
                                     value={receiverId}
                                     onChange={(e) => setReceiverId(e.target.value)}
@@ -823,11 +889,17 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                             </div>
                         </div>
 
-                        {/* 3. Photo Section */}
-                        {requiresPhoto1 && (
+                        {/* 3. Photo Section — siempre a la vista, como el DNI. Antes sólo
+                            aparecía si el cliente exigía foto, y el conductor que consigue
+                            un sello en la mercancía o en el albarán se quedaba sin dónde
+                            guardar esa prueba. Obligatoria (asterisco rojo y bloqueo al
+                            confirmar) sigue siéndolo sólo si el cliente lo exige. */}
                             <div className="space-y-4">
-                                {/* Mini-recordatorio de bultos también sobre la foto */}
-                                {(() => {
+                                {/* Mini-recordatorio de bultos: sólo cuando la foto es
+                                    obligatoria, que es cuando el conductor está fotografiando
+                                    el albarán y tiene que cuadrar lo que entrega. Si no, ya
+                                    lo tiene en la línea naranja de arriba. */}
+                                {requiresPhoto1 && (() => {
                                     const arts = shipment.articles || [];
                                     const pkgText = shipment.packages || '';
                                     const totalBultos = arts.length > 0
@@ -904,7 +976,12 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                     /* Single Photo Capture */
                                     <div className="space-y-2">
                                         <div className="flex justify-between items-end">
-                                            <label className={labelClass}>Foto del Sello / Albarán / Documento {requiresPhoto1 && <span className="text-red-500">*</span>}</label>
+                                            <label className={labelClass}>
+                                                Foto del Sello / Albarán / Documento{' '}
+                                                {requiresPhoto1
+                                                    ? <span className="text-red-500">*</span>
+                                                    : <span className="text-slate-400 font-medium normal-case tracking-normal">(opcional)</span>}
+                                            </label>
                                             {photoPreview && (
                                                 <button onClick={() => handleClearPhoto(1)} className="text-[10px] text-red-500 font-bold uppercase hover:underline mb-1">
                                                     Quitar
@@ -930,12 +1007,11 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                     </div>
                                 )}
                             </div>
-                        )}
                     </div>
                     )}
                 </div>
 
-                <div className="p-4 border-t border-slate-100 bg-slate-50 shrink-0 flex flex-col gap-2">
+                <div className="p-4 border-t border-slate-100 bg-slate-50 shrink-0 flex flex-col gap-2" style={{ zoom }}>
                     {/* Logic: If there is SOMETHING to collect (current Porte, COD, or old Debts), show dual buttons. Else show single finish button. */}
                     {allSelectableDebts.length > 0 ? (
                         <>
@@ -1056,6 +1132,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                     </div>
                 )}
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }
