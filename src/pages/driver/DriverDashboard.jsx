@@ -5008,11 +5008,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                     const senderClient = clients?.find(c => normalize(c.name) === sName || normalize(c.legalName) === sName);
                                     const destClient = clients?.find(c => normalize(c.name) === dName || normalize(c.legalName) === dName);
 
+                                    // Los "Recibo" (cierre de presupuestos, cobros manuales de oficina...) traen su
+                                    // propio billingType puesto A PROPÓSITO — normalmente 'Clientes Habituales' para
+                                    // forzar que se cobre en mano aunque el cliente real sea de Presupuesto/Facturación.
+                                    // Si aquí se sustituye por la ficha del cliente, ese Recibo deja de aparecer como
+                                    // deuda de contado y desaparece de la pestaña del conductor sin avisar a nadie.
+                                    const isOfficeReceipt = shipment.type === 'Recibo';
+
                                     // Create model with enriched billing info
                                     const model = new Shipment({
                                         ...shipment,
-                                        billingType: senderClient?.billingType || shipment.billingType || 'Clientes Habituales',
-                                        destinationBillingType: destClient?.billingType || shipment.destinationBillingType || null
+                                        billingType: isOfficeReceipt ? (shipment.billingType || 'Clientes Habituales') : (senderClient?.billingType || shipment.billingType || 'Clientes Habituales'),
+                                        destinationBillingType: isOfficeReceipt ? null : (destClient?.billingType || shipment.destinationBillingType || null)
                                     });
 
                                     // Skip fully paid (now using model logic implicitly via our filters)

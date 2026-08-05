@@ -1205,6 +1205,18 @@ function App() {
           } else {
             console.warn(`[OfflineQueue] Failed to sync createShipment ${op.shipmentId}:`, error);
           }
+        } else if (op.type === 'bulkUpdateShipments') {
+          const { error } = await supabase.from('shipments').upsert(op.payloads);
+          if (!error) {
+            await dequeue(op.id);
+            setShipments(prev => prev.map(s => {
+              const match = op.payloads.find(p => p.id === s.id);
+              return match ? { ...match.data, id: match.id } : s;
+            }));
+            console.log(`[OfflineQueue] Synced bulkUpdateShipments: ${op.payloads.length} envíos`);
+          } else {
+            console.warn(`[OfflineQueue] Failed to sync bulkUpdateShipments:`, error);
+          }
         } else if (op.type === 'updateClient') {
           const { error } = await supabase
             .from('clients')
@@ -2428,22 +2440,28 @@ function App() {
     // 2. Optimistic local update
     setShipments(prev => prev.map(s => localUpdatesMap.has(s.id) ? localUpdatesMap.get(s.id) : s));
 
-    // 3. Update Supabase
-    if (navigator.onLine) {
-      try {
-        const { error } = await supabase.from('shipments').upsert(supabasePayloads);
-        if (error) {
-          console.error("Supabase bulk update failed:", error);
-          alert("Error al actualizar envíos múltiples en la base de datos.");
-          return false;
-        }
-      } catch (err) {
-        console.error("Network error on bulk update:", err);
-        return false;
+    // --- OFFLINE or FAIL: enqueue for retry (p.ej. liquidación de presupuestos) ---
+    const enqueueBulkOp = async () => {
+      const opId = `bulkUpdateShipments_${Date.now()}`;
+      const qLen = await enqueue({ id: opId, type: 'bulkUpdateShipments', payloads: supabasePayloads, queuedAt: new Date().toISOString() });
+      setPendingQueueCount(qLen);
+      console.log(`[Queue] Enqueued bulkUpdateShipments (${supabasePayloads.length} envíos)`);
+    };
+
+    if (!navigator.onLine) {
+      await enqueueBulkOp();
+      return true; // Ya aplicado en local, se sincroniza al recuperar cobertura
+    }
+
+    try {
+      const { error } = await supabase.from('shipments').upsert(supabasePayloads);
+      if (error) {
+        console.warn("[Queue] Bulk update failed, enqueuing for retry:", error);
+        await enqueueBulkOp();
       }
-    } else {
-      alert("Estás desconectado. La actualización múltiple no se ha guardado en la nube.");
-      return false; // For simplicity, we don't enqueue bulk updates
+    } catch (err) {
+      console.warn("[Queue] Network error on bulk update, enqueuing for retry:", err);
+      await enqueueBulkOp();
     }
     return true;
   }

@@ -1,4 +1,4 @@
-import { Search, Filter, Plus, MoreVertical, MapPin, Calendar, Truck, User, BarChart2, CheckCircle, Clock, AlertCircle, FileText, Printer, Trash2, ChevronUp, ChevronDown, PackagePlus, X } from 'lucide-react';
+import { Search, Filter, Plus, MoreVertical, MapPin, Calendar, Truck, User, BarChart2, CheckCircle, Clock, AlertCircle, FileText, Printer, Trash2, ChevronUp, ChevronDown, PackagePlus, X, Banknote } from 'lucide-react';
 import { printShipmentTicket } from '../utils/printShipment';
 import { useState, useMemo, useEffect } from 'react';
 import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
@@ -848,10 +848,10 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 min-w-[160px] max-w-[220px]">
-                                            <div className="flex items-center gap-2">
-                                                <User size={14} className="text-slate-400" />
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <User size={14} className="text-slate-400 shrink-0" />
                                                 <select
-                                                    className="bg-transparent text-sm text-slate-700 font-medium border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none transition-colors cursor-pointer py-0.5"
+                                                    className="bg-transparent text-sm text-slate-700 font-medium border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none transition-colors cursor-pointer py-0.5 w-full min-w-0 truncate"
                                                     value={shipment.assignedDriverId || ''}
                                                     onClick={(e) => e.stopPropagation()} // Prevent opening details when clicking select
                                                     onChange={(e) => {
@@ -878,19 +878,20 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 </select>
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 whitespace-nowrap text-right">
-                                            <div className="flex flex-col items-end gap-0.5">
-                                                <span className="text-sm font-bold text-slate-700">{shipment.amount}</span>
+                                        <td className="px-4 py-3 text-right min-w-[110px]">
+                                            <div className="flex flex-col items-end gap-1">
+                                                <span className="text-sm font-bold text-slate-700 whitespace-nowrap">{shipment.amount}</span>
                                                 {shipment.hasCod && parseFloat(shipment.codAmount || 0) > 0 && (
                                                     <span
-                                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap leading-none ${
                                                             shipment.codPaid
-                                                                ? 'bg-emerald-100 text-emerald-700'
-                                                                : 'bg-amber-100 text-amber-800'
+                                                                ? 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200'
+                                                                : 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200'
                                                         }`}
                                                         title={shipment.codPaid ? 'Reembolso cobrado' : 'Reembolso pendiente de cobro'}
                                                     >
-                                                        💰 {parseFloat(shipment.codAmount).toFixed(2)} €
+                                                        <Banknote size={11} className="shrink-0" />
+                                                        {parseFloat(shipment.codAmount).toFixed(2)} €
                                                     </span>
                                                 )}
                                             </div>
