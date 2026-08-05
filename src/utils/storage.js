@@ -128,7 +128,7 @@ export const uploadFileToBucket = async (fileName, file, bucketName) => {
  * Inicializa los buckets necesarios si no existen.
  */
 export const initStorageBuckets = async () => {
-  const buckets = ['signatures', 'delivery_photos', 'agency_logos', 'merchandise_photos', 'cod_receipts', 'payrolls'];
+  const buckets = ['signatures', 'delivery_photos', 'agency_logos', 'merchandise_photos', 'cod_receipts', 'payrolls', 'incident_photos'];
   
   for (const bucket of buckets) {
     try {

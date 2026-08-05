@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, AlertTriangle, Camera, Trash2, CheckCircle, Mic, MicOff } from 'lucide-react';
+import { compressImage } from '../../utils/imageCompression';
 
 export default function IncidentModal({ isOpen, onClose, onConfirm, shipment, initialReason = '' }) {
     const [reason, setReason] = useState('');
@@ -17,7 +18,17 @@ export default function IncidentModal({ isOpen, onClose, onConfirm, shipment, in
         const file = e.target.files[0];
         if (file) {
             const reader = new FileReader();
-            reader.onloadend = () => setPhoto(reader.result);
+            reader.onloadend = async () => {
+                const base64 = reader.result;
+                try {
+                    // Comprimir aquí (no sólo al subir) para que también pese poco
+                    // si el envío se hace en cola sin cobertura.
+                    setPhoto(await compressImage(base64));
+                } catch (err) {
+                    console.error("Compression error:", err);
+                    setPhoto(base64); // Fallback a la original si falla la compresión
+                }
+            };
             reader.readAsDataURL(file);
         }
     };

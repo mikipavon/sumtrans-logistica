@@ -631,7 +631,7 @@ function App() {
       });
 
       let totalDeleted = 0;
-      const buckets = ['signatures', 'delivery_photos', 'merchandise_photos'];
+      const buckets = ['signatures', 'delivery_photos', 'merchandise_photos', 'incident_photos'];
 
       const start = orphanStartDate ? new Date(orphanStartDate).getTime() : 0;
       const end = orphanEndDate ? new Date(orphanEndDate).getTime() + 86400000 : Infinity; // Add 24h to include end day
@@ -1172,6 +1172,14 @@ function App() {
               if (uploadedUrl) dataToSave.deliveryPhoto2 = uploadedUrl;
               console.log(`[OfflineQueue] Uploaded offline photo 2 for ${op.shipmentId}`);
             } catch (e) { console.warn('[OfflineQueue] Photo 2 upload failed:', e); }
+          }
+          // Upload incident photo if stored as base64 offline
+          if (uploads.incidentPhotoData) {
+            try {
+              const uploadedUrl = await uploadProof(op.shipmentId, uploads.incidentPhotoData, 'incident_photos');
+              if (uploadedUrl) dataToSave.incidentPhoto = uploadedUrl;
+              console.log(`[OfflineQueue] Uploaded offline incident photo for ${op.shipmentId}`);
+            } catch (e) { console.warn('[OfflineQueue] Incident photo upload failed:', e); }
           }
 
           // --- Sync the shipment record to Supabase ---
@@ -2474,6 +2482,27 @@ function App() {
         return;
     }
 
+    // Foto de incidencia: se sube a Storage igual que las pruebas de entrega (firma,
+    // foto de sello...) para guardar solo la URL. Antes se guardaba el base64 crudo
+    // directo en la fila del envío, engordando la carga de `shipments` para todo el
+    // mundo cada vez que había una incidencia con foto.
+    let finalPhoto = photo;
+    let incidentPendingUpload = {};
+    if (newStatus === 'Incidencia' && photo) {
+      if (navigator.onLine) {
+        try {
+          finalPhoto = await uploadProof(shipmentId, photo, 'incident_photos');
+        } catch (e) {
+          console.warn('[Incidencia] No se pudo subir la foto, se guarda localmente:', e);
+          finalPhoto = photo; // Fallback: mejor guardarla en base64 que perderla
+        }
+      } else {
+        // Sin cobertura: se ve ya en pantalla como base64, y se sube de verdad al
+        // reconectar (mismo mecanismo que signatureData/photoData de una entrega).
+        incidentPendingUpload = { incidentPhotoData: photo };
+      }
+    }
+
     // ============================================================
     // MODO PRUEBAS SANDBOX: Si el conductor que opera está en modo
     // prueba, solo actualizamos el estado local. NADA va a Supabase.
@@ -2482,18 +2511,18 @@ function App() {
     if (operatingDriverForCheck?.isTestMode) {
       console.log('🛡️ [Modo Pruebas] Cambio de estado bloqueado — solo actualización local.');
       const shipmentModel = new Shipment({ ...s, ...extraData });
-      shipmentModel.updateStatus(newStatus, comment, photo, proof);
+      shipmentModel.updateStatus(newStatus, comment, finalPhoto, proof);
       if (deliveryCoordinates) shipmentModel.deliveryCoordinates = deliveryCoordinates;
       const localUpdatedData = { ...s, ...shipmentModel.toJSON(), updatedAt: new Date().toISOString() };
       setShipments(prev => prev.map(item => item.id === shipmentId ? localUpdatedData : item));
       return; // 🛑 FIN — no se escribe nada a Supabase ni a clientes
     }
     // ============================================================
-    
+
     // 2. Usar el modelo para procesar la lógica de negocio (status, comment, etc)
     // FUSIONAR extraData (flags de pago) ANTES de crear el modelo para que updateStatus use los valores actualizados
     const shipmentModel = new Shipment({ ...s, ...extraData });
-    shipmentModel.updateStatus(newStatus, comment, photo, proof);
+    shipmentModel.updateStatus(newStatus, comment, finalPhoto, proof);
     if (deliveryCoordinates) shipmentModel.deliveryCoordinates = deliveryCoordinates;
 
     // 3. Obtener el objeto plano para guardar como JSONB en Supabase
@@ -2509,6 +2538,8 @@ function App() {
     // Optimistic UI Update
     setShipments(prev => prev.map(item => item.id === shipmentId ? updatedData : item));
 
+    const mergedPendingUploads = { ...pendingUploads, ...incidentPendingUpload };
+
     // --- OFFLINE: enqueue and skip Supabase ---
     if (!navigator.onLine) {
       const opId = `statusChange_${shipmentId}_${newStatus}`;
@@ -2519,11 +2550,11 @@ function App() {
         finalStatus,
         assignedDriverId: s.assignedDriverId,
         updatedData,
-        pendingUploads, // base64 images to upload to Storage when back online
+        pendingUploads: mergedPendingUploads, // base64 images to upload to Storage when back online
         queuedAt: new Date().toISOString()
       });
       setPendingQueueCount(qLen);
-      console.log(`[Offline] Queued statusChange for ${shipmentId} -> ${finalStatus}`, pendingUploads);
+      console.log(`[Offline] Queued statusChange for ${shipmentId} -> ${finalStatus}`, mergedPendingUploads);
       return;
     }
     // ------------------------------------------
@@ -2538,7 +2569,7 @@ function App() {
         finalStatus,
         assignedDriverId: s.assignedDriverId,
         updatedData,
-        pendingUploads,
+        pendingUploads: mergedPendingUploads,
         queuedAt: new Date().toISOString()
       });
       setPendingQueueCount(qLen);
