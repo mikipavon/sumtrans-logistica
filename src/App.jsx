@@ -1205,6 +1205,18 @@ function App() {
           } else {
             console.warn(`[OfflineQueue] Failed to sync createShipment ${op.shipmentId}:`, error);
           }
+        } else if (op.type === 'updateClient') {
+          const { error } = await supabase
+            .from('clients')
+            .update({ name: op.updatedData.name, data: op.updatedData })
+            .eq('id', op.clientId);
+          if (!error) {
+            await dequeue(op.id);
+            setClients(prev => prev.map(c => c.id === op.clientId ? { ...op.updatedData, id: op.clientId } : c));
+            console.log(`[OfflineQueue] Synced updateClient: ${op.clientId}`);
+          } else {
+            console.warn(`[OfflineQueue] Failed to sync updateClient ${op.clientId}:`, error);
+          }
         }
       } catch (e) {
         console.error(`[OfflineQueue] Error processing op ${op.id}:`, e);
@@ -1944,23 +1956,43 @@ function App() {
       return true;
     }
 
+    // Optimistic Update — always applied immediately, igual que handleUpdateShipment
+    setShipments(prev => prev.map(s => s.id === shipmentId ? updatedShipment : s));
+
+    // --- OFFLINE or FAIL: enqueue for retry (reutiliza el mismo op 'updateShipment' del flush) ---
+    const enqueueAssignOp = async () => {
+      const opId = `updateShipment_${shipmentId}`;
+      const qLen = await enqueue({ id: opId, type: 'updateShipment', shipmentId, mergedData: updatedShipment, queuedAt: new Date().toISOString() });
+      setPendingQueueCount(qLen);
+      console.log(`[Queue] Enqueued assignDriver for ${shipmentId}`);
+    };
+
+    if (!navigator.onLine) {
+      await enqueueAssignOp();
+      return true;
+    }
+
     try {
-      const { data, error } = await supabase.from('shipments').update({ 
-        status: updatedShipment.status, 
+      const { data, error } = await supabase.from('shipments').update({
+        status: updatedShipment.status,
         assignedDriverId: updatedShipment.assignedDriverId,
-        data: updatedShipment 
+        data: updatedShipment
       }).eq('id', shipmentId).select();
       if (error) throw error;
-      
+
       if (!data || data.length === 0) {
         console.warn(`[Supabase] No se encontró el envío ${shipmentId} para actualizar. Puede que no se haya sincronizado aún.`);
-        // Fallback to local update so the UI doesn't crash and the state is preserved
-        setShipments(prev => prev.map(s => s.id === shipmentId ? updatedShipment : s));
-        return true;
+        return true; // Ya se hizo la actualización optimista localmente
       }
-      
+
       setShipments(prev => prev.map(s => s.id === shipmentId ? { ...data[0].data, id: data[0].id } : s));
-    } catch (e) { alert('Error al asignar conductor: ' + e.message); console.error(e); }
+      return true;
+    } catch (e) {
+      // Error de red (o Supabase caído) — encolar en vez de perder la asignación
+      console.warn(`[Queue] Error asignando conductor ${shipmentId}, encolando para reintento:`, e);
+      await enqueueAssignOp();
+      return true; // Keep optimistic update
+    }
   }
 
   const handleAddVehicle = async (newVehicle) => {
@@ -2079,6 +2111,32 @@ function App() {
     }
     // ============================================================
 
+    // Encola el envío para crearlo en Supabase en cuanto vuelva la cobertura.
+    // Se usa tanto si ya sabemos que estamos offline como si la red falla a mitad de guardado.
+    const enqueueCreateOp = async () => {
+      const qLen = await enqueue({
+        id: `create_${shipmentWithMeta.id}_${Date.now()}`,
+        type: 'createShipment',
+        shipmentId: shipmentWithMeta.id,
+        shipmentData: shipmentWithMeta,
+        timestamp: Date.now(),
+      });
+      setPendingQueueCount(qLen);
+      if (originalPickupId) {
+        setShipments(prev => [{ ...shipmentWithMeta }, ...prev.filter(s => s.id !== originalPickupId)]);
+      } else {
+        setShipments(prev => [{ ...shipmentWithMeta }, ...prev]);
+      }
+    };
+
+    // --- SIN COBERTURA: no intentamos la llamada de red (tardaría en fallar) ---
+    // encolamos directamente para que se sincronice en cuanto vuelva la señal.
+    if (!navigator.onLine) {
+      console.warn('[handleAddShipment] Sin conexión — encolando envío para sincronizar al recuperar cobertura');
+      await enqueueCreateOp();
+      return true;
+    }
+
     try {
       // 1. If replacing an existing pickup, delete it FIRST to avoid Primary Key collisions
       if (originalPickupId) {
@@ -2097,19 +2155,16 @@ function App() {
       if (error) {
         console.error('Supabase Error Details:', error)
         // Error 42501 = RLS: el conductor no tiene sesión Auth activa.
-        // En lugar de mostrar error, guardamos el envío en la cola offline
-        // para que se sincronice automáticamente en cuanto se renueve la sesión.
-        if (error.code === '42501') {
-          console.warn('[handleAddShipment] RLS error — encolando envío para reintento automático');
-          await enqueue({
-            id: `create_${shipmentWithMeta.id}_${Date.now()}`,
-            type: 'createShipment',
-            shipmentId: shipmentWithMeta.id,
-            shipmentData: shipmentWithMeta,
-            timestamp: Date.now(),
-          });
-          // Actualizar estado local para que el conductor vea el envío creado
-          setShipments(prev => [{ ...shipmentWithMeta }, ...prev]);
+        // Código vacío/ausente = supabase-js envolvió un fallo de red (fetch roto por
+        // mala cobertura, "TypeError: Load failed" en Safari/iOS) como si fuera una
+        // respuesta normal en vez de lanzar una excepción — navigator.onLine puede seguir
+        // marcando true con wifi "conectado pero sin datos reales".
+        // En ambos casos NO es un error de datos: guardamos el envío en la cola offline
+        // para que se sincronice automáticamente en cuanto haya cobertura real.
+        const isRetryable = error.code === '42501' || !error.code;
+        if (isRetryable) {
+          console.warn('[handleAddShipment] Error de red/RLS — encolando envío para reintento automático', error);
+          await enqueueCreateOp();
           return true; // No bloquear al conductor
         }
         alert(`Error Supabase: ${error.message} (${error.code})`)
@@ -2193,9 +2248,10 @@ function App() {
 
       return true;
     } catch (error) {
-      console.error('Error adding shipment to Supabase:', error)
-      alert('Error al guardar el envío en la nube.')
-      return false
+      // Error de red (fetch falla, no solo un error de Supabase) — encolar en vez de perder el envío
+      console.warn('[handleAddShipment] Error de red al guardar envío — encolando para reintento:', error);
+      await enqueueCreateOp();
+      return true; // No bloquear al conductor
     }
   }
 
@@ -2224,15 +2280,15 @@ function App() {
     setShipments(prev => prev.map(s => s.id === id ? mergedData : s));
 
     // --- OFFLINE or FAIL: enqueue for retry ---
-    const enqueueUpdateOp = () => {
+    const enqueueUpdateOp = async () => {
       const opId = `updateShipment_${id}`;
-      enqueue({ id: opId, type: 'updateShipment', shipmentId: id, mergedData, queuedAt: new Date().toISOString() });
-      setPendingQueueCount(getQueueLength());
+      const qLen = await enqueue({ id: opId, type: 'updateShipment', shipmentId: id, mergedData, queuedAt: new Date().toISOString() });
+      setPendingQueueCount(qLen);
       console.log(`[Queue] Enqueued updateShipment for ${id}`);
     };
 
     if (!navigator.onLine) {
-      enqueueUpdateOp();
+      await enqueueUpdateOp();
       return true;
     }
 
@@ -2246,26 +2302,26 @@ function App() {
         })
         .eq('id', id)
         .select();
-      
+
       if (error) {
         // Supabase write failed — enqueue for retry instead of reverting
         console.warn(`[Queue] Supabase write failed for ${id}, enqueuing for retry:`, error);
-        enqueueUpdateOp();
+        await enqueueUpdateOp();
         return true; // Keep optimistic update, will sync later
       }
-      
+
       if (!data || data.length === 0) {
         console.warn(`[Supabase] No se encontró el envío ${id} para actualizar. Puede estar en modo prueba o no sincronizado.`);
         return true; // Ya se hizo la actualización optimista localmente
       }
-      
+
       const savedShipment = { ...data[0].data, id: data[0].id };
       setShipments(prev => prev.map(s => s.id === id ? savedShipment : s));
       return true;
     } catch (error) {
        // Network error — enqueue for retry
        console.warn(`[Queue] Network error updating ${id}, enqueuing for retry:`, error);
-       enqueueUpdateOp();
+       await enqueueUpdateOp();
        return true; // Keep optimistic update
     }
   }
@@ -2602,9 +2658,9 @@ function App() {
   const handleUpdateClient = async (clientId, updatedData, branchId = null) => {
     const c = clientsRef.current.find(item => item.id === clientId);
     if (!c) return;
-    
+
     let updated = { ...c, lastInteraction: new Date().toISOString().split('T')[0] };
-    
+
     if (branchId && c.branches) {
         const updatedBranches = c.branches.map(b => b.id === branchId ? { ...b, ...updatedData } : b);
         updated.branches = updatedBranches;
@@ -2612,12 +2668,30 @@ function App() {
         updated = { ...updated, ...updatedData };
     }
 
+    // Optimistic update — este handler se usa mucho como efecto secundario silencioso
+    // (aprendizaje de GPS/receptor en la entrega), así que nunca debe bloquear al
+    // conductor con un alert ni perder el dato si falla la red.
+    setClients(prev => prev.map(item => item.id === clientId ? updated : item));
+
+    const enqueueClientOp = async () => {
+      const qLen = await enqueue({ id: `updateClient_${clientId}`, type: 'updateClient', clientId, updatedData: updated, queuedAt: new Date().toISOString() });
+      setPendingQueueCount(qLen);
+      console.log(`[Queue] Enqueued updateClient for ${clientId}`);
+    };
+
+    if (!navigator.onLine) {
+      await enqueueClientOp();
+      return;
+    }
+
     try {
       const { data, error } = await supabase.from('clients').update({ name: updated.name, data: updated }).eq('id', clientId).select();
       if (error) throw error;
       if (data && data[0]) setClients(prev => prev.map(item => item.id === clientId ? { ...data[0].data, id: data[0].id } : item));
-      else setClients(prev => prev.map(item => item.id === clientId ? updated : item));
-    } catch (e) { alert('Error al actualizar cliente'); console.error(e); }
+    } catch (e) {
+      console.warn(`[Queue] Error actualizando cliente ${clientId}, encolando para reintento:`, e);
+      await enqueueClientOp();
+    }
   }
 
   const getClientPrefix = (billingType) => {
