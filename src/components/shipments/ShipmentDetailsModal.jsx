@@ -1376,9 +1376,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     )}
                                 </div>
                                     
-                                    {shipment.deliveryCoordinates && (
-                                        <div className="pt-2">
-                                            <a 
+                                    <div className="pt-2">
+                                        {shipment.deliveryCoordinates ? (
+                                            <a
                                                 href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(shipment.deliveryCoordinates)}`}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
@@ -1386,8 +1386,12 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             >
                                                 <MapPin size={12} /> Ubicación GPS Confirmada
                                             </a>
-                                        </div>
-                                    )}
+                                        ) : (
+                                            <span className="text-[10px] font-bold text-amber-600 flex items-center gap-1.5" title="El conductor no tenía señal GPS al confirmar la entrega">
+                                                <MapPin size={12} /> ⚠️ Sin ubicación GPS registrada
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         )}

@@ -6,6 +6,12 @@ import Shipment from '../../models/Shipment';
 import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 
+// Reintentos de localización GPS al abrir el modal: en sitios con mala señal
+// (naves, sótanos) un solo intento sin timeout se queda esperando para siempre.
+// Se reintenta varias veces con un límite corto por intento antes de rendirse.
+const GPS_MAX_ATTEMPTS = 8;
+const GPS_RETRY_INTERVAL_MS = 5000;
+
 export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, shipment, collectionAlert, pendingDebts = [], clients = [], sameClientStops = [], zoom = 1 }) {
     const labelClass = "block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1";
     const inputClass = "w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all shadow-sm";
@@ -18,6 +24,9 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
     const [receiverId, setReceiverId] = useState('');
     const [isListening, setIsListening] = useState(false);
     const [deliveryCoordinates, setDeliveryCoordinates] = useState('');
+    const [gpsAttempt, setGpsAttempt] = useState(0);
+    const [gpsFailed, setGpsFailed] = useState(false);
+    const gpsRetryTimeoutRef = useRef(null);
     const [customAmounts, setCustomAmounts] = useState({});
     const [selectedDebts, setSelectedDebts] = useState([]);
     // Otras paradas de hoy para el mismo destinatario que se cerrarán en este mismo
@@ -265,13 +274,40 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
     useEffect(() => {
         if (isOpen && navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                (position) => setDeliveryCoordinates(`${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`),
-                (error) => console.log(error),
-                { enableHighAccuracy: true }
-            );
+            let cancelled = false;
+
+            const tryGetPosition = (attempt) => {
+                if (cancelled) return;
+                setGpsAttempt(attempt);
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        if (cancelled) return;
+                        setDeliveryCoordinates(`${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`);
+                    },
+                    (error) => {
+                        if (cancelled) return;
+                        console.log('[GPS] intento', attempt, 'de', GPS_MAX_ATTEMPTS, error);
+                        if (attempt < GPS_MAX_ATTEMPTS) {
+                            gpsRetryTimeoutRef.current = setTimeout(() => tryGetPosition(attempt + 1), GPS_RETRY_INTERVAL_MS);
+                        } else {
+                            setGpsFailed(true);
+                        }
+                    },
+                    { enableHighAccuracy: true, timeout: GPS_RETRY_INTERVAL_MS - 500, maximumAge: 0 }
+                );
+            };
+
+            tryGetPosition(1);
+
+            return () => {
+                cancelled = true;
+                if (gpsRetryTimeoutRef.current) clearTimeout(gpsRetryTimeoutRef.current);
+            };
         } else if (!isOpen) {
+            if (gpsRetryTimeoutRef.current) clearTimeout(gpsRetryTimeoutRef.current);
             setDeliveryCoordinates('');
+            setGpsAttempt(0);
+            setGpsFailed(false);
             setReceiverName('');
             setReceiverId('');
             setReceiverId('');
@@ -446,6 +482,18 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                     alert("Es obligatorio capturar al menos una prueba (Firma o Foto del Sello/Albarán).");
                 }
                 return;
+            }
+
+            // Ubicación GPS: no bloquea la entrega (el conductor puede estar en un sitio
+            // sin señal), pero se avisa para que sea una decisión consciente y no un
+            // hueco silencioso que nadie nota hasta que hace falta para una reclamación.
+            if (!deliveryCoordinates) {
+                const proceedWithoutGps = window.confirm(
+                    gpsFailed
+                        ? '⚠️ No se ha podido obtener tu ubicación GPS tras varios intentos.\n\n¿Confirmar la entrega sin ubicación registrada?'
+                        : '⚠️ Todavía no se ha capturado tu ubicación GPS.\n\n¿Confirmar la entrega sin esperar a la ubicación?'
+                );
+                if (!proceedWithoutGps) return;
             }
         }
 
@@ -741,12 +789,14 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
                     <div className={`flex items-center gap-2 text-xs mb-4 px-3 py-2 rounded-lg ${deliveryCoordinates
                         ? 'bg-emerald-50 text-emerald-700'
-                        : 'bg-amber-50 text-amber-700'
+                        : gpsFailed ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'
                         }`}>
                         <MapPin size={14} />
                         {deliveryCoordinates
                             ? `📍 Ubicación capturada: ${deliveryCoordinates}`
-                            : '⏳ Obteniendo ubicación GPS...'
+                            : gpsFailed
+                                ? '⚠️ No se pudo obtener el GPS tras varios intentos'
+                                : `⏳ Buscando señal GPS... intento ${gpsAttempt} de ${GPS_MAX_ATTEMPTS}`
                         }
                     </div>
 
