@@ -400,7 +400,8 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
             amount: totalWithIva.toFixed(2),
             amountDisplay: `€${totalWithIva.toFixed(2)}`,
             colorClass: 'text-orange-600',
-            source: 'simplified'
+            source: 'simplified',
+            original: s
         };
     });
 

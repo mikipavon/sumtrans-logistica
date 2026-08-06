@@ -475,6 +475,36 @@ describe('encadenado entre pueblos', () => {
         expect(r.resumen.sinRuta).toBe(true);
     });
 
+    it('una parada sin coordenadas propias usa las del pueblo para no irse siempre al final', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Aguilar de la Frontera', coords: punto(20), nombre: 'aguilar' }),
+            envio({ ciudad: 'Cabra', coords: null, nombre: 'pepe' }),
+        ];
+        // El conductor está físicamente en Cabra, pero "pepe" es una dirección nueva
+        // sin coordenadas propias ni de cliente aprendidas. Otro cliente de Cabra sí
+        // las tiene, y sirve de referencia de dónde cae el pueblo.
+        const r = optimizarRuta({
+            envios, rutas: [], conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(0), lon: este(0) },
+            resolverCoordenadasPueblo: (pueblo) => pueblo === 'Cabra' ? { lat: norte(0.5), lon: este(0) } : null,
+        });
+        expect(nombres(r)).toEqual(['pepe', 'aguilar']);
+    });
+
+    it('sin ninguna referencia del pueblo, la parada sin coordenadas se queda al final', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Aguilar de la Frontera', coords: punto(20), nombre: 'aguilar' }),
+            envio({ ciudad: 'Cabra', coords: null, nombre: 'pepe' }),
+        ];
+        const r = optimizarRuta({
+            envios, rutas: [], conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(0), lon: este(0) },
+        });
+        expect(nombres(r)).toEqual(['aguilar', 'pepe']);
+    });
+
     it('los pueblos que no están en la ruta se cuelan donde menos desvían', () => {
         contador = 0;
         const envios = [

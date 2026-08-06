@@ -2812,6 +2812,15 @@ function App() {
     } catch (e) { alert('Error al borrar cliente'); console.error(e); }
   }
 
+  const handleDeleteClients = async (clientIds) => {
+    if (!clientIds || clientIds.length === 0) return;
+    try {
+      const { error } = await supabase.from('clients').delete().in('id', clientIds);
+      if (error) throw error;
+      setClients(prev => prev.filter(c => !clientIds.includes(c.id)));
+    } catch (e) { alert('Error al borrar los clientes'); console.error(e); }
+  }
+
   const handleImportClients = async (newClients) => {
     try {
       let currentClients = [...clientsRef.current];
@@ -3477,7 +3486,7 @@ function App() {
       />}
       {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onReply={handleIncidentReply} drivers={drivers} driverNamePreference={driverNamePreference} />}
       {currentView === 'notifications' && <NotificationCenter shipments={visibleShipments} drivers={drivers} clients={visibleClients} onUpdateShipment={handleUpdateShipment} articles={articles} tariffs={tariffs} defaultCodFee={defaultCodFee} familyOrder={familyOrder} coverageZones={coverageZones} />}
-      {currentView === 'clientValidation' && <ClientValidation clients={clients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
+      {currentView === 'clientValidation' && <ClientValidation clients={clients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} onDeleteClients={handleDeleteClients} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
       {currentView === 'settings' && (
         <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
 

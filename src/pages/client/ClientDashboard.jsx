@@ -146,10 +146,14 @@ export default function ClientDashboard({
         return uniquePoblaciones.filter(p => p.name.toLowerCase().includes(q)).slice(0, 8);
     }, [uniquePoblaciones, newOriginCity]);
 
-    // Available articles for clients: BADI (Bultos) and MYM (Palets)
+    // Available articles for clients: los asignados en su ficha (allowedArticles);
+    // si no tiene ninguno configurado, se cae al default histórico BADI (Bultos) y MYM (Palets).
     const availableArticles = useMemo(() => {
         if (!articles) return [];
-        const allowed = articles.filter(a => a.category === 'BADI' || a.category === 'MYM');
+        const allowedIds = client?.allowedArticles;
+        const allowed = (allowedIds && allowedIds.length > 0)
+            ? articles.filter(a => allowedIds.includes(a.id) || allowedIds.includes(String(a.id)))
+            : articles.filter(a => a.category === 'BADI' || a.category === 'MYM');
         return allowed.sort((a,b) => {
             if (a.category === 'BADI' && b.category === 'MYM') return -1;
             if (a.category === 'MYM' && b.category === 'BADI') return 1;

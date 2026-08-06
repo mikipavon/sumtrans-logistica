@@ -71,7 +71,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         requireName: true,
         requireDNI: false,
         requirePhoto: false,
-        requireSignature: true,
+        requireSignature: false,
     };
 
     const fileInputRef = useRef(null);

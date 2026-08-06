@@ -181,8 +181,22 @@ const agruparPorCiudad = (items) => {
     return [...mapa.values()];
 };
 
+/**
+ * El centro de un grupo, cayendo al centro del PUEBLO si ningún envío del grupo
+ * tiene coordenadas propias (dirección nueva, nunca entregada, sin ficha de cliente
+ * con coordenadas aprendidas). Sin esto, un grupo sin coordenadas quedaba a distancia
+ * "infinita" de cualquier punto y el algoritmo lo mandaba siempre al final, aunque el
+ * conductor estuviera físicamente en ese pueblo al pulsar Optimizar.
+ */
+const centroDeConRespaldo = (items, pueblo, resolverCoordenadasPueblo) => {
+    const propio = centroDe(items);
+    if (propio) return propio;
+    const delPueblo = resolverCoordenadasPueblo ? resolverCoordenadasPueblo(pueblo) : null;
+    return (delPueblo && Number.isFinite(delPueblo.lat) && Number.isFinite(delPueblo.lon)) ? delPueblo : null;
+};
+
 /** Sin ruta configurada: cadena de pueblos por cercanía, que es mejor que el azar. */
-const secuenciaGeografica = (items, puntoInicial) => {
+const secuenciaGeografica = (items, puntoInicial, resolverCoordenadasPueblo) => {
     const restantes = agruparPorCiudad(items);
     const grupos = [];
     let cursor = puntoInicial;
@@ -190,20 +204,20 @@ const secuenciaGeografica = (items, puntoInicial) => {
         let mejor = 0;
         let mejorDist = Infinity;
         restantes.forEach((grupo, i) => {
-            const centro = centroDe(grupo.items);
+            const centro = centroDeConRespaldo(grupo.items, grupo.pueblo, resolverCoordenadasPueblo);
             const dist = distanciaEntre(cursor, centro);
             if (dist < mejorDist) { mejorDist = dist; mejor = i; }
         });
         const elegido = restantes.splice(mejor, 1)[0];
         grupos.push(elegido);
-        const centro = centroDe(elegido.items);
+        const centro = centroDeConRespaldo(elegido.items, elegido.pueblo, resolverCoordenadasPueblo);
         if (centro) cursor = centro;
     }
     return { grupos, extras: 0, sinRuta: true };
 };
 
-const secuenciaDePueblos = (items, pueblosRuta, puntoInicial) => {
-    if (pueblosRuta.length === 0) return secuenciaGeografica(items, puntoInicial);
+const secuenciaDePueblos = (items, pueblosRuta, puntoInicial, resolverCoordenadasPueblo) => {
+    if (pueblosRuta.length === 0) return secuenciaGeografica(items, puntoInicial, resolverCoordenadasPueblo);
 
     const cubos = new Map();
     const sueltos = [];
@@ -225,13 +239,13 @@ const secuenciaDePueblos = (items, pueblosRuta, puntoInicial) => {
     // decidía "antes o después" comparando con dónde estaba el conductor al pulsar el
     // botón, lo cual solo tiene sentido para el primer pueblo del día.
     agruparPorCiudad(sueltos).forEach(suelto => {
-        const centro = centroDe(suelto.items);
+        const centro = centroDeConRespaldo(suelto.items, suelto.pueblo, resolverCoordenadasPueblo);
         if (!centro || grupos.length === 0) { grupos.push(suelto); return; }
         let mejor = grupos.length;
         let mejorCoste = Infinity;
         for (let i = 0; i <= grupos.length; i++) {
-            const previo = i === 0 ? puntoInicial : centroDe(grupos[i - 1].items);
-            const siguiente = i < grupos.length ? centroDe(grupos[i].items) : null;
+            const previo = i === 0 ? puntoInicial : centroDeConRespaldo(grupos[i - 1].items, grupos[i - 1].pueblo, resolverCoordenadasPueblo);
+            const siguiente = i < grupos.length ? centroDeConRespaldo(grupos[i].items, grupos[i].pueblo, resolverCoordenadasPueblo) : null;
             const coste = costeDeInsercion(previo, centro, siguiente);
             if (coste < mejorCoste) { mejorCoste = coste; mejor = i; }
         }
@@ -417,6 +431,7 @@ export const optimizarRuta = ({
     conductorId = null,
     routeId = null,
     resolverCliente = () => null,
+    resolverCoordenadasPueblo = () => null,
     aprendizaje = null,
     conocimiento = null,
     gps = null,
@@ -458,7 +473,7 @@ export const optimizarRuta = ({
         ? { lat: gps.lat, lon: gps.lon }
         : centroDe(items);
 
-    const { grupos, extras, sinRuta } = secuenciaDePueblos(items, pueblosRuta, puntoInicial);
+    const { grupos, extras, sinRuta } = secuenciaDePueblos(items, pueblosRuta, puntoInicial, resolverCoordenadasPueblo);
 
     const contexto = {
         turno,

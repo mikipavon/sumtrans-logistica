@@ -36,7 +36,7 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { getPackagesCount, puedeAsignarloEsteConductor, ciudadDeEnvio, nombreDeParada } from '../../utils/shipmentUtils';
 import { mejorPuebloParaCiudad, esElMismoPueblo, normalizarPueblo } from '../../utils/townMatch';
-import { optimizarRuta } from '../../utils/optimizadorRuta';
+import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
 import { adaptarConocimiento, registrarEntrega, contarPueblosMemorizados } from '../../utils/aprendizajeRuta';
 import { turnoQueSeAsignaAhora, turnoQueSeRepartaAhora, etiquetaTurno } from '../../utils/turnos';
 import { resolverLogo, insigniaDeAgencia, buscarClienteDeEnvio } from '../../utils/marca';
@@ -3254,6 +3254,20 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             }, 3000);
         };
 
+        // Cuando la parada es una dirección nueva (sin coordenadas propias ni de
+        // cliente), no hay forma de saber a qué distancia está del conductor. Antes
+        // de rendirse y mandarla al final, se mira si algún OTRO cliente de ese mismo
+        // pueblo tiene coordenadas aprendidas de entregas anteriores, y se usan como
+        // referencia aproximada de dónde cae el pueblo.
+        const resolverCoordenadasPueblo = (pueblo) => {
+            const clave = normalizarPueblo(pueblo);
+            if (!clave) return null;
+            const conocido = (clients || []).find(c =>
+                c?.coordinates && normalizarPueblo(c.city) === clave
+            );
+            return conocido ? parsearCoordenadas(conocido.coordinates) : null;
+        };
+
         const ordenar = (gps) => {
             try {
                 const { orden, deCamino, resumen } = optimizarRuta({
@@ -3262,6 +3276,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     conductorId: currentDriverId,
                     routeId: currentDriver?.routeId,
                     resolverCliente: (envio) => clientsMap.get(normalizeClientName(nombreDeParada(envio))) || null,
+                    resolverCoordenadasPueblo,
                     aprendizaje: positionLearning,
                     conocimiento: routeKnowledge,
                     gps,
@@ -4270,7 +4285,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         return name === target || legal === target;
                     });
                     const bType = String(payingClient?.billingType || '').toLowerCase();
-                    return bType.includes('factur') || bType.includes('presupuesto') || bType.includes('habitual') || bType.includes('diar') || bType.includes('libre') || bType.includes('contado');
+                    return bType.includes('factur') || bType.includes('presupuesto');
                 })()}
             />
 
@@ -4343,18 +4358,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             {/* Header */}
             <header id="driver-header" className={`bg-slate-900 text-white p-4 sticky z-50 shadow-md transition-all duration-300 ${(!isOnline || justReconnected) ? 'top-10' : 'top-0'}`}>
                 <div className="flex justify-between items-center mb-4">
-                    <div className="flex items-center gap-3">
-                        <div 
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div
                             onClick={() => setActiveTab('profile')}
-                            className="w-10 h-10 bg-white rounded-xl p-1.5 shadow-inner flex items-center justify-center overflow-hidden relative cursor-pointer hover:shadow-md transition-all active:scale-95"
+                            className="w-10 h-10 bg-white rounded-xl p-1.5 shadow-inner flex items-center justify-center overflow-hidden relative cursor-pointer hover:shadow-md transition-all active:scale-95 shrink-0"
                             title="Portal del Empleado"
                         >
                             <img src="/logo-sum.svg" alt="Logo" className="w-full h-full object-contain" />
                         </div>
-                        <div>
-                            <h1 className="font-bold text-lg leading-tight text-white flex items-center gap-2">
-                                Hola, {drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name || cachedDriverName || 'Conductor'}
-                                
+                        <div className="min-w-0">
+                            <h1 className="font-bold text-lg leading-tight text-white flex items-center gap-2 min-w-0">
+                                <span className="truncate">Hola, {drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name || cachedDriverName || 'Conductor'}</span>
+
                                 {/* GPS Status Button */}
                                 <button
                                     onClick={(e) => {
@@ -4381,7 +4396,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             </h1>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                         {/* Accessibility Controls */}
                         <div className="flex bg-slate-800 rounded-lg p-1 mr-2">
                             <button 
@@ -4887,9 +4902,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                 <h4 className={`text-sm truncate ${shipment.porteType !== 'Pagado' ? 'font-bold italic text-amber-800' : 'font-bold text-slate-700'}`}>{shipment.destinationName || shipment.client} <span className="font-normal text-slate-500 not-italic">({shipment.destinationCity || 'N/A'})</span></h4>
                                             </div>
                                         </div>
-                                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ml-2 shrink-0 ${shipment.type === 'Recibo' ? 'bg-emerald-200 text-emerald-800' : 'bg-green-200 text-green-800'}`}>
-                                            {shipment.type === 'Recibo' ? 'Cobrado' : 'Entregado'}
-                                        </span>
+                                        {shipment.type === 'Recibo' && (
+                                            <span className="text-xs px-2 py-0.5 rounded-full font-bold ml-2 shrink-0 bg-emerald-200 text-emerald-800">
+                                                Cobrado
+                                            </span>
+                                        )}
                                     </div>
 
                                     <div className="flex justify-between items-center mt-2 pt-2 border-t border-slate-200">
@@ -5586,9 +5603,28 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                     <p className="text-[10px] text-slate-400">{item.detail}</p>
                                                     <p className="text-[9px] text-orange-400">Base: {item.base}€ + IVA: {item.iva}€</p>
                                                 </div>
-                                                <span className="font-mono text-sm font-bold text-orange-600">
-                                                    {item.amountDisplay}
-                                                </span>
+                                                <div className="flex items-center gap-3">
+                                                    <span className="font-mono text-sm font-bold text-orange-600">
+                                                        {item.amountDisplay}
+                                                    </span>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            const ship = item.original || (allShipments || []).find(s => s.id === item.id) || {};
+                                                            printSimplifiedInvoice({
+                                                                ...ship,
+                                                                amount: item.amount,
+                                                                id: item.id,
+                                                                date: item.date || new Date().toLocaleDateString('es-ES'),
+                                                                articles: ship.articles || []
+                                                            });
+                                                        }}
+                                                        className="p-2 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition-colors"
+                                                        title="Ver / Enviar justificante por WhatsApp"
+                                                    >
+                                                        <MessageSquare size={16} />
+                                                    </button>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -5819,6 +5855,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 allShipments={allShipments}
                 onUpdateShipment={onUpdateShipment}
                 onUpdateClient={onUpdateClient}
+                onAddClient={onAddClient}
                 currentDriverId={currentDriverId}
             />
 

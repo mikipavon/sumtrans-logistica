@@ -123,6 +123,40 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         setFormData(prev => ({ ...prev, amount: (articlesTotal + commission).toFixed(2) }));
     };
 
+    // Si el admin corrige quién paga (Pagado ↔ Debido), los artículos ya añadidos
+    // se quedan con el precio calculado para el pagador ANTERIOR (p.ej. una tarifa
+    // especial pactada con el remitente) aunque el nuevo pagador no tenga ese acuerdo.
+    // Se recalculan aquí para que caigan a la tarifa general del nuevo pagador.
+    useEffect(() => {
+        if (!isEditing || selectedArticles.length === 0) return;
+
+        const pt = formData.porteType || 'Pagado';
+        const payingClientName = pt === 'Pagado' ? formData.client : formData.destinationName;
+        const cName = (payingClientName || '').toLowerCase().trim();
+        const client = (clients || []).find(c =>
+            String(c.name || '').toLowerCase().trim() === cName ||
+            String(c.legalName || '').toLowerCase().trim() === cName
+        );
+
+        const updatedArticles = selectedArticles.map(item => {
+            let price = parseFloat(item.price || 0); // Tarifa general del artículo
+            if (weightClientData) {
+                price = 0;
+            } else if (client?.customRates && client.customRates[item.id] !== undefined && client.customRates[item.id] !== '') {
+                price = parseFloat(client.customRates[item.id]);
+            }
+            return { ...item, pricePerUnit: price, totalPrice: price * item.quantity };
+        });
+
+        const hasChanged = JSON.stringify(updatedArticles) !== JSON.stringify(selectedArticles);
+        if (hasChanged) {
+            setSelectedArticles(updatedArticles);
+            const articlesTotal = updatedArticles.reduce((sum, item) => sum + item.totalPrice, 0);
+            const commission = parseFloat(formData.codCommission) || 0;
+            setFormData(prev => ({ ...prev, amount: (articlesTotal + commission).toFixed(2) }));
+        }
+    }, [formData.porteType, formData.client, formData.destinationName, clients, weightClientData, selectedArticles, isEditing]);
+
     useEffect(() => {
         if (shipment) {
             // Los artículos guardados son la fuente de verdad.

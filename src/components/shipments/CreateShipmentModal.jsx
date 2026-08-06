@@ -322,7 +322,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
         const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
         const client = resolveBillingClient(payingClientName, parentId);
-        if (!client) return { requireWeight: false, requireName: true, requireDNI: false, requirePhoto: false, requireSignature: true };
+        if (!client) return { requireWeight: false, requireName: true, requireDNI: false, requirePhoto: false, requireSignature: false };
         return {
             requireWeight: !!client.requireWeight,
             requireName: client.requireName !== false,
@@ -597,7 +597,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
     const handleDestinationNameChange = (e) => {
         const value = e.target.value;
-        setFormData(prev => ({ ...prev, destinationName: value }));
+        setFormData(prev => ({ ...prev, destinationName: value, selectedDestBillingType: null }));
         updateDestSuggestions(value);
     };
 

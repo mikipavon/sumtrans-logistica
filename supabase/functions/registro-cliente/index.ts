@@ -264,7 +264,7 @@ serve(async (req: Request) => {
       sector: sector,
       color: '#3b82f6',
       priority: 'normal',
-      requireSignature: true,
+      requireSignature: false,
       requireName: true,
       // Pistas para el admin si el CIF ya estaba en cartera
       ...(duplicadoDe ? {
