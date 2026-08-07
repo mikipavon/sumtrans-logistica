@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, MapPin, Map as MapIcon, Calendar, Clock, Package, User, Phone, FileText, Euro, CreditCard, Save, Edit2, Truck, Printer, Shield, Fingerprint, Image as ImageIcon, ExternalLink, Download, Loader2, MessageSquare, Camera, Wallet } from 'lucide-react';
 
 import { printShipmentTicket } from '../../utils/printShipment';
+import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { generateDeliveryPDF } from '../../utils/deliveryPdf';
 import { uploadProof } from '../../utils/storage';
 import { getPackagesCount } from '../../utils/shipmentUtils';
@@ -17,6 +18,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
     const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
     const [codReceiptPhoto, setCodReceiptPhoto] = useState(null); // COD receipt photo (new upload)
     const [isUploadingCodReceipt, setIsUploadingCodReceipt] = useState(false);
+    const [isSavingInvoice, setIsSavingInvoice] = useState(false);
     const fileInputRef = useRef(null);
     const codReceiptInputRef = useRef(null);
     
@@ -709,6 +711,78 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     </div>
                     )}
 
+                    {/* Factura Simplificada: fuera del modo edición a propósito, para que se
+                        pueda marcar también desde vistas de solo lectura (p.ej. al pinchar un
+                        cobro en la Caja del conductor), que es justo donde hace falta reclasificar
+                        un cobro ya hecho. Guarda al momento con onUpdate, sin pasar por "Guardar
+                        Cambios". Lo ya cobrado pasa a ser la BASE y se le suma el +21% de IVA
+                        encima (igual que el checkbox de la confirmación de entrega): el cliente
+                        pasa a deber ese IVA además de lo que ya pagó. simplifiedInvoiceAmount se
+                        guarda CON IVA incluido porque así lo espera accountLogic.js, que además
+                        saca automáticamente el albarán del cómputo normal de caja en cuanto
+                        hasSimplifiedInvoice es true. */}
+                    {!isClientView && !hidePrices && (parseFloat(String(formData.customAmount ?? formData.amount ?? 0).toString().replace(/[^0-9.,-]+/g, '').replace(',', '.')) || 0) > 0 && (
+                        <div className={`p-4 rounded-xl border shadow-sm transition-colors ${formData.hasSimplifiedInvoice ? 'bg-amber-50 border-amber-300' : 'bg-white border-gray-200'}`}>
+                            <label className="flex items-center gap-3 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={formData.hasSimplifiedInvoice || false}
+                                    disabled={isSavingInvoice || !onUpdate}
+                                    onChange={async (e) => {
+                                        const checked = e.target.checked;
+                                        let updates;
+                                        if (checked) {
+                                            const base = parseFloat(String(formData.customAmount ?? formData.amount ?? 0).toString().replace(/[^0-9.,-]+/g, '').replace(',', '.')) || 0;
+                                            const totalConIva = +(base * 1.21).toFixed(2);
+                                            updates = { hasSimplifiedInvoice: true, simplifiedInvoiceAmount: totalConIva.toFixed(2), simplifiedInvoicePaid: true };
+                                        } else {
+                                            updates = { hasSimplifiedInvoice: false, simplifiedInvoiceAmount: null, simplifiedInvoicePaid: false };
+                                        }
+                                        setFormData(prev => ({ ...prev, ...updates }));
+                                        if (onUpdate) {
+                                            setIsSavingInvoice(true);
+                                            try {
+                                                await onUpdate(shipment.id, updates);
+                                            } catch (err) {
+                                                console.error('Error guardando factura simplificada:', err);
+                                                alert('Error al guardar la factura simplificada: ' + err.message);
+                                            } finally {
+                                                setIsSavingInvoice(false);
+                                            }
+                                        }
+                                    }}
+                                    className="w-5 h-5 rounded text-amber-600 border-gray-300 focus:ring-amber-500"
+                                />
+                                <div className="flex-1">
+                                    <span className="text-sm font-bold text-slate-800 block leading-none mb-1">
+                                        🧾 Factura Simplificada{isSavingInvoice ? ' (guardando...)' : ''}
+                                    </span>
+                                    <span className="text-[10px] text-slate-500 uppercase leading-none block">Añade +21% IVA a lo ya cobrado y lo saca de caja</span>
+                                </div>
+                            </label>
+                            {formData.hasSimplifiedInvoice && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const totalConIva = parseFloat(formData.simplifiedInvoiceAmount) || 0;
+                                        const base = +(totalConIva / 1.21).toFixed(2);
+                                        printSimplifiedInvoice({
+                                            ...shipment,
+                                            ...formData,
+                                            amount: base,
+                                            id: shipment.id,
+                                            date: new Date().toLocaleDateString('es-ES'),
+                                            articles: selectedArticles.length > 0 ? selectedArticles : (shipment.articles || [])
+                                        });
+                                    }}
+                                    className="mt-3 w-full text-[10px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 rounded-lg py-2 transition-colors"
+                                >
+                                    Imprimir Factura Simplificada ({formData.simplifiedInvoiceAmount}€)
+                                </button>
+                            )}
+                        </div>
+                    )}
+
                     {(formData.hasCod || isEditing) && (
                         <div className={`p-3 rounded-lg border flex gap-4 animate-in fade-in slide-in-from-bottom-2 ${formData.hasCod ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-200'}`}>
                             <div className="flex-1 flex flex-col justify-center relative">
@@ -1227,8 +1301,8 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     {formData.hasCod && (
                                         <div className="bg-white p-3 rounded-xl border border-orange-100 shadow-sm hover:border-orange-300 transition-colors">
                                             <label className="flex items-center gap-3 cursor-pointer">
-                                                <input 
-                                                    type="checkbox" 
+                                                <input
+                                                    type="checkbox"
                                                     checked={formData.codPaid || formData.isCodPaid || false}
                                                     onChange={(e) => {
                                                         handleChange('codPaid', e.target.checked);

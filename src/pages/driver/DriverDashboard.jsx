@@ -5598,7 +5598,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                     </div>
                                     <div className="bg-white rounded-xl shadow-sm border border-orange-100 divide-y divide-orange-50">
                                         {allSimplifiedInvoiceDetail.map(item => (
-                                            <div key={item.key} className="p-3 flex justify-between items-center">
+                                            <div
+                                                key={item.key}
+                                                className="p-3 flex justify-between items-center hover:bg-slate-50 cursor-pointer"
+                                                onClick={() => {
+                                                    const ship = item.original || (allShipments || []).find(s => s.id === item.id);
+                                                    if (ship) {
+                                                        setSelectedShipment(ship);
+                                                        setIsReadOnlyModal(true);
+                                                        setIsDetailsModalOpen(true);
+                                                    }
+                                                }}
+                                            >
                                                 <div className="flex-1">
                                                     <p className="text-sm font-bold text-slate-700">{item.client}</p>
                                                     <p className="text-[10px] text-slate-400">{item.detail}</p>

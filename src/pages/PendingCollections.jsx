@@ -4,7 +4,7 @@ import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { utils, writeFile } from 'xlsx';
 import Shipment from '../models/Shipment';
 
-export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, driverNamePreference = 'both' }) {
+export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onUpdateShipment, driverNamePreference = 'both' }) {
     const getDriverDisplayName = (driver) => {
         if (!driver) return '';
         const name = driver.name || '';
@@ -268,7 +268,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                 isOpen={isDetailsModalOpen}
                 onClose={() => { setIsDetailsModalOpen(false); setSelectedShipment(null); }}
                 shipment={selectedShipment}
-                onUpdate={() => { }}
+                onUpdate={onUpdateShipment}
             />
             <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
