@@ -4265,6 +4265,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     setIsDetailsModalOpen(false);
                     setIsReadOnlyModal(false);
                 }}
+                zoom={zoom}
                 shipment={selectedShipment}
                 allPoblaciones={allPoblaciones}
                 drivers={drivers}

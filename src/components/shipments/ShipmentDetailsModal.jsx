@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, MapPin, Map as MapIcon, Calendar, Clock, Package, User, Phone, FileText, Euro, CreditCard, Save, Edit2, Truck, Printer, Shield, Fingerprint, Image as ImageIcon, ExternalLink, Download, Loader2, MessageSquare, Camera, Wallet } from 'lucide-react';
 
 import { printShipmentTicket } from '../../utils/printShipment';
@@ -8,7 +9,7 @@ import { getPackagesCount } from '../../utils/shipmentUtils';
 
 
 import { Trash2, Plus } from 'lucide-react';
-export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, driverNamePreference = 'both' }) {
+export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, driverNamePreference = 'both', zoom = 1 }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -347,7 +348,13 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         );
     };
 
-    return (
+    // El modal se saca del árbol del dashboard con un portal a propósito: el dashboard
+    // del conductor va envuelto en `style={{ zoom }}` (la lupa A+/A-), y el zoom de CSS
+    // no ajusta las unidades de viewport (ver memoria zoom-css-rompe-vh-en-el-dashboard),
+    // así que el marco `modal-mobile-height` (dvh) se dibuja mal dentro de ese subárbol.
+    // Fuera del zoom, `fixed inset-0` y `dvh` valen exactamente lo que mide la pantalla.
+    // El zoom del conductor se reaplica más abajo, pero sólo al CONTENIDO de cada bloque.
+    return createPortal(
         <div className="fixed inset-0 bg-slate-900/90 z-[100] flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-md animate-in fade-in duration-200">
             {isEditing && !isReadOnly && (
                 <datalist id="edit-clients-list">
@@ -361,7 +368,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
             )}
             <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col modal-mobile-height">
                 {/* Header */}
-                <div className="sticky top-0 bg-white border-b border-gray-100 p-4 flex items-center justify-between z-10 shrink-0">
+                <div className="sticky top-0 bg-white border-b border-gray-100 p-4 flex items-center justify-between z-10 shrink-0" style={{ zoom }}>
                     <div className="flex items-center gap-3">
                         <div className={`p-2 rounded-lg ${shipment.type === 'Recogida' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
                             <Package size={20} />
@@ -420,7 +427,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     </div>
                 </div>
 
-                <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 flex-1 overflow-y-auto bg-slate-50/50">
+                <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 flex-1 overflow-y-auto bg-slate-50/50" style={{ zoom }}>
                     {/* Client Information */}
                     <div className="bg-gray-50 p-4 rounded-xl space-y-4 border border-gray-100">
                         <h3 className="font-bold text-slate-800 flex items-center gap-2 text-[10px] uppercase tracking-wider border-b border-gray-200 pb-2">
@@ -1435,7 +1442,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
                 {/* Footer Buttons */}
                 {isEditing ? (
-                    <div className="border-t border-gray-100 p-4 bg-gray-50 shrink-0 flex gap-3 animate-in slide-in-from-bottom-2">
+                    <div className="border-t border-gray-100 p-4 bg-gray-50 shrink-0 flex gap-3 animate-in slide-in-from-bottom-2" style={{ zoom }}>
                         <button
                             onClick={() => {
                                 setFormData(shipment);
@@ -1455,7 +1462,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                         </button>
                     </div>
                 ) : (
-                    <div className="border-t border-gray-100 p-4 bg-gray-50 shrink-0 flex gap-3">
+                    <div className="border-t border-gray-100 p-4 bg-gray-50 shrink-0 flex gap-3" style={{ zoom }}>
                         {shipment.status === 'Entregado' && (
                             <button
                                 onClick={async () => {
@@ -1487,6 +1494,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
                 )}
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }
