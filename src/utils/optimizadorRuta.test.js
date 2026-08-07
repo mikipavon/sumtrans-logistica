@@ -436,6 +436,61 @@ describe('aprendizaje del transportista', () => {
     });
 });
 
+// ── La coordenada de la SEDE manda sobre la del cliente padre ─────────────────
+// Dos sedes del mismo cliente (p.ej. "Agrocor Torre" y "Agrocor Quemadas") con la
+// ficha principal con coordenadas propias: sin esto, el optimizador las trataba
+// como si estuvieran en el mismo sitio y el orden dejaba de tener que ver con la
+// distancia real entre ellas.
+
+describe('coordenadas de sede vs cliente padre', () => {
+    const rutas = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Córdoba'] }];
+    const gps = { lat: norte(0), lon: este(0) };
+
+    it('usa la coordenada de la sede, no la de la ficha principal', () => {
+        contador = 0;
+        // A propósito en el orden equivocado: si mandara la ficha principal
+        // (mismo punto para las dos) ganaría el orden de entrada, no la distancia.
+        const quemadas = envio({ ciudad: 'Córdoba', coords: punto(5), nombre: 'Agrocor Quemadas' });
+        const torre = envio({ ciudad: 'Córdoba', coords: punto(1), nombre: 'Agrocor Torre' });
+
+        const fichaPrincipal = { name: 'Agrocor', coordinates: punto(10) };
+        const resolverCliente = (e) => {
+            if (e.destinationName === 'Agrocor Quemadas') {
+                return { ...fichaPrincipal, _isBranch: true, _branch: { name: 'Agrocor Quemadas', coordinates: punto(5) } };
+            }
+            if (e.destinationName === 'Agrocor Torre') {
+                return { ...fichaPrincipal, _isBranch: true, _branch: { name: 'Agrocor Torre', coordinates: punto(1) } };
+            }
+            return null;
+        };
+
+        const r = optimizarRuta({
+            envios: [quemadas, torre], rutas, conductorId: 7, ahora: MANANA, gps, resolverCliente,
+        });
+        // Torre está a 1 km del punto de partida, Quemadas a 5 km: Torre va primero.
+        expect(nombres(r)).toEqual(['Agrocor Torre', 'Agrocor Quemadas']);
+    });
+
+    it('sin coordenada propia en la sede, cae a la de la ficha principal', () => {
+        contador = 0;
+        // La sede no tiene coordenada propia (fondo, punto(9)): sin la ficha
+        // principal (punto(1), cerca) caería a las del ALBARÁN, que la dejarían
+        // la última. Con el fallback a la ficha principal, va primero.
+        const sedeSinCoords = envio({ ciudad: 'Córdoba', coords: punto(9), nombre: 'Agrocor Quemadas' });
+        const otra = envio({ ciudad: 'Córdoba', coords: punto(4), nombre: 'otra' });
+        const resolverCliente = (e) => {
+            if (e.destinationName === 'Agrocor Quemadas') {
+                return { name: 'Agrocor', coordinates: punto(1), _isBranch: true, _branch: { name: 'Agrocor Quemadas', coordinates: '' } };
+            }
+            return null;
+        };
+        const r = optimizarRuta({
+            envios: [sedeSinCoords, otra], rutas, conductorId: 7, ahora: MANANA, gps, resolverCliente,
+        });
+        expect(nombres(r)).toEqual(['Agrocor Quemadas', 'otra']);
+    });
+});
+
 // ── Geografía entre pueblos ──────────────────────────────────────────────────
 
 describe('encadenado entre pueblos', () => {

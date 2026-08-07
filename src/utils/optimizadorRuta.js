@@ -73,6 +73,15 @@ export const parsearCoordenadas = (texto) => {
 };
 
 const resolverCoordenadas = (envio, cliente) => {
+    // Cuando el envío va a una SEDE (cliente._branch, ver clientsMap en
+    // DriverDashboard), sus coordenadas propias mandan sobre las del cliente
+    // padre. Si no, dos sedes distintas del mismo cliente (p.ej. "Agrocor
+    // Torre" y "Agrocor Quemadas") heredaban la coordenada de la ficha
+    // principal y el optimizador las trataba como si estuvieran en el MISMO
+    // sitio, así que el orden entre ellas dejaba de tener nada que ver con la
+    // distancia real.
+    const deLaSede = cliente?._branch?.coordinates;
+    if (deLaSede && String(deLaSede).trim()) return deLaSede;
     if (cliente?.coordinates && String(cliente.coordinates).trim()) return cliente.coordinates;
     if (envio.deliveryCoordinates) return envio.deliveryCoordinates;
     const propias = envio.type === 'Recogida' ? envio.originCoordinates : envio.destinationCoordinates;
