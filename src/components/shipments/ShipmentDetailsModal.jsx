@@ -295,6 +295,23 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         setFormData(prev => ({ ...prev, [field]: value }));
     };
 
+    // originCoordinates/destinationCoordinates son una FOTO tomada al crear el
+    // albarán (de la sede, o del GPS de quien lo creó si tocó "capturar
+    // ubicación"). Si luego se corrige la coordenada en la ficha del cliente/
+    // sede, los albaranes ya creados NO se actualizan solos y se quedan con la
+    // posición vieja en el mapa de ruta. Esto busca el valor actual guardado
+    // en cliente o sede para poder resincronizar un albarán puntual.
+    const findSavedCoordinates = (name) => {
+        const norm = String(name || '').trim().toLowerCase();
+        if (!norm) return null;
+        for (const c of (clients || [])) {
+            if (String(c.name || '').trim().toLowerCase() === norm) return c.coordinates || null;
+            const b = (c.branches || []).find(br => String(br.name || '').trim().toLowerCase() === norm);
+            if (b) return b.coordinates || null;
+        }
+        return null;
+    };
+
     // Resolve driver name from ID
     const resolveDriver = (driverId) => {
         if (!driverId) return null;
@@ -511,6 +528,38 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     <div className="grid grid-cols-2 gap-3">
                                         {renderField("Teléfono", formData.originPhone, "originPhone", <Phone />)}
                                     </div>
+                                    <div className="space-y-1">
+                                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                                            <MapIcon size={12} /> Coordenadas GPS (mapa de ruta)
+                                        </span>
+                                        {isEditing && !isReadOnly ? (
+                                            <div className="flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={formData.originCoordinates || ''}
+                                                    onChange={(e) => handleChange('originCoordinates', e.target.value)}
+                                                    placeholder="37.9052, -4.7192"
+                                                    className="flex-1 min-w-0 text-sm border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    title="Volver a tomar la ubicación guardada en la ficha del cliente/sede"
+                                                    onClick={() => {
+                                                        const saved = findSavedCoordinates(formData.originName || formData.senderName);
+                                                        if (saved) handleChange('originCoordinates', saved);
+                                                        else alert('Ese remitente no tiene coordenadas guardadas en su ficha.');
+                                                    }}
+                                                    className="px-3 py-2 bg-blue-50 text-blue-600 rounded-lg border border-blue-100 hover:bg-blue-100 text-[10px] font-bold whitespace-nowrap shrink-0"
+                                                >
+                                                    🔄 Usar la de la ficha
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <p className="text-gray-800 font-medium text-sm font-mono">
+                                                {formData.originCoordinates || <span className="text-gray-300 italic">No guardadas (usará la dirección)</span>}
+                                            </p>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
@@ -580,6 +629,38 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     <div className="grid grid-cols-2 gap-3">
                                         {renderField("Teléfono", formData.destinationPhone, "destinationPhone", <Phone />)}
                                         {renderField("Contacto", formData.destinationContact, "destinationContact", <User />)}
+                                    </div>
+                                    <div className="space-y-1">
+                                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                                            <MapIcon size={12} /> Coordenadas GPS (mapa de ruta)
+                                        </span>
+                                        {isEditing && !isReadOnly ? (
+                                            <div className="flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={formData.destinationCoordinates || ''}
+                                                    onChange={(e) => handleChange('destinationCoordinates', e.target.value)}
+                                                    placeholder="37.9052, -4.7192"
+                                                    className="flex-1 min-w-0 text-sm border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    title="Volver a tomar la ubicación guardada en la ficha del cliente/sede"
+                                                    onClick={() => {
+                                                        const saved = findSavedCoordinates(formData.destinationName || formData.receiverName);
+                                                        if (saved) handleChange('destinationCoordinates', saved);
+                                                        else alert('Ese destinatario no tiene coordenadas guardadas en su ficha.');
+                                                    }}
+                                                    className="px-3 py-2 bg-green-50 text-green-600 rounded-lg border border-green-100 hover:bg-green-100 text-[10px] font-bold whitespace-nowrap shrink-0"
+                                                >
+                                                    🔄 Usar la de la ficha
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <p className="text-gray-800 font-medium text-sm font-mono">
+                                                {formData.destinationCoordinates || <span className="text-gray-300 italic">No guardadas (usará la dirección)</span>}
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
                             </div>
