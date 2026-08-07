@@ -72,12 +72,28 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         return parseFloat(sorted[sorted.length - 1].price);
     };
 
+    // customRates ("Tarifa Especial" en la ficha del cliente) vive en el cliente
+    // PADRE, pero el remitente o el destinatario de un albarán puede ser una
+    // SEDE concreta suya. Buscar solo por c.name/c.legalName no encontraba
+    // nunca al padre a través de la sede: cambiar el pagador a una sede con
+    // tarifa especial pactada se quedaba con el precio normal del artículo,
+    // como si no tuviera ningún acuerdo.
+    const findBillingClient = (name) => {
+        const cName = String(name || '').toLowerCase().trim();
+        if (!cName) return null;
+        return (clients || []).find(c =>
+            String(c.name || '').toLowerCase().trim() === cName ||
+            String(c.legalName || '').toLowerCase().trim() === cName ||
+            (c.branches || []).some(b => String(b.name || '').toLowerCase().trim() === cName)
+        ) || null;
+    };
+
     const addArticle = (articleId) => {
         const idToUse = articleId || tempArticleId;
         if (!idToUse || tempQuantity < 1) return;
         const article = (articles || []).find(a => a.id.toString() === idToUse.toString());
         if (!article) return;
-        
+
         let price = parseFloat(article.price || 0);
 
         // ── Para clientes "Por Kilos": el precio viene del peso, NO del artículo ──
@@ -87,11 +103,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
             // Check if paying client has custom rates for this article
             const pt = formData.porteType || 'Pagado';
             const payingClientName = pt === 'Pagado' ? formData.client : formData.destinationName;
-            const cName = (payingClientName || '').toLowerCase().trim();
-            const client = (clients || []).find(c =>
-                String(c.name || '').toLowerCase().trim() === cName ||
-                String(c.legalName || '').toLowerCase().trim() === cName
-            );
+            const client = findBillingClient(payingClientName);
 
             if (client?.customRates && client.customRates[article.id] !== undefined && client.customRates[article.id] !== '') {
                 price = parseFloat(client.customRates[article.id]);
@@ -135,11 +147,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
         const pt = formData.porteType || 'Pagado';
         const payingClientName = pt === 'Pagado' ? formData.client : formData.destinationName;
-        const cName = (payingClientName || '').toLowerCase().trim();
-        const client = (clients || []).find(c =>
-            String(c.name || '').toLowerCase().trim() === cName ||
-            String(c.legalName || '').toLowerCase().trim() === cName
-        );
+        const client = findBillingClient(payingClientName);
 
         const updatedArticles = selectedArticles.map(item => {
             let price = parseFloat(item.price || 0); // Tarifa general del artículo
@@ -312,6 +320,29 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         return null;
     };
 
+    // billingType/destinationBillingType son otra FOTO tomada al crear el albarán
+    // (misma familia de bug que las coordenadas). Si al editar se cambia el
+    // remitente o el destinatario a otro cliente —o a uno nuevo que aún no está
+    // en la ficha, pendiente de validar—, sin esto el albarán se queda con el
+    // tipo de facturación del cliente ANTERIOR: un destinatario de Facturación
+    // (no cobra a la entrega) podía convertirse en un cliente nuevo real, que sí
+    // hay que cobrar, y seguir marcado como si no hubiera que cobrarle. Mismo
+    // criterio que usa CreateShipmentModal al crear: cliente no encontrado en la
+    // ficha → 'Clientes Habituales' (se cobra en el momento), igual que un
+    // cliente desconocido.
+    const lookupBillingType = (name) => {
+        const norm = String(name || '').trim().toLowerCase();
+        if (!norm) return 'Clientes Habituales';
+        for (const c of (clients || [])) {
+            if (String(c.name || '').trim().toLowerCase() === norm || String(c.legalName || '').trim().toLowerCase() === norm) {
+                return c.billingType || 'Clientes Habituales';
+            }
+            const b = (c.branches || []).find(br => String(br.name || '').trim().toLowerCase() === norm);
+            if (b) return c.billingType || 'Clientes Habituales';
+        }
+        return 'Clientes Habituales';
+    };
+
     // Resolve driver name from ID
     const resolveDriver = (driverId) => {
         if (!driverId) return null;
@@ -476,7 +507,8 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                                 onChange={(e) => {
                                                     const val = e.target.value;
                                                     handleChange("originName", val);
-                                                    
+                                                    handleChange("billingType", lookupBillingType(val));
+
                                                     const match = (clients || []).find(c => (c.name || '').toLowerCase() === val.toLowerCase());
                                                     if (match) {
                                                         handleChange("originAddress", match.address || '');
@@ -577,7 +609,8 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                                 onChange={(e) => {
                                                     const val = e.target.value;
                                                     handleChange("destinationName", val);
-                                                    
+                                                    handleChange("destinationBillingType", lookupBillingType(val));
+
                                                     const match = (clients || []).find(c => (c.name || '').toLowerCase() === val.toLowerCase());
                                                     if (match) {
                                                         handleChange("destinationAddress", match.address || '');
