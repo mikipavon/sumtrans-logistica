@@ -34,6 +34,7 @@ import ScannerModal from '../../components/delivery/ScannerModal';
 import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
+import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { getPackagesCount, puedeAsignarloEsteConductor, ciudadDeEnvio, nombreDeParada } from '../../utils/shipmentUtils';
 import { mejorPuebloParaCiudad, esElMismoPueblo, normalizarPueblo } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
@@ -2292,9 +2293,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
     const handleWhatsAppShare = (shipment, manualPhone = null) => {
         // Correct logic: If it's a pickup, use origin phone. If it's a delivery, use destination phone.
-        const targetPhone = shipment.type === 'Recogida' ? shipment.originPhone : shipment.destinationPhone;
+        const isPickup = shipment.type === 'Recogida';
+        const targetPhone = isPickup ? shipment.originPhone : shipment.destinationPhone;
         const phone = manualPhone || targetPhone;
-        
+
         if (!phone && manualPhone === null) {
             setWhatsappPrompt({ shipment, phone: '' });
             return;
@@ -2307,33 +2309,66 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
 
         // --- PERSISTENCE LOGIC (Background) ---
+        // El número que el conductor teclea aquí es oro: si no lo guardamos en la ficha,
+        // el siguiente albarán del mismo cliente vuelve a salir sin teléfono y se lo
+        // tiene que volver a pedir.
         if (manualPhone && cleanPhone) {
             (async () => {
                 try {
-                    const shipmentUpdates = {};
-                    if (shipment.type === 'Recogida') shipmentUpdates.originPhone = manualPhone;
-                    else shipmentUpdates.destinationPhone = manualPhone;
-                    shipmentUpdates.updatedAt = new Date().toISOString();
-                    
-                    await supabase.from('shipments').update(shipmentUpdates).eq('id', shipment.id);
+                    // 1) El albarán. Vía onUpdateShipment para que use las columnas reales
+                    // de la tabla y se encole si el conductor no tiene cobertura.
+                    await onUpdateShipment(shipment.id, isPickup
+                        ? { originPhone: manualPhone }
+                        : { destinationPhone: manualPhone });
 
-                    const targetName = (shipment.type === 'Recogida' ? (shipment.originName || shipment.client) : (shipment.destinationName || shipment.client));
+                    const targetName = isPickup
+                        ? (shipment.originName || shipment.client)
+                        : (shipment.destinationName || shipment.client);
                     const normalizedTarget = normalizeClientName(targetName);
-                    
-                    if (normalizedTarget && clientsMap.size > 0) {
-                        const matchedClient = clientsMap.get(normalizedTarget);
-                        if (matchedClient) {
-                            (async () => {
-                                try {
-                                    const { id: cid, ...cleanData } = matchedClient;
-                                    const updatedData = { ...cleanData };
-                                    if (shipment.type === 'Recogida') updatedData.phone = manualPhone;
-                                    else updatedData.destinationPhone = manualPhone;
-                                    
-                                    await supabase.from('clients').update({ data: updatedData }).eq('id', cid);
-                                } catch (ce) { console.error("Client phone sync failed:", ce); }
-                            })();
+                    if (!normalizedTarget) return;
+
+                    const matchedClient = clientsMap.get(normalizedTarget);
+
+                    if (matchedClient) {
+                        // 2) La ficha existente. Solo 'phone' y 'mobile' se leen en el
+                        // formulario de cliente y en el autorrelleno del albarán, así que
+                        // escribir en cualquier otro campo es tirar el dato.
+                        const ficha = matchedClient._isBranch ? matchedClient._branch : matchedClient;
+                        const fichaPhone = String(ficha.phone || '').trim();
+                        const fichaMobile = String(ficha.mobile || '').trim();
+
+                        let cambios = null;
+                        if (!fichaPhone) cambios = { phone: manualPhone };
+                        else if (fichaPhone !== manualPhone && !fichaMobile) cambios = { mobile: manualPhone };
+                        // Si ya tiene los dos huecos ocupados no pisamos nada: esto puede
+                        // ser un contacto puntual y la ficha manda sobre el albarán.
+
+                        if (cambios && onUpdateClient) {
+                            onUpdateClient(
+                                matchedClient.id,
+                                cambios,
+                                matchedClient._isBranch ? matchedClient._branch.id : null
+                            );
                         }
+                    } else if (onAddClient) {
+                        // 3) No hay ficha: la creamos pendiente de validar para que el
+                        // número no se quede huérfano en el albarán.
+                        onAddClient({
+                            name: targetName,
+                            address: (isPickup ? shipment.originAddress : (shipment.destinationAddress || shipment.address)) || '',
+                            city: (isPickup ? shipment.originCity : shipment.destinationCity) || '',
+                            zip: (isPickup ? shipment.originZip : shipment.destinationZip) || '',
+                            phone: manualPhone,
+                            coordinates: (isPickup ? shipment.originCoordinates : shipment.destinationCoordinates) || '',
+                            type: isPickup ? 'Remitente' : 'Destinatario',
+                            billingType: 'Clientes Habituales',
+                            status: 'pending',
+                            // Si el porte lo paga una agencia, el cliente es suyo (ver agencyOwnership.js)
+                            ownerAgencyId: resolveOwnerAgencyId(shipment, clients),
+                            createdFrom: 'WhatsApp Justificante',
+                            createdBy: currentDriver?.name || 'Driver',
+                            isTest: isTestMode,
+                        });
                     }
                 } catch (err) {
                     console.error("Persistence background error:", err);
@@ -3889,6 +3924,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         // El admin puede cambiar a 'Facturación' al validar si el cliente paga por factura.
                         billingType: 'Clientes Habituales',
                         status: 'pending',
+                        // Si el porte lo paga una agencia, el destinatario es suyo (ver agencyOwnership.js)
+                        ownerAgencyId: resolveOwnerAgencyId(currentShip, clients),
                         createdFrom: 'Reparto (Driver)',
                         createdBy: currentDriver?.name || 'Driver',
                         // Quien ha recibido hoy, para sugerirlo en la próxima entrega.
