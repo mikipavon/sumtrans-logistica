@@ -2291,7 +2291,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
     };
 
-    const handleWhatsAppShare = (shipment, manualPhone = null) => {
+    const handleWhatsAppShare = async (shipment, manualPhone = null) => {
         // Correct logic: If it's a pickup, use origin phone. If it's a delivery, use destination phone.
         const isPickup = shipment.type === 'Recogida';
         const targetPhone = isPickup ? shipment.originPhone : shipment.destinationPhone;
@@ -2308,31 +2308,32 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             return;
         }
 
-        // --- PERSISTENCE LOGIC (Background) ---
+        // --- PERSISTENCIA DEL TELÉFONO TECLEADO ---
         // El número que el conductor teclea aquí es oro: si no lo guardamos en la ficha,
         // el siguiente albarán del mismo cliente vuelve a salir sin teléfono y se lo
         // tiene que volver a pedir.
-        if (manualPhone && cleanPhone) {
-            (async () => {
+        //
+        // OJO CON EL ORDEN: al final de esta función hacemos window.location.assign a
+        // wa.me, y eso descarga la página. Antes esto era una función de fondo que
+        // empezaba por el albarán; su primer await dejaba la escritura de la ficha
+        // para el siguiente tick, el navegador ya se había ido a WhatsApp y el
+        // teléfono no llegaba nunca a la ficha. Ahora se guarda ANTES de navegar, y
+        // primero la ficha, que es el dato que hay que conservar.
+        const guardarTelefono = async () => {
+            const targetName = isPickup
+                ? (shipment.originName || shipment.client)
+                : (shipment.destinationName || shipment.client);
+            const normalizedTarget = normalizeClientName(targetName);
+
+            // 1) La ficha del cliente.
+            if (normalizedTarget) {
                 try {
-                    // 1) El albarán. Vía onUpdateShipment para que use las columnas reales
-                    // de la tabla y se encole si el conductor no tiene cobertura.
-                    await onUpdateShipment(shipment.id, isPickup
-                        ? { originPhone: manualPhone }
-                        : { destinationPhone: manualPhone });
-
-                    const targetName = isPickup
-                        ? (shipment.originName || shipment.client)
-                        : (shipment.destinationName || shipment.client);
-                    const normalizedTarget = normalizeClientName(targetName);
-                    if (!normalizedTarget) return;
-
                     const matchedClient = clientsMap.get(normalizedTarget);
 
                     if (matchedClient) {
-                        // 2) La ficha existente. Solo 'phone' y 'mobile' se leen en el
-                        // formulario de cliente y en el autorrelleno del albarán, así que
-                        // escribir en cualquier otro campo es tirar el dato.
+                        // Solo 'phone' y 'mobile' se leen en el formulario de cliente y en
+                        // el autorrelleno del albarán, así que escribir en cualquier otro
+                        // campo es tirar el dato.
                         const ficha = matchedClient._isBranch ? matchedClient._branch : matchedClient;
                         const fichaPhone = String(ficha.phone || '').trim();
                         const fichaMobile = String(ficha.mobile || '').trim();
@@ -2344,16 +2345,16 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         // ser un contacto puntual y la ficha manda sobre el albarán.
 
                         if (cambios && onUpdateClient) {
-                            onUpdateClient(
+                            await onUpdateClient(
                                 matchedClient.id,
                                 cambios,
                                 matchedClient._isBranch ? matchedClient._branch.id : null
                             );
                         }
                     } else if (onAddClient) {
-                        // 3) No hay ficha: la creamos pendiente de validar para que el
+                        // No hay ficha: la creamos pendiente de validar para que el
                         // número no se quede huérfano en el albarán.
-                        onAddClient({
+                        await onAddClient({
                             name: targetName,
                             address: (isPickup ? shipment.originAddress : (shipment.destinationAddress || shipment.address)) || '',
                             city: (isPickup ? shipment.originCity : shipment.destinationCity) || '',
@@ -2371,12 +2372,34 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         });
                     }
                 } catch (err) {
-                    console.error("Persistence background error:", err);
+                    console.error("[WhatsApp] Error guardando el teléfono en la ficha:", err);
                 }
-            })();
+            }
+
+            // 2) El albarán. Vía onUpdateShipment para que use las columnas reales
+            // de la tabla y se encole si el conductor no tiene cobertura. Va en su
+            // propio try para que un fallo de la ficha no se lo lleve por delante.
+            try {
+                await onUpdateShipment(shipment.id, isPickup
+                    ? { originPhone: manualPhone }
+                    : { destinationPhone: manualPhone });
+            } catch (err) {
+                console.error("[WhatsApp] Error guardando el teléfono en el albarán:", err);
+            }
+        };
+
+        if (manualPhone && cleanPhone) {
+            setWhatsappPrompt(prev => prev ? { ...prev, saving: true } : prev);
+            // Tope de espera: sin cobertura la escritura se encola en local y vuelve
+            // enseguida, pero con una red mala de verdad no vamos a dejar al conductor
+            // mirando el botón; a los 6 segundos se abre WhatsApp igual.
+            await Promise.race([
+                guardarTelefono(),
+                new Promise(resolve => setTimeout(resolve, 6000)),
+            ]);
         }
 
-        // 1. Immediately close prompt modal
+        // 1. Close prompt modal
         setWhatsappPrompt(null);
 
         // 2. Prepare message and Trigger Redirect
@@ -4346,22 +4369,27 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                 placeholder="Ej: 600123456"
                                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all font-bold text-lg text-slate-700 mb-4"
                                 onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleWhatsAppShare(whatsappPrompt.shipment, whatsappPrompt.phone);
+                                    if (e.key === 'Enter' && !whatsappPrompt.saving) handleWhatsAppShare(whatsappPrompt.shipment, whatsappPrompt.phone);
                                 }}
                             />
-                            
+
                             <div className="flex gap-3">
-                                <button 
+                                <button
                                     onClick={() => setWhatsappPrompt(null)}
-                                    className="flex-1 py-3 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors"
+                                    disabled={whatsappPrompt.saving}
+                                    className="flex-1 py-3 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors disabled:opacity-40"
                                 >
                                     Cancelar
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => handleWhatsAppShare(whatsappPrompt.shipment, whatsappPrompt.phone)}
-                                    className="flex-1 py-3 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2"
+                                    disabled={whatsappPrompt.saving}
+                                    className="flex-1 py-3 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-70"
                                 >
-                                    Abrir WhatsApp
+                                    {/* El botón se queda un instante en "Guardando..." a propósito: es el
+                                        tiempo que tarda el número en llegar a la ficha, y si abriéramos
+                                        WhatsApp antes la página se descarga y el dato se pierde. */}
+                                    {whatsappPrompt.saving ? 'Guardando...' : 'Abrir WhatsApp'}
                                 </button>
                             </div>
                         </div>
