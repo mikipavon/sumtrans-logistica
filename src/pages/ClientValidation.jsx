@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2 } from 'lucide-react';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import { supabase } from '../lib/supabase';
+import { getOwnerLabel } from '../utils/agencyOwnership';
 
 // ── Llama a la Edge Function para enviar email de acceso al cliente ──
 async function sendAccessEmail(clientId) {
@@ -238,6 +239,12 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
 
                                 {/* Meta info */}
                                 <div className="pt-2 border-t border-slate-100 space-y-1">
+                                    <div className="flex items-center gap-2 text-xs">
+                                        <Building2 size={12} className={client.ownerAgencyId ? 'text-amber-500' : 'text-emerald-500'} />
+                                        <span className={client.ownerAgencyId ? 'text-amber-600 font-bold' : 'text-emerald-600 font-bold'}>
+                                            {client.ownerAgencyId ? getOwnerLabel(client, clients) : 'Mis clientes'}
+                                        </span>
+                                    </div>
                                     <div className="flex items-center gap-2 text-xs text-slate-400">
                                         <Calendar size={12} />
                                         <span>Creado: {client.lastInteraction}</span>

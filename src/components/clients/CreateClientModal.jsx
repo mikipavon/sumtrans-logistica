@@ -1,6 +1,7 @@
 import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Image as ImageIcon, Upload, Trash2, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { uploadProof } from '../../utils/storage';
+import { getAgencies } from '../../utils/agencyOwnership';
 
 const TABS = [
     { id: 'general', label: 'General', icon: FileCode },
@@ -64,6 +65,9 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         registrationDate: '', birthDate: '',
         bank: '', bankEntity: '', bankOffice: '', account: '', controlDigit: '',
         agencyLogoUrl: null,
+        // Pertenencia: null = cartera propia de SUM. Ver utils/agencyOwnership.js
+        isAgency: false,
+        ownerAgencyId: null,
         weightTariff: [],
         branches: [],
         // Delivery Rules
@@ -73,6 +77,10 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         requirePhoto: false,
         requireSignature: false,
     };
+
+    // Agencias disponibles para asignar la ficha, excluyendo la que se está editando
+    // (una agencia no puede pertenecerse a sí misma).
+    const agencyOptions = getAgencies(allClients).filter(a => String(a.id) !== String(initialData?.id));
 
     const fileInputRef = useRef(null);
     const [isUploading, setIsUploading] = useState(false);
@@ -337,6 +345,40 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                             <option value="Destinatario">Destinatario</option>
                                             <option value="Ambos">Ambos</option>
                                         </select>
+                                    </Field>
+                                    <Field label="Base de Datos (Pertenencia)">
+                                        <select className={inputCls}
+                                            value={formData.ownerAgencyId ? String(formData.ownerAgencyId) : ''}
+                                            disabled={!!formData.isAgency}
+                                            onChange={e => {
+                                                const picked = agencyOptions.find(a => String(a.id) === e.target.value);
+                                                set('ownerAgencyId', picked ? picked.id : null);
+                                            }}>
+                                            <option value="">🏠 Mis clientes (SUM)</option>
+                                            {agencyOptions.map(a => (
+                                                <option key={a.id} value={String(a.id)}>🚚 {a.name}</option>
+                                            ))}
+                                        </select>
+                                        <p className="text-[10px] text-slate-400 mt-1">
+                                            {formData.isAgency
+                                                ? 'Las agencias son clientes tuyos: siempre en tu base de datos.'
+                                                : 'Si la ficha es de una agencia, se borrará con ella al darla de baja.'}
+                                        </p>
+                                    </Field>
+                                    <Field label="¿Es Agencia de Transporte?">
+                                        <label className="flex items-center gap-2 cursor-pointer mt-2 group">
+                                            <input type="checkbox" checked={!!formData.isAgency}
+                                                onChange={e => {
+                                                    set('isAgency', e.target.checked);
+                                                    // Una agencia nunca pertenece a otra bolsa: es cliente directo de SUM.
+                                                    if (e.target.checked) set('ownerAgencyId', null);
+                                                }}
+                                                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
+                                            <span className={`text-sm font-bold transition-colors ${formData.isAgency ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-600'}`}>
+                                                Sí, trae carga de sus propios clientes
+                                            </span>
+                                        </label>
+                                        <p className="text-[10px] text-slate-400 mt-1">Marca TSB, TXT y XPO. Sus destinatarios irán a una base de datos aparte.</p>
                                     </Field>
                                     <Field label="Tipo de Cobro">
                                         <div className="flex gap-4 mt-1">

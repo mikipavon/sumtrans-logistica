@@ -5,6 +5,7 @@ import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
+import { resolveOwnerAgencyId, getOwnerLabel } from '../../utils/agencyOwnership';
 import CityAutocomplete from '../CityAutocomplete';
 import { supabase } from '../../lib/supabase';
 
@@ -1212,6 +1213,11 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
         // ── Auto-crear clientes desconocidos ──
         if (onAddClient && clients) {
+            // Si el porte lo paga una agencia (TSB/TXT/XPO), las fichas que nazcan de este
+            // albarán son suyas, no de la cartera de SUM. Las fichas que YA existen no
+            // cambian de dueño: un cliente propio sigue siendo propio aunque le traigan
+            // mercancía desde una agencia.
+            const ownerAgencyId = resolveOwnerAgencyId(finalData, clients);
             const normalize = (s) => String(s || '').normalize("NFD").replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
             const checkAndCreateClient = (name, type, address, zip, city, phone) => {
                 if (!name || String(name).trim() === '') return;
@@ -1231,6 +1237,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                         phone: phone || '',
                         status: 'pending',
                         billingType: 'Clientes Habituales',
+                        ownerAgencyId,
                         createdFrom: 'Albarán Automático',
                         createdBy: isDriver ? 'Conductor' : 'Administración',
                         creatorId: currentDriverId || 'admin'
@@ -1429,6 +1436,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                             <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
                                                                 {item._type === 'branch' && <span className="text-blue-500 text-[10px]">📍</span>}
                                                                 {item._displayName || item.name}
+                                                                {/* De qué base de datos sale la ficha: la tuya o la de una agencia */}
+                                                                {item.ownerAgencyId && (
+                                                                    <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-100 shrink-0">
+                                                                        {getOwnerLabel(item, clients)}
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                             <div className="text-[10px] text-slate-500 truncate">
                                                                 {item._type === 'branch' && item._branch ? (item._branch.address || item._branch.city || '') : item.address}
@@ -1518,7 +1531,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                                 zip: formData.destinationZip || '',
                                                                 phone: formData.destinationPhone || '',
                                                                 type: 'Destinatario',
-                                                                billingType: 'Clientes Habituales'
+                                                                billingType: 'Clientes Habituales',
+                                                                // Misma regla que en el alta automática: si paga la agencia, es suyo.
+                                                                ownerAgencyId: resolveOwnerAgencyId({
+                                                                    porteType: formData.porteType,
+                                                                    client: formData.clientName,
+                                                                    destinationName: formData.destinationName,
+                                                                }, clients),
                                                             });
                                                             setSavedDestClient(true);
                                                         }}
@@ -1544,6 +1563,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                             <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
                                                                 {item._type === 'branch' && <span className="text-blue-500 text-[10px]">📍</span>}
                                                                 {item._displayName || item.name}
+                                                                {/* De qué base de datos sale la ficha: la tuya o la de una agencia */}
+                                                                {item.ownerAgencyId && (
+                                                                    <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-100 shrink-0">
+                                                                        {getOwnerLabel(item, clients)}
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                             <div className="text-[10px] text-slate-500 truncate">
                                                                 {item._type === 'branch' && item._branch ? (item._branch.address || item._branch.city || '') : item.address}

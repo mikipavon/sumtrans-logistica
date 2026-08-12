@@ -2,26 +2,34 @@ import { Search, Filter, MapPin, Building2, Calendar, Database, Lock, Edit2, Tra
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import CreateClientModal from '../components/clients/CreateClientModal';
+import AgencyDatabasesPanel from '../components/clients/AgencyDatabasesPanel';
+import { getOwnerLabel } from '../utils/agencyOwnership';
 
-export default function Clients({ clients, allPoblaciones, articles, onUpdateClient, onAddClient, onImportClients, onDeleteClient, tariffs }) {
+export default function Clients({ clients, allClients, shipments, allPoblaciones, articles, onUpdateClient, onAddClient, onImportClients, onDeleteClient, onAssignOwnerAgency, onDeleteAgencyDatabase, tariffs }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState(null);
     const fileInputRef = useRef(null);
-    
+
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
     const [filterGPS, setFilterGPS] = useState(false);
     const [expandedClients, setExpandedClients] = useState(new Set());
+    // 'all' | 'own' | id de agencia — ver utils/agencyOwnership.js
+    const [ownerFilter, setOwnerFilter] = useState('all');
 
     const filteredClients = useMemo(() => {
         const safeClients = Array.isArray(clients) ? clients : [];
         let result = safeClients.filter(c => {
             // Only show validated/active clients in the master list
             if (c.status === 'pending') return false;
-            
+
+            // Base de datos: propia o de una agencia concreta
+            if (ownerFilter === 'own' && c.ownerAgencyId) return false;
+            if (ownerFilter !== 'all' && ownerFilter !== 'own' && String(c.ownerAgencyId || '') !== ownerFilter) return false;
+
             // GPS filter
             if (filterGPS && !(c.coordinates && c.coordinates.trim())) return false;
-            
+
             const search = (searchTerm || '').toLowerCase();
             const mainMatch = (c.name || '').toLowerCase().includes(search) ||
                    (c.legalName || '').toLowerCase().includes(search) ||
@@ -58,7 +66,7 @@ export default function Clients({ clients, allPoblaciones, articles, onUpdateCli
             });
         }
         return result;
-    }, [clients, searchTerm, sortConfig, filterGPS]);
+    }, [clients, searchTerm, sortConfig, filterGPS, ownerFilter]);
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -375,6 +383,16 @@ export default function Clients({ clients, allPoblaciones, articles, onUpdateCli
                 </div>
             </div>
 
+            {/* Bases de datos: propia vs. agencias */}
+            <AgencyDatabasesPanel
+                allClients={allClients || clients}
+                shipments={shipments}
+                ownerFilter={ownerFilter}
+                onChangeFilter={setOwnerFilter}
+                onAssignOwnerAgency={onAssignOwnerAgency}
+                onDeleteAgencyDatabase={onDeleteAgencyDatabase}
+            />
+
             {/* Actions Bar */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-100">
                 <div className="relative w-full sm:w-96">
@@ -493,6 +511,19 @@ export default function Clients({ clients, allPoblaciones, articles, onUpdateCli
                                         <div>
                                             <div className="flex items-center gap-2">
                                                 <div className="font-bold text-slate-800">{client.name}</div>
+                                                {client.isAgency && (
+                                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-100">
+                                                        AGENCIA
+                                                    </span>
+                                                )}
+                                                {client.ownerAgencyId && (
+                                                    <span
+                                                        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-100"
+                                                        title="Ficha de la agencia: se borrará al darla de baja"
+                                                    >
+                                                        {getOwnerLabel(client, allClients || clients)}
+                                                    </span>
+                                                )}
                                                 {Array.isArray(client.branches) && client.branches.length > 0 && (
                                                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-600 border border-blue-100">
                                                         <Building2 size={10} /> {client.branches.length} sedes

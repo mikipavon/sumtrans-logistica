@@ -23,6 +23,7 @@ import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { initStorageBuckets } from './utils/storage';
 import { fetchAllRows } from './utils/fetchAllRows';
+import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
 import { establecerContextoDeError } from './utils/errorLog';
 import { getIrregularReasons } from './utils/shipmentUtils';
 import {
@@ -2242,6 +2243,8 @@ function App() {
           type: 'Remitente',
           billingType: 'Clientes Habituales',
           status: 'pending',
+          // Si el porte lo paga una agencia, el remitente también es gente suya
+          ownerAgencyId: resolveOwnerAgencyId(newShipment, clientsRef.current),
           createdFrom: newShipment.type === 'Recogida' ? 'Recogida' : 'Albarán',
           createdBy: creatorName,
           lastInteraction: new Date().toISOString().split('T')[0],
@@ -2672,6 +2675,8 @@ function App() {
             type: 'Destinatario',
             billingType: 'Clientes Habituales',
             status: 'pending',
+            // Si el porte lo paga una agencia, el destinatario es suyo (ver agencyOwnership.js)
+            ownerAgencyId: resolveOwnerAgencyId(shipment, clientsRef.current),
             createdFrom: 'Entrega',
             lastInteraction: new Date().toISOString().split('T')[0],
             isTest: false
@@ -2820,6 +2825,50 @@ function App() {
       setClients(prev => prev.filter(c => !clientIds.includes(c.id)));
     } catch (e) { alert('Error al borrar los clientes'); console.error(e); }
   }
+
+  // ── Reparto de fichas entre bases de datos (propia / agencias) ──
+  // Se usa desde el informe de reparto: mueve fichas en bloque sin tocar nada más.
+  const handleAssignOwnerAgency = async (assignments) => {
+    if (!assignments || assignments.length === 0) return { updated: 0, failed: 0 };
+    const updatedClients = [];
+    let failed = 0;
+
+    for (const { clientId, agencyId } of assignments) {
+      const current = clientsRef.current.find(c => String(c.id) === String(clientId));
+      if (!current) { failed += 1; continue; }
+      const updated = { ...current, ownerAgencyId: agencyId || null };
+      try {
+        const { error } = await supabase.from('clients').update({ data: updated }).eq('id', clientId);
+        if (error) throw error;
+        updatedClients.push(updated);
+      } catch (e) {
+        console.error(`[Reparto] No se pudo mover la ficha ${clientId}:`, e);
+        failed += 1;
+      }
+    }
+
+    if (updatedClients.length > 0) {
+      const byId = new Map(updatedClients.map(c => [String(c.id), c]));
+      setClients(prev => prev.map(c => byId.get(String(c.id)) || c));
+    }
+    return { updated: updatedClients.length, failed };
+  };
+
+  // ── Baja de una agencia: borra su base de datos, nunca la cartera propia ──
+  const handleDeleteAgencyDatabase = async (agencyId) => {
+    const toDelete = getClientsOwnedBy(agencyId, clientsRef.current).map(c => c.id);
+    if (toDelete.length === 0) return { deleted: 0 };
+
+    // Por lotes: un .in() con miles de ids revienta la URL de la petición.
+    for (let i = 0; i < toDelete.length; i += 100) {
+      const chunk = toDelete.slice(i, i + 100);
+      const { error } = await supabase.from('clients').delete().in('id', chunk);
+      if (error) throw error;
+    }
+    const deletedSet = new Set(toDelete.map(id => String(id)));
+    setClients(prev => prev.filter(c => !deletedSet.has(String(c.id))));
+    return { deleted: toDelete.length };
+  };
 
   const handleImportClients = async (newClients) => {
     try {
@@ -3461,7 +3510,7 @@ function App() {
       {currentView === 'drivers' && <Drivers routes={routes} onUpdateRoutes={handleUpdateRoutes} routeKnowledge={routeKnowledge} onUpdateRouteKnowledge={handleUpdateRouteKnowledge} drivers={drivers} shipments={visibleShipments} clients={visibleClients} onAddDriver={handleAddDriver} onUpdateDriver={handleUpdateDriver} onDeleteDriver={handleDeleteDriver} onImpersonate={handleImpersonate} onNavigate={setCurrentView} articles={articles} defaultCodFee={defaultCodFee} isGhostModeUnlocked={isGhostModeUnlocked} driverOrder={driverOrder} onUpdateDriverOrder={handleUpdateDriverOrder} gpsIntervalMinutes={gpsIntervalMinutes} setGpsIntervalMinutes={setGpsIntervalMinutes} driverAlerts={driverAlerts} setDriverAlerts={setDriverAlerts} driverNamePreference={driverNamePreference} onUpdateDriverNamePreference={handleUpdateDriverNamePreference} />}
       {currentView === 'tracking' && <Tracking drivers={drivers} shipments={shipments} onRequestGps={handleRequestDriverGps} />}
 
-      {currentView === 'clients' && <Clients clients={visibleClients} allPoblaciones={allPoblaciones} articles={articles} onUpdateClient={handleUpdateClient} onAddClient={handleAddClient} onImportClients={handleImportClients} onDeleteClient={handleDeleteClient} tariffs={tariffs} isGhostModeUnlocked={isGhostModeUnlocked} />}
+      {currentView === 'clients' && <Clients clients={visibleClients} allClients={clients} shipments={shipments} allPoblaciones={allPoblaciones} articles={articles} onUpdateClient={handleUpdateClient} onAddClient={handleAddClient} onImportClients={handleImportClients} onDeleteClient={handleDeleteClient} onAssignOwnerAgency={handleAssignOwnerAgency} onDeleteAgencyDatabase={handleDeleteAgencyDatabase} tariffs={tariffs} isGhostModeUnlocked={isGhostModeUnlocked} />}
       {currentView === 'articles' && <Articles 
         articles={articles} 
         tariffs={tariffs} 
