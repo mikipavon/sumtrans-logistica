@@ -60,6 +60,17 @@ const normalizeClientName = (name) => {
         .replace(/\s+/g, " "); // collapse multiple spaces
 };
 
+// ── ¿Es un fijo? ──
+// En España los móviles empiezan por 6 o 7 y los fijos por 8 o 9. Un fijo no
+// tiene WhatsApp, así que mandarle ahí el justificante es tirarlo. Solo damos
+// por fijo lo que reconocemos como número español de 9 cifras: un extranjero o
+// cualquier cosa rara se manda tal cual, que de eso sabe más el conductor.
+const esFijoEspanol = (numero) => {
+    const limpio = String(numero || '').replace(/[\s.\-()+]/g, '');
+    const nacional = limpio.startsWith('34') ? limpio.slice(2) : limpio;
+    return nacional.length === 9 && /^[89]/.test(nacional);
+};
+
 const isCityInBaremo = (city, zip) => {
     if (!city && !zip) return false;
     const normCity = normalizeClientName(city);
@@ -2291,14 +2302,39 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
     };
 
+    // Busca un móvil en la ficha del cliente. El albarán se autorrellena siempre
+    // con el 'phone' de la ficha —el bueno para llamar, muchas veces un fijo— y el
+    // móvil se queda en 'mobile', donde nadie lo mira. Sede primero, luego la ficha
+    // madre. Devuelve null si el cliente solo tiene fijos.
+    const buscarMovilEnFicha = (nombreCliente) => {
+        const normalizado = normalizeClientName(nombreCliente);
+        if (!normalizado) return null;
+        const encontrado = clientsMap.get(normalizado);
+        if (!encontrado) return null;
+        const candidatos = encontrado._isBranch
+            ? [encontrado._branch.mobile, encontrado._branch.phone, encontrado.mobile]
+            : [encontrado.mobile];
+        return candidatos.find(n => String(n || '').trim() && !esFijoEspanol(n)) || null;
+    };
+
     const handleWhatsAppShare = async (shipment, manualPhone = null) => {
         // Correct logic: If it's a pickup, use origin phone. If it's a delivery, use destination phone.
         const isPickup = shipment.type === 'Recogida';
+        const targetName = isPickup
+            ? (shipment.originName || shipment.client)
+            : (shipment.destinationName || shipment.client);
         const targetPhone = isPickup ? shipment.originPhone : shipment.destinationPhone;
-        const phone = manualPhone || targetPhone;
+
+        // Si el del albarán es un fijo no vale para WhatsApp, pero antes de dar el
+        // número por perdido miramos si la ficha guarda un móvil.
+        const albaranEsFijo = !manualPhone && esFijoEspanol(targetPhone);
+        const phoneDelAlbaran = albaranEsFijo ? buscarMovilEnFicha(targetName) : targetPhone;
+        const phone = manualPhone || phoneDelAlbaran;
 
         if (!phone && manualPhone === null) {
-            setWhatsappPrompt({ shipment, phone: '' });
+            // 'motivo' solo cambia el texto del modal: si el albarán sí tenía un
+            // teléfono, el conductor tiene que entender por qué le pedimos otro.
+            setWhatsappPrompt({ shipment, phone: '', motivo: albaranEsFijo ? 'fijo' : 'sin_telefono' });
             return;
         }
 
@@ -2320,9 +2356,6 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         // teléfono no llegaba nunca a la ficha. Ahora se guarda ANTES de navegar, y
         // primero la ficha, que es el dato que hay que conservar.
         const guardarTelefono = async () => {
-            const targetName = isPickup
-                ? (shipment.originName || shipment.client)
-                : (shipment.destinationName || shipment.client);
             const normalizedTarget = normalizeClientName(targetName);
 
             // 1) La ficha del cliente.
@@ -2341,6 +2374,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         let cambios = null;
                         if (!fichaPhone) cambios = { phone: manualPhone };
                         else if (fichaPhone !== manualPhone && !fichaMobile) cambios = { mobile: manualPhone };
+                        else if (fichaPhone !== manualPhone && esFijoEspanol(fichaMobile) && !esFijoEspanol(manualPhone)) {
+                            // El hueco del móvil ocupado por otro fijo no le sirve a nadie:
+                            // si el conductor acaba de teclear un móvil de verdad, ese manda.
+                            // Sin esto le pediríamos el número en cada justificante.
+                            cambios = { mobile: manualPhone };
+                        }
                         // Si ya tiene los dos huecos ocupados no pisamos nada: esto puede
                         // ser un contacto puntual y la ficha manda sobre el albarán.
 
@@ -2376,15 +2415,20 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 }
             }
 
-            // 2) El albarán. Vía onUpdateShipment para que use las columnas reales
-            // de la tabla y se encole si el conductor no tiene cobertura. Va en su
-            // propio try para que un fallo de la ficha no se lo lleve por delante.
-            try {
-                await onUpdateShipment(shipment.id, isPickup
-                    ? { originPhone: manualPhone }
-                    : { destinationPhone: manualPhone });
-            } catch (err) {
-                console.error("[WhatsApp] Error guardando el teléfono en el albarán:", err);
+            // 2) El albarán, solo si venía sin teléfono. Si lo que tiene es un fijo
+            // no lo pisamos: para llamar es el bueno, y el móvil ya ha quedado en la
+            // ficha, que es de donde lo cogeremos la próxima vez.
+            // Vía onUpdateShipment para que use las columnas reales de la tabla y se
+            // encole si el conductor no tiene cobertura. Va en su propio try para que
+            // un fallo de la ficha no se lo lleve por delante.
+            if (!String(targetPhone || '').trim()) {
+                try {
+                    await onUpdateShipment(shipment.id, isPickup
+                        ? { originPhone: manualPhone }
+                        : { destinationPhone: manualPhone });
+                } catch (err) {
+                    console.error("[WhatsApp] Error guardando el teléfono en el albarán:", err);
+                }
             }
         };
 
@@ -4359,7 +4403,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                 <MessageSquare size={24} />
                             </div>
                             <h3 className="text-lg font-bold text-slate-800 mb-1">Enviar Justificante</h3>
-                            <p className="text-sm text-slate-500 mb-6">El cliente no tiene teléfono guardado. Introduce el número de WhatsApp:</p>
+                            <p className="text-sm text-slate-500 mb-6">
+                                {whatsappPrompt.motivo === 'fijo'
+                                    ? 'El teléfono del cliente es un fijo y no tiene WhatsApp. Introduce un móvil:'
+                                    : 'El cliente no tiene teléfono guardado. Introduce el número de WhatsApp:'}
+                            </p>
                             
                             <input 
                                 type="tel"
