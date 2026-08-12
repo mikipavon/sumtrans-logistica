@@ -8,11 +8,12 @@ import LabelPrintModal from '../../components/clients/LabelPrintModal';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { getPackagesCount } from '../../utils/shipmentUtils';
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
+import { supabase } from '../../lib/supabase';
 
-export default function ClientDashboard({ 
-    client, 
-    onLogout, 
-    allShipments, 
+export default function ClientDashboard({
+    client,
+    onLogout,
+    allShipments,
     drivers,
     allClients,
     articles,
@@ -20,7 +21,9 @@ export default function ClientDashboard({
     coverageZones,
     onCreateShipment,
     onUpdateClient,
-    onDeleteShipment
+    onDeleteShipment,
+    pendingQueueCount = 0,
+    isSyncingQueue = false
 }) {
     const [activeTab, setActiveTab] = useState('shipments'); // 'shipments', 'create'
     const [selectedShipment, setSelectedShipment] = useState(null);
@@ -198,22 +201,42 @@ export default function ClientDashboard({
         setShowDestSuggestions(false);
     };
 
-    const handleCreateSubmit = (e) => {
+    const handleCreateSubmit = async (e) => {
         e.preventDefault();
-        
+
         // Prefijo según tipo de cliente: HAB- para habituales/presupuesto, SUM- para el resto
         const clientBillingType = String(client.billingType || '').toLowerCase();
-        const isHabClient = clientBillingType.includes('habitual') || clientBillingType.includes('diar') || 
-                            clientBillingType.includes('libre') || clientBillingType.includes('contado') || 
+        const isHabClient = clientBillingType.includes('habitual') || clientBillingType.includes('diar') ||
+                            clientBillingType.includes('libre') || clientBillingType.includes('contado') ||
                             clientBillingType.includes('presupuesto');
         const clientPrefix = isHabClient ? 'HAB' : 'SUM';
-        const maxId = (allShipments || []).reduce((max, s) => {
+        const localMaxId = (allShipments || []).reduce((max, s) => {
             const sId = String(s.id || '');
             if (!sId.toUpperCase().startsWith(clientPrefix + '-')) return max;
             const num = parseInt(sId.replace(/\D/g, ''), 10);
             return (!isNaN(num) && num < 100000 && num > max) ? num : max;
         }, 0);
 
+        // `allShipments` no incluye envíos entregados/anulados de más de 90 días,
+        // así que el máximo local puede quedarse corto y generar un ID que ya existe
+        // en la base de datos (el upsert choca entonces con esa fila y falla por RLS).
+        // Consultamos el máximo real en Supabase para esta serie antes de asignar el ID.
+        let dbMaxId = 0;
+        try {
+            const { data: allIds } = await supabase.from('shipments').select('id');
+            if (allIds) {
+                dbMaxId = allIds.reduce((max, row) => {
+                    const sId = String(row.id || '');
+                    if (!sId.toUpperCase().startsWith(clientPrefix + '-')) return max;
+                    const num = parseInt(sId.replace(/\D/g, ''), 10);
+                    return (!isNaN(num) && num < 100000 && num > max) ? num : max;
+                }, 0);
+            }
+        } catch (err) {
+            console.warn('No se pudo consultar Supabase para maxId, usando local:', err);
+        }
+
+        const maxId = Math.max(localMaxId, dbMaxId);
 
         const selectedArticle = availableArticles.find(a => String(a.id) === String(selectedArticleId));
         let numPackages = 1;
@@ -469,6 +492,17 @@ export default function ClientDashboard({
 
     return (
         <div className="min-h-screen bg-slate-50">
+            {/* Aviso de sincronización pendiente — un envío puede quedar en cola (p.ej. tras
+                un fallo de guardado) sin llegar a Supabase hasta que esto se resuelva; antes
+                esto pasaba en completo silencio y el envío parecía "desaparecer". */}
+            {pendingQueueCount > 0 && (
+                <div className="sticky top-0 z-50 flex items-center justify-center gap-2 px-4 py-2 bg-amber-500 text-white text-sm font-medium">
+                    <Clock size={15} className="shrink-0" />
+                    {isSyncingQueue
+                        ? `Sincronizando ${pendingQueueCount} envío${pendingQueueCount > 1 ? 's' : ''} pendiente${pendingQueueCount > 1 ? 's' : ''}...`
+                        : `${pendingQueueCount} envío${pendingQueueCount > 1 ? 's' : ''} pendiente${pendingQueueCount > 1 ? 's' : ''} de sincronizar. Si no desaparece en unos minutos, contacta con Sumtrans.`}
+                </div>
+            )}
             {/* Header */}
             <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
                 <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">

@@ -3391,6 +3391,8 @@ function App() {
         onCreateShipment={handleAddShipment}
         onUpdateClient={handleUpdateClient}
         onDeleteShipment={handleDeleteShipment}
+        pendingQueueCount={pendingQueueCount}
+        isSyncingQueue={isSyncingQueue}
     />
   }
 

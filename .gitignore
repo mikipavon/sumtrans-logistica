@@ -24,3 +24,7 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Scripts sueltos de mantenimiento: suelen llevar la service_role key de Supabase
+# en claro, así que nunca deben acabar en el repo.
+tmp/
