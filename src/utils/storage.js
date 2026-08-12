@@ -125,24 +125,19 @@ export const uploadFileToBucket = async (fileName, file, bucketName) => {
 };
 
 /**
- * Inicializa los buckets necesarios si no existen.
+ * Buckets que usa la aplicación. Se crean UNA VEZ desde el panel de Supabase,
+ * no desde el navegador.
+ *
+ * Aquí había un `initStorageBuckets()` que en cada arranque recorría esta lista
+ * comprobando y, si fallaba, intentando crear cada bucket. No podía funcionar:
+ * crear buckets exige la clave `service_role`, que jamás está en el cliente. Lo
+ * único que conseguía eran 14 peticiones fallidas en serie en cada carga,
+ * peleando por conexión con las consultas que sí importan.
+ *
+ * Si algún día falta un bucket, `uploadProof` y `uploadFileToBucket` ya lo dicen
+ * con un error claro ("El contenedor 'X' no existe").
  */
-export const initStorageBuckets = async () => {
-  const buckets = ['signatures', 'delivery_photos', 'agency_logos', 'merchandise_photos', 'cod_receipts', 'payrolls', 'incident_photos'];
-  
-  for (const bucket of buckets) {
-    try {
-      const { data, error } = await supabase.storage.getBucket(bucket);
-      if (error && error.message.includes('not found')) {
-        console.log(`Intentando crear el bucket: ${bucket}...`);
-        await supabase.storage.createBucket(bucket, {
-          public: true, // Permitir acceso público de lectura por URL
-          allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'],
-          fileSizeLimit: 10485760 // 10MB
-        });
-      }
-    } catch (e) {
-      console.warn(`No se pudo verificar/crear el bucket ${bucket}. Es posible que necesites crearlo manualmente en el panel de Supabase.`, e);
-    }
-  }
-};
+export const STORAGE_BUCKETS = [
+  'signatures', 'delivery_photos', 'agency_logos',
+  'merchandise_photos', 'cod_receipts', 'payrolls', 'incident_photos',
+];

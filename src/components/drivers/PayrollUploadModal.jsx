@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Upload, CheckCircle, AlertTriangle, Loader2, FileText, FolderOpen, User } from 'lucide-react';
-import { uploadFileToBucket, initStorageBuckets } from '../../utils/storage';
+import { uploadFileToBucket } from '../../utils/storage';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -223,13 +223,6 @@ export default function PayrollUploadModal({ isOpen, onClose, drivers = [], onUp
         }
 
         setIsUploading(true);
-        
-        // Ensure bucket exists before uploading (in case app wasn't hard-reloaded)
-        try {
-            await initStorageBuckets();
-        } catch (e) {
-            console.error("Error initializing buckets:", e);
-        }
 
         let successCount = 0;
         let errorCount = 0;

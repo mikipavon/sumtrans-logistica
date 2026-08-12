@@ -1,27 +1,37 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { Download, Upload, Trash2, Database, Shield, Clock, Folder, CheckCircle, AlertCircle, Save, Settings, X, RotateCcw, User } from 'lucide-react'
 import DailySummaryModal from './components/DailySummaryModal';
 import { ALL_BAREMO_PUEBLOS } from './data/baremos';
 import Layout from './components/layout/Layout'
-import Dashboard from './pages/Dashboard'
-import Shipments from './pages/Shipments'
-import Fleet from './pages/Fleet'
-import Drivers from './pages/Drivers'
 import Login from './pages/Login'
-import DriverDashboard from './pages/driver/DriverDashboard'
-import Clients from './pages/Clients'
-import Articles from './pages/Articles'
-import Tracking from './pages/Tracking'
-import FuelManagement from './pages/FuelManagement'
-import MaintenanceHistory from './pages/MaintenanceHistory'
-import ClientDashboard from './pages/client/ClientDashboard'
-import Incidents from './pages/Incidents'
-import ClientValidation from './pages/ClientValidation'
-import PendingCollections from './pages/PendingCollections'
-import NotificationCenter from './pages/NotificationCenter'
+
+// ── Carga diferida de las pantallas ───────────────────────────────────────────
+// Antes esto eran imports normales, y eso metía TODA la aplicación en un solo
+// fichero de 4 MB: el conductor se descargaba el panel de administración, las
+// gráficas, los mapas y el lector de PDF de nóminas antes de ver su primera
+// parada. Con `lazy` cada pantalla viaja en su propio trozo y las librerías
+// pesadas (xlsx, recharts, leaflet, jspdf, pdfjs, el escáner) se van con ella.
+//
+// Login y Layout se quedan como imports normales a propósito: son lo primero
+// que se pinta, diferirlos solo añadiría un parpadeo.
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Shipments = lazy(() => import('./pages/Shipments'))
+const Fleet = lazy(() => import('./pages/Fleet'))
+const Drivers = lazy(() => import('./pages/Drivers'))
+const DriverDashboard = lazy(() => import('./pages/driver/DriverDashboard'))
+const Clients = lazy(() => import('./pages/Clients'))
+const Articles = lazy(() => import('./pages/Articles'))
+const Tracking = lazy(() => import('./pages/Tracking'))
+const FuelManagement = lazy(() => import('./pages/FuelManagement'))
+const MaintenanceHistory = lazy(() => import('./pages/MaintenanceHistory'))
+const ClientDashboard = lazy(() => import('./pages/client/ClientDashboard'))
+const Incidents = lazy(() => import('./pages/Incidents'))
+const ClientValidation = lazy(() => import('./pages/ClientValidation'))
+const PendingCollections = lazy(() => import('./pages/PendingCollections'))
+const NotificationCenter = lazy(() => import('./pages/NotificationCenter'))
+
 import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
-import { initStorageBuckets } from './utils/storage';
 import { fetchAllRows } from './utils/fetchAllRows';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
 import { establecerContextoDeError } from './utils/errorLog';
@@ -40,6 +50,18 @@ import { enqueue, getQueue, dequeue, getQueueLength } from './utils/offlineQueue
 import { uploadProof } from './utils/storage';
 
 
+
+// Lo que se ve mientras llega el trozo de la pantalla que se acaba de pedir.
+// Suele durar milisegundos (y nada a partir de la segunda vez, porque el
+// navegador ya lo tiene en caché), así que no lleva texto: un texto que
+// parpadea molesta más que un hueco tranquilo.
+function PantallaCargando() {
+  return (
+    <div className="flex items-center justify-center py-24">
+      <div className="w-8 h-8 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" />
+    </div>
+  );
+}
 
 // Custom hook for localStorage persistence
 function usePersistentState(key, initialValue) {
@@ -297,8 +319,6 @@ function App() {
   // Para saber qué aprendizaje había ANTES de un cambio del administrador y deducir
   // qué filas por conductor hay que reescribir.
   const routeKnowledgeRef = useRef(routeKnowledge);
-  // Guard to ensure initStorageBuckets only runs once per app session
-  const bucketsInitializedRef = useRef(false);
 
   useEffect(() => { shipmentsRef.current = shipments; }, [shipments]);
   useEffect(() => { driversRef.current = drivers; }, [drivers]);
@@ -766,12 +786,6 @@ function App() {
     if (isMissingSupabaseKeys) {
         setIsSyncing(false);
         return;
-    }
-
-    // Non-blocking: init storage buckets only once per app session
-    if (!bucketsInitializedRef.current) {
-      bucketsInitializedRef.current = true;
-      initStorageBuckets().catch(e => console.warn('initStorageBuckets background error:', e));
     }
 
     let retryCount = 0;
@@ -3428,54 +3442,62 @@ function App() {
 
   // Client View
   if (userRole === 'client') {
-    return <ClientDashboard 
-        client={clients.find(c => c.id === currentClientId)}
-        onLogout={handleLogout}
-        allShipments={shipments}
-        drivers={drivers}
-        allClients={clients}
-        articles={articles}
-        tariffs={tariffs}
-        coverageZones={coverageZones}
-        onCreateShipment={handleAddShipment}
-        onUpdateClient={handleUpdateClient}
-        onDeleteShipment={handleDeleteShipment}
-        pendingQueueCount={pendingQueueCount}
-        isSyncingQueue={isSyncingQueue}
-    />
+    return (
+      <Suspense fallback={<PantallaCargando />}>
+        <ClientDashboard
+          client={clients.find(c => c.id === currentClientId)}
+          onLogout={handleLogout}
+          allShipments={shipments}
+          drivers={drivers}
+          allClients={clients}
+          articles={articles}
+          tariffs={tariffs}
+          coverageZones={coverageZones}
+          onCreateShipment={handleAddShipment}
+          onUpdateClient={handleUpdateClient}
+          onDeleteShipment={handleDeleteShipment}
+          pendingQueueCount={pendingQueueCount}
+          isSyncingQueue={isSyncingQueue}
+        />
+      </Suspense>
+    )
   }
 
   // Driver View
   if (userRole === 'driver') {
-    return <DriverDashboard
-      onLogout={handleLogout}
-      allShipments={shipments}
-      currentDriverId={currentDriverId}
-      routes={routes}
-      routeKnowledge={routeKnowledge}
-      onUpdateRouteKnowledge={handleUpdateRouteKnowledge}
-      onAssignShipment={handleAssignDriver}
-      drivers={drivers}
-      clients={clients}
-      allPoblaciones={allPoblaciones}
-      onCreateShipment={handleAddShipment}
-      onStatusChange={handleShipmentStatusChange}
-      onUpdateShipment={handleUpdateShipment}
-      onUpdateClient={handleUpdateClient}
-      onAddClient={handleAddClient}
-      tariffs={tariffs}
-      articles={articles}
-      familyOrder={familyOrder}
-      coverageZones={coverageZones}
-      defaultCodFee={defaultCodFee}
-      gpsIntervalMinutes={gpsIntervalMinutes}
-      driverAlerts={driverAlerts}
-      alertAcknowledgements={alertAcknowledgements}
-      isInitialLoading={isSyncing}
-      driverNamePreference={driverNamePreference}
-      isTestMode={activeTestMode}
-      cachedDriverName={cachedDriverName}
-    />
+    return (
+      <Suspense fallback={<PantallaCargando />}>
+        <DriverDashboard
+          onLogout={handleLogout}
+          allShipments={shipments}
+          currentDriverId={currentDriverId}
+          routes={routes}
+          routeKnowledge={routeKnowledge}
+          onUpdateRouteKnowledge={handleUpdateRouteKnowledge}
+          onAssignShipment={handleAssignDriver}
+          drivers={drivers}
+          clients={clients}
+          allPoblaciones={allPoblaciones}
+          onCreateShipment={handleAddShipment}
+          onStatusChange={handleShipmentStatusChange}
+          onUpdateShipment={handleUpdateShipment}
+          onUpdateClient={handleUpdateClient}
+          onAddClient={handleAddClient}
+          tariffs={tariffs}
+          articles={articles}
+          familyOrder={familyOrder}
+          coverageZones={coverageZones}
+          defaultCodFee={defaultCodFee}
+          gpsIntervalMinutes={gpsIntervalMinutes}
+          driverAlerts={driverAlerts}
+          alertAcknowledgements={alertAcknowledgements}
+          isInitialLoading={isSyncing}
+          driverNamePreference={driverNamePreference}
+          isTestMode={activeTestMode}
+          cachedDriverName={cachedDriverName}
+        />
+      </Suspense>
+    )
   }
 
   // Admin View (Default)
@@ -3497,6 +3519,11 @@ function App() {
       pendingQueueCount={pendingQueueCount}
       isSyncingQueue={isSyncingQueue}
     >
+      {/* Una sola frontera para todas las pantallas: solo entra en juego mientras
+          llega el trozo de la que se acaba de abrir. Los modales y la pantalla de
+          Configuración quedan fuera a propósito — no son diferidos y así no
+          desaparecen si se está cargando otra cosa. */}
+      <Suspense fallback={<PantallaCargando />}>
                 {currentView === 'dashboard' && (
                     <div className="animate-in fade-in duration-500">
                         <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} vehicles={vehicles} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
@@ -3538,6 +3565,7 @@ function App() {
       {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onReply={handleIncidentReply} drivers={drivers} driverNamePreference={driverNamePreference} />}
       {currentView === 'notifications' && <NotificationCenter shipments={visibleShipments} drivers={drivers} clients={visibleClients} onUpdateShipment={handleUpdateShipment} articles={articles} tariffs={tariffs} defaultCodFee={defaultCodFee} familyOrder={familyOrder} coverageZones={coverageZones} />}
       {currentView === 'clientValidation' && <ClientValidation clients={clients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} onDeleteClients={handleDeleteClients} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
+      </Suspense>
       {currentView === 'settings' && (
         <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
 
