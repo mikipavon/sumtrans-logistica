@@ -498,7 +498,7 @@ export const optimizarRuta = ({
         return {
             orden: [],
             deCamino: new Set(),
-            resumen: { turno, ruta: null, pueblos: 0, ordenPueblos: [], extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0, sinPosicion: !gps },
+            resumen: { turno, ruta: null, pueblos: 0, ordenPueblos: [], kmAlPrimero: null, extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0, sinPosicion: !gps },
         };
     }
 
@@ -582,6 +582,15 @@ export const optimizarRuta = ({
             // Los pueblos en el orden en que han quedado. Es lo único que le dice al
             // conductor, de un vistazo, si el orden que ve es el de su ruta o no.
             ordenPueblos: grupos.map(g => g.pueblo).filter(Boolean),
+            // A cuánto queda la primera parada de donde está el conductor. Si sale un
+            // número grande ordenando por cercanía, o la posición es mala o la
+            // referencia de algún pueblo lo es: sin este dato no se distingue.
+            kmAlPrimero: (() => {
+                if (!posicion || grupos.length === 0) return null;
+                const centro = centroDeConRespaldo(grupos[0].items, grupos[0].pueblo, referencia);
+                const km = distanciaEntre(posicion, centro);
+                return Number.isFinite(km) ? Math.round(km) : null;
+            })(),
             extras,
             sinRuta,
             // Se ha ordenado sin saber dónde está el conductor: el punto de partida ha

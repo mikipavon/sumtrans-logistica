@@ -553,6 +553,33 @@ describe('encadenado entre pueblos', () => {
         // El resumen enseña el orden con nombres: es lo que le dice al conductor si lo
         // que ve viene de su ruta o de la distancia.
         expect(r.resumen.ordenPueblos).toEqual(['Cabra', 'Montilla', 'La Rambla']);
+        // Ordenando desde donde está, la primera le tiene que pillar al lado.
+        expect(r.resumen.kmAlPrimero).toBe(1);
+    });
+
+    // Lo que delata que la posición usada no era la buena: se ordena "por cercanía" y
+    // aun así la primera parada queda a 30 km.
+    it('el resumen dice a cuánto queda la primera parada', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'La Rambla', coords: punto(30), nombre: 'la_rambla' }),
+            envio({ ciudad: 'Cabra', coords: punto(0), nombre: 'cabra' }),
+        ];
+        // El conductor cree estar en Cabra, pero se optimiza con una posición vieja
+        // que lo situa junto a La Rambla.
+        const conPosicionVieja = optimizarRuta({
+            envios, rutas: [], conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(30), lon: este(0) },
+        });
+        expect(conPosicionVieja.resumen.ordenPueblos).toEqual(['La Rambla', 'Cabra']);
+        expect(conPosicionVieja.resumen.kmAlPrimero).toBe(0);
+
+        const desdeCabra = optimizarRuta({
+            envios, rutas: [], conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(0), lon: este(0) },
+        });
+        expect(desdeCabra.resumen.ordenPueblos).toEqual(['Cabra', 'La Rambla']);
+        expect(desdeCabra.resumen.kmAlPrimero).toBe(0);
     });
 
     it('y sirve igual si el paquete de fuera no tiene ni dirección ni coordenadas', () => {

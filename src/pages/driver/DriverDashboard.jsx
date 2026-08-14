@@ -1971,9 +1971,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const gpsIntervalRef = useRef(null);
     const gpsDeniedRef = useRef(false); // Evitar alertas repetidas
 
-    // La última posición que ha dado el móvil en esta sesión. El rastreador la coge
-    // cada pocos minutos; Optimizar la reaprovecha cuando el GPS no contesta a tiempo,
-    // que dentro de una nave o entre edificios pasa constantemente.
+    // La última posición que ha dado el móvil en esta sesión, con la hora. El
+    // rastreador la coge cada pocos minutos; Optimizar la reaprovecha cuando el GPS no
+    // contesta a tiempo, que dentro de una nave o entre edificios pasa constantemente.
+    // La hora es imprescindible: una posición vieja no es "casi tan buena", es MALA —
+    // ordena el reparto desde donde estabas hace un rato.
     const ultimaPosicionRef = useRef(null);
     const driversRef = useRef(drivers); // Ref para acceso en callbacks sin re-render
 
@@ -1996,7 +1998,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             const { latitude, longitude } = position.coords;
             // Se guarda ANTES de subirla: aunque falle el envío al servidor, la
             // posición es buena y a Optimizar le vale igual.
-            ultimaPosicionRef.current = { lat: latitude, lon: longitude };
+            ultimaPosicionRef.current = { lat: latitude, lon: longitude, cuando: Date.now() };
             try {
                 const drv = driversRef.current.find(d => String(d.id) === String(currentDriverId));
                 if (!drv) return;
@@ -3514,7 +3516,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             };
         };
 
-        const ordenar = async (gps) => {
+        const ordenar = async (gps, origenPosicion) => {
             try {
                 const resolverCoordenadasPueblo = await resolverPueblosDelReparto();
                 const { orden, deCamino, resumen } = optimizarRuta({
@@ -3533,7 +3535,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 setParadasDeCamino(deCamino);
                 setRouteOptimized(true);
                 guardarOrdenEnLaNube(orden);
-                setLearningMessage(mensajeDeOptimizacion(resumen));
+                setLearningMessage(mensajeDeOptimizacion(resumen, origenPosicion));
             } catch (error) {
                 console.error("Falló la optimización de la ruta:", error);
                 setLearningMessage("No se ha podido optimizar la ruta.");
@@ -3545,46 +3547,53 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         };
 
         /**
-         * Dónde está el conductor cuando el GPS no contesta a los 5 segundos.
+         * Dónde está el conductor cuando el GPS no contesta.
          *
-         * Antes, en ese caso, se optimizaba con `null`: el optimizador ordenaba el día
-         * como si no supiera dónde estás —cogiendo el centro de las paradas como punto
-         * de partida— y encima sin decirlo. Estando parado en Cabra, la primera parada
-         * podía salir a 40 km. Y no hacía falta: la app YA sabe dónde estás, porque el
-         * rastreador manda la posición cada pocos minutos y el mapa la pinta.
-         *
-         * Primero la de esta sesión, y si el móvil aún no ha dado ninguna, la última
-         * que se guardó en su ficha, siempre que sea de hoy. Una de ayer coloca peor
-         * que no tener ninguna.
+         * Con un tope de antigüedad CORTO, y esto es la lección de hoy: se aceptaba una
+         * posición de hasta 3 horas, y a las 19:30 la de las 16:30 puede estar en otro
+         * pueblo. El reparto salió ordenado desde donde el conductor había estado por
+         * la tarde, no desde donde estaba, y encima sin el aviso de "sin GPS" porque
+         * técnicamente sí había posición. Una posición vieja no es media posición: es
+         * una posición equivocada, y coloca peor que no tener ninguna.
          */
-        const posicionConocida = () => {
-            if (ultimaPosicionRef.current) return ultimaPosicionRef.current;
+        const MAX_EDAD_POSICION_MS = 15 * 60 * 1000;
+
+        const posicionGuardada = () => {
+            const propia = ultimaPosicionRef.current;
+            if (propia && Date.now() - propia.cuando <= MAX_EDAD_POSICION_MS) return propia;
 
             const driver = drivers?.find(d => String(d.id) === String(currentDriverId));
             const lat = Number(driver?.currentLat);
             const lon = Number(driver?.currentLng);
-            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-
             const sello = Date.parse(driver?.lastGpsUpdate || '');
-            if (!Number.isFinite(sello) || Date.now() - sello > 3 * 60 * 60 * 1000) return null;
-            return { lat, lon };
+            if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(sello)) return null;
+            if (Date.now() - sello > MAX_EDAD_POSICION_MS) return null;
+            return { lat, lon, cuando: sello };
         };
 
-        if (!navigator.geolocation) { ordenar(posicionConocida()); return; }
+        const conLaGuardada = () => {
+            const guardada = posicionGuardada();
+            if (!guardada) { ordenar(null, null); return; }
+            const minutos = Math.round((Date.now() - guardada.cuando) / 60000);
+            ordenar(guardada, minutos <= 1 ? 'posición de hace un momento' : `posición de hace ${minutos} min`);
+        };
 
-        // Sin alta precisión: en el móvil tarda de más y acaba cayendo al plan B casi
-        // siempre. Para elegir por dónde empezar, la posición aproximada sobra.
+        if (!navigator.geolocation) { conLaGuardada(); return; }
+
+        // 12 segundos y no 5: esto lo dispara el conductor a propósito y prefiere
+        // esperar un poco a que le ordenen el día desde donde está de verdad. Sin alta
+        // precisión, que en el móvil tarda de más; para elegir pueblo, sobra.
         navigator.geolocation.getCurrentPosition(
             (pos) => {
-                ultimaPosicionRef.current = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-                ordenar(ultimaPosicionRef.current);
+                ultimaPosicionRef.current = { lat: pos.coords.latitude, lon: pos.coords.longitude, cuando: Date.now() };
+                ordenar(ultimaPosicionRef.current, 'GPS de ahora');
             },
-            () => ordenar(posicionConocida()),
-            { timeout: 5000, enableHighAccuracy: false, maximumAge: 60000 }
+            conLaGuardada,
+            { timeout: 12000, enableHighAccuracy: false, maximumAge: 30000 }
         );
     };
 
-    const mensajeDeOptimizacion = (resumen) => {
+    const mensajeDeOptimizacion = (resumen, origenPosicion) => {
         const partes = [`${etiquetaTurno(resumen.turno)}: ${resumen.pueblos} pueblo${resumen.pueblos !== 1 ? 's' : ''}`];
         // El nombre de la ruta usada: cuando un conductor cubre la de otro es lo único
         // que le dice si ha ordenado con la ruta buena o con la suya de siempre.
@@ -3594,8 +3603,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         if (resumen.ordenPueblos?.length) partes.push(`orden: ${resumen.ordenPueblos.join(' → ')}`);
         // Le ha cambiado el orden de siempre porque está dentro de ese pueblo: que lo
         // sepa, para poder mover las paradas si hoy no le conviene.
-        // Que no parezca que ha optimizado con tu posición cuando no la tenía.
+        // De dónde salió la posición y a qué distancia queda la primera parada. Sin
+        // esto, un orden raro no se puede diagnosticar: no se distingue "no sé dónde
+        // estás" de "sé dónde estás pero no dónde cae ese pueblo".
         if (resumen.sinPosicion) partes.push('⚠ sin señal GPS: ordenado por el centro del reparto');
+        else if (origenPosicion) partes.push(origenPosicion);
+        if (resumen.kmAlPrimero != null) partes.push(`la 1ª parada te pilla a ${resumen.kmAlPrimero} km`);
         if (resumen.sinRuta) partes.push('sin ruta asignada, ordenados por cercanía');
         if (resumen.extras > 0) partes.push(`${resumen.extras} fuera de ruta`);
         if (resumen.deCamino > 0) partes.push(`${resumen.deCamino} de camino`);
