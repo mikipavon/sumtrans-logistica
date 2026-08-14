@@ -515,6 +515,79 @@ describe('encadenado entre pueblos', () => {
         ]);
     });
 
+    it('se empieza por el pueblo en el que está el conductor, no por el primero de la lista', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Montilla', coords: punto(30), nombre: 'montilla' }),
+            envio({ ciudad: 'La Rambla', coords: punto(45), nombre: 'la_rambla' }),
+            envio({ ciudad: 'Cabra', coords: punto(0.5), nombre: 'cabra' }),
+        ];
+        const rutas = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Montilla', 'La Rambla', 'Cabra'] }];
+        const r = optimizarRuta({
+            envios, rutas, conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(0), lon: este(0) },   // parado en Cabra
+        });
+        // Cabra al principio; Montilla y La Rambla se quedan como estaban detrás.
+        expect(nombres(r)).toEqual(['cabra', 'montilla', 'la_rambla']);
+        expect(r.resumen.arranque).toBe('Cabra');
+    });
+
+    it('también vale cuando la parada del pueblo donde estás no tiene coordenadas', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Montilla', coords: punto(30), nombre: 'montilla' }),
+            envio({ ciudad: 'Cabra', coords: null, nombre: 'aviso_de_cabra' }),
+        ];
+        const rutas = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Montilla', 'Cabra'] }];
+        const r = optimizarRuta({
+            envios, rutas, conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(0), lon: este(0) },
+            resolverCoordenadasPueblo: (p) => p === 'Cabra' ? { lat: norte(0.5), lon: este(0) } : null,
+        });
+        expect(nombres(r)).toEqual(['aviso_de_cabra', 'montilla']);
+    });
+
+    it('si no estás dentro de ningún pueblo del reparto, manda la ruta', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Montilla', coords: punto(30), nombre: 'montilla' }),
+            envio({ ciudad: 'Cabra', coords: punto(0.5), nombre: 'cabra' }),
+        ];
+        const rutas = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Montilla', 'Cabra'] }];
+        const r = optimizarRuta({
+            envios, rutas, conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(60), lon: este(0) },   // camino de ninguna parte
+        });
+        expect(nombres(r)).toEqual(['montilla', 'cabra']);
+        expect(r.resumen.arranque).toBe(null);
+    });
+
+    it('sin GPS no se mueve nada: el centro de las paradas no dice dónde estás', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Montilla', coords: punto(30), nombre: 'montilla' }),
+            envio({ ciudad: 'Cabra', coords: punto(0.5), nombre: 'cabra' }),
+        ];
+        const rutas = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Montilla', 'Cabra'] }];
+        const r = optimizarRuta({ envios, rutas, conductorId: 7, ahora: MANANA, gps: null });
+        expect(nombres(r)).toEqual(['montilla', 'cabra']);
+        expect(r.resumen.arranque).toBe(null);
+    });
+
+    it('el pueblo de al lado no cuenta como "estoy aquí"', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Montilla', coords: punto(30), nombre: 'montilla' }),
+            envio({ ciudad: 'Doña Mencía', coords: punto(7), nombre: 'dona_mencia' }),
+        ];
+        const rutas = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Montilla', 'Doña Mencía'] }];
+        const r = optimizarRuta({
+            envios, rutas, conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(0), lon: este(0) },   // en Cabra, a 7 km de Doña Mencía
+        });
+        expect(nombres(r)).toEqual(['montilla', 'dona_mencia']);
+    });
+
     it('sin ruta configurada ordena los pueblos por cercanía', () => {
         contador = 0;
         const envios = [
@@ -558,6 +631,58 @@ describe('encadenado entre pueblos', () => {
             gps: { lat: norte(0), lon: este(0) },
         });
         expect(nombres(r)).toEqual(['aguilar', 'pepe']);
+    });
+
+    // El caso del aviso por teléfono: se apunta el nombre y el pueblo, y ya está.
+    it('una parada sin dirección se ordena por el pueblo, no al final del bloque', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Cabra', coords: punto(6), nombre: 'lejos_del_pueblo' }),
+            envio({ ciudad: 'Cabra', coords: null, nombre: 'aviso_por_telefono', destinationAddress: '' }),
+            envio({ ciudad: 'Cabra', coords: punto(5.9), nombre: 'tambien_lejos' }),
+        ];
+        const rutas = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Cabra'] }];
+        const r = optimizarRuta({
+            envios, rutas, conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(0), lon: este(0) },
+            // El centro de Cabra, que es lo único que se sabe del aviso.
+            resolverCoordenadasPueblo: () => ({ lat: norte(0.5), lon: este(0) }),
+        });
+        // Cae junto al centro del pueblo, que es por donde se entra: antes salía el
+        // último de los tres por no tener punto propio.
+        expect(nombres(r)).toEqual(['aviso_por_telefono', 'tambien_lejos', 'lejos_del_pueblo']);
+    });
+
+    it('con dos paradas sin dirección en el mismo pueblo, no se estorban', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Cabra', coords: null, nombre: 'aviso_1' }),
+            envio({ ciudad: 'Cabra', coords: null, nombre: 'aviso_2' }),
+            envio({ ciudad: 'Cabra', coords: punto(8), nombre: 'con_gps' }),
+        ];
+        const rutas = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Cabra'] }];
+        const r = optimizarRuta({
+            envios, rutas, conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(0), lon: este(0) },
+            resolverCoordenadasPueblo: () => ({ lat: norte(0.5), lon: este(0) }),
+        });
+        expect(r.orden).toHaveLength(3);
+        expect(nombres(r)[2]).toBe('con_gps');
+    });
+
+    it('el pueblo se pregunta una sola vez, por muchas paradas que tenga', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Cabra', coords: null, nombre: 'a' }),
+            envio({ ciudad: 'CABRA (14940)', coords: null, nombre: 'b' }),
+            envio({ ciudad: 'Cabra', coords: null, nombre: 'c' }),
+        ];
+        const preguntados = [];
+        optimizarRuta({
+            envios, rutas: [], conductorId: 7, ahora: MANANA,
+            resolverCoordenadasPueblo: (p) => { preguntados.push(p); return { lat: norte(0.5), lon: este(0) }; },
+        });
+        expect(preguntados).toHaveLength(1);
     });
 
     it('los pueblos que no están en la ruta se cuelan donde menos desvían', () => {

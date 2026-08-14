@@ -13,6 +13,10 @@
  *    algo pendiente, no se pierde). Un pueblo que esté en los dos turnos sale UNA vez,
  *    en el sitio que le toca por el turno actual.
  *
+ *    Con una excepción: si al pulsar Optimizar el GPS dice que ya estás DENTRO de uno
+ *    de los pueblos del reparto, ese pasa al principio y los demás se quedan como
+ *    estaban. La ruta dice el orden del circuito, pero no por dónde se entra en él.
+ *
  * 2. Dentro de cada pueblo, primero los nuestros (logo SUM) y después las agencias:
  *    con las agencias hay margen de entrega, con lo nuestro no.
  *
@@ -24,6 +28,12 @@
  * 4. El orden dentro del pueblo se aprende del transportista: cuando ya hay historial
  *    firme, manda el orden que él confirma y la geografía solo coloca a los clientes
  *    nuevos. Mientras no lo hay, manda la geografía y el historial desempata.
+ *
+ * 5. Una parada de la que solo se sabe el pueblo —un aviso por teléfono, sin calle ni
+ *    GPS— se ordena por el punto del pueblo, no se va al final por estar ciega. Ese
+ *    punto es aproximado y va aparte (`coordsRef`), para que no cuente como una
+ *    coordenada de verdad en la regla 3: no se cuela ni arrastra a nadie "de camino"
+ *    quien en realidad no se sabe dónde está.
  */
 
 import { normalizarPueblo, mejorPuebloParaCiudad } from './townMatch';
@@ -44,6 +54,14 @@ export const RADIO_DE_CAMINO_KM = 1;
 
 /** Cuántas paradas como máximo se cuelan tras una misma parada. */
 export const MAX_ARRASTRE_DE_CAMINO = 2;
+
+/**
+ * Hasta dónde se da por hecho que el conductor está DENTRO de un pueblo (en km).
+ *
+ * Un pueblo de por aquí se cruza en dos o tres kilómetros, y el más cercano suele
+ * estar a siete u ocho. Cuatro separa bien "estoy aquí" de "estoy en el de al lado".
+ */
+export const RADIO_PUEBLO_DE_SALIDA_KM = 4;
 
 /** Cuánto puede mover el historial a una parada cuando aún no es firme (en km). */
 const PESO_MEMORIA_KM = 0.8;
@@ -191,6 +209,26 @@ const agruparPorCiudad = (items) => {
 };
 
 /**
+ * Las coordenadas de un pueblo, preguntadas UNA vez por pueblo.
+ *
+ * Buscarlas cuesta (recorrer todos los clientes, o el mapa), y hacen falta en los
+ * bucles de inserción, que preguntan lo mismo decenas de veces.
+ */
+const referenciaPorPueblo = (resolver) => {
+    const cache = new Map();
+    return (pueblo) => {
+        const clave = normalizarPueblo(pueblo);
+        if (!clave) return null;
+        if (!cache.has(clave)) {
+            const punto = resolver ? resolver(pueblo) : null;
+            const vale = punto && Number.isFinite(punto.lat) && Number.isFinite(punto.lon);
+            cache.set(clave, vale ? punto : null);
+        }
+        return cache.get(clave);
+    };
+};
+
+/**
  * El centro de un grupo, cayendo al centro del PUEBLO si ningún envío del grupo
  * tiene coordenadas propias (dirección nueva, nunca entregada, sin ficha de cliente
  * con coordenadas aprendidas). Sin esto, un grupo sin coordenadas quedaba a distancia
@@ -265,6 +303,39 @@ const secuenciaDePueblos = (items, pueblosRuta, puntoInicial, resolverCoordenada
 };
 
 /**
+ * Arranca por el pueblo en el que ya está el conductor.
+ *
+ * La lista de la ruta dice el ORDEN del circuito, pero no por dónde se entra en él:
+ * eso depende de dónde estés al pulsar el botón. Estando parado en Cabra, la primera
+ * parada del día salía en Montilla, a 30 km, solo porque Montilla iba antes en la
+ * lista; y las de Cabra, que las tenías debajo, para el final.
+ *
+ * El pueblo en el que estás pasa al principio y los demás se quedan tal cual, en el
+ * orden de la ruta. No es darle la vuelta al circuito: es entrar por donde toca.
+ *
+ * Hace falta GPS de verdad. Con el centro de las paradas del día como punto de
+ * partida —el plan B cuando no hay señal— "el pueblo donde estoy" no significa nada.
+ */
+const arrancarPorElPuebloActual = (grupos, posicion, referencia, radioKm) => {
+    if (!posicion || grupos.length < 2) return { grupos, arranque: null };
+
+    let elegido = -1;
+    let masCerca = radioKm;
+    grupos.forEach((grupo, i) => {
+        const centro = centroDeConRespaldo(grupo.items, grupo.pueblo, referencia);
+        const dist = distanciaEntre(posicion, centro);
+        if (dist < masCerca) { masCerca = dist; elegido = i; }
+    });
+
+    // -1: no estás en ninguno. 0: ya era el primero, no hay nada que mover.
+    if (elegido <= 0) return { grupos, arranque: null };
+
+    const restantes = [...grupos];
+    const [actual] = restantes.splice(elegido, 1);
+    return { grupos: [actual, ...restantes], arranque: actual.pueblo || null };
+};
+
+/**
  * El historial que aplica a este pueblo. El propio del conductor manda; si no tiene,
  * se hereda del maestro de SU ruta antes que del de cualquier otra, que es lo que
  * antes no se hacía: se cogía el primer maestro que resultara conocer el pueblo.
@@ -297,13 +368,13 @@ const memoriaAplicable = (pueblo, contexto) => {
  * transportista lleva meses haciendo primero.
  */
 const insertarDondeMenosDesvie = (cadena, item, entrada) => {
-    if (!item.coords || cadena.length === 0) { cadena.push(item); return; }
+    if (!item.coordsRef || cadena.length === 0) { cadena.push(item); return; }
     let mejor = cadena.length;
     let mejorCoste = Infinity;
     for (let i = 0; i <= cadena.length; i++) {
-        const previo = i === 0 ? entrada : cadena[i - 1].coords;
-        const siguiente = i < cadena.length ? cadena[i].coords : null;
-        const coste = costeDeInsercion(previo, item.coords, siguiente);
+        const previo = i === 0 ? entrada : cadena[i - 1].coordsRef;
+        const siguiente = i < cadena.length ? cadena[i].coordsRef : null;
+        const coste = costeDeInsercion(previo, item.coordsRef, siguiente);
         if (coste <= mejorCoste) { mejorCoste = coste; mejor = i; }
     }
     cadena.splice(mejor, 0, item);
@@ -333,7 +404,7 @@ const ordenarPorGeografia = (items, memoria, confianza, entrada) => {
         let mejor = 0;
         let mejorScore = Infinity;
         restantes.forEach((item, i) => {
-            const dist = cursor ? distanciaEntre(cursor, item.coords) : 0;
+            const dist = cursor ? distanciaEntre(cursor, item.coordsRef) : 0;
             const orden = ordenDeCliente(memoria, item.nombre);
             const sesgoMemoria = (orden === null ? 0.5 : orden) * PESO_MEMORIA_KM * confianza;
             const sesgoUrgencia = item.urgente ? 0 : PESO_NO_URGENTE_KM;
@@ -342,22 +413,25 @@ const ordenarPorGeografia = (items, memoria, confianza, entrada) => {
         });
         const elegido = restantes.splice(mejor, 1)[0];
         salida.push(elegido);
-        cursor = elegido.coords;
+        cursor = elegido.coordsRef;
     }
     return salida;
 };
 
 const ordenarBloque = (bloque, memoria, entrada) => {
-    const conCoords = bloque.filter(i => i.coords);
-    const sinCoords = bloque.filter(i => !i.coords);
+    // Basta con saber en qué pueblo cae la parada: con eso ya se ordena como una más
+    // en lugar de irse al final por no tener su punto exacto. Al final solo se quedan
+    // las que no se sabe ni eso.
+    const conCoords = bloque.filter(i => i.coordsRef);
+    const sinCoords = bloque.filter(i => !i.coordsRef);
     const confianza = confianzaDeMemoria(memoria, bloque.map(i => i.nombre));
 
     const ordenados = confianza >= UMBRAL_MEMORIA_FIRME
         ? ordenarPorMemoria(conCoords, memoria, entrada)
         : ordenarPorGeografia(conCoords, memoria, confianza, entrada);
 
-    // Sin coordenadas no se puede optimizar: al final del bloque, por historial y
-    // luego por dirección, que al menos deja juntas las de la misma calle.
+    // Sin ninguna referencia no se puede optimizar: al final del bloque, por historial
+    // y luego por dirección, que al menos deja juntas las de la misma calle.
     sinCoords.sort((a, b) => {
         const oa = ordenDeCliente(memoria, a.nombre);
         const ob = ordenDeCliente(memoria, b.nombre);
@@ -377,6 +451,9 @@ const ordenarBloque = (bloque, memoria, entrada) => {
  *  · Además del radio se mira el desvío real (ir y volver al rumbo). Un radio a secas
  *    también arrastra lo que está detrás, en dirección contraria a la marcha.
  */
+// Aquí se mira `coords` y no `coordsRef` a propósito: "está a 300 m, se deja al pasar"
+// solo se puede decir con la coordenada de verdad. Con el punto del pueblo saldría que
+// todas las paradas sin dirección están pegadas unas a otras.
 const pasarDeCamino = (lista, deCamino, radioKm) => {
     const restantes = [...lista];
     const salida = [];
@@ -422,8 +499,8 @@ const ordenarDentroDelPueblo = (items, pueblo, entrada, contexto, deCamino, radi
         if (bloque.length === 0) return;
         const trozo = ordenarBloque(bloque, memoria, cursor);
         ordenado.push(...trozo);
-        const ultimo = [...trozo].reverse().find(i => i.coords);
-        if (ultimo) cursor = ultimo.coords;
+        const ultimo = [...trozo].reverse().find(i => i.coordsRef);
+        if (ultimo) cursor = ultimo.coordsRef;
     });
 
     return pasarDeCamino(ordenado, deCamino, radioKm);
@@ -446,6 +523,7 @@ export const optimizarRuta = ({
     gps = null,
     ahora = new Date(),
     radioDeCaminoKm = RADIO_DE_CAMINO_KM,
+    radioPuebloDeSalidaKm = RADIO_PUEBLO_DE_SALIDA_KM,
 } = {}) => {
     const turno = turnoQueSeRepartaAhora(ahora);
     const lista = (envios || []).filter(Boolean);
@@ -454,18 +532,26 @@ export const optimizarRuta = ({
         return {
             orden: [],
             deCamino: new Set(),
-            resumen: { turno, ruta: null, pueblos: 0, extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0 },
+            resumen: { turno, ruta: null, pueblos: 0, extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0, arranque: null },
         };
     }
 
+    const referencia = referenciaPorPueblo(resolverCoordenadasPueblo);
+
     const items = lista.map(envio => {
         const cliente = resolverCliente(envio);
+        const ciudad = ciudadDeEnvio(envio);
+        const propias = parsearCoordenadas(resolverCoordenadas(envio, cliente));
         return {
             envio,
-            coords: parsearCoordenadas(resolverCoordenadas(envio, cliente)),
+            // `coords` son las de verdad; `coordsRef` es con lo que se ordena. Una
+            // parada sin dirección ni GPS —un aviso por teléfono, un cliente nuevo—
+            // se coloca por el pueblo en lugar de quedarse ciega y caer al final.
+            coords: propias,
+            coordsRef: propias || referencia(ciudad),
             agencia: esDeAgencia(envio, cliente),
             urgente: (cliente?.priority || 'urgent') === 'urgent',
-            ciudad: ciudadDeEnvio(envio),
+            ciudad,
             nombre: nombreDeParada(envio),
             direccion: envio.destinationAddress || '',
         };
@@ -478,11 +564,15 @@ export const optimizarRuta = ({
 
     // Punto de partida de la cadena: el GPS del conductor si lo hay, y si no el
     // centro de las paradas del día.
-    const puntoInicial = (gps && Number.isFinite(gps.lat) && Number.isFinite(gps.lon))
+    const posicion = (gps && Number.isFinite(gps.lat) && Number.isFinite(gps.lon))
         ? { lat: gps.lat, lon: gps.lon }
-        : centroDe(items);
+        : null;
+    const puntoInicial = posicion || centroDe(items);
 
-    const { grupos, extras, sinRuta } = secuenciaDePueblos(items, pueblosRuta, puntoInicial, resolverCoordenadasPueblo);
+    const secuencia = secuenciaDePueblos(items, pueblosRuta, puntoInicial, referencia);
+    const { extras, sinRuta } = secuencia;
+    const { grupos, arranque } = arrancarPorElPuebloActual(
+        secuencia.grupos, posicion, referencia, radioPuebloDeSalidaKm);
 
     const contexto = {
         turno,
@@ -506,8 +596,8 @@ export const optimizarRuta = ({
         const trozo = ordenarDentroDelPueblo(
             grupo.items, grupo.pueblo, entrada, contexto, deCamino, radioDeCaminoKm);
         ordenados.push(...trozo);
-        const ultimo = [...trozo].reverse().find(i => i.coords);
-        if (ultimo) entrada = ultimo.coords;
+        const ultimo = [...trozo].reverse().find(i => i.coordsRef);
+        if (ultimo) entrada = ultimo.coordsRef;
     });
 
     // Red de seguridad: que no se pierda ningún envío por el camino.
@@ -528,6 +618,10 @@ export const optimizarRuta = ({
             pueblos: grupos.length,
             extras,
             sinRuta,
+            // El pueblo por el que se ha empezado por estar el conductor dentro, si se
+            // ha movido alguno. Va en el mensaje: si un día no le conviene, tiene que
+            // saber por qué le ha cambiado el orden de siempre.
+            arranque,
             deCamino: deCamino.size,
             pueblosMemorizados: contarPueblosMemorizados(aprendizaje),
         },

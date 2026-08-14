@@ -38,6 +38,7 @@ import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { getPackagesCount, puedeAsignarloEsteConductor, ciudadDeEnvio, nombreDeParada } from '../../utils/shipmentUtils';
 import { mejorPuebloParaCiudad, esElMismoPueblo, normalizarPueblo } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
+import { geocodificarDireccion } from '../../utils/geocodificar';
 import { adaptarConocimiento, registrarEntrega, contarPueblosMemorizados } from '../../utils/aprendizajeRuta';
 import { turnoQueSeAsignaAhora, turnoQueSeRepartaAhora, etiquetaTurno } from '../../utils/turnos';
 import { resolverLogo, insigniaDeAgencia, buscarClienteDeEnvio } from '../../utils/marca';
@@ -3466,7 +3467,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         // de rendirse y mandarla al final, se mira si algún OTRO cliente de ese mismo
         // pueblo tiene coordenadas aprendidas de entregas anteriores, y se usan como
         // referencia aproximada de dónde cae el pueblo.
-        const resolverCoordenadasPueblo = (pueblo) => {
+        const puntoDeOtroCliente = (pueblo) => {
             const clave = normalizarPueblo(pueblo);
             if (!clave) return null;
             const conocido = (clients || []).find(c =>
@@ -3475,8 +3476,41 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             return conocido ? parsearCoordenadas(conocido.coordinates) : null;
         };
 
-        const ordenar = (gps) => {
+        /**
+         * Dónde cae cada pueblo del reparto de hoy.
+         *
+         * Primero se mira entre los clientes, que es gratis. Si en ese pueblo no hay
+         * todavía ningún cliente con coordenadas —pueblo nuevo, o el aviso de hoy es
+         * el primero que se hace allí— se le pregunta al mapa. Sin esto, un envío sin
+         * dirección ni GPS entraba ciego en el optimizador y se iba al final del
+         * bloque; ahora entra colocado en su pueblo como una parada más.
+         */
+        const resolverPueblosDelReparto = async () => {
+            const puntos = new Map();
+            for (const envio of localRoute) {
+                const pueblo = ciudadDeEnvio(envio);
+                const clave = normalizarPueblo(pueblo);
+                if (!clave || puntos.has(clave)) continue;
+
+                let punto = puntoDeOtroCliente(pueblo);
+                if (!punto) {
+                    const delMapa = await geocodificarDireccion(pueblo, pueblo);
+                    if (delMapa) punto = { lat: delMapa[0], lon: delMapa[1] };
+                }
+                puntos.set(clave, punto || null);
+            }
+            return (busca) => {
+                const clave = normalizarPueblo(busca);
+                // La ruta puede escribir el pueblo de otra manera ("El Tejar" contra
+                // "Tejar"): si no está en el mapa de hoy, se busca como siempre.
+                if (clave && puntos.has(clave)) return puntos.get(clave);
+                return puntoDeOtroCliente(busca);
+            };
+        };
+
+        const ordenar = async (gps) => {
             try {
+                const resolverCoordenadasPueblo = await resolverPueblosDelReparto();
                 const { orden, deCamino, resumen } = optimizarRuta({
                     envios: localRoute,
                     rutas: routes,
@@ -3520,6 +3554,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         // El nombre de la ruta usada: cuando un conductor cubre la de otro es lo único
         // que le dice si ha ordenado con la ruta buena o con la suya de siempre.
         if (resumen.ruta) partes.push(`ruta: ${resumen.ruta}`);
+        // Le ha cambiado el orden de siempre porque está dentro de ese pueblo: que lo
+        // sepa, para poder mover las paradas si hoy no le conviene.
+        if (resumen.arranque) partes.push(`empezando por ${resumen.arranque}, que es donde estás`);
         if (resumen.sinRuta) partes.push('sin ruta asignada, ordenados por cercanía');
         if (resumen.extras > 0) partes.push(`${resumen.extras} fuera de ruta`);
         if (resumen.deCamino > 0) partes.push(`${resumen.deCamino} de camino`);
