@@ -3463,12 +3463,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         setIsOptimizing(true);
         setLearningMessage("Optimizando ruta...");
 
-        const terminar = () => {
-            setTimeout(() => {
-                setLearningMessage("");
-                setIsOptimizing(false);
-            }, 3000);
-        };
+        // Se desbloquea el botón, pero el resumen se queda puesto: lo borra el
+        // conductor tocándolo, o la siguiente optimización. Antes se iba solo a los
+        // 3 segundos y no daba tiempo ni a leerlo.
+        const terminar = () => setIsOptimizing(false);
 
         // Cuando la parada es una dirección nueva (sin coordenadas propias ni de
         // cliente), no hay forma de saber a qué distancia está del conductor. Antes
@@ -3591,6 +3589,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         // El nombre de la ruta usada: cuando un conductor cubre la de otro es lo único
         // que le dice si ha ordenado con la ruta buena o con la suya de siempre.
         if (resumen.ruta) partes.push(`ruta: ${resumen.ruta}`);
+        // El orden que ha salido, con los nombres. Sin esto no hay forma de saber si
+        // el orden viene de la ruta o de la distancia sin abrir el Gestor de Rutas.
+        if (resumen.ordenPueblos?.length) partes.push(`orden: ${resumen.ordenPueblos.join(' → ')}`);
         // Le ha cambiado el orden de siempre porque está dentro de ese pueblo: que lo
         // sepa, para poder mover las paradas si hoy no le conviene.
         // Que no parezca que ha optimizado con tu posición cuando no la tenía.
@@ -4733,11 +4734,22 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 <DriverTimeLogAlerts currentDriverId={currentDriverId} />
 
                 {/* AI Notification Toast */}
+                {/* Resumen de la optimización.
+                    Era una píldora de una línea que se borraba sola a los 3 segundos:
+                    en el móvil el texto no cabía y no daba tiempo a leerlo, así que el
+                    conductor nunca se enteraba de con qué ruta había ordenado, de
+                    cuántas paradas iban fuera de ruta ni de si lo había hecho sin GPS.
+                    Ahora el texto entero cabe y se queda hasta que se toca. */}
                 {learningMessage && (
-                    <div className="fixed top-24 left-1/2 -translate-x-1/2 bg-slate-800/90 backdrop-blur-sm text-white px-4 py-2 rounded-full text-xs font-bold shadow-xl animate-in fade-in slide-in-from-top-4 z-50 flex items-center gap-2">
-                        <BrainCircuit size={14} className="text-purple-400" />
-                        {learningMessage}
-                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setLearningMessage("")}
+                        className="fixed top-24 left-1/2 -translate-x-1/2 w-[92vw] max-w-md bg-slate-800/95 backdrop-blur-sm text-white text-left px-4 py-3 rounded-2xl text-xs font-bold shadow-xl animate-in fade-in slide-in-from-top-4 z-50 flex items-start gap-2"
+                    >
+                        <BrainCircuit size={14} className="text-purple-400 shrink-0 mt-0.5" />
+                        <span className="flex-1 leading-relaxed">{learningMessage}</span>
+                        <X size={14} className="text-slate-400 shrink-0 mt-0.5" />
+                    </button>
                 )}
 
                 {/* Upload Status */}

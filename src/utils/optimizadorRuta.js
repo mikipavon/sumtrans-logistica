@@ -498,7 +498,7 @@ export const optimizarRuta = ({
         return {
             orden: [],
             deCamino: new Set(),
-            resumen: { turno, ruta: null, pueblos: 0, extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0, sinPosicion: !gps },
+            resumen: { turno, ruta: null, pueblos: 0, ordenPueblos: [], extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0, sinPosicion: !gps },
         };
     }
 
@@ -579,6 +579,9 @@ export const optimizarRuta = ({
             // ha cogido la buena sin tener que abrir el Gestor de Rutas.
             ruta: ruta?.nombre || null,
             pueblos: grupos.length,
+            // Los pueblos en el orden en que han quedado. Es lo único que le dice al
+            // conductor, de un vistazo, si el orden que ve es el de su ruta o no.
+            ordenPueblos: grupos.map(g => g.pueblo).filter(Boolean),
             extras,
             sinRuta,
             // Se ha ordenado sin saber dónde está el conductor: el punto de partida ha

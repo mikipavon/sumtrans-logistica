@@ -550,6 +550,9 @@ describe('encadenado entre pueblos', () => {
         });
         expect(nombres(r)).toEqual(['cabra', 'montilla', 'la_rambla']);
         expect(r.resumen.extras).toBe(2);
+        // El resumen enseña el orden con nombres: es lo que le dice al conductor si lo
+        // que ve viene de su ruta o de la distancia.
+        expect(r.resumen.ordenPueblos).toEqual(['Cabra', 'Montilla', 'La Rambla']);
     });
 
     it('y sirve igual si el paquete de fuera no tiene ni dirección ni coordenadas', () => {
