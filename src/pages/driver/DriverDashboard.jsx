@@ -71,6 +71,65 @@ const esFijoEspanol = (numero) => {
     return nacional.length === 9 && /^[89]/.test(nacional);
 };
 
+// Los teléfonos de una parada, MÓVILES PRIMERO: a un cliente se le localiza antes
+// en el móvil, y el fijo de la nave no lo coge nadie a media tarde. De aquí salen
+// tanto el número del justificante de WhatsApp (que solo puede ser un móvil) como
+// la lista del botón de llamar.
+//
+// Se juntan dos fuentes porque ninguna basta sola: el teléfono del albarán es el
+// más concreto —lo tecleó quien creó el envío— pero el autorrelleno solo baja el
+// 'phone' de la ficha, así que un móvil guardado en 'mobile' no llega nunca al
+// albarán.
+//
+// Se busca por nombre exacto del destinatario (o del remitente si es recogida), no
+// con la tolerancia de marca de buscarClienteDeEnvio: esa empareja también por
+// etiqueta de agencia, y un albarán de TSB acabaría ofreciendo el teléfono de la
+// agencia en vez del de quien recibe el paquete.
+export const telefonosDeLaParada = (stop, clientes) => {
+    if (!stop) return [];
+    const esRecogida = stop.type === 'Recogida';
+    const nombre = normalizeClientName(esRecogida
+        ? (stop.originName || stop.client)
+        : (stop.destinationName || stop.client));
+    const delAlbaran = esRecogida ? stop.originPhone : stop.destinationPhone;
+
+    let fichaPhone = null;
+    let fichaMobile = null;
+    if (nombre && Array.isArray(clientes)) {
+        for (const c of clientes) {
+            if (!c) continue;
+            // La sede manda sobre la ficha madre, pero si a la sede le falta un
+            // hueco se completa con el de la madre: es la misma empresa.
+            const sede = (c.branches || []).find(b => normalizeClientName(b?.name) === nombre);
+            if (sede) {
+                fichaPhone = sede.phone || c.phone;
+                fichaMobile = sede.mobile || c.mobile;
+                break;
+            }
+            if (normalizeClientName(c.name) === nombre || normalizeClientName(c.legalName) === nombre) {
+                fichaPhone = c.phone;
+                fichaMobile = c.mobile;
+                break;
+            }
+        }
+    }
+
+    const vistos = new Set();
+    const lista = [];
+    [delAlbaran, fichaMobile, fichaPhone].forEach(numero => {
+        const texto = String(numero || '').trim();
+        if (!texto) return;
+        // Mismo número escrito de dos formas (con prefijo, con espacios) es uno solo.
+        const clave = texto.replace(/[\s.\-()+]/g, '').replace(/^34/, '');
+        if (!clave || vistos.has(clave)) return;
+        vistos.add(clave);
+        lista.push({ numero: texto, esFijo: esFijoEspanol(texto) });
+    });
+
+    // Móviles delante, respetando dentro de cada grupo el orden de arriba.
+    return [...lista.filter(t => !t.esFijo), ...lista.filter(t => t.esFijo)];
+};
+
 const isCityInBaremo = (city, zip) => {
     if (!city && !zip) return false;
     const normCity = normalizeClientName(city);
@@ -160,6 +219,11 @@ export const ShipmentCardUI = React.memo(({
     esDeCamino = false,
     dragOverlay = false
 }) => {
+    // Desplegable del botón de llamar cuando la parada tiene fijo y móvil. Va en
+    // estado local de la tarjeta, no como el de documentos: aquí no hace falta que
+    // el padre lo cierre, se cierra solo al elegir número o al tocar fuera.
+    const [showPhoneActions, setShowPhoneActions] = useState(false);
+
     // El cliente de la parada, resuelto una sola vez: de él salen el logo y el
     // distintivo de agencia, que antes se calculaban a mano ahí abajo con reglas
     // distintas de las que usaba el optimizador para ordenar la ruta.
@@ -360,16 +424,66 @@ export const ShipmentCardUI = React.memo(({
                                         </a>
                                     );
                                 })()}
-                                {(stop.type === 'Recogida' ? stop.originPhone : stop.destinationPhone) && (
-                                    <a
-                                        id={index === 0 ? 'tour-phone-btn' : undefined}
-                                        href={`tel:${stop.type === 'Recogida' ? stop.originPhone : stop.destinationPhone}`}
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="p-2.5 bg-white text-emerald-600 rounded-xl shadow-md border border-emerald-100 hover:bg-emerald-50 transition-all active:scale-95 flex items-center justify-center"
-                                    >
-                                        <Phone size={20} />
-                                    </a>
-                                )}
+                                {/* LLAMAR — con un solo número llama directo, como siempre. Con
+                                    varios (el fijo de la nave y el móvil del encargado) despliega
+                                    los dos para elegir, en vez de decidir por el conductor. */}
+                                {(() => {
+                                    const telefonos = telefonosDeLaParada(stop, clients);
+                                    if (telefonos.length === 0) return null;
+
+                                    const botonClass = "p-2.5 bg-white text-emerald-600 rounded-xl shadow-md border border-emerald-100 hover:bg-emerald-50 transition-all active:scale-95 flex items-center justify-center";
+
+                                    if (telefonos.length === 1) {
+                                        return (
+                                            <a
+                                                id={index === 0 ? 'tour-phone-btn' : undefined}
+                                                href={`tel:${telefonos[0].numero}`}
+                                                onClick={(e) => e.stopPropagation()}
+                                                title={`Llamar al ${telefonos[0].esFijo ? 'fijo' : 'móvil'} ${telefonos[0].numero}`}
+                                                className={botonClass}
+                                            >
+                                                <Phone size={20} />
+                                            </a>
+                                        );
+                                    }
+
+                                    return (
+                                        <div id={index === 0 ? 'tour-phone-btn' : undefined} className="relative">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); setShowPhoneActions(!showPhoneActions); }}
+                                                title="Llamar"
+                                                className={showPhoneActions
+                                                    ? "p-2.5 bg-emerald-600 text-white rounded-xl shadow-md border border-emerald-600 transition-all active:scale-95 flex items-center justify-center"
+                                                    : botonClass}
+                                            >
+                                                <Phone size={20} />
+                                            </button>
+                                            {showPhoneActions && (
+                                                <>
+                                                    <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setShowPhoneActions(false); }} />
+                                                    <div className="absolute right-0 top-full mt-2 w-52 bg-white rounded-xl shadow-2xl border border-slate-100 z-50 py-1 overflow-hidden animate-in zoom-in-95 fade-in duration-150 origin-top-right">
+                                                        {telefonos.map(t => (
+                                                            <a
+                                                                key={t.numero}
+                                                                href={`tel:${t.numero}`}
+                                                                onClick={(e) => { e.stopPropagation(); setShowPhoneActions(false); }}
+                                                                className="w-full px-4 py-3 flex items-center gap-3 text-slate-700 hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-b-0"
+                                                            >
+                                                                <Phone size={16} className={t.esFijo ? 'text-slate-400' : 'text-emerald-500'} />
+                                                                <span className="flex flex-col items-start leading-tight">
+                                                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                                                        {t.esFijo ? 'Fijo' : 'Móvil'}
+                                                                    </span>
+                                                                    <span className="text-xs font-bold">{t.numero}</span>
+                                                                </span>
+                                                            </a>
+                                                        ))}
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                                 <div id={index === 0 ? 'tour-doc-btn' : undefined} className="relative">
                                     <button
                                         onClick={(e) => { e.stopPropagation(); setShowDocActions(!showDocActions); }}
@@ -2302,21 +2416,6 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
     };
 
-    // Busca un móvil en la ficha del cliente. El albarán se autorrellena siempre
-    // con el 'phone' de la ficha —el bueno para llamar, muchas veces un fijo— y el
-    // móvil se queda en 'mobile', donde nadie lo mira. Sede primero, luego la ficha
-    // madre. Devuelve null si el cliente solo tiene fijos.
-    const buscarMovilEnFicha = (nombreCliente) => {
-        const normalizado = normalizeClientName(nombreCliente);
-        if (!normalizado) return null;
-        const encontrado = clientsMap.get(normalizado);
-        if (!encontrado) return null;
-        const candidatos = encontrado._isBranch
-            ? [encontrado._branch.mobile, encontrado._branch.phone, encontrado.mobile]
-            : [encontrado.mobile];
-        return candidatos.find(n => String(n || '').trim() && !esFijoEspanol(n)) || null;
-    };
-
     const handleWhatsAppShare = async (shipment, manualPhone = null) => {
         // Correct logic: If it's a pickup, use origin phone. If it's a delivery, use destination phone.
         const isPickup = shipment.type === 'Recogida';
@@ -2325,16 +2424,22 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             : (shipment.destinationName || shipment.client);
         const targetPhone = isPickup ? shipment.originPhone : shipment.destinationPhone;
 
-        // Si el del albarán es un fijo no vale para WhatsApp, pero antes de dar el
-        // número por perdido miramos si la ficha guarda un móvil.
-        const albaranEsFijo = !manualPhone && esFijoEspanol(targetPhone);
-        const phoneDelAlbaran = albaranEsFijo ? buscarMovilEnFicha(targetName) : targetPhone;
-        const phone = manualPhone || phoneDelAlbaran;
+        // Aquí solo vale un móvil: a un fijo el justificante no llega. Se coge el
+        // primer móvil que haya entre el albarán y la ficha (telefonosDeLaParada ya
+        // los devuelve en ese orden) y los fijos se descartan del todo.
+        const telefonosDelCliente = telefonosDeLaParada(shipment, clients);
+        const movilDisponible = telefonosDelCliente.find(t => !t.esFijo)?.numero || null;
+        const phone = manualPhone || movilDisponible;
 
         if (!phone && manualPhone === null) {
-            // 'motivo' solo cambia el texto del modal: si el albarán sí tenía un
-            // teléfono, el conductor tiene que entender por qué le pedimos otro.
-            setWhatsappPrompt({ shipment, phone: '', motivo: albaranEsFijo ? 'fijo' : 'sin_telefono' });
+            // 'motivo' solo cambia el texto del modal: si aquí queda algún teléfono es
+            // que todos son fijos, y el conductor tiene que entender por qué le pedimos
+            // otro número teniendo el cliente teléfono.
+            setWhatsappPrompt({
+                shipment,
+                phone: '',
+                motivo: telefonosDelCliente.length > 0 ? 'fijo' : 'sin_telefono',
+            });
             return;
         }
 
