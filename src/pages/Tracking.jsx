@@ -3,6 +3,7 @@ import 'leaflet/dist/leaflet.css';
 import { Truck, Phone, Navigation, Clock, CheckCircle, Package, Zap, MapPin, Layers, Play, Pause, RotateCcw } from 'lucide-react';
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import L from 'leaflet';
+import { geocodificarDireccion } from '../utils/geocodificar';
 
 // ─── Fix Leaflet icons ────────────────────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -37,6 +38,9 @@ const getStopAddress = (s) => {
         : `${s.destinationAddress || ''}, ${s.destinationCity || ''}`;
     return addr.replace(/^,\s*|,\s*$/g, '').trim();
 };
+// La población suelta: lleva el código postal, y de ahí sale la provincia con la que
+// se busca. Sin ella, "La Rambla" se geocodificaba en Barcelona.
+const getStopCity = (s) => (s.type === 'Recogida' ? s.originCity : s.destinationCity) || '';
 const fmtDist = (m) => m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
 const fmtTime = (s) => {
     const min = Math.round(s / 60);
@@ -45,19 +49,6 @@ const fmtTime = (s) => {
     return `${Math.floor(min / 60)}h ${min % 60}min`;
 };
 const fmtClock = (ms) => new Date(ms).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-const geocodeAddress = async (address) => {
-    const q = encodeURIComponent(`${address}, España`);
-    const url = `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=es`;
-    try {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 6000);
-        const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'SumtransLogistica/1.0' } });
-        clearTimeout(t);
-        const data = await res.json();
-        if (data?.[0]) return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
-    } catch (_) {}
-    return null;
-};
 const OSRM_SERVERS = ['https://router.project-osrm.org', 'https://routing.openstreetmap.de/routed-car'];
 const fetchRoadSegment = async (from, to) => {
     const c = `${from[1]},${from[0]};${to[1]},${to[0]}`;
@@ -337,9 +328,9 @@ export default function Tracking({ drivers, shipments = [], onRequestGps }) {
         const run = async () => {
             for (const stop of stopsNoGPS) {
                 if (cancelled) break;
-                const coords = await geocodeAddress(getStopAddress(stop));
+                // El ritmo que pide Nominatim y la caché los lleva geocodificarDireccion.
+                const coords = await geocodificarDireccion(getStopAddress(stop), getStopCity(stop));
                 if (coords && !cancelled) setPendingGeocoded(prev => ({ ...prev, [stop.id]: coords }));
-                if (!cancelled) await new Promise(r => setTimeout(r, 1200));
             }
             if (!cancelled) setPendingGeocoding(false);
         };

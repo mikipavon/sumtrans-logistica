@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { X, Navigation, AlertCircle, Map, Layers, Clock, Ruler } from 'lucide-react';
+import { geocodificarDireccion } from '../../utils/geocodificar';
 
 // ─── Fix Leaflet icon paths ───────────────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -40,6 +41,9 @@ const getStopAddress = (stop) => {
         : `${stop.destinationAddress || ''}, ${stop.destinationCity || ''}`;
     return addr.replace(/^,\s*|,\s*$/g, '').trim();
 };
+// La población suelta: es la que lleva el código postal, y de ahí sale la provincia
+// con la que se busca. Sin ella, "La Rambla" acababa en Barcelona.
+const getStopCity = (stop) => (stop._isRecogida ? stop.originCity : stop.destinationCity) || '';
 const getLocationString = (stop) => {
     const addr = getStopAddress(stop).replace(/,\s*$/, '').trim();
     if (addr.length > 3) return addr;
@@ -52,21 +56,6 @@ const fmtTime = (s) => {
     if (min < 1) return `${Math.round(s)}s`;
     if (min < 60) return `${min} min`;
     return `${Math.floor(min / 60)}h ${min % 60}min`;
-};
-
-// ─── Nominatim: geocodificar dirección → coordenadas ──────────────────────────
-const geocodeAddress = async (address) => {
-    const q = encodeURIComponent(`${address}, España`);
-    const url = `https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1&countrycodes=es`;
-    try {
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 6000);
-        const res = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'SumtransLogistica/1.0' } });
-        clearTimeout(t);
-        const data = await res.json();
-        if (data?.[0]) return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
-    } catch (_) {}
-    return null;
 };
 
 // ─── OSRM: ruta real por carretera ────────────────────────────────────────────
@@ -207,9 +196,10 @@ export default function RouteMapModal({ route, driverCoords, onClose }) {
         const run = async () => {
             for (const stop of stopsNoGPS) {
                 if (cancelled) break;
-                const coords = await geocodeAddress(getStopAddress(stop));
+                // El ritmo de una consulta por segundo que pide Nominatim lo lleva ya
+                // geocodificarDireccion, que también se guarda lo buscado.
+                const coords = await geocodificarDireccion(getStopAddress(stop), getStopCity(stop));
                 if (coords && !cancelled) setGeocoded(prev => ({ ...prev, [stop.id]: coords }));
-                if (!cancelled) await new Promise(r => setTimeout(r, 1200)); // Nominatim: 1 req/s
             }
             if (!cancelled) setGeocoding(false);
         };
