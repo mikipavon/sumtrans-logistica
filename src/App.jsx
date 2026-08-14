@@ -35,6 +35,7 @@ import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { fetchAllRows } from './utils/fetchAllRows';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
 import { establecerContextoDeError } from './utils/errorLog';
+import { avisarAlPadre } from './utils/ventanaPadre';
 import { getIrregularReasons } from './utils/shipmentUtils';
 import {
   fusionarConocimiento,
@@ -336,9 +337,6 @@ function App() {
   }, [userRole, currentDriverId, cachedDriverName]);
   // =========================================================================
 
-  // Admin credentials (loaded from Supabase settings, with secure defaults)
-  const [adminCreds, setAdminCreds] = useState({ user: 'info@sumtransportes.com', pass: '1632' })
-
   // --- MODO PRUEBAS (Ahora es por cada conductor) ---
   const activeTestMode = useMemo(() => {
     if (userRole === 'driver' && currentDriverId) {
@@ -433,16 +431,15 @@ function App() {
       setIsGhostModeUnlocked(false);
       alert("🔒 Modo Seguro Reactivado. Datos confidenciales ocultos.");
     } else {
-      // Pedimos la contraseña (se validará contra la que tenga configurada el admin en ajustes)
-      const pass = prompt("Modo Dev: Introduce la clave de la base de datos para depuración.");
-      if (pass === adminCreds.pass) {
-        setIsGhostModeUnlocked(true);
-        alert("🔓 Desbloqueo Completado: Mostrando registros de Clientes Habituales.");
-      } else if (pass !== null && pass !== '') {
-        alert("❌ Clave de depuración incorrecta.");
-      }
+      // Este atajo solo existe dentro del panel de administración, así que la sesión
+      // ya viene verificada por Supabase Auth. Antes pedía la contraseña de admin
+      // guardada en `settings`, pero esa fila la puede leer cualquier repartidor,
+      // así que no protegía nada: basta con confirmar la intención.
+      if (!window.confirm("¿Mostrar en pantalla los datos confidenciales (Clientes Habituales)?")) return;
+      setIsGhostModeUnlocked(true);
+      alert("🔓 Desbloqueo Completado: Mostrando registros de Clientes Habituales.");
     }
-  }, [isGhostModeUnlocked, adminCreds.pass]);
+  }, [isGhostModeUnlocked]);
 
   /**
    * Borra los cobros de unos envíos de la caja de todos los conductores.
@@ -973,12 +970,6 @@ function App() {
         }
 
 
-        // Admin credentials (from the same single settings query — no extra network calls)
-        setAdminCreds({
-          user: getSetting('admin_user') || 'info@sumtransportes.com',
-          pass: getSetting('admin_pass') || '1632'
-        })
-
         // If critical data failed to load OR active shipments timed out, retry automatically
         if ((criticalLoaded < 3 || activeShipmentsTimedOut) && retryCount < MAX_RETRIES) {
           retryCount++;
@@ -1410,9 +1401,7 @@ function App() {
         setCurrentClientId(profile.linked_id);
         setCurrentDriverId(null);
         // Notificar a la web padre (iframe)
-        if (window.parent !== window) {
-          window.parent.postMessage({ type: 'SUM_CLIENT_LOGIN_SUCCESS', clientId: profile.linked_id }, '*');
-        }
+        avisarAlPadre({ type: 'SUM_CLIENT_LOGIN_SUCCESS', clientId: profile.linked_id });
       } else {
         setCurrentDriverId(null);
         setCurrentClientId(null);
@@ -1457,13 +1446,13 @@ function App() {
             } else {
               console.log('[LegacyLogin] Auth failed but legacy RPC succeeded. Sincronizando contraseña en Auth...');
               try {
+                // Se manda el usuario tal cual lo ha escrito: la función vuelve a
+                // verificarlo contra la ficha antes de tocar nada en Auth. El rol y
+                // el vínculo los decide ella a partir de la base de datos, no de aquí.
                 const res = await supabase.functions.invoke('create-auth-user', {
                   body: {
-                    email: driverInfo.email,
+                    legacy_username: username,
                     password: password,
-                    role: 'driver',
-                    linked_id: String(driverInfo.id),
-                    display_name: driverInfo.name || driverInfo.username,
                   }
                 });
                 
@@ -1555,29 +1544,17 @@ function App() {
         setCurrentClientId(client.id);
         setCurrentDriverId(null);
         // Notificar a la web padre (iframe) que el login fue exitoso
-        if (window.parent !== window) {
-          window.parent.postMessage({ type: 'SUM_CLIENT_LOGIN_SUCCESS', clientId: client.id }, '*');
-        }
+        avisarAlPadre({ type: 'SUM_CLIENT_LOGIN_SUCCESS', clientId: client.id });
         return true;
       }
       return false;
 
     } else {
-      // Admin log in - compare against loaded creds OR hardcoded defaults
-      const DEFAULT_ADMIN_USER = 'info@sumtransportes.com';
-      const DEFAULT_ADMIN_PASS = '1632';
-
-      const isValid = 
-        (username === (adminCreds?.user || DEFAULT_ADMIN_USER) && password === (adminCreds?.pass || DEFAULT_ADMIN_PASS)) ||
-        (username === DEFAULT_ADMIN_USER && password === DEFAULT_ADMIN_PASS);
-
-      if (isValid) {
-        setIsAuthenticated(true);
-        setUserRole(role);
-        setCurrentDriverId(null);
-        setCurrentClientId(null);
-        return true;
-      }
+      // El acceso de administrador va exclusivamente por Supabase Auth (ver handleLogin).
+      // Aquí ya no queda respaldo: el antiguo comparaba contra una contraseña escrita
+      // en el propio código, que viajaba dentro del bundle público y que además seguía
+      // valiendo aunque se cambiara la de Ajustes, así que no había forma de revocarla.
+      console.warn('[LegacyLogin] Admin sin sesión de Supabase Auth — acceso denegado');
       return false;
     }
   }
@@ -3726,54 +3703,23 @@ function App() {
               </div>
             </div>
 
-            {/* ADMIN PASSWORD MANAGEMENT */}
+            {/* ACCESO DE GESTIÓN — la contraseña la gestiona Supabase Auth, no esta pantalla */}
             <div className="mt-8 pt-8 border-t border-slate-100">
                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
                  <Shield size={18} className="text-blue-600" />
                  Acceso de Gestión (Administrador)
                </h3>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-6 rounded-xl border border-slate-200">
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Usuario / Email Administrador</label>
-                      <input 
-                        type="text" 
-                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
-                        value={adminCreds.user}
-                        onChange={(e) => setAdminCreds(prev => ({ ...prev, user: e.target.value }))}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Nueva Contraseña Administración</label>
-                      <input 
-                        type="password" 
-                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
-                        value={adminCreds.pass}
-                        onChange={(e) => setAdminCreds(prev => ({ ...prev, pass: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  <div className="flex flex-col justify-end">
-                    <button
-                      onClick={async () => {
-                        try {
-                          await supabase.from('settings').upsert([
-                            { key: 'admin_user', value: adminCreds.user },
-                            { key: 'admin_pass', value: adminCreds.pass }
-                          ]);
-                          alert('¡Credenciales de Administrador actualizadas con éxito!');
-                        } catch (err) {
-                          alert('Error al guardar credenciales.');
-                        }
-                      }}
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-blue-500/20 active:scale-95"
-                    >
-                      Guardar Nuevas Credenciales
-                    </button>
-                    <p className="text-[10px] text-slate-400 mt-2 italic px-2">
-                       Ten cuidado: si cambias estos datos, tendrás que usarlos la próxima vez que inicies sesión.
-                    </p>
-                  </div>
+               <div className="bg-slate-50 p-6 rounded-xl border border-slate-200">
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    La contraseña de administración ya no se guarda aquí. Antes se almacenaba
+                    sin cifrar en la base de datos y cualquier repartidor con sesión abierta
+                    podía leerla, así que la gestiona directamente Supabase Auth.
+                  </p>
+                  <p className="text-sm text-slate-600 leading-relaxed mt-3">
+                    Para cambiarla, entra en el panel de Supabase, apartado
+                    <span className="font-bold"> Authentication → Users</span>, y usa
+                    <span className="font-bold"> Reset password</span> sobre el usuario administrador.
+                  </p>
                </div>
             </div>
 

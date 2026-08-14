@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Truck, ArrowRight, Shield, User, Eye, EyeOff } from 'lucide-react';
+import { avisarAlPadre, esOrigenPadrePermitido, estamosEmbebidos } from '../utils/ventanaPadre';
 
 export default function Login({ onLogin }) {
     const emailRef = useRef(null);
@@ -19,10 +20,73 @@ export default function Login({ onLogin }) {
         activeTabRef.current = activeTab;
     }, [activeTab]);
 
+    // ── Auto-login: intenta entrar con las credenciales que manda la web padre ──
+    // Reintenta porque la primera carga puede pillar la base de datos aún despertando.
+    const intentarAutoLogin = async (usuario, contrasena, maxIntentos = 8, esperaMs = 800) => {
+        if (!usuario || !contrasena || initializedRef.current) return;
+        initializedRef.current = true;
+
+        if (emailRef.current) emailRef.current.value = usuario;
+        if (passwordRef.current) passwordRef.current.value = contrasena;
+
+        setIsLoading(true);
+        for (let intento = 1; intento <= maxIntentos; intento++) {
+            try {
+                console.log(`[AutoLogin] Intento ${intento}/${maxIntentos}...`);
+                const success = await onLogin(activeTabRef.current, usuario, contrasena);
+                if (success) {
+                    console.log(`[AutoLogin] ✅ Login exitoso en intento ${intento}`);
+                    try { localStorage.setItem(`lastLoginUser_${activeTabRef.current}`, usuario); } catch (_) {}
+                    setIsLoading(false);
+                    return;
+                }
+            } catch (e) {
+                console.warn(`[AutoLogin] Error en intento ${intento}:`, e);
+            }
+            if (intento < maxIntentos) {
+                await new Promise(r => setTimeout(r, esperaMs));
+            }
+        }
+        console.error('[AutoLogin] ❌ Todos los intentos fallaron');
+        setError('No se pudo conectar. Inténtalo de nuevo.');
+        setIsLoading(false);
+        avisarAlPadre({ type: 'SUM_CLIENT_LOGIN_FAILED' });
+    };
+
+    // ── Canal nuevo: la web padre manda las credenciales por postMessage ──
+    // Nunca tocan la barra de direcciones, así que no acaban en el historial,
+    // en los registros del alojamiento ni en la cabecera Referer.
+    useEffect(() => {
+        if (!estamosEmbebidos()) return;
+
+        const alRecibirMensaje = (evento) => {
+            if (!esOrigenPadrePermitido(evento.origin)) return;
+            const datos = evento.data;
+            if (!datos || datos.type !== 'SUM_CLIENT_CREDENTIALS') return;
+
+            const { username, password, tab } = datos;
+            if (!username || !password) return;
+
+            if (tab) {
+                setActiveTab(tab);
+                activeTabRef.current = tab;
+            }
+            intentarAutoLogin(username, password);
+        };
+
+        window.addEventListener('message', alRecibirMensaje);
+        // Avisar de que ya estamos listos para recibirlas
+        avisarAlPadre({ type: 'SUM_CLIENT_LOGIN_READY' });
+
+        return () => window.removeEventListener('message', alRecibirMensaje);
+    }, []);
+
     // Auto-fill on mount
     useEffect(() => {
         setTimeout(() => {
-            // Check for Auto-Login from URL params
+            // ── Canal antiguo: credenciales en la URL ──
+            // OBSOLETO. Se mantiene sólo mientras sumtransportes.com siga usándolo;
+            // en cuanto la web padre pase a postMessage, este bloque se borra.
             const params = new URLSearchParams(window.location.search);
             const isAutoLogin = params.get('autoLogin') === 'true';
             const urlUser = params.get('username');
@@ -30,53 +94,27 @@ export default function Login({ onLogin }) {
             const urlTab = params.get('tab');
 
             if (isAutoLogin && urlUser && urlPass) {
+                console.warn(
+                    '[AutoLogin] Credenciales recibidas por la URL (obsoleto e inseguro). ' +
+                    'La web padre debería mandarlas por postMessage: ver src/utils/ventanaPadre.js'
+                );
+
+                // Quitarlas de la barra de direcciones cuanto antes: así no quedan
+                // en el historial ni viajan en el Referer de las peticiones siguientes.
+                try {
+                    const limpia = new URL(window.location.href);
+                    limpia.searchParams.delete('username');
+                    limpia.searchParams.delete('password');
+                    limpia.searchParams.delete('autoLogin');
+                    window.history.replaceState({}, '', limpia.toString());
+                } catch (_) {}
+
                 if (urlTab) {
                     setActiveTab(urlTab);
                     activeTabRef.current = urlTab; // update ref immediately
                 }
-                if (emailRef.current) emailRef.current.value = urlUser;
-                if (passwordRef.current) passwordRef.current.value = urlPass;
-                // Auto trigger login con reintentos
-                if (!initializedRef.current) {
-                    initializedRef.current = true;
-                    // Función de reintento: espera a que la base de datos esté lista
-                    const attemptAutoLogin = async (maxRetries = 8, delayMs = 800) => {
-                        const currentEmail = emailRef.current?.value?.trim() || '';
-                        const currentPassword = passwordRef.current?.value || '';
-                        if (!currentEmail || !currentPassword) return;
-                        
-                        setIsLoading(true);
-                        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                            try {
-                                console.log(`[AutoLogin] Intento ${attempt}/${maxRetries}...`);
-                                const success = await onLogin(activeTabRef.current, currentEmail, currentPassword);
-                                if (success) {
-                                    console.log(`[AutoLogin] ✅ Login exitoso en intento ${attempt}`);
-                                    try { localStorage.setItem(`lastLoginUser_${activeTabRef.current}`, currentEmail); } catch (_) {}
-                                    setIsLoading(false);
-                                    return;
-                                }
-                            } catch (e) {
-                                console.warn(`[AutoLogin] Error en intento ${attempt}:`, e);
-                            }
-                            // Si no es el último intento, esperar antes de reintentar
-                            if (attempt < maxRetries) {
-                                await new Promise(r => setTimeout(r, delayMs));
-                            }
-                        }
-                        // Todos los intentos fallaron
-                        console.error('[AutoLogin] ❌ Todos los intentos fallaron');
-                        setError('No se pudo conectar. Inténtalo de nuevo.');
-                        setIsLoading(false);
-                        // Notificar a la web padre que el login definitivamente falló
-                        if (window.parent !== window) {
-                            window.parent.postMessage({ type: 'SUM_CLIENT_LOGIN_FAILED' }, '*');
-                        }
-                    };
-                    // Esperar un poco antes del primer intento (dar tiempo al arranque inicial)
-                    setTimeout(() => attemptAutoLogin(), 300);
-
-                }
+                // Esperar un poco antes del primer intento (dar tiempo al arranque inicial)
+                setTimeout(() => intentarAutoLogin(urlUser, urlPass), 300);
                 return;
             }
 
