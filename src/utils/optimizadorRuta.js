@@ -8,14 +8,20 @@
  *
  * ── Las reglas del negocio ────────────────────────────────────────────────────────
  *
- * 1. Los pueblos se recorren en el orden que marca el turno que se está repartiendo:
- *    primero los del turno de ahora, después los del otro (si a alguien se le queda
- *    algo pendiente, no se pierde). Un pueblo que esté en los dos turnos sale UNA vez,
- *    en el sitio que le toca por el turno actual.
+ * 1. Los pueblos DE LA RUTA se recorren en el orden que marca la ruta, dentro del
+ *    turno que se está repartiendo: primero los del turno de ahora, después los del
+ *    otro (si a alguien se le queda algo pendiente, no se pierde). Un pueblo que esté
+ *    en los dos turnos sale UNA vez, en el sitio que le toca por el turno actual.
  *
- *    Con una excepción: si al pulsar Optimizar el GPS dice que ya estás DENTRO de uno
- *    de los pueblos del reparto, ese pasa al principio y los demás se quedan como
- *    estaban. La ruta dice el orden del circuito, pero no por dónde se entra en él.
+ *    Ese orden NO se toca por cercanía, y es a propósito: la ruta es un orden de
+ *    prioridad de clientes, no un orden de kilómetros. En la ruta Cabra - Lucena -
+ *    Rute - Iznájar - Priego - Almedinilla - Carcabuey, saliendo de Cabra lo más
+ *    cerca es Carcabuey, y aun así va el último. Eso lo decide quien monta la ruta.
+ *
+ * 1b. Lo que sí manda la distancia es dónde se meten los pueblos que NO están en la
+ *    ruta: un paquete suelto que se le da a un conductor porque conviene. Si pilla de
+ *    camino antes del primer pueblo de su ruta, se entrega al ir, no llegando al final
+ *    y dando la vuelta. Se mide desde donde está el conductor de verdad (ver `gps`).
  *
  * 2. Dentro de cada pueblo, primero los nuestros (logo SUM) y después las agencias:
  *    con las agencias hay margen de entrega, con lo nuestro no.
@@ -55,13 +61,6 @@ export const RADIO_DE_CAMINO_KM = 1;
 /** Cuántas paradas como máximo se cuelan tras una misma parada. */
 export const MAX_ARRASTRE_DE_CAMINO = 2;
 
-/**
- * Hasta dónde se da por hecho que el conductor está DENTRO de un pueblo (en km).
- *
- * Un pueblo de por aquí se cruza en dos o tres kilómetros, y el más cercano suele
- * estar a siete u ocho. Cuatro separa bien "estoy aquí" de "estoy en el de al lado".
- */
-export const RADIO_PUEBLO_DE_SALIDA_KM = 4;
 
 /** Cuánto puede mover el historial a una parada cuando aún no es firme (en km). */
 const PESO_MEMORIA_KM = 0.8;
@@ -302,38 +301,6 @@ const secuenciaDePueblos = (items, pueblosRuta, puntoInicial, resolverCoordenada
     return { grupos, extras: sueltos.length, sinRuta: false };
 };
 
-/**
- * Arranca por el pueblo en el que ya está el conductor.
- *
- * La lista de la ruta dice el ORDEN del circuito, pero no por dónde se entra en él:
- * eso depende de dónde estés al pulsar el botón. Estando parado en Cabra, la primera
- * parada del día salía en Montilla, a 30 km, solo porque Montilla iba antes en la
- * lista; y las de Cabra, que las tenías debajo, para el final.
- *
- * El pueblo en el que estás pasa al principio y los demás se quedan tal cual, en el
- * orden de la ruta. No es darle la vuelta al circuito: es entrar por donde toca.
- *
- * Hace falta GPS de verdad. Con el centro de las paradas del día como punto de
- * partida —el plan B cuando no hay señal— "el pueblo donde estoy" no significa nada.
- */
-const arrancarPorElPuebloActual = (grupos, posicion, referencia, radioKm) => {
-    if (!posicion || grupos.length < 2) return { grupos, arranque: null };
-
-    let elegido = -1;
-    let masCerca = radioKm;
-    grupos.forEach((grupo, i) => {
-        const centro = centroDeConRespaldo(grupo.items, grupo.pueblo, referencia);
-        const dist = distanciaEntre(posicion, centro);
-        if (dist < masCerca) { masCerca = dist; elegido = i; }
-    });
-
-    // -1: no estás en ninguno. 0: ya era el primero, no hay nada que mover.
-    if (elegido <= 0) return { grupos, arranque: null };
-
-    const restantes = [...grupos];
-    const [actual] = restantes.splice(elegido, 1);
-    return { grupos: [actual, ...restantes], arranque: actual.pueblo || null };
-};
 
 /**
  * El historial que aplica a este pueblo. El propio del conductor manda; si no tiene,
@@ -523,7 +490,6 @@ export const optimizarRuta = ({
     gps = null,
     ahora = new Date(),
     radioDeCaminoKm = RADIO_DE_CAMINO_KM,
-    radioPuebloDeSalidaKm = RADIO_PUEBLO_DE_SALIDA_KM,
 } = {}) => {
     const turno = turnoQueSeRepartaAhora(ahora);
     const lista = (envios || []).filter(Boolean);
@@ -532,7 +498,7 @@ export const optimizarRuta = ({
         return {
             orden: [],
             deCamino: new Set(),
-            resumen: { turno, ruta: null, pueblos: 0, extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0, arranque: null },
+            resumen: { turno, ruta: null, pueblos: 0, extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0, sinPosicion: !gps },
         };
     }
 
@@ -569,10 +535,7 @@ export const optimizarRuta = ({
         : null;
     const puntoInicial = posicion || centroDe(items);
 
-    const secuencia = secuenciaDePueblos(items, pueblosRuta, puntoInicial, referencia);
-    const { extras, sinRuta } = secuencia;
-    const { grupos, arranque } = arrancarPorElPuebloActual(
-        secuencia.grupos, posicion, referencia, radioPuebloDeSalidaKm);
+    const { grupos, extras, sinRuta } = secuenciaDePueblos(items, pueblosRuta, puntoInicial, referencia);
 
     const contexto = {
         turno,
@@ -618,10 +581,10 @@ export const optimizarRuta = ({
             pueblos: grupos.length,
             extras,
             sinRuta,
-            // El pueblo por el que se ha empezado por estar el conductor dentro, si se
-            // ha movido alguno. Va en el mensaje: si un día no le conviene, tiene que
-            // saber por qué le ha cambiado el orden de siempre.
-            arranque,
+            // Se ha ordenado sin saber dónde está el conductor: el punto de partida ha
+            // sido el centro de las paradas del día, que no es donde está nadie. Hay
+            // que decirlo, porque explica que la primera parada le salga lejos.
+            sinPosicion: !posicion,
             deCamino: deCamino.size,
             pueblosMemorizados: contarPueblosMemorizados(aprendizaje),
         },

@@ -1970,6 +1970,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const [gpsLog, setGpsLog] = useState([]);
     const gpsIntervalRef = useRef(null);
     const gpsDeniedRef = useRef(false); // Evitar alertas repetidas
+
+    // La última posición que ha dado el móvil en esta sesión. El rastreador la coge
+    // cada pocos minutos; Optimizar la reaprovecha cuando el GPS no contesta a tiempo,
+    // que dentro de una nave o entre edificios pasa constantemente.
+    const ultimaPosicionRef = useRef(null);
     const driversRef = useRef(drivers); // Ref para acceso en callbacks sin re-render
 
     useEffect(() => { driversRef.current = drivers; }, [drivers]);
@@ -1989,6 +1994,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
         const handleSuccess = async (position) => {
             const { latitude, longitude } = position.coords;
+            // Se guarda ANTES de subirla: aunque falle el envío al servidor, la
+            // posición es buena y a Optimizar le vale igual.
+            ultimaPosicionRef.current = { lat: latitude, lon: longitude };
             try {
                 const drv = driversRef.current.find(d => String(d.id) === String(currentDriverId));
                 if (!drv) return;
@@ -3538,13 +3546,42 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             }
         };
 
-        if (!navigator.geolocation) { ordenar(null); return; }
+        /**
+         * Dónde está el conductor cuando el GPS no contesta a los 5 segundos.
+         *
+         * Antes, en ese caso, se optimizaba con `null`: el optimizador ordenaba el día
+         * como si no supiera dónde estás —cogiendo el centro de las paradas como punto
+         * de partida— y encima sin decirlo. Estando parado en Cabra, la primera parada
+         * podía salir a 40 km. Y no hacía falta: la app YA sabe dónde estás, porque el
+         * rastreador manda la posición cada pocos minutos y el mapa la pinta.
+         *
+         * Primero la de esta sesión, y si el móvil aún no ha dado ninguna, la última
+         * que se guardó en su ficha, siempre que sea de hoy. Una de ayer coloca peor
+         * que no tener ninguna.
+         */
+        const posicionConocida = () => {
+            if (ultimaPosicionRef.current) return ultimaPosicionRef.current;
+
+            const driver = drivers?.find(d => String(d.id) === String(currentDriverId));
+            const lat = Number(driver?.currentLat);
+            const lon = Number(driver?.currentLng);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+            const sello = Date.parse(driver?.lastGpsUpdate || '');
+            if (!Number.isFinite(sello) || Date.now() - sello > 3 * 60 * 60 * 1000) return null;
+            return { lat, lon };
+        };
+
+        if (!navigator.geolocation) { ordenar(posicionConocida()); return; }
 
         // Sin alta precisión: en el móvil tarda de más y acaba cayendo al plan B casi
         // siempre. Para elegir por dónde empezar, la posición aproximada sobra.
         navigator.geolocation.getCurrentPosition(
-            (pos) => ordenar({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-            () => ordenar(null),
+            (pos) => {
+                ultimaPosicionRef.current = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+                ordenar(ultimaPosicionRef.current);
+            },
+            () => ordenar(posicionConocida()),
             { timeout: 5000, enableHighAccuracy: false, maximumAge: 60000 }
         );
     };
@@ -3556,7 +3593,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         if (resumen.ruta) partes.push(`ruta: ${resumen.ruta}`);
         // Le ha cambiado el orden de siempre porque está dentro de ese pueblo: que lo
         // sepa, para poder mover las paradas si hoy no le conviene.
-        if (resumen.arranque) partes.push(`empezando por ${resumen.arranque}, que es donde estás`);
+        // Que no parezca que ha optimizado con tu posición cuando no la tenía.
+        if (resumen.sinPosicion) partes.push('⚠ sin señal GPS: ordenado por el centro del reparto');
         if (resumen.sinRuta) partes.push('sin ruta asignada, ordenados por cercanía');
         if (resumen.extras > 0) partes.push(`${resumen.extras} fuera de ruta`);
         if (resumen.deCamino > 0) partes.push(`${resumen.deCamino} de camino`);
@@ -6152,9 +6190,16 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 <RouteMapModal
                     route={localRoute}
                     driverCoords={(() => {
+                        // La posición del conductor se guarda en currentLat/currentLng
+                        // (es lo que escribe el rastreador y lo que lee Tracking).
+                        // Aquí se buscaba en latitude/longitude, que no existen: esto
+                        // era SIEMPRE null, y por eso "Ir" y "Ruta completa" abrían
+                        // Google Maps sin poner tu posición como origen.
                         const driver = drivers?.find(d => String(d.id) === String(currentDriverId));
-                        if (!driver?.latitude && !driver?.longitude) return null;
-                        return { lat: driver.latitude, lon: driver.longitude };
+                        const lat = Number(driver?.currentLat);
+                        const lon = Number(driver?.currentLng);
+                        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+                        return { lat, lon };
                     })()}
                     onClose={() => setShowRouteMap(false)}
                 />
