@@ -40,6 +40,11 @@
  *    punto es aproximado y va aparte (`coordsRef`), para que no cuente como una
  *    coordenada de verdad en la regla 3: no se cuela ni arrastra a nadie "de camino"
  *    quien en realidad no se sabe dónde está.
+ *
+ * 6. Para colocar una parada manda su coordenada, y el pueblo es el recambio. Pero
+ *    para decidir en qué orden se visitan los PUEBLOS manda el punto del pueblo, y la
+ *    coordenada de una ficha no pinta nada: una sola ficha con el GPS de la nave
+ *    plantaba su pueblo entero encima del conductor.
  */
 
 import { normalizarPueblo, mejorPuebloParaCiudad } from './townMatch';
@@ -62,14 +67,16 @@ export const RADIO_DE_CAMINO_KM = 1;
 export const MAX_ARRASTRE_DE_CAMINO = 2;
 
 /**
- * Cuánto puede alejarse una parada de su propio pueblo para creerle la coordenada.
+ * A partir de cuántos kilómetros de su propio pueblo una coordenada canta.
  *
  * Muchas fichas se dieron de alta EN LA NAVE, y el móvil les guardó el GPS del momento
- * de crearlas: fichas que ponen "La Rambla" con las coordenadas de Cabra. El
- * optimizador se las creía, y como esa era además la referencia del pueblo entero, le
- * salía que La Rambla estaba a 0 km del conductor y la mandaba la primera. Una parada
- * a 30 km de su propio pueblo no está en su pueblo: está mal fichada, y es mejor
- * colocarla por el pueblo que hacerle caso.
+ * de crearlas: fichas que ponen "La Rambla" con las coordenadas de Cabra.
+ *
+ * Solo se AVISA, no se descarta: manda la coordenada, que cuando es buena es mejor
+ * dato que el centro del pueblo. Lo que se le quitó a la coordenada de una ficha es
+ * poder decidir dónde cae un PUEBLO (ver `puntoDelPueblo`); con eso, una coordenada
+ * mala descoloca su parada y nada más, en vez de arrastrar a todo el pueblo encima
+ * del conductor. El aviso sirve para ir arreglando esas fichas.
  *
  * Diez kilómetros dejan sitio de sobra para polígonos, cortijos y afueras, y aun así
  * separan un pueblo del siguiente.
@@ -243,17 +250,22 @@ const referenciaPorPueblo = (resolver) => {
 };
 
 /**
- * El centro de un grupo, cayendo al centro del PUEBLO si ningún envío del grupo
- * tiene coordenadas propias (dirección nueva, nunca entregada, sin ficha de cliente
- * con coordenadas aprendidas). Sin esto, un grupo sin coordenadas quedaba a distancia
- * "infinita" de cualquier punto y el algoritmo lo mandaba siempre al final, aunque el
- * conductor estuviera físicamente en ese pueblo al pulsar Optimizar.
+ * Dónde cae un pueblo, para decidir en qué orden se visitan los pueblos.
+ *
+ * Manda el punto del PUEBLO —el que da el mapa— y no las coordenadas de las paradas,
+ * y esa es la lección que costó una tarde entera: basta con que UNA ficha de ese
+ * pueblo lleve el GPS de la nave (se dan de alta allí) para que el pueblo entero se
+ * plante encima del conductor y le salga el primero estando a 40 km. La coordenada de
+ * una parada dice dónde está esa parada; no dónde está su pueblo.
+ *
+ * Solo si el pueblo no se ha podido situar —sin cobertura, pueblo raro— se cae al
+ * centro de las paradas del grupo, que es mejor que nada: sin ningún punto, el grupo
+ * queda a distancia "infinita" de todo y se va siempre al final.
  */
 const centroDeConRespaldo = (items, pueblo, resolverCoordenadasPueblo) => {
-    const propio = centroDe(items);
-    if (propio) return propio;
     const delPueblo = resolverCoordenadasPueblo ? resolverCoordenadasPueblo(pueblo) : null;
-    return (delPueblo && Number.isFinite(delPueblo.lat) && Number.isFinite(delPueblo.lon)) ? delPueblo : null;
+    if (delPueblo && Number.isFinite(delPueblo.lat) && Number.isFinite(delPueblo.lon)) return delPueblo;
+    return centroDe(items);
 };
 
 /** Sin ruta configurada: cadena de pueblos por cercanía, que es mejor que el azar. */
@@ -523,16 +535,14 @@ export const optimizarRuta = ({
     const items = lista.map(envio => {
         const cliente = resolverCliente(envio);
         const ciudad = ciudadDeEnvio(envio);
-        const guardadas = parsearCoordenadas(resolverCoordenadas(envio, cliente));
+        const propias = parsearCoordenadas(resolverCoordenadas(envio, cliente));
         const delPueblo = referencia(ciudad);
 
-        // Una coordenada que cae lejísimos de su propio pueblo no es de esa parada:
-        // es la de donde se dio de alta la ficha (ver RADIO_COHERENCIA_KM). Se
-        // descarta y la parada se coloca por el pueblo, que es lo único cierto.
-        const desfase = distanciaEntre(guardadas, delPueblo);
-        const raras = Number.isFinite(desfase) && desfase > RADIO_COHERENCIA_KM;
-        if (raras) coordenadasRaras++;
-        const propias = raras ? null : guardadas;
+        // La coordenada manda; el pueblo es el recambio. Si además cae lejísimos de su
+        // propio pueblo, se cuenta para avisar —esa ficha tiene el GPS de donde se
+        // creó— pero se respeta igual (ver RADIO_COHERENCIA_KM).
+        const desfase = distanciaEntre(propias, delPueblo);
+        if (Number.isFinite(desfase) && desfase > RADIO_COHERENCIA_KM) coordenadasRaras++;
 
         return {
             envio,

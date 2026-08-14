@@ -574,25 +574,29 @@ describe('encadenado entre pueblos', () => {
             resolverCoordenadasPueblo: (p) => puntoDelPueblo[p] || null,
         });
         expect(nombres(r)).toEqual(['cabra', 'la_rambla']);
+        // Se avisa de la ficha, pero su coordenada se respeta: lo que no se le deja es
+        // decidir dónde cae La Rambla.
         expect(r.resumen.coordenadasRaras).toBe(1);
-        // Y la primera parada le pilla al lado, no "a 0 km" de un pueblo a 30.
         expect(r.resumen.kmAlPrimero).toBeLessThanOrEqual(1);
     });
 
-    it('las coordenadas buenas de un cliente siguen mandando sobre el punto del pueblo', () => {
+    it('para colocar la parada manda su coordenada, y el pueblo es el recambio', () => {
         contador = 0;
         const envios = [
             envio({ ciudad: 'Cabra', coords: punto(3), nombre: 'lejos_del_centro' }),
+            envio({ ciudad: 'Cabra', coords: null, nombre: 'sin_coordenada' }),
             envio({ ciudad: 'Cabra', coords: punto(0.2), nombre: 'junto_al_centro' }),
         ];
         const r = optimizarRuta({
             envios, rutas: [], conductorId: 7, ahora: MANANA,
             gps: { lat: norte(0), lon: este(0) },
+            // El centro del pueblo, a 1 km: es lo que hereda la que no tiene coordenada.
             resolverCoordenadasPueblo: () => ({ lat: norte(1), lon: este(0) }),
         });
-        // 3 km del centro del pueblo es normal: no se descarta nada.
+        // 3 km del centro del pueblo es normal, no se avisa de nada. Y cada parada va
+        // por SU coordenada: la que no tiene, por el centro del pueblo (1 km).
         expect(r.resumen.coordenadasRaras).toBe(0);
-        expect(nombres(r)).toEqual(['junto_al_centro', 'lejos_del_centro']);
+        expect(nombres(r)).toEqual(['junto_al_centro', 'sin_coordenada', 'lejos_del_centro']);
     });
 
     // Lo que delata que la posición usada no era la buena: se ordena "por cercanía" y
