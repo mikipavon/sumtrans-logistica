@@ -61,6 +61,21 @@ export const RADIO_DE_CAMINO_KM = 1;
 /** Cuántas paradas como máximo se cuelan tras una misma parada. */
 export const MAX_ARRASTRE_DE_CAMINO = 2;
 
+/**
+ * Cuánto puede alejarse una parada de su propio pueblo para creerle la coordenada.
+ *
+ * Muchas fichas se dieron de alta EN LA NAVE, y el móvil les guardó el GPS del momento
+ * de crearlas: fichas que ponen "La Rambla" con las coordenadas de Cabra. El
+ * optimizador se las creía, y como esa era además la referencia del pueblo entero, le
+ * salía que La Rambla estaba a 0 km del conductor y la mandaba la primera. Una parada
+ * a 30 km de su propio pueblo no está en su pueblo: está mal fichada, y es mejor
+ * colocarla por el pueblo que hacerle caso.
+ *
+ * Diez kilómetros dejan sitio de sobra para polígonos, cortijos y afueras, y aun así
+ * separan un pueblo del siguiente.
+ */
+export const RADIO_COHERENCIA_KM = 10;
+
 
 /** Cuánto puede mover el historial a una parada cuando aún no es firme (en km). */
 const PESO_MEMORIA_KM = 0.8;
@@ -498,23 +513,34 @@ export const optimizarRuta = ({
         return {
             orden: [],
             deCamino: new Set(),
-            resumen: { turno, ruta: null, pueblos: 0, ordenPueblos: [], kmAlPrimero: null, extras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0, sinPosicion: !gps },
+            resumen: { turno, ruta: null, pueblos: 0, ordenPueblos: [], kmAlPrimero: null, extras: 0, coordenadasRaras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0, sinPosicion: !gps },
         };
     }
 
     const referencia = referenciaPorPueblo(resolverCoordenadasPueblo);
 
+    let coordenadasRaras = 0;
     const items = lista.map(envio => {
         const cliente = resolverCliente(envio);
         const ciudad = ciudadDeEnvio(envio);
-        const propias = parsearCoordenadas(resolverCoordenadas(envio, cliente));
+        const guardadas = parsearCoordenadas(resolverCoordenadas(envio, cliente));
+        const delPueblo = referencia(ciudad);
+
+        // Una coordenada que cae lejísimos de su propio pueblo no es de esa parada:
+        // es la de donde se dio de alta la ficha (ver RADIO_COHERENCIA_KM). Se
+        // descarta y la parada se coloca por el pueblo, que es lo único cierto.
+        const desfase = distanciaEntre(guardadas, delPueblo);
+        const raras = Number.isFinite(desfase) && desfase > RADIO_COHERENCIA_KM;
+        if (raras) coordenadasRaras++;
+        const propias = raras ? null : guardadas;
+
         return {
             envio,
             // `coords` son las de verdad; `coordsRef` es con lo que se ordena. Una
             // parada sin dirección ni GPS —un aviso por teléfono, un cliente nuevo—
             // se coloca por el pueblo en lugar de quedarse ciega y caer al final.
             coords: propias,
-            coordsRef: propias || referencia(ciudad),
+            coordsRef: propias || delPueblo,
             agencia: esDeAgencia(envio, cliente),
             urgente: (cliente?.priority || 'urgent') === 'urgent',
             ciudad,
@@ -592,6 +618,9 @@ export const optimizarRuta = ({
                 return Number.isFinite(km) ? Math.round(km) : null;
             })(),
             extras,
+            // Fichas con el GPS puesto en otro sitio. Se le enseña al conductor porque
+            // se arregla en la ficha, no en el reparto de hoy.
+            coordenadasRaras,
             sinRuta,
             // Se ha ordenado sin saber dónde está el conductor: el punto de partida ha
             // sido el centro de las paradas del día, que no es donde está nadie. Hay

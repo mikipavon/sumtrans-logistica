@@ -557,6 +557,44 @@ describe('encadenado entre pueblos', () => {
         expect(r.resumen.kmAlPrimero).toBe(1);
     });
 
+    // El fallo del 14/08 por la noche: las fichas de La Rambla se dieron de alta en la
+    // nave de Cabra y guardaron el GPS de la nave. El optimizador se las creía, le
+    // salía que La Rambla estaba a 0 km del conductor, y la mandaba la primera.
+    it('una ficha con el GPS de la nave no arrastra a su pueblo', () => {
+        contador = 0;
+        const enCabra = { lat: norte(0), lon: este(0) };
+        const envios = [
+            // Dice La Rambla, pero la coordenada guardada es la de la nave de Cabra.
+            envio({ ciudad: 'La Rambla', coords: punto(0), nombre: 'la_rambla' }),
+            envio({ ciudad: 'Cabra', coords: punto(0.5), nombre: 'cabra' }),
+        ];
+        const puntoDelPueblo = { 'La Rambla': { lat: norte(30), lon: este(0) }, 'Cabra': enCabra };
+        const r = optimizarRuta({
+            envios, rutas: [], conductorId: 7, ahora: MANANA, gps: enCabra,
+            resolverCoordenadasPueblo: (p) => puntoDelPueblo[p] || null,
+        });
+        expect(nombres(r)).toEqual(['cabra', 'la_rambla']);
+        expect(r.resumen.coordenadasRaras).toBe(1);
+        // Y la primera parada le pilla al lado, no "a 0 km" de un pueblo a 30.
+        expect(r.resumen.kmAlPrimero).toBeLessThanOrEqual(1);
+    });
+
+    it('las coordenadas buenas de un cliente siguen mandando sobre el punto del pueblo', () => {
+        contador = 0;
+        const envios = [
+            envio({ ciudad: 'Cabra', coords: punto(3), nombre: 'lejos_del_centro' }),
+            envio({ ciudad: 'Cabra', coords: punto(0.2), nombre: 'junto_al_centro' }),
+        ];
+        const r = optimizarRuta({
+            envios, rutas: [], conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(0), lon: este(0) },
+            resolverCoordenadasPueblo: () => ({ lat: norte(1), lon: este(0) }),
+        });
+        // 3 km del centro del pueblo es normal: no se descarta nada.
+        expect(r.resumen.coordenadasRaras).toBe(0);
+        expect(nombres(r)).toEqual(['junto_al_centro', 'lejos_del_centro']);
+    });
+
     // Lo que delata que la posición usada no era la buena: se ordena "por cercanía" y
     // aun así la primera parada queda a 30 km.
     it('el resumen dice a cuánto queda la primera parada', () => {

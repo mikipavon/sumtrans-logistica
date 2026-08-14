@@ -1977,6 +1977,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     // La hora es imprescindible: una posición vieja no es "casi tan buena", es MALA —
     // ordena el reparto desde donde estabas hace un rato.
     const ultimaPosicionRef = useRef(null);
+
+    // El temporizador que retira el resumen de la optimización.
+    const mensajeTimeoutRef = useRef(null);
     const driversRef = useRef(drivers); // Ref para acceso en callbacks sin re-render
 
     useEffect(() => { driversRef.current = drivers; }, [drivers]);
@@ -3465,10 +3468,13 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         setIsOptimizing(true);
         setLearningMessage("Optimizando ruta...");
 
-        // Se desbloquea el botón, pero el resumen se queda puesto: lo borra el
-        // conductor tocándolo, o la siguiente optimización. Antes se iba solo a los
-        // 3 segundos y no daba tiempo ni a leerlo.
-        const terminar = () => setIsOptimizing(false);
+        // El resumen se va solo, pero a los 12 segundos y no a los 3: es un texto
+        // largo y en 3 no daba tiempo ni a empezarlo. Y se puede cerrar antes con la X.
+        const terminar = () => {
+            setIsOptimizing(false);
+            clearTimeout(mensajeTimeoutRef.current);
+            mensajeTimeoutRef.current = setTimeout(() => setLearningMessage(""), 12000);
+        };
 
         // Cuando la parada es una dirección nueva (sin coordenadas propias ni de
         // cliente), no hay forma de saber a qué distancia está del conductor. Antes
@@ -3487,11 +3493,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         /**
          * Dónde cae cada pueblo del reparto de hoy.
          *
-         * Primero se mira entre los clientes, que es gratis. Si en ese pueblo no hay
-         * todavía ningún cliente con coordenadas —pueblo nuevo, o el aviso de hoy es
-         * el primero que se hace allí— se le pregunta al mapa. Sin esto, un envío sin
-         * dirección ni GPS entraba ciego en el optimizador y se iba al final del
-         * bloque; ahora entra colocado en su pueblo como una parada más.
+         * Manda el MAPA, no las fichas de los clientes, y esto es la lección que costó
+         * media tarde: muchas fichas se dieron de alta en la nave y llevan guardado el
+         * GPS de la nave, no el del cliente. Cogiendo "un cliente cualquiera de La
+         * Rambla" salía que La Rambla estaba en Cabra, y con eso el reparto entero se
+         * ordenaba mal. El punto del pueblo que da el buscador es el del pueblo, y
+         * punto. Las fichas solo valen de respaldo, para cuando no hay cobertura.
+         *
+         * Se pregunta una vez por pueblo y queda en caché.
          */
         const resolverPueblosDelReparto = async () => {
             const puntos = new Map();
@@ -3500,11 +3509,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 const clave = normalizarPueblo(pueblo);
                 if (!clave || puntos.has(clave)) continue;
 
-                let punto = puntoDeOtroCliente(pueblo);
-                if (!punto) {
-                    const delMapa = await geocodificarDireccion(pueblo, pueblo);
-                    if (delMapa) punto = { lat: delMapa[0], lon: delMapa[1] };
-                }
+                const delMapa = await geocodificarDireccion(pueblo, pueblo);
+                const punto = delMapa
+                    ? { lat: delMapa[0], lon: delMapa[1] }
+                    : puntoDeOtroCliente(pueblo);
                 puntos.set(clave, punto || null);
             }
             return (busca) => {
@@ -3609,6 +3617,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         if (resumen.sinPosicion) partes.push('⚠ sin señal GPS: ordenado por el centro del reparto');
         else if (origenPosicion) partes.push(origenPosicion);
         if (resumen.kmAlPrimero != null) partes.push(`la 1ª parada te pilla a ${resumen.kmAlPrimero} km`);
+        // Fichas con el GPS de donde se crearon (la nave) en vez del cliente. Se dice
+        // para que se arreglen: mientras tanto esas paradas van colocadas por el pueblo.
+        if (resumen.coordenadasRaras > 0) {
+            partes.push(`${resumen.coordenadasRaras} ficha${resumen.coordenadasRaras !== 1 ? 's' : ''} con el GPS mal puesto (colocada${resumen.coordenadasRaras !== 1 ? 's' : ''} por el pueblo)`);
+        }
         if (resumen.sinRuta) partes.push('sin ruta asignada, ordenados por cercanía');
         if (resumen.extras > 0) partes.push(`${resumen.extras} fuera de ruta`);
         if (resumen.deCamino > 0) partes.push(`${resumen.deCamino} de camino`);
