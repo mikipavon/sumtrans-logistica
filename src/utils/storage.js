@@ -43,7 +43,12 @@ export const uploadProof = async (shipmentId, base64Data, bucketName) => {
     const { data, error } = await supabase.storage
       .from(bucketName)
       .upload(filePath, blob, {
-        cacheControl: '3600',
+        // Un año de caché. El nombre lleva un Date.now(), así que cada subida
+        // crea una URL nueva: el contenido de una URL dada no cambia jamás y
+        // no hay riesgo de servir una foto vieja. Con la hora que había antes,
+        // reabrir un albarán del día anterior volvía a descargar los mismos
+        // bytes: datos del móvil del conductor y tráfico de Supabase tirados.
+        cacheControl: '31536000',
         upsert: true,
         contentType: blob.type
       });
@@ -95,7 +100,9 @@ export const uploadFileToBucket = async (fileName, file, bucketName) => {
     const { data, error } = await supabase.storage
       .from(bucketName)
       .upload(filePath, file, {
-        cacheControl: '3600',
+        // Mismo caso que en uploadProof: filePath empieza por Date.now(), así
+        // que la URL es única por subida y puede cachearse un año.
+        cacheControl: '31536000',
         upsert: true,
         contentType: file.type || 'application/pdf'
       });

@@ -1,14 +1,15 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { LogOut, Package, Plus, MapPin, Truck, CheckCircle, Clock, FileText, Download, Printer, Settings as SettingsIcon, Upload, Trash2, Tag } from 'lucide-react';
+import { LogOut, Package, Plus, MapPin, Truck, CheckCircle, Clock, FileText, Download, FileDown, Loader2, Printer, Settings as SettingsIcon, Upload, Trash2, Tag } from 'lucide-react';
 import ShipmentDetailsModal from '../../components/shipments/ShipmentDetailsModal';
 import { printShipmentTicket } from '../../utils/printShipment';
-import { generateDeliveryPDF } from '../../utils/deliveryPdf';
+import { generateDeliveryPDF, generateDeliveryNotesPDF } from '../../utils/deliveryPdf';
 import LabelPrintModal from '../../components/clients/LabelPrintModal';
 
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { getPackagesCount } from '../../utils/shipmentUtils';
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
 import { supabase } from '../../lib/supabase';
+import { avisarAlPadre, estamosEmbebidos } from '../../utils/ventanaPadre';
 
 export default function ClientDashboard({
     client,
@@ -31,8 +32,8 @@ export default function ClientDashboard({
 
     // Notificar a la web padre que el dashboard del cliente está listo y renderizado
     useEffect(() => {
-        if (window.parent !== window) {
-            window.parent.postMessage({ type: 'SUM_CLIENT_DASHBOARD_READY' }, '*');
+        if (estamosEmbebidos()) {
+            avisarAlPadre({ type: 'SUM_CLIENT_DASHBOARD_READY' });
             console.log('📡 [ClientDashboard] Dashboard montado — notificando a web padre');
         }
     }, []);
@@ -84,6 +85,30 @@ export default function ClientDashboard({
             return 0;
         });
     }, [allShipments, client, dateFrom, dateTo, sortConfig]);
+
+    // Albaranes descargables del rango de fechas filtrado (los entregados ya tienen POD)
+    const albaranesDelFiltro = useMemo(
+        () => clientShipments.filter(s => s.status === 'Entregado'),
+        [clientShipments]
+    );
+
+    const [descargandoAlbaranes, setDescargandoAlbaranes] = useState(false);
+
+    const descargarAlbaranesDelFiltro = async () => {
+        if (descargandoAlbaranes || albaranesDelFiltro.length === 0) return;
+        setDescargandoAlbaranes(true);
+        try {
+            const tramo = [dateFrom, dateTo].filter(Boolean).join('_a_') || 'todos';
+            await generateDeliveryNotesPDF(
+                albaranesDelFiltro,
+                'Albaranes_' + (client.name || 'Cliente') + '_' + tramo
+            );
+        } catch (err) {
+            alert('Error al descargar los albaranes: ' + err.message);
+        } finally {
+            setDescargandoAlbaranes(false);
+        }
+    };
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -618,13 +643,31 @@ export default function ClientDashboard({
                                 />
                             </div>
                             {(dateFrom || dateTo) && (
-                                <button 
+                                <button
                                     onClick={() => { setDateFrom(''); setDateTo(''); }}
                                     className="text-sm font-medium text-red-500 hover:text-red-700 hover:underline"
                                 >
                                     Limpiar filtros
                                 </button>
                             )}
+
+                            <button
+                                onClick={descargarAlbaranesDelFiltro}
+                                disabled={descargandoAlbaranes || albaranesDelFiltro.length === 0}
+                                className="ml-auto flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                title={albaranesDelFiltro.length === 0
+                                    ? 'No hay albaranes entregados en las fechas seleccionadas'
+                                    : 'Descarga en un solo PDF todos los albaranes de las fechas seleccionadas'}
+                            >
+                                {descargandoAlbaranes
+                                    ? <Loader2 size={16} className="animate-spin" />
+                                    : <FileDown size={16} />
+                                }
+                                {descargandoAlbaranes
+                                    ? 'Preparando PDF...'
+                                    : `Descargar albaranes (${albaranesDelFiltro.length})`
+                                }
+                            </button>
                         </div>
 
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">

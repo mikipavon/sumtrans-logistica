@@ -12,15 +12,18 @@ const BLACK = [15, 23, 42];
 
 /**
  * Convierte URL de imagen a Base64 para incrustar en PDF.
+ * Nunca lanza: si la imagen no se puede leer devuelve null y el PDF sigue
+ * adelante sin ella. Al generar albaranes en lote, una foto rota no puede
+ * tumbar la descarga entera.
  */
 const getBase64FromUrl = async (url) => {
   try {
     const response = await fetch(url);
     const blob = await response.blob();
-    return new Promise((resolve, reject) => {
+    return await new Promise((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
+      reader.onerror = () => resolve(null);
       reader.readAsDataURL(blob);
     });
   } catch (error) {
@@ -29,20 +32,27 @@ const getBase64FromUrl = async (url) => {
   }
 };
 
-/**
- * Genera el Justificante de Entrega (POD) en PDF — Diseño corporativo SUM.
- */
-const createDeliveryPDFDoc = async (shipment) => {
-  if (!shipment) return null;
+const BANNER_URL = 'https://www.sumtransportes.com/banner-email.png';
 
-  const doc = new jsPDF();
+// El banner es siempre el mismo: lo descargamos una vez por sesión.
+// Al generar albaranes en lote esto evita una descarga por cada envío.
+let bannerCache;
+const getBannerBase64 = async () => {
+  if (bannerCache === undefined) bannerCache = await getBase64FromUrl(BANNER_URL);
+  return bannerCache;
+};
+
+/**
+ * Pinta el Justificante de Entrega (POD) de un envío en la página actual del documento.
+ * Diseño corporativo SUM.
+ */
+const renderDeliveryPage = async (doc, shipment) => {
   const pW = doc.internal.pageSize.getWidth();
   const pH = doc.internal.pageSize.getHeight();
   const M  = 14;
 
   // ── CABECERA: banner corporativo ──
-  const BANNER_URL = 'https://www.sumtransportes.com/banner-email.png';
-  const bannerB64 = await getBase64FromUrl(BANNER_URL);
+  const bannerB64 = await getBannerBase64();
   const bannerH = 44; // altura en mm
 
   if (bannerB64) {
@@ -275,6 +285,7 @@ const createDeliveryPDFDoc = async (shipment) => {
     doc.text(lines, M, curY);
   }
 
+
   // ── FOOTER ──
   doc.setFillColor(...NAVY);
   doc.rect(0, pH - 14, pW, 14, 'F');
@@ -291,7 +302,12 @@ const createDeliveryPDFDoc = async (shipment) => {
     'Pol. El Junquillo Nº 83, Cabra (Córdoba) 14940  ·  Tel: 957 245 221  ·  info@sumtransportes.com',
     pW / 2, pH - 4, { align: 'center' }
   );
+};
 
+const createDeliveryPDFDoc = async (shipment) => {
+  if (!shipment) return null;
+  const doc = new jsPDF();
+  await renderDeliveryPage(doc, shipment);
   return doc;
 };
 
@@ -300,6 +316,33 @@ export const generateDeliveryPDF = async (shipment) => {
   if (!doc) return;
   const fileName = ('POD_' + shipment.id + '_' + (shipment.destinationName || 'Envio') + '.pdf').replace(/\s+/g, '_');
   doc.save(fileName);
+};
+
+/**
+ * Monta un único documento con un albarán por página (uno por envío).
+ * Devuelve null si no hay envíos.
+ */
+export const createDeliveryNotesDoc = async (shipments) => {
+  const list = (shipments || []).filter(Boolean);
+  if (list.length === 0) return null;
+
+  const doc = new jsPDF();
+  for (let i = 0; i < list.length; i++) {
+    if (i > 0) doc.addPage();
+    await renderDeliveryPage(doc, list[i]);
+  }
+  return doc;
+};
+
+/**
+ * Descarga en un solo PDF los albaranes de todos los envíos indicados.
+ * Devuelve cuántos albaranes se han incluido.
+ */
+export const generateDeliveryNotesPDF = async (shipments, fileName) => {
+  const doc = await createDeliveryNotesDoc(shipments);
+  if (!doc) return 0;
+  doc.save((fileName || 'Albaranes').replace(/\s+/g, '_') + '.pdf');
+  return doc.internal.getNumberOfPages();
 };
 
 export const generateDeliveryPDFBlob = async (shipment) => {
