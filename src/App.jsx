@@ -1151,42 +1151,50 @@ function App() {
             console.warn(`[OfflineQueue] Failed to sync updateShipment ${op.shipmentId}:`, error);
           }
         } else if (op.type === 'statusChange') {
-          // --- Upload pending offline photos/signatures ---
+          // --- Subida de las pruebas que se quedaron en base64 por falta de cobertura ---
+          //
+          // Si una subida falla, el base64 NO viaja a la fila del envío. Se queda en la
+          // cola (IndexedDB, que es disco), y se reintenta en la siguiente pasada.
+          //
+          // Antes cada fallo se tragaba con un console.warn y pasaban dos cosas malas a
+          // la vez: la fila se guardaba con ~400 KB de base64 incrustados, y el dequeue
+          // de más abajo borraba la operación de la cola. Resultado: la foto no se subía
+          // nunca, y la firma se quedaba a vivir dentro de la base de datos.
+          const esBase64 = (v) => typeof v === 'string' && v.startsWith('data:');
+
+          const PRUEBAS = [
+            { key: 'signatureData',     campo: 'deliverySignature', bucket: 'signatures',      etiqueta: 'firma' },
+            { key: 'photoData',         campo: 'deliveryPhoto',     bucket: 'delivery_photos', etiqueta: 'foto' },
+            { key: 'photoData2',        campo: 'deliveryPhoto2',    bucket: 'delivery_photos', etiqueta: 'foto 2' },
+            { key: 'incidentPhotoData', campo: 'incidentPhoto',     bucket: 'incident_photos', etiqueta: 'foto de incidencia' },
+          ];
+
           let dataToSave = { ...op.updatedData };
           const uploads = op.pendingUploads || {};
+          const sinSubir = {}; // lo que siga sin subir después de esta pasada
 
-          // Upload signature if stored as base64 offline
-          if (uploads.signatureData) {
+          for (const { key, campo, bucket, etiqueta } of PRUEBAS) {
+            if (!uploads[key]) continue;
             try {
-              const uploadedUrl = await uploadProof(op.shipmentId, uploads.signatureData, 'signatures');
-              if (uploadedUrl) dataToSave.deliverySignature = uploadedUrl;
-              console.log(`[OfflineQueue] Uploaded offline signature for ${op.shipmentId}`);
-            } catch (e) { console.warn('[OfflineQueue] Signature upload failed:', e); }
+              const uploadedUrl = await uploadProof(op.shipmentId, uploads[key], bucket);
+              if (!uploadedUrl) throw new Error('Storage no devolvió URL');
+              dataToSave[campo] = uploadedUrl;
+              console.log(`[OfflineQueue] Subida la ${etiqueta} de ${op.shipmentId}`);
+            } catch (e) {
+              // El cambio de estado sí se guarda (en la oficina tienen que ver la entrega
+              // ya), pero el campo va vacío en vez de con el base64: la imagen espera en
+              // la cola, que es donde no estorba, hasta que la subida entre.
+              console.warn(`[OfflineQueue] Falló la subida de la ${etiqueta} de ${op.shipmentId}:`, e);
+              sinSubir[key] = uploads[key];
+              if (esBase64(dataToSave[campo])) dataToSave[campo] = null;
+            }
           }
-          // Upload photo if stored as base64 offline
-          if (uploads.photoData) {
-            try {
-              const uploadedUrl = await uploadProof(op.shipmentId, uploads.photoData, 'delivery_photos');
-              if (uploadedUrl) dataToSave.deliveryPhoto = uploadedUrl;
-              console.log(`[OfflineQueue] Uploaded offline photo for ${op.shipmentId}`);
-            } catch (e) { console.warn('[OfflineQueue] Photo upload failed:', e); }
-          }
-          // Upload photo 2 if stored as base64 offline
-          if (uploads.photoData2) {
-            try {
-              const uploadedUrl = await uploadProof(op.shipmentId, uploads.photoData2, 'delivery_photos');
-              if (uploadedUrl) dataToSave.deliveryPhoto2 = uploadedUrl;
-              console.log(`[OfflineQueue] Uploaded offline photo 2 for ${op.shipmentId}`);
-            } catch (e) { console.warn('[OfflineQueue] Photo 2 upload failed:', e); }
-          }
-          // Upload incident photo if stored as base64 offline
-          if (uploads.incidentPhotoData) {
-            try {
-              const uploadedUrl = await uploadProof(op.shipmentId, uploads.incidentPhotoData, 'incident_photos');
-              if (uploadedUrl) dataToSave.incidentPhoto = uploadedUrl;
-              console.log(`[OfflineQueue] Uploaded offline incident photo for ${op.shipmentId}`);
-            } catch (e) { console.warn('[OfflineQueue] Incident photo upload failed:', e); }
-          }
+
+          const quedanPruebas = Object.keys(sinSubir).length > 0;
+          // Marca para saber que a este albarán le falta prueba por subir. Sin esto, un
+          // albarán a medias es indistinguible de uno entregado sin firma.
+          if (quedanPruebas) dataToSave.proofUploadPending = true;
+          else delete dataToSave.proofUploadPending;
 
           // --- Sync the shipment record to Supabase ---
           const { error } = await supabase
@@ -1198,10 +1206,26 @@ function App() {
             })
             .eq('id', op.shipmentId);
           if (!error) {
-            await dequeue(op.id);
-            // Refresh local state with permanent Storage URLs
-            setShipments(prev => prev.map(s => s.id === op.shipmentId ? { ...s, ...dataToSave } : s));
-            console.log(`[OfflineQueue] Synced statusChange: ${op.shipmentId} -> ${op.finalStatus}`);
+            if (quedanPruebas) {
+              // El estado ya está guardado; lo único que falta es la imagen. Se deja la
+              // operación en la cola SOLO con lo que no subió, para que el reintento no
+              // vuelva a reescribir la fila entera y se pelee únicamente con Storage.
+              const intentos = (op.proofAttempts || 0) + 1;
+              await enqueue({ ...op, updatedData: dataToSave, pendingUploads: sinSubir, proofAttempts: intentos });
+              if (intentos % 20 === 0) {
+                console.error(`[OfflineQueue] ${op.shipmentId} lleva ${intentos} intentos sin poder subir la prueba. Revisa los buckets y sus permisos en Supabase.`);
+              }
+            } else {
+              await dequeue(op.id);
+            }
+            // En la pantalla del conductor seguimos enseñando el base64 mientras se
+            // reintenta: eso es memoria del navegador, no viaja a la base de datos.
+            const dataLocal = { ...dataToSave };
+            for (const { key, campo } of PRUEBAS) {
+              if (sinSubir[key]) dataLocal[campo] = uploads[key];
+            }
+            setShipments(prev => prev.map(s => s.id === op.shipmentId ? { ...s, ...dataLocal } : s));
+            console.log(`[OfflineQueue] Synced statusChange: ${op.shipmentId} -> ${op.finalStatus}${quedanPruebas ? ' (quedan pruebas por subir)' : ''}`);
           } else {
             console.warn(`[OfflineQueue] Failed to sync statusChange ${op.shipmentId}:`, error);
           }
@@ -2487,8 +2511,12 @@ function App() {
         try {
           finalPhoto = await uploadProof(shipmentId, photo, 'incident_photos');
         } catch (e) {
-          console.warn('[Incidencia] No se pudo subir la foto, se guarda localmente:', e);
-          finalPhoto = photo; // Fallback: mejor guardarla en base64 que perderla
+          // Había cobertura pero Storage falló. El fallback era guardar el base64 en la
+          // fila "mejor que perderla", y eso es un falso dilema: la cola ya es disco y
+          // no pierde nada. Va a la cola y se reintenta, igual que si no hubiera red.
+          console.warn('[Incidencia] No se pudo subir la foto, queda en cola para reintento:', e);
+          finalPhoto = null;
+          incidentPendingUpload = { incidentPhotoData: photo };
         }
       } else {
         // Sin cobertura: se ve ya en pantalla como base64, y se sube de verdad al
@@ -2589,6 +2617,15 @@ function App() {
       } else {
         // 5. Sincronizar con el dato real de la base de datos
         setShipments(prev => prev.map(item => item.id === shipmentId ? { ...data[0].data, id: data[0].id } : item));
+
+        // La fila se guardó, pero si alguna imagen se quedó sin subir (Storage caído con
+        // red disponible) hay que dejar la operación en cola: el flush es quien reintenta
+        // la subida y luego pega la URL en el envío. Sin esto la foto se perdía en el
+        // único caso en que todo lo demás había ido bien.
+        if (Object.keys(mergedPendingUploads).length > 0) {
+          console.warn(`[Queue] ${shipmentId} guardado pero con pruebas pendientes de subir; encolado para reintento.`);
+          await enqueueStatusOp();
+        }
 
         // Actualizar posición del conductor con las coordenadas de entrega
         if (deliveryCoordinates && s.assignedDriverId) {
