@@ -46,9 +46,19 @@ REVOKE ALL ON TABLE public.contadores_albaran FROM anon, authenticated;
 -- ────────────────────────────────────────────────────────────
 -- Devuelve el PRIMER número reservado; quien la llama usa desde ahí hasta
 -- `primero + cantidad - 1`. Nadie más recibirá esos números.
+--
+-- Los parámetros van con prefijo p_ (como get_driver_email_by_username) y no es
+-- cosmética: llamarlo `prefijo` a secas choca con la columna `prefijo` de la
+-- tabla, y Postgres aborta con 42702 "column reference is ambiguous" en el
+-- primer INSERT. La función se creó así y fallaba SIEMPRE, en silencio: la app
+-- capturaba el error y numeraba con el plan B local. Comprobado el 17/08/2026.
+--
+-- El DROP es necesario porque CREATE OR REPLACE no puede renombrar parámetros.
+DROP FUNCTION IF EXISTS public.reservar_numeros_albaran(TEXT, INTEGER);
+
 CREATE OR REPLACE FUNCTION public.reservar_numeros_albaran(
-  prefijo  TEXT,
-  cantidad INTEGER DEFAULT 1
+  p_prefijo  TEXT,
+  p_cantidad INTEGER DEFAULT 1
 )
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -70,16 +80,16 @@ BEGIN
 
   -- El prefijo entra en una expresión regular más abajo, así que se acota
   -- a letras antes de tocar nada.
-  _prefijo := upper(btrim(coalesce(prefijo, '')));
+  _prefijo := upper(btrim(coalesce(p_prefijo, '')));
   IF _prefijo !~ '^[A-Z]{2,6}$' THEN
-    RAISE EXCEPTION 'Prefijo de serie no válido: %', prefijo;
+    RAISE EXCEPTION 'Prefijo de serie no válido: %', p_prefijo;
   END IF;
 
   -- El tope no es un límite de negocio, es un freno: la importación de Excel
   -- pide de golpe tantos números como filas traiga el fichero, y no queremos
   -- que un bucle desbocado se coma la serie entera.
-  IF cantidad IS NULL OR cantidad < 1 OR cantidad > 5000 THEN
-    RAISE EXCEPTION 'Cantidad fuera de rango (1-5000): %', cantidad;
+  IF p_cantidad IS NULL OR p_cantidad < 1 OR p_cantidad > 5000 THEN
+    RAISE EXCEPTION 'Cantidad fuera de rango (1-5000): %', p_cantidad;
   END IF;
 
   -- La fila del contador nace la primera vez que se usa una serie.
@@ -109,7 +119,7 @@ BEGIN
   _primero := GREATEST(_ultimo, _max_real) + 1;
 
   UPDATE public.contadores_albaran
-     SET ultimo = _primero + cantidad - 1
+     SET ultimo = _primero + p_cantidad - 1
    WHERE prefijo = _prefijo;
 
   RETURN _primero;

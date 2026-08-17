@@ -57,9 +57,11 @@ export const reservarNumerosAlbaran = async (prefijo, cantidad = 1, { enviosLoca
     const cuantos = Math.max(1, parseInt(cantidad, 10) || 1);
 
     try {
+        // Los nombres llevan p_ porque `prefijo` a secas choca con la columna del
+        // mismo nombre dentro de la función (42702) — ver 10_numeracion_albaranes.sql.
         const { data, error } = await supabase.rpc('reservar_numeros_albaran', {
-            prefijo: serie,
-            cantidad: cuantos
+            p_prefijo: serie,
+            p_cantidad: cuantos
         });
         if (error) throw error;
 

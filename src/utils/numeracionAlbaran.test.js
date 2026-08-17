@@ -46,7 +46,7 @@ describe('reservarNumerosAlbaran', () => {
 
         expect(primero).toBe(1451);
         expect(reservado).toBe(true);
-        expect(rpc).toHaveBeenCalledWith('reservar_numeros_albaran', { prefijo: 'SUM', cantidad: 1 });
+        expect(rpc).toHaveBeenCalledWith('reservar_numeros_albaran', { p_prefijo: 'SUM', p_cantidad: 1 });
     });
 
     it('pide de golpe todos los números de una importación', async () => {
@@ -55,7 +55,7 @@ describe('reservarNumerosAlbaran', () => {
         const { primero } = await reservarNumerosAlbaran('HAB', 40, { enviosLocales: [] });
 
         expect(primero).toBe(300);
-        expect(rpc).toHaveBeenCalledWith('reservar_numeros_albaran', { prefijo: 'HAB', cantidad: 40 });
+        expect(rpc).toHaveBeenCalledWith('reservar_numeros_albaran', { p_prefijo: 'HAB', p_cantidad: 40 });
     });
 
     it('si el servidor falla, numera con lo local en vez de dejar al cliente sin crear', async () => {
@@ -96,6 +96,6 @@ describe('reservarNumerosAlbaran', () => {
 
         await reservarNumerosAlbaran('sum', 1, { enviosLocales: [] });
 
-        expect(rpc).toHaveBeenCalledWith('reservar_numeros_albaran', { prefijo: 'SUM', cantidad: 1 });
+        expect(rpc).toHaveBeenCalledWith('reservar_numeros_albaran', { p_prefijo: 'SUM', p_cantidad: 1 });
     });
 });
