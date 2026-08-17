@@ -1743,6 +1743,64 @@ function App() {
     }
   };
 
+  // ── Crear/actualizar la cuenta Supabase Auth de un cliente ──
+  // Gemela de syncDriverAuthAccount, que a los clientes les faltaba. Sin cuenta
+  // Auth, el cliente entra por el login antiguo: la app le da la sesión por buena
+  // en React pero no hay sesión de Supabase, así que RLS le bloquea todo y ve el
+  // portal a cero — y lo que intente crear se queda en la cola sin sincronizar.
+  // Comprobado el 17/08/2026 con ACTIVA y con MIGUEL PAVON.
+  //
+  // Sólo se llama cuando se guarda una ficha CON contraseña: las fichas de
+  // destinatario que crean solos los repartidores al entregar no llevan, y no
+  // deben disparar ningún aviso.
+  const syncClientAuthAccount = async ({ email, password, clientId, displayName }) => {
+    const motivo = !email
+      ? 'la ficha no tiene email'
+      : (!password || password.length < 6)
+        ? 'la contraseña tiene menos de 6 caracteres'
+        : null;
+
+    if (motivo) {
+      alert(
+        `⚠️ El cliente se ha guardado, pero NO podrá entrar en su portal porque ${motivo}.\n\n` +
+        `Sin cuenta de acceso inicia sesión pero lo ve todo vacío y no puede crear albaranes.\n\n` +
+        `Edita su ficha y añade email + contraseña de 6 caracteres o más.`
+      );
+      return false;
+    }
+
+    try {
+      const res = await supabase.functions.invoke('create-auth-user', {
+        body: {
+          email,
+          password,
+          role: 'client',
+          linked_id: String(clientId),
+          display_name: displayName || email,
+        }
+      });
+
+      if (res.error) {
+        console.warn('[ClientAuth]', res.error.message);
+        alert(
+          `⚠️ El cliente se ha guardado, pero no se pudo crear su cuenta de acceso:\n\n${res.error.message}\n\n` +
+          `Hasta que se resuelva, entrará en el portal pero lo verá todo vacío.`
+        );
+        return false;
+      }
+
+      console.log('[ClientAuth] Cuenta Auth creada/actualizada ✅');
+      return true;
+    } catch (authErr) {
+      console.error('[ClientAuth] Error inesperado:', authErr);
+      alert(
+        `⚠️ El cliente se ha guardado, pero no se pudo crear su cuenta de acceso:\n\n${authErr.message}\n\n` +
+        `Hasta que se resuelva, entrará en el portal pero lo verá todo vacío.`
+      );
+      return false;
+    }
+  };
+
   const handleAddDriver = async (newDriver) => {
     try {
       const { data, error } = await supabase.from('drivers').insert([{ 
@@ -2795,6 +2853,18 @@ function App() {
       const { data, error } = await supabase.from('clients').update({ name: updated.name, data: updated }).eq('id', clientId).select();
       if (error) throw error;
       if (data && data[0]) setClients(prev => prev.map(item => item.id === clientId ? { ...data[0].data, id: data[0].id } : item));
+
+      // Igual que en el alta: sólo cuando se toca la contraseña. Este handler se
+      // usa mucho como efecto silencioso (GPS, logo del portal…) y esos guardados
+      // no traen contraseña, así que no disparan nada.
+      if (updatedData && updatedData.password) {
+        await syncClientAuthAccount({
+          email: updated.email,
+          password: updatedData.password,
+          clientId,
+          displayName: updated.name,
+        });
+      }
     } catch (e) {
       console.warn(`[Queue] Error actualizando cliente ${clientId}, encolando para reintento:`, e);
       await enqueueClientOp();
@@ -2858,6 +2928,17 @@ function App() {
       if (error) throw error;
       if (data && data[0]) setClients(prev => [...prev, { ...data[0].data, id: data[0].id }]);
       else setClients(prev => [...prev, clientWithMeta]);
+
+      // Ficha guardada con contraseña = alguien le está dando acceso al portal,
+      // así que necesita cuenta de Auth o entrará y lo verá todo vacío.
+      if (clientWithMeta.password) {
+        await syncClientAuthAccount({
+          email: clientWithMeta.email,
+          password: clientWithMeta.password,
+          clientId: clientWithMeta.id,
+          displayName: clientWithMeta.name,
+        });
+      }
     } catch (e) { alert('Error al guardar cliente'); console.error(e); }
   }
 
