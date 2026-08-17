@@ -14,6 +14,7 @@ import { avisarAlPadre, estamosEmbebidos } from '../../utils/ventanaPadre';
 
 export default function ClientDashboard({
     client,
+    modoAdmin = false,
     onLogout,
     allShipments,
     drivers,
@@ -494,6 +495,17 @@ export default function ClientDashboard({
 
     return (
         <div className="min-h-screen bg-slate-50">
+            {/* Administración mirando el portal de un cliente. Se avisa a propósito y con
+                el motivo: aquí dentro se guarda con permisos de ADMIN, así que si lo que
+                se quiere es comprobar que el cliente puede hacerlo por su cuenta, esta
+                pantalla no vale — hay que entrar con su usuario. */}
+            {modoAdmin && (
+                <div className="sticky top-0 z-50 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 px-4 py-2 bg-violet-600 text-white text-sm font-medium">
+                    <span className="font-bold">Vista de administración</span>
+                    <span className="opacity-90">— estás dentro del portal de {client?.name}.</span>
+                    <span className="opacity-75 text-xs">Lo que crees aquí se guarda con permisos de administración, no con los del cliente.</span>
+                </div>
+            )}
             {/* Aviso de sincronización pendiente — un envío puede quedar en cola (p.ej. tras
                 un fallo de guardado) sin llegar a Supabase hasta que esto se resuelva; antes
                 esto pasaba en completo silencio y el envío parecía "desaparecer". */}
@@ -531,11 +543,15 @@ export default function ClientDashboard({
 
                     {/* Ocultar botón Salir si estamos dentro del iframe de la web */}
                     {window.parent === window && (
-                    <button 
+                    <button
                         onClick={onLogout}
-                        className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                            modoAdmin
+                                ? 'text-violet-700 bg-violet-50 hover:bg-violet-100'
+                                : 'text-slate-600 hover:text-red-600 hover:bg-red-50'
+                        }`}
                     >
-                        <LogOut size={16} /> Salir
+                        <LogOut size={16} /> {modoAdmin ? 'Volver a administración' : 'Salir'}
                     </button>
                     )}
                 </div>

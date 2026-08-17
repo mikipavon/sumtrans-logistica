@@ -1,11 +1,11 @@
-import { Search, Filter, MapPin, Building2, Calendar, Database, Lock, Edit2, Trash2, Check, X, Plus, Upload, FileSpreadsheet, Download, ChevronUp, ChevronDown, Copy } from 'lucide-react';
+import { Search, Filter, MapPin, Building2, Calendar, Database, Lock, Edit2, Trash2, Check, X, Plus, Upload, FileSpreadsheet, Download, ChevronUp, ChevronDown, Copy, LogIn } from 'lucide-react';
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import AgencyDatabasesPanel from '../components/clients/AgencyDatabasesPanel';
 import { getOwnerLabel } from '../utils/agencyOwnership';
 
-export default function Clients({ clients, allClients, shipments, allPoblaciones, articles, onUpdateClient, onAddClient, onImportClients, onDeleteClient, onAssignOwnerAgency, onDeleteAgencyDatabase, tariffs }) {
+export default function Clients({ clients, allClients, shipments, allPoblaciones, articles, onUpdateClient, onAddClient, onImportClients, onDeleteClient, onAssignOwnerAgency, onDeleteAgencyDatabase, onImpersonateClient, tariffs }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState(null);
     const fileInputRef = useRef(null);
@@ -610,6 +610,15 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
                                                 title={expandedClients.has(client.id) ? 'Ocultar sedes' : 'Ver sedes'}
                                             >
                                                 {expandedClients.has(client.id) ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                            </button>
+                                        )}
+                                        {onImpersonateClient && (
+                                            <button
+                                                onClick={() => onImpersonateClient(client.id)}
+                                                className="p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+                                                title="Entrar en su Portal de Cliente (vista de administración)"
+                                            >
+                                                <LogIn size={16} />
                                             </button>
                                         )}
                                         <button

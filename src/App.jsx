@@ -133,6 +133,12 @@ function App() {
   // ── Nombre del conductor guardado en sesión para mostrarlo instantáneamente ──
   const [cachedDriverName, setCachedDriverName] = useState(savedSession?.driverName || null)
 
+  // ── ¿Administración está mirando el portal de un cliente? ──
+  // La sesión de Supabase sigue siendo la de admin; sólo cambia lo que se pinta.
+  // Se guarda en la sesión local para que al recargar la pestaña siga habiendo
+  // forma de volver atrás en vez de quedarse encerrado en el portal.
+  const [suplantandoCliente, setSuplantandoCliente] = useState(savedSession?.suplantandoCliente || false)
+
   // ── Persistir sesión local cada vez que cambie el estado de login ──
   useEffect(() => {
     if (isAuthenticated && userRole) {
@@ -143,13 +149,14 @@ function App() {
           clientId: currentClientId,
           view: currentView,
           driverName: cachedDriverName,
+          suplantandoCliente,
           savedAt: Date.now()
         }));
       } catch {}
     } else {
       sessionStorage.removeItem('sumtrans_session');
     }
-  }, [isAuthenticated, userRole, currentDriverId, currentClientId, currentView, cachedDriverName]);
+  }, [isAuthenticated, userRole, currentDriverId, currentClientId, currentView, cachedDriverName, suplantandoCliente]);
 
   // ── Restaurar sesión de Supabase Auth al cargar la app ──
   useEffect(() => {
@@ -3472,13 +3479,34 @@ function App() {
     setCurrentDriverId(driverId)
   }
 
+  // ── Entrar en el portal de un cliente desde administración ──
+  // No es un inicio de sesión: la sesión de Supabase sigue siendo la del admin,
+  // así que todo lo que se haga aquí dentro se guarda CON PERMISOS DE ADMIN. Sirve
+  // para ver lo que ve el cliente y para trabajarle un albarán, pero NO para
+  // comprobar si él podría hacerlo por su cuenta (eso hay que probarlo entrando
+  // con su usuario). El propio portal lo avisa con una banda arriba.
+  const handleImpersonateClient = (clientId) => {
+    setUserRole('client')
+    setCurrentClientId(clientId)
+    setCurrentDriverId(null)
+    setSuplantandoCliente(true)
+  }
+
+  const volverAAdministracion = () => {
+    setSuplantandoCliente(false)
+    setCurrentClientId(null)
+    setUserRole('admin')
+    setCurrentView('clients')
+  }
+
   // Client View
   if (userRole === 'client') {
     return (
       <Suspense fallback={<PantallaCargando />}>
         <ClientDashboard
           client={clients.find(c => c.id === currentClientId)}
-          onLogout={handleLogout}
+          modoAdmin={suplantandoCliente}
+          onLogout={suplantandoCliente ? volverAAdministracion : handleLogout}
           allShipments={shipments}
           drivers={drivers}
           allClients={clients}
@@ -3569,7 +3597,7 @@ function App() {
       {currentView === 'drivers' && <Drivers routes={routes} onUpdateRoutes={handleUpdateRoutes} routeKnowledge={routeKnowledge} onUpdateRouteKnowledge={handleUpdateRouteKnowledge} drivers={drivers} shipments={visibleShipments} clients={visibleClients} onAddDriver={handleAddDriver} onUpdateDriver={handleUpdateDriver} onDeleteDriver={handleDeleteDriver} onImpersonate={handleImpersonate} onNavigate={setCurrentView} articles={articles} defaultCodFee={defaultCodFee} isGhostModeUnlocked={isGhostModeUnlocked} driverOrder={driverOrder} onUpdateDriverOrder={handleUpdateDriverOrder} gpsIntervalMinutes={gpsIntervalMinutes} setGpsIntervalMinutes={setGpsIntervalMinutes} driverAlerts={driverAlerts} setDriverAlerts={setDriverAlerts} driverNamePreference={driverNamePreference} onUpdateDriverNamePreference={handleUpdateDriverNamePreference} />}
       {currentView === 'tracking' && <Tracking drivers={drivers} shipments={shipments} onRequestGps={handleRequestDriverGps} />}
 
-      {currentView === 'clients' && <Clients clients={visibleClients} allClients={clients} shipments={shipments} allPoblaciones={allPoblaciones} articles={articles} onUpdateClient={handleUpdateClient} onAddClient={handleAddClient} onImportClients={handleImportClients} onDeleteClient={handleDeleteClient} onAssignOwnerAgency={handleAssignOwnerAgency} onDeleteAgencyDatabase={handleDeleteAgencyDatabase} tariffs={tariffs} isGhostModeUnlocked={isGhostModeUnlocked} />}
+      {currentView === 'clients' && <Clients clients={visibleClients} allClients={clients} shipments={shipments} allPoblaciones={allPoblaciones} articles={articles} onUpdateClient={handleUpdateClient} onAddClient={handleAddClient} onImportClients={handleImportClients} onDeleteClient={handleDeleteClient} onAssignOwnerAgency={handleAssignOwnerAgency} onDeleteAgencyDatabase={handleDeleteAgencyDatabase} onImpersonateClient={handleImpersonateClient} tariffs={tariffs} isGhostModeUnlocked={isGhostModeUnlocked} />}
       {currentView === 'articles' && <Articles 
         articles={articles} 
         tariffs={tariffs} 
