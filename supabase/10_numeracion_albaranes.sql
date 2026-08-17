@@ -116,7 +116,15 @@ BEGIN
 END;
 $$;
 
+-- El REVOKE de PUBLIC no basta: este proyecto tiene ALTER DEFAULT PRIVILEGES
+-- concediendo EXECUTE sobre las funciones nuevas de `public` a anon y
+-- authenticated, asi que la funcion nace con un permiso propio para anon que
+-- PUBLIC no cubre. Comprobado al aplicar la migracion el 17/08/2026:
+-- has_function_privilege('anon', ...) devolvia true hasta revocarlo a mano.
+-- El cuerpo ya rechaza a quien no tenga perfil, pero un visitante sin sesion
+-- no debe ni poder llamarla.
 REVOKE ALL ON FUNCTION public.reservar_numeros_albaran(TEXT, INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.reservar_numeros_albaran(TEXT, INTEGER) FROM anon;
 GRANT EXECUTE ON FUNCTION public.reservar_numeros_albaran(TEXT, INTEGER) TO authenticated;
 
 -- ────────────────────────────────────────────────────────────
