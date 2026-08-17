@@ -1374,6 +1374,24 @@ function App() {
         }
       }
 
+      // Para clientes, lo mismo. Sin esta traducción, quien entraba con su nombre
+      // de usuario ("ACTIVA") en vez de con su email hacía fallar a Supabase Auth y
+      // acababa en `handleLegacyLogin`, que da la sesión por buena en React pero NO
+      // crea sesión de Auth: a partir de ahí el portal escribe como visitante
+      // anónimo y RLS le rechaza todo — el albarán se va a la cola offline y el
+      // cliente se queda mirando el aviso de "pendiente de sincronizar".
+      if (role === 'client' && !username.includes('@')) {
+        try {
+          const { data: email } = await supabase.rpc('get_client_email_by_username', { p_username: username });
+          if (email) {
+            authEmail = email;
+            console.log('[Login] Client username →', authEmail);
+          }
+        } catch (e) {
+          console.warn('[Login] RPC client email lookup failed:', e);
+        }
+      }
+
       // ── Autenticación con Supabase Auth ──
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: authEmail,
