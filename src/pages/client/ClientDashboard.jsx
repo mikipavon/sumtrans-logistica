@@ -8,7 +8,7 @@ import LabelPrintModal from '../../components/clients/LabelPrintModal';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { getPackagesCount } from '../../utils/shipmentUtils';
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
-import { supabase } from '../../lib/supabase';
+import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { avisarAlPadre, estamosEmbebidos } from '../../utils/ventanaPadre';
 
 export default function ClientDashboard({
@@ -235,33 +235,13 @@ export default function ClientDashboard({
                             clientBillingType.includes('libre') || clientBillingType.includes('contado') ||
                             clientBillingType.includes('presupuesto');
         const clientPrefix = isHabClient ? 'HAB' : 'SUM';
-        const localMaxId = (allShipments || []).reduce((max, s) => {
-            const sId = String(s.id || '');
-            if (!sId.toUpperCase().startsWith(clientPrefix + '-')) return max;
-            const num = parseInt(sId.replace(/\D/g, ''), 10);
-            return (!isNaN(num) && num < 100000 && num > max) ? num : max;
-        }, 0);
 
-        // `allShipments` no incluye envíos entregados/anulados de más de 90 días,
-        // así que el máximo local puede quedarse corto y generar un ID que ya existe
-        // en la base de datos (el upsert choca entonces con esa fila y falla por RLS).
-        // Consultamos el máximo real en Supabase para esta serie antes de asignar el ID.
-        let dbMaxId = 0;
-        try {
-            const { data: allIds } = await supabase.from('shipments').select('id');
-            if (allIds) {
-                dbMaxId = allIds.reduce((max, row) => {
-                    const sId = String(row.id || '');
-                    if (!sId.toUpperCase().startsWith(clientPrefix + '-')) return max;
-                    const num = parseInt(sId.replace(/\D/g, ''), 10);
-                    return (!isNaN(num) && num < 100000 && num > max) ? num : max;
-                }, 0);
-            }
-        } catch (err) {
-            console.warn('No se pudo consultar Supabase para maxId, usando local:', err);
-        }
-
-        const maxId = Math.max(localMaxId, dbMaxId);
+        // El número lo reserva el servidor. Contarlo aquí no vale: el cliente sólo
+        // ve SUS envíos (RLS, fase 04), así que su máximo va por detrás del real y
+        // el id acababa pisando el albarán de otro cliente — ver numeracionAlbaran.js.
+        const { primero: numeroAlbaran } = await reservarNumerosAlbaran(clientPrefix, 1, {
+            enviosLocales: allShipments
+        });
 
         const selectedArticle = availableArticles.find(a => String(a.id) === String(selectedArticleId));
         let numPackages = 1;
@@ -328,7 +308,7 @@ export default function ClientDashboard({
         const finalAmount = unitPrice; // No sumamos comisión de COD aquí según petición
 
         const shipmentData = {
-            id: `${clientPrefix}-${maxId + 1}`,
+            id: `${clientPrefix}-${numeroAlbaran}`,
             type: 'Entrega',
             client: client.name,
             clientId: client.id,

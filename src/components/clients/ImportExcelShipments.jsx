@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, ArrowRight, ArrowLeft, Trash2, Download, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
-import { supabase } from '../../lib/supabase';
+import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 
 // ─── Diccionario de sinónimos para mapeo inteligente ───
 const FIELD_SYNONYMS = {
@@ -169,31 +169,15 @@ export default function ImportExcelShipments({ client, onCreateShipment, allShip
                             clientBt.includes('presupuesto');
         const prefix = isHabClient ? 'HAB' : 'SUM';
 
-        // Calcular maxId local solo dentro de la serie correcta
-        let localMaxId = (allShipments || []).reduce((max, s) => {
-            const sId = String(s.id || '');
-            if (!sId.toUpperCase().startsWith(prefix + '-')) return max;
-            const num = parseInt(sId.replace(/\D/g, ''), 10);
-            return (!isNaN(num) && num < 100000 && num > max) ? num : max;
-        }, 0);
+        // Se reserva de una vez el tramo entero de números en el servidor: contar
+        // aquí no vale porque el cliente sólo ve sus propios envíos (RLS, fase 04)
+        // y la numeración acababa pisando albaranes de otros — ver numeracionAlbaran.js.
+        // `primero` es el primer número del tramo, y el bucle va sumando desde ahí.
+        const { primero } = await reservarNumerosAlbaran(prefix, validRows.length, {
+            enviosLocales: allShipments
+        });
 
-        // Consultar Supabase para obtener el ID real más alto de esta serie
-        let dbMaxId = 0;
-        try {
-            const { data: allIds } = await supabase.from('shipments').select('id');
-            if (allIds) {
-                dbMaxId = allIds.reduce((max, row) => {
-                    const sId = String(row.id || '');
-                    if (!sId.toUpperCase().startsWith(prefix + '-')) return max;
-                    const num = parseInt(sId.replace(/\D/g, ''), 10);
-                    return (!isNaN(num) && num < 100000 && num > max) ? num : max;
-                }, 0);
-            }
-        } catch (err) {
-            console.warn('No se pudo consultar Supabase para maxId, usando local:', err);
-        }
-
-        let maxId = Math.max(localMaxId, dbMaxId);
+        let maxId = primero - 1;
 
         let created = 0, failed = 0;
 
