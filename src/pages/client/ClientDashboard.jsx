@@ -6,6 +6,7 @@ import { generateDeliveryPDF, generateDeliveryNotesPDF } from '../../utils/deliv
 import LabelPrintModal from '../../components/clients/LabelPrintModal';
 
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
+import { construirAgendaDestinatarios, filtrarAgendaDestinatarios } from '../../utils/agendaDestinatarios';
 import { getPackagesCount } from '../../utils/shipmentUtils';
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
@@ -45,14 +46,21 @@ export default function ClientDashboard({
     // Estado de ordenación
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
 
-    // Filter shipments belonging to this client (by Name or by matching logic) + Date Filter
+    // Envíos de este cliente, sin filtrar por fechas. Se saca aparte porque la
+    // agenda de destinatarios se construye con TODOS sus envíos: no tiene sentido
+    // que las sugerencias se encojan porque haya un filtro puesto en la pantalla.
+    const misEnvios = useMemo(() => {
+        const clientNameLower = (client.name || '').toLowerCase();
+        return (allShipments || []).filter(s =>
+            (s.client && s.client.toLowerCase() === clientNameLower) ||
+            (s.originName && s.originName.toLowerCase() === clientNameLower) ||
+            (s.clientId === client.id)
+        );
+    }, [allShipments, client]);
+
+    // Lo mismo, ya filtrado por el rango de fechas y ordenado: es lo que se pinta.
     const clientShipments = useMemo(() => {
-        let filtered = (allShipments || []).filter(s => {
-            const clientNameLower = (client.name || '').toLowerCase();
-            return (s.client && s.client.toLowerCase() === clientNameLower) || 
-                   (s.originName && s.originName.toLowerCase() === clientNameLower) ||
-                   (s.clientId === client.id);
-        });
+        let filtered = misEnvios;
 
         if (dateFrom) {
             const from = new Date(dateFrom);
@@ -64,7 +72,9 @@ export default function ClientDashboard({
             filtered = filtered.filter(s => new Date(s.createdAt || s.date) <= to);
         }
 
-        return filtered.sort((a,b) => {
+        // Copia antes de ordenar: sin filtro de fechas `filtered` ES `misEnvios`,
+        // y sort() ordena en el sitio (estaríamos tocando el resultado del memo).
+        return [...filtered].sort((a,b) => {
             const getVal = (s, key) => {
                 if (key === 'id') {
                     const match = String(s.id).match(/\d+/);
@@ -84,7 +94,7 @@ export default function ClientDashboard({
             if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
             return 0;
         });
-    }, [allShipments, client, dateFrom, dateTo, sortConfig]);
+    }, [misEnvios, dateFrom, dateTo, sortConfig]);
 
     // Albaranes descargables del rango de fechas filtrado (los entregados ya tienen POD)
     const albaranesDelFiltro = useMemo(
@@ -194,29 +204,16 @@ export default function ClientDashboard({
         });
     }, [articles]);
 
-    // Build the client's own private address book from the shared DB
-    // Only contacts that were created by this client (creatorId matches) or matched in past shipments
-    const myContacts = useMemo(() => {
-        if (!allClients) return [];
-        // Past destination names from MY shipments
-        const myDestNames = new Set(
-            clientShipments.map(s => (s.destinationName || '').toLowerCase()).filter(Boolean)
-        );
-        return allClients.filter(c =>
-            c.id !== client.id &&
-            (
-                Number(c.creatorId) === Number(client.id) ||
-                myDestNames.has((c.name || '').toLowerCase())
-            )
-        );
-    }, [allClients, client, clientShipments]);
+    // Agenda de destinatarios: sale de los envíos del propio cliente, no de la
+    // tabla `clients`. Antes se intentaba filtrar `allClients` y salía siempre
+    // vacía — un cliente sólo recibe su propia ficha (RLS, fase 04). Ver
+    // agendaDestinatarios.js.
+    const agenda = useMemo(() => construirAgendaDestinatarios(misEnvios), [misEnvios]);
 
-    const filteredContacts = useMemo(() => {
-        if (!newDestinationName) return myContacts.slice(0, 8);
-        return myContacts.filter(c =>
-            c.name.toLowerCase().includes(newDestinationName.toLowerCase())
-        ).slice(0, 8);
-    }, [myContacts, newDestinationName]);
+    const filteredContacts = useMemo(
+        () => filtrarAgendaDestinatarios(agenda, newDestinationName),
+        [agenda, newDestinationName]
+    );
 
     const handleSelectContact = (contact) => {
         setNewDestinationName(contact.name || '');
@@ -862,8 +859,8 @@ export default function ClientDashboard({
                                         {showDestSuggestions && filteredContacts.length > 0 && (
                                             <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
                                                 {filteredContacts.map(c => (
-                                                    <button 
-                                                        key={c.id} 
+                                                    <button
+                                                        key={c.clave}
                                                         type="button"
                                                         onMouseDown={() => handleSelectContact(c)}
                                                         className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors flex flex-col border-b border-slate-50 last:border-0"
