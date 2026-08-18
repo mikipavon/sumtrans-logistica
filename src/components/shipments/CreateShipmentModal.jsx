@@ -28,7 +28,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         destinationCoordinates: '',
 
         amount: '',
-        porteType: 'Pagado', // 'Pagado' or 'Debido'
+        porteType: '', // '' = sin elegir. Obligatorio: 'Pagado' o 'Debido'
         assignedDriverId: '',
         observations: '',
         hasCod: false,
@@ -184,6 +184,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     const [merchandisePhoto, setMerchandisePhoto] = useState(null);
     const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
     const [validationFailed, setValidationFailed] = useState(false);
+    const [porteMissing, setPorteMissing] = useState(false); // Se intentó guardar sin elegir Pagado/Debido
     const fileInputRef = useRef(null);
     const cameraOpenRef = useRef(false); // Track if the native camera is open
 
@@ -293,8 +294,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
     const shouldHidePrices = useMemo(() => {
         if (!isDriver) return false;
-        const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
-        const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
+        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : formData.clientName;
+        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
         const payingClient = resolveBillingClient(payingClientName, parentId);
         const bType = String(payingClient?.billingType || '').toLowerCase();
         return bType.includes('factur') || bType.includes('presupuesto');
@@ -307,8 +308,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     //   - Pagado → el remitente paga → comprobar remitente
     //   - Debido → el destinatario paga → comprobar destinatario
     const weightClientData = useMemo(() => {
-        const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
-        const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
+        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : formData.clientName;
+        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
         const client = resolveBillingClient(payingClientName, parentId);
         console.log('[WeightTariff] porteType:', formData.porteType, '| Paying client:', payingClientName, '| Resolved:', client?.name, '| tariffType:', client?.tariffType);
         const isByKilos = client && client.tariffType === 'Por Kilos';
@@ -320,8 +321,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
     // Resolve delivery rules from the billing client
     const clientRules = useMemo(() => {
-        const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
-        const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
+        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : formData.clientName;
+        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
         const client = resolveBillingClient(payingClientName, parentId);
         if (!client) return { requireWeight: false, requireName: true, requireDNI: false, requirePhoto: false, requireSignature: false };
         return {
@@ -378,6 +379,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
             setWeightKg(''); // Reset weight on open
             setValidationFailed(false); // Reset validation highlights
             setKeepOrigin(false); // Make sure Envío Múltiple resets by default
+            setPorteMissing(false);
             issuedNumbersRef.current = {}; // Nueva sesión → nadie ha emitido nada aún
             multipleChainStartedRef.current = false;
 
@@ -399,7 +401,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                     destinationCoordinates: prefillData.destinationCoordinates || '',
 
                     amount: prefillData.amount || '',
-                    porteType: prefillData.porteType || 'Pagado',
+                    porteType: prefillData.porteType || '',
                     assignedDriverId: prefillData.assignedDriverId || '',
                     observations: prefillData.observations || '',
                     hasCod: prefillData.hasCod || false,
@@ -427,7 +429,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                     destinationPhone: '',
                     destinationCoordinates: '',
                     amount: '',
-                    porteType: 'Pagado',
+                    porteType: '',
                     assignedDriverId: '',
                     observations: '',
                     hasCod: false,
@@ -833,8 +835,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
         const { baremo, tariffId } = getEffectiveBaremo();
 
-        const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
-        const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
+        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : formData.clientName;
+        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
         const client = resolveBillingClient(payingClientName, parentId);
 
         const updatedArticles = selectedArticles.map(item => {
@@ -882,8 +884,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
         const { baremo, tariffId } = getEffectiveBaremo();
 
-        const payingClientName = formData.porteType === 'Pagado' ? formData.clientName : formData.destinationName;
-        const parentId = formData.porteType === 'Pagado' ? formData._parentClientId : formData._destParentClientId;
+        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : formData.clientName;
+        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
         const client = resolveBillingClient(payingClientName, parentId);
 
         let unitPrice = parseFloat(article.price);
@@ -963,6 +965,16 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
     const handleInitialSubmit = async (e) => {
         e.preventDefault();
+
+        // El porte decide QUIÉN PAGA: la tarifa, la serie (SUM/HAB) y el cobro en destino
+        // salen de aquí. Antes venía premarcado "Pagado" y se colaban albaranes sin
+        // decidirlo. Ahora hay que elegirlo a mano.
+        if (formData.porteType !== 'Pagado' && formData.porteType !== 'Debido') {
+            setPorteMissing(true);
+            document.getElementById('shipment-form-payment')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            alert("💶 FALTA EL TIPO DE PORTE\n\nTienes que marcar si el porte es PAGADO (lo paga el remitente) o DEBIDO (lo paga el destinatario).\n\nSin eso no se sabe a quién cobrar ni qué tarifa aplicar.");
+            return;
+        }
 
         // Validación obligatoria de kilos para clientes con tarifa por peso O regla "requireWeight"
         if ((weightClientData || clientRules.requireWeight) && (!weightKg || parseFloat(weightKg) <= 0)) {
@@ -1618,17 +1630,22 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                     Condiciones de Pago
                                 </h4>
                                 <div className="space-y-3" id="shipment-form-sender">
-                                    <label className={labelClass}>¿Quién Paga el Porte?</label>
+                                    <label className={labelClass}>¿Quién Paga el Porte? <span className="text-red-500">*</span></label>
                                     <div className="flex gap-2">
-                                        <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer p-3 rounded-lg border transition-all ${formData.porteType === 'Pagado' ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                                            <input type="radio" name="porteType" value="Pagado" checked={formData.porteType === 'Pagado'} onChange={(e) => setFormData({ ...formData, porteType: e.target.value })} className="hidden" />
+                                        <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer p-3 rounded-lg border transition-all ${formData.porteType === 'Pagado' ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : porteMissing ? 'bg-white border-red-400 text-red-600 animate-pulse' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                                            <input type="radio" name="porteType" value="Pagado" checked={formData.porteType === 'Pagado'} onChange={(e) => { setPorteMissing(false); setFormData({ ...formData, porteType: e.target.value }); }} className="hidden" />
                                             <span className="text-xs font-bold uppercase transition-all">PAGADO (Remitente)</span>
                                         </label>
-                                        <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer p-3 rounded-lg border transition-all ${formData.porteType === 'Debido' ? 'bg-amber-50 border-amber-200 text-amber-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                                            <input type="radio" name="porteType" value="Debido" checked={formData.porteType === 'Debido'} onChange={(e) => setFormData({ ...formData, porteType: e.target.value })} className="hidden" />
+                                        <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer p-3 rounded-lg border transition-all ${formData.porteType === 'Debido' ? 'bg-amber-50 border-amber-200 text-amber-700 shadow-sm' : porteMissing ? 'bg-white border-red-400 text-red-600 animate-pulse' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                                            <input type="radio" name="porteType" value="Debido" checked={formData.porteType === 'Debido'} onChange={(e) => { setPorteMissing(false); setFormData({ ...formData, porteType: e.target.value }); }} className="hidden" />
                                             <span className="text-xs font-bold uppercase transition-all">DEBIDO (Destinatario)</span>
                                         </label>
                                     </div>
+                                    {!formData.porteType && (
+                                        <p className={`text-[11px] font-bold ${porteMissing ? 'text-red-600' : 'text-slate-400'}`}>
+                                            Elige una de las dos opciones para poder guardar.
+                                        </p>
+                                    )}
                                     <div className="grid grid-cols-2 gap-3 pt-2">
                                         <label className="flex items-center gap-3 p-2.5 rounded-lg border border-slate-200 bg-white cursor-pointer hover:bg-blue-50 transition-all group">
                                             <input type="checkbox" checked={formData.hasReturn} onChange={(e) => setFormData({ ...formData, hasReturn: e.target.checked })} className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-all cursor-pointer" />

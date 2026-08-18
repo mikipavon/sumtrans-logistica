@@ -143,7 +143,8 @@ export default function ClientDashboard({
     const [selectedArticleId, setSelectedArticleId] = useState('');
     const [observations, setObservations] = useState('');
     const [clientReference, setClientReference] = useState('');
-    const [porteType, setPorteType] = useState('Pagado');
+    const [porteType, setPorteType] = useState(''); // '' = sin elegir, obligatorio antes de enviar
+    const [porteMissing, setPorteMissing] = useState(false);
     const [codAmount, setCodAmount] = useState('');
     const [showDestSuggestions, setShowDestSuggestions] = useState(false);
     const [showDestCitySuggestions, setShowDestCitySuggestions] = useState(false);
@@ -226,6 +227,15 @@ export default function ClientDashboard({
 
     const handleCreateSubmit = async (e) => {
         e.preventDefault();
+
+        // Antes de reservar número: el tipo de porte es obligatorio. Va aquí arriba
+        // a propósito, porque reservarNumerosAlbaran quema un correlativo y salir
+        // después dejaría un hueco en la serie.
+        if (porteType !== 'Pagado' && porteType !== 'Debido') {
+            setPorteMissing(true);
+            alert("💶 FALTA EL TIPO DE PORTE\n\nMarca si el porte es PAGADO (se carga en tu factura) o DEBIDO (se cobra en destino).");
+            return;
+        }
 
         // Prefijo según tipo de cliente: HAB- para habituales/presupuesto, SUM- para el resto
         const clientBillingType = String(client.billingType || '').toLowerCase();
@@ -355,7 +365,8 @@ export default function ClientDashboard({
         setSelectedArticleId('');
         setObservations('');
         setClientReference('');
-        setPorteType('Pagado');
+        setPorteType('');
+        setPorteMissing(false);
         setCodAmount('');
     };
 
@@ -965,17 +976,22 @@ export default function ClientDashboard({
                                         </div>
                                     </div>
                                     <div className="w-full">
-                                        <label className="block text-sm font-medium text-slate-700 mb-2">Tipo de Porte</label>
+                                        <label className="block text-sm font-medium text-slate-700 mb-2">Tipo de Porte <span className="text-red-500">*</span></label>
                                         <div className="flex gap-2">
-                                            <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer py-3 px-4 rounded-xl border transition-all ${porteType === 'Pagado' ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                                                <input type="radio" name="porteType" value="Pagado" checked={porteType === 'Pagado'} onChange={(e) => setPorteType(e.target.value)} className="hidden" />
+                                            <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer py-3 px-4 rounded-xl border transition-all ${porteType === 'Pagado' ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm' : porteMissing ? 'bg-white border-red-400 text-red-600 animate-pulse' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                                                <input type="radio" name="porteType" value="Pagado" checked={porteType === 'Pagado'} onChange={(e) => { setPorteMissing(false); setPorteType(e.target.value); }} className="hidden" />
                                                 <span className="text-[12px] font-bold uppercase transition-all text-center">PAGADO<br/><span className="font-normal text-[10px] opacity-70">(Cargo en mi Factura)</span></span>
                                             </label>
-                                            <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer py-3 px-4 rounded-xl border transition-all ${porteType === 'Debido' ? 'bg-amber-50 border-amber-200 text-amber-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                                                <input type="radio" name="porteType" value="Debido" checked={porteType === 'Debido'} onChange={(e) => setPorteType(e.target.value)} className="hidden" />
+                                            <label className={`flex-1 flex items-center justify-center gap-2 cursor-pointer py-3 px-4 rounded-xl border transition-all ${porteType === 'Debido' ? 'bg-amber-50 border-amber-200 text-amber-700 shadow-sm' : porteMissing ? 'bg-white border-red-400 text-red-600 animate-pulse' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                                                <input type="radio" name="porteType" value="Debido" checked={porteType === 'Debido'} onChange={(e) => { setPorteMissing(false); setPorteType(e.target.value); }} className="hidden" />
                                                 <span className="text-[12px] font-bold uppercase transition-all text-center">DEBIDO<br/><span className="font-normal text-[10px] opacity-70">(Cobro en Destino)</span></span>
                                             </label>
                                         </div>
+                                        {!porteType && (
+                                            <p className={`mt-1.5 text-[11px] font-bold ${porteMissing ? 'text-red-600' : 'text-slate-400'}`}>
+                                                Elige una de las dos opciones para poder enviar la solicitud.
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="w-full">
                                         <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
