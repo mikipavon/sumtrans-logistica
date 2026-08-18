@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2 } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2, AlertTriangle, KeyRound, Globe } from 'lucide-react';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import { supabase } from '../lib/supabase';
 import { getOwnerLabel } from '../utils/agencyOwnership';
+import { buscarFichasParecidas, explicarMotivos } from '../utils/duplicadosClientes';
 
 // ── Llama a la Edge Function para enviar email de acceso al cliente ──
 async function sendAccessEmail(clientId) {
@@ -35,9 +36,91 @@ async function sendAccessEmail(clientId) {
     }
 }
 
+// ── ¿Esta solicitud la ha pedido una empresa, o la ha creado la app sola? ──
+//
+// En esta pantalla caen dos cosas muy distintas y hasta ahora se veían igual:
+//   - fichas que nacen solas al hacer un albarán, una entrega o un reparto
+//     (`createdFrom`: 'Albarán', 'Entrega', 'Reparto (Driver)'…). No las ha
+//     pedido nadie, son remitentes y destinatarios que se apuntan al vuelo.
+//   - empresas que han rellenado el formulario de sumtransportes.com. Ésas SÍ
+//     están esperando: traen correo, CIF y contraseña, y al aprobarlas se les
+//     abre el portal.
+// Mezcladas entre decenas de las primeras, las segundas no se encuentran.
+function esRegistroWeb(client) {
+    return String(client?.createdFrom || '') === 'web-registro';
+}
+
+// Fecha y hora del registro. El formulario guarda `createdAt` en ISO; las
+// fichas creadas en un albarán sólo dejan `lastInteraction` (día suelto).
+function cuandoSeRegistro(client) {
+    const iso = client?.createdAt;
+    if (iso) {
+        const fecha = new Date(iso);
+        if (!isNaN(fecha.getTime())) {
+            return fecha.toLocaleString('es-ES', {
+                day: '2-digit', month: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit',
+            });
+        }
+    }
+    return client?.lastInteraction || '';
+}
+
+// Para ordenar: lo más reciente arriba, que es lo que se está esperando.
+function momentoDeRegistro(client) {
+    const t = Date.parse(client?.createdAt || '');
+    return isNaN(t) ? 0 : t;
+}
+
 export default function ClientValidation({ clients, onValidateClient, onUpdateClient, onDeleteClients, articles, tariffs, allPoblaciones }) {
     // Filter only pending clients — exclude test-mode clients (isTest: true)
-    const pendingClients = clients.filter(c => c.status === 'pending' && !c.isTest);
+    // Los registros web van primero, y entre ellos el último de arriba: son los
+    // únicos que tienen a alguien esperando al otro lado.
+    const pendingClients = useMemo(
+        () => clients
+            .filter(c => c.status === 'pending' && !c.isTest)
+            .sort((a, b) => {
+                const web = Number(esRegistroWeb(b)) - Number(esRegistroWeb(a));
+                if (web !== 0) return web;
+                return momentoDeRegistro(b) - momentoDeRegistro(a);
+            }),
+        [clients]
+    );
+
+    // Cuántos de los pendientes se han registrado ellos por la web.
+    const registrosWeb = useMemo(() => pendingClients.filter(esRegistroWeb), [pendingClients]);
+
+    // ── Fichas de cartera que se parecen a cada solicitud ──
+    // El registro web nunca toca una ficha existente, así que la empresa que ya
+    // era cliente y sólo quería el acceso entra aquí como si fuera nueva. Si se
+    // aprueba a ciegas quedan dos fichas y el portal se ata a la nueva, vacía.
+    const duplicadosPorCliente = useMemo(() => {
+        const mapa = new Map();
+        pendingClients.forEach(p => {
+            const parecidas = buscarFichasParecidas(p, clients);
+            if (parecidas.length > 0) mapa.set(p.id, parecidas);
+        });
+        return mapa;
+    }, [pendingClients, clients]);
+
+    // Aviso antes de aprobar algo que ya está en cartera. Devuelve true si se
+    // puede seguir adelante.
+    const confirmarSiEsDuplicado = (clientId) => {
+        const parecidas = duplicadosPorCliente.get(clientId);
+        if (!parecidas || parecidas.length === 0) return true;
+
+        const lista = parecidas
+            .map(p => `   • ${p.client.name}${p.client.clientNumber ? ` (nº ${p.client.clientNumber})` : ''} — ${explicarMotivos(p.motivos)}${p.yaTieneAcceso ? ' — YA ENTRA EN EL PORTAL' : ''}`)
+            .join('\n');
+
+        return window.confirm(
+            `⚠️ Esta empresa ya parece estar en tu cartera:\n\n${lista}\n\n` +
+            `Si la apruebas tendrás DOS fichas de la misma empresa, y su portal quedará atado a esta nueva, ` +
+            `que está vacía: el cliente entrará y no verá ninguno de sus envíos.\n\n` +
+            `Comprueba antes que quien se ha registrado es de verdad de esa empresa: el CIF es público.\n\n` +
+            `¿Aprobar de todas formas?`
+        );
+    };
 
     const [searchTerm, setSearchTerm] = useState('');
     const normalize = (val) => String(val || '')
@@ -48,14 +131,34 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
         .replace(/[íìïî]/g, 'i')
         .replace(/[óòöô]/g, 'o')
         .replace(/[úùüû]/g, 'u');
+
+    // Origen: 'web' | 'app' | 'todos'. Mientras no se toque el filtro vale null
+    // y manda lo que haya: si hay registros de la web se enseñan ésos, que es a
+    // lo que se entra aquí después de mandar el correo pidiendo el alta. No se
+    // puede decidir en el useState inicial porque en el primer render los
+    // clientes aún no han llegado de Supabase.
+    const [origen, setOrigen] = useState(null);
+    const origenActivo = origen ?? (registrosWeb.length > 0 ? 'web' : 'todos');
+
+    const clientesPorOrigen = origenActivo === 'web'
+        ? registrosWeb
+        : origenActivo === 'app'
+            ? pendingClients.filter(c => !esRegistroWeb(c))
+            : pendingClients;
+
     const filteredClients = searchTerm.trim() === ''
-        ? pendingClients
-        : pendingClients.filter(c => {
+        ? clientesPorOrigen
+        : clientesPorOrigen.filter(c => {
             const term = normalize(searchTerm);
+            // También por correo, CIF y persona de contacto: es lo que se tiene
+            // a mano cuando llega el aviso de un registro y se quiere buscar.
             return normalize(c.name).includes(term)
                 || normalize(c.city).includes(term)
                 || normalize(c.phone).includes(term)
-                || normalize(c.address).includes(term);
+                || normalize(c.address).includes(term)
+                || normalize(c.email).includes(term)
+                || normalize(c.cif).includes(term)
+                || normalize(c.contactPerson).includes(term);
         });
 
     // Selección múltiple
@@ -94,6 +197,10 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
     };
 
     const handleSaveAndApprove = async (clientData) => {
+        // Se pregunta antes de guardar nada: si se cancela, la ficha pendiente
+        // se queda como estaba y el modal sigue abierto para poder revisarla.
+        if (editingClient && !confirmarSiEsDuplicado(editingClient.id)) return;
+
         if (onUpdateClient && editingClient) {
             // Update client data with everything from the full form
             // ⚠️ await is important: ensures billingType is saved before number assignment
@@ -114,6 +221,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
     };
 
     const handleApprove = async (clientId) => {
+        if (!confirmarSiEsDuplicado(clientId)) return;
         await onValidateClient(clientId, true);
         // Enviar email automático de confirmación de acceso
         await sendAccessEmail(clientId);
@@ -133,15 +241,57 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                         Validar Clientes
                     </h1>
                     <p className="text-slate-500 mt-1">
-                        Clientes creados automáticamente pendientes de aprobación
+                        Empresas registradas en la web y fichas creadas solas al hacer albaranes
                     </p>
                 </div>
-                <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl">
-                    <Clock size={18} className="text-amber-600" />
-                    <span className="font-bold text-amber-700">{pendingClients.length}</span>
-                    <span className="text-amber-600">pendientes</span>
+                <div className="flex items-center gap-2">
+                    {registrosWeb.length > 0 && (
+                        <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-xl">
+                            <Globe size={18} className="text-blue-600" />
+                            <span className="font-bold text-blue-700">{registrosWeb.length}</span>
+                            <span className="text-blue-600">registrados en la web</span>
+                        </div>
+                    )}
+                    <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl">
+                        <Clock size={18} className="text-amber-600" />
+                        <span className="font-bold text-amber-700">{pendingClients.length}</span>
+                        <span className="text-amber-600">pendientes</span>
+                    </div>
+                    {duplicadosPorCliente.size > 0 && (
+                        <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border border-red-200 rounded-xl">
+                            <AlertTriangle size={18} className="text-red-600" />
+                            <span className="font-bold text-red-700">{duplicadosPorCliente.size}</span>
+                            <span className="text-red-600">ya en cartera</span>
+                        </div>
+                    )}
                 </div>
             </div>
+
+            {/* Filtro por origen — separar quién se ha registrado de lo que crea la app sola */}
+            {pendingClients.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                    {[
+                        { clave: 'web', texto: 'Registrados en la web', cuantos: registrosWeb.length, icono: <Globe size={15} /> },
+                        { clave: 'app', texto: 'Creados al hacer albaranes', cuantos: pendingClients.length - registrosWeb.length, icono: <Building2 size={15} /> },
+                        { clave: 'todos', texto: 'Todos', cuantos: pendingClients.length, icono: <Clock size={15} /> },
+                    ].map(({ clave, texto, cuantos, icono }) => (
+                        <button
+                            key={clave}
+                            onClick={() => setOrigen(clave)}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold border transition-colors ${origenActivo === clave
+                                ? 'bg-blue-600 border-blue-600 text-white'
+                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                }`}
+                        >
+                            {icono}
+                            {texto}
+                            <span className={`px-1.5 rounded-full text-xs ${origenActivo === clave ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+                                {cuantos}
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            )}
 
             {/* Search + Selección masiva */}
             {pendingClients.length > 0 && (
@@ -152,7 +302,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                             type="text"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            placeholder="Buscar por nombre, ciudad o teléfono..."
+                            placeholder="Buscar por nombre, correo, CIF, ciudad o teléfono..."
                             className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
                         />
                     </div>
@@ -186,8 +336,8 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {filteredClients.map(client => (
                         <div key={client.id} className={`bg-white rounded-xl shadow-sm border overflow-hidden hover:shadow-md transition-shadow ${selectedIds.includes(client.id) ? 'border-amber-400 ring-2 ring-amber-200' : 'border-slate-100'}`}>
-                            {/* Header */}
-                            <div className="bg-amber-50 px-4 py-3 border-b border-amber-100 flex items-center justify-between">
+                            {/* Header — azul si la empresa se ha registrado ella en la web */}
+                            <div className={`px-4 py-3 border-b flex items-center justify-between ${esRegistroWeb(client) ? 'bg-blue-50 border-blue-100' : 'bg-amber-50 border-amber-100'}`}>
                                 <div className="flex items-center gap-2 min-w-0">
                                     <input
                                         type="checkbox"
@@ -195,8 +345,10 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                         onChange={() => toggleSelected(client.id)}
                                         className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 shrink-0"
                                     />
-                                    <div className="p-2 bg-amber-100 rounded-lg shrink-0">
-                                        <Building2 size={16} className="text-amber-600" />
+                                    <div className={`p-2 rounded-lg shrink-0 ${esRegistroWeb(client) ? 'bg-blue-100' : 'bg-amber-100'}`}>
+                                        {esRegistroWeb(client)
+                                            ? <Globe size={16} className="text-blue-600" />
+                                            : <Building2 size={16} className="text-amber-600" />}
                                     </div>
                                     <span className="font-bold text-slate-800 truncate max-w-[150px]" title={client.name}>
                                         {client.name}
@@ -209,6 +361,76 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                     {client.type}
                                 </span>
                             </div>
+
+                            {/* Quién se ha registrado — sólo en los altas de la web */}
+                            {esRegistroWeb(client) && (
+                                <div className="bg-blue-50/60 border-b border-blue-100 px-4 py-3 space-y-1.5">
+                                    <div className="flex items-center gap-2">
+                                        <Globe size={13} className="text-blue-600 shrink-0" />
+                                        <span className="text-xs font-bold text-blue-800">Se ha registrado en la web</span>
+                                    </div>
+                                    {client.email && (
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <Mail size={13} className="text-blue-400 shrink-0" />
+                                            <a href={`mailto:${client.email}`} className="text-xs text-blue-700 font-medium truncate hover:underline" title={client.email}>
+                                                {client.email}
+                                            </a>
+                                        </div>
+                                    )}
+                                    {client.cif && (
+                                        <div className="flex items-center gap-2">
+                                            <Tag size={13} className="text-blue-400 shrink-0" />
+                                            <span className="text-xs text-blue-700 font-mono">{client.cif}</span>
+                                        </div>
+                                    )}
+                                    {client.contactPerson && (
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <User size={13} className="text-blue-400 shrink-0" />
+                                            <span className="text-xs text-blue-700 truncate" title={client.contactPerson}>{client.contactPerson}</span>
+                                        </div>
+                                    )}
+                                    {client.legalName && client.legalName !== client.name && (
+                                        <div className="flex items-start gap-2 min-w-0">
+                                            <Building2 size={13} className="text-blue-400 shrink-0 mt-0.5" />
+                                            <span className="text-xs text-blue-700 break-words">{client.legalName}</span>
+                                        </div>
+                                    )}
+                                    <div className="flex items-center gap-2">
+                                        <Calendar size={13} className="text-blue-400 shrink-0" />
+                                        <span className="text-xs text-blue-600">{cuandoSeRegistro(client)}</span>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Aviso de duplicado — la empresa ya está en cartera */}
+                            {duplicadosPorCliente.has(client.id) && (
+                                <div className="bg-red-50 border-b border-red-200 px-4 py-3">
+                                    <div className="flex items-start gap-2">
+                                        <AlertTriangle size={15} className="text-red-600 mt-0.5 shrink-0" />
+                                        <div className="min-w-0">
+                                            <p className="text-xs font-bold text-red-800">Ya parece estar en tu cartera</p>
+                                            <ul className="mt-1 space-y-1">
+                                                {duplicadosPorCliente.get(client.id).map(({ client: ficha, motivos, yaTieneAcceso }) => (
+                                                    <li key={ficha.id} className="text-xs text-red-700 leading-snug">
+                                                        <span className="font-bold break-words">{ficha.name}</span>
+                                                        {ficha.clientNumber && <span className="text-red-500"> (nº {ficha.clientNumber})</span>}
+                                                        <span className="text-red-600"> — {explicarMotivos(motivos)}</span>
+                                                        {yaTieneAcceso && (
+                                                            <span className="mt-1 flex items-center gap-1 font-bold text-red-800">
+                                                                <KeyRound size={11} className="shrink-0" />
+                                                                Esa ficha ya entra en el portal
+                                                            </span>
+                                                        )}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                            <p className="text-[10px] text-red-600 mt-1.5 leading-snug">
+                                                Aprobarla crea una segunda ficha, y el cliente entrará a la nueva —vacía—, no a la suya.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Body */}
                             <div className="p-4 space-y-3 text-sm">
@@ -252,7 +474,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                     {client.createdFrom && (
                                         <div className="flex items-center gap-2 text-xs text-slate-400">
                                             <Tag size={12} />
-                                            <span>Desde: {client.createdFrom}</span>
+                                            <span>Desde: {esRegistroWeb(client) ? 'formulario de la web' : client.createdFrom}</span>
                                         </div>
                                     )}
                                     {client.createdBy && (
@@ -299,7 +521,13 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                         <Search size={32} className="text-slate-400" />
                     </div>
                     <h3 className="text-lg font-bold text-slate-800 mb-2">Sin resultados</h3>
-                    <p className="text-slate-500">Ningún cliente pendiente coincide con "{searchTerm}".</p>
+                    <p className="text-slate-500">
+                        {searchTerm.trim() !== ''
+                            ? `Ningún cliente pendiente${origenActivo === 'web' ? ' registrado en la web' : ''} coincide con "${searchTerm}".`
+                            : origenActivo === 'web'
+                                ? 'Nadie se ha registrado por la web todavía. En «Todos» tienes las fichas que crea la app sola al hacer albaranes.'
+                                : 'No hay fichas pendientes creadas al hacer albaranes.'}
+                    </p>
                 </div>
             ) : (
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-12 text-center">
