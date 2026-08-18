@@ -98,7 +98,12 @@ serve(async (req: Request) => {
 
     const clientData = clientRow.data || {}
     const nombre = clientData.name || clientRow.name || 'Cliente'
-    const email  = clientData.email || clientData.username || ''
+    // El correo de acceso manda sobre el de la ficha: es el que identifica la
+    // cuenta en Auth. Si la ficha no lo trae (que es lo normal), se usa el email
+    // de siempre. Mismo criterio que emailDeAcceso() en la app.
+    const email = String(
+      clientData.accessEmail || clientData.email || clientData.username || ''
+    ).trim().toLowerCase()
     const password = clientData.password || ''
 
     if (!email) {

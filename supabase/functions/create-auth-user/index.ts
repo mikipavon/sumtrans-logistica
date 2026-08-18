@@ -8,6 +8,9 @@
 //
 //   A) MODO ADMIN — el que llama presenta un token de un usuario cuyo
 //      perfil tiene role='admin'. Es el caso del panel de conductores.
+//      En este modo, si la ficha ya tiene cuenta y lo que cambia es el email
+//      (un cliente al que se le pone correo de acceso propio), se MUEVE la
+//      cuenta existente en vez de crear otra: ver buscarPorVinculo().
 //
 //   B) MODO AUTOMIGRACIÓN — no hay admin, pero el que llama demuestra que
 //      ya conoce la contraseña antigua del conductor (se verifica contra la
@@ -60,6 +63,34 @@ async function llamadaDeAdmin(req: Request, supabase: ReturnType<typeof createCl
     .single()
 
   return perfil?.role === 'admin'
+}
+
+// ── Buscar la cuenta que ya está vinculada a esta ficha ──
+// Se busca por el vínculo, NO por el email, porque sirve justo para el caso en
+// que el email ha cambiado: un cliente al que se le pone un correo de acceso
+// distinto del que tenía. Si esto no existiera, createUser vería un email nuevo,
+// crearía una SEGUNDA cuenta y la vieja seguiría viva con su contraseña vieja:
+// dos llaves de la misma casa y ninguna forma clara de quitar el acceso.
+async function buscarPorVinculo(
+  supabase: ReturnType<typeof createClient>,
+  role: string,
+  linkedId: string,
+): Promise<{ id: string; email?: string } | null> {
+  if (!linkedId) return null
+
+  for (let page = 1; page <= 50; page++) {
+    const { data: listado, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 })
+    if (error || !listado?.users?.length) return null
+
+    const encontrada = listado.users.find((u: { user_metadata?: Record<string, unknown> }) =>
+      String(u.user_metadata?.linked_id || '') === String(linkedId)
+      && String(u.user_metadata?.role || '') === role
+    )
+    if (encontrada) return encontrada as { id: string; email?: string }
+
+    if (listado.users.length < 1000) return null
+  }
+  return null
 }
 
 // ── Crear la cuenta, o actualizar la contraseña si el email ya existe ──
@@ -146,11 +177,33 @@ serve(async (req: Request) => {
         return json({ error: 'Falta el email' }, 400)
       }
       const rol = ROLES_VALIDOS.includes(role) ? role : 'driver'
-      return await crearOActualizar(supabase, email, password, {
+      const emailNormalizado = String(email).trim().toLowerCase()
+      const metadata = {
         role: rol,
         linked_id: String(linked_id || ''),
-        display_name: display_name || email,
-      })
+        display_name: display_name || emailNormalizado,
+      }
+
+      // ¿Esta ficha ya tenía cuenta con OTRO email? Entonces no se crea nada
+      // nuevo: se le cambia el correo a la que ya existe, para que conserve su
+      // id (y con él la fila de `profiles`, que es de donde RLS saca el vínculo).
+      const yaVinculada = await buscarPorVinculo(supabase, rol, metadata.linked_id)
+      if (yaVinculada && String(yaVinculada.email || '').toLowerCase() !== emailNormalizado) {
+        const { error: cambioError } = await supabase.auth.admin.updateUserById(yaVinculada.id, {
+          email: emailNormalizado,
+          password,
+          email_confirm: true,
+          user_metadata: metadata,
+        })
+        if (cambioError) {
+          console.warn(`[create-auth-user] No se pudo mover ${yaVinculada.email} → ${emailNormalizado}: ${cambioError.message}`)
+          return json({ error: `No se pudo cambiar el correo de acceso: ${cambioError.message}` }, 500)
+        }
+        console.log(`[create-auth-user] Correo de acceso movido ${yaVinculada.email} → ${emailNormalizado} (${rol})`)
+        return json({ ok: true, action: 'email_changed', userId: yaVinculada.id })
+      }
+
+      return await crearOActualizar(supabase, emailNormalizado, password, metadata)
     }
 
     // ── MODO B: automigración de un conductor que aún no está en Auth ──

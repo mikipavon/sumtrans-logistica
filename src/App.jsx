@@ -34,6 +34,7 @@ import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { fetchAllRows } from './utils/fetchAllRows';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
+import { emailDeAcceso } from './utils/clientAccess';
 import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre } from './utils/ventanaPadre';
 import { getIrregularReasons } from './utils/shipmentUtils';
@@ -1387,10 +1388,15 @@ function App() {
       // crea sesión de Auth: a partir de ahí el portal escribe como visitante
       // anónimo y RLS le rechaza todo — el albarán se va a la cola offline y el
       // cliente se queda mirando el aviso de "pendiente de sincronizar".
-      if (role === 'client' && !username.includes('@')) {
+      // Ojo: aquí se traduce SIEMPRE, también cuando lo escrito ya parece un
+      // email. Desde que la ficha puede llevar un correo de acceso distinto del
+      // de contacto, el email que el cliente tiene por suyo (el de las facturas)
+      // ya no tiene por qué ser el de su cuenta de Auth. Si no se tradujese,
+      // quien escriba el de facturación caería otra vez en el login antiguo.
+      if (role === 'client') {
         try {
           const { data: email } = await supabase.rpc('get_client_email_by_username', { p_username: username });
-          if (email) {
+          if (email && email.toLowerCase() !== username.toLowerCase()) {
             authEmail = email;
             console.log('[Login] Client username →', authEmail);
           }
@@ -1583,8 +1589,8 @@ function App() {
       const normalize = (val) => String(val || '').toLowerCase().trim();
       const normInputUser = normalize(username);
 
-      const client = currentClients.find(c => 
-        (normalize(c.username) === normInputUser || normalize(c.email) === normInputUser || normalize(c.name).includes(normInputUser)) 
+      const client = currentClients.find(c =>
+        (normalize(c.username) === normInputUser || normalize(c.email) === normInputUser || emailDeAcceso(c) === normInputUser || normalize(c.name).includes(normInputUser))
         && c.password === password
       );
       if (client) {
@@ -1743,6 +1749,14 @@ function App() {
     }
   };
 
+  // ── ¿Se le ha cambiado el correo con el que entra al portal? ──
+  // Sólo importa si la ficha ya tenía acceso configurado: si nunca lo tuvo, no
+  // hay ninguna cuenta de Auth que se quede atrás y no hay nada que avisar.
+  const correoDeAccesoCambiado = (anterior, nuevo) => {
+    if (!anterior?.password) return false;
+    return emailDeAcceso(anterior) !== emailDeAcceso(nuevo);
+  };
+
   // ── Crear/actualizar la cuenta Supabase Auth de un cliente ──
   // Gemela de syncDriverAuthAccount, que a los clientes les faltaba. Sin cuenta
   // Auth, el cliente entra por el login antiguo: la app le da la sesión por buena
@@ -1755,7 +1769,7 @@ function App() {
   // deben disparar ningún aviso.
   const syncClientAuthAccount = async ({ email, password, clientId, displayName }) => {
     const motivo = !email
-      ? 'la ficha no tiene email'
+      ? 'la ficha no tiene correo de acceso ni e-mail de contacto'
       : (!password || password.length < 6)
         ? 'la contraseña tiene menos de 6 caracteres'
         : null;
@@ -1764,7 +1778,7 @@ function App() {
       alert(
         `⚠️ El cliente se ha guardado, pero NO podrá entrar en su portal porque ${motivo}.\n\n` +
         `Sin cuenta de acceso inicia sesión pero lo ve todo vacío y no puede crear albaranes.\n\n` +
-        `Edita su ficha y añade email + contraseña de 6 caracteres o más.`
+        `Edita su ficha y añade un correo (el de acceso, o el de contacto) + contraseña de 6 caracteres o más.`
       );
       return false;
     }
@@ -2859,11 +2873,21 @@ function App() {
       // no traen contraseña, así que no disparan nada.
       if (updatedData && updatedData.password) {
         await syncClientAuthAccount({
-          email: updated.email,
+          email: emailDeAcceso(updated),
           password: updatedData.password,
           clientId,
           displayName: updated.name,
         });
+      } else if (updatedData && correoDeAccesoCambiado(c, updated)) {
+        // Cambiar el correo de acceso mueve la cuenta de Auth, y para eso hay
+        // que volver a pasar por create-auth-user, que exige contraseña. Sin
+        // ella la ficha diría un correo y la cuenta seguiría en el anterior:
+        // el cliente escribiría el nuevo y no entraría.
+        alert(
+          `⚠️ Has cambiado el correo de acceso, pero la cuenta del portal sigue en el anterior.\n\n` +
+          `Para aplicarlo, vuelve a abrir la ficha y escribe también la contraseña antes de guardar.\n\n` +
+          `Hasta entonces el cliente tiene que seguir entrando con: ${emailDeAcceso(c) || '(sin correo)'}`
+        );
       }
     } catch (e) {
       console.warn(`[Queue] Error actualizando cliente ${clientId}, encolando para reintento:`, e);
@@ -2933,7 +2957,7 @@ function App() {
       // así que necesita cuenta de Auth o entrará y lo verá todo vacío.
       if (clientWithMeta.password) {
         await syncClientAuthAccount({
-          email: clientWithMeta.email,
+          email: emailDeAcceso(clientWithMeta),
           password: clientWithMeta.password,
           clientId: clientWithMeta.id,
           displayName: clientWithMeta.name,

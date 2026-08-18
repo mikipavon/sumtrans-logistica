@@ -1,4 +1,4 @@
-import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Image as ImageIcon, Upload, Trash2, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
+import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Mail, Image as ImageIcon, Upload, Trash2, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { uploadProof } from '../../utils/storage';
 import { getAgencies } from '../../utils/agencyOwnership';
@@ -53,7 +53,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         type: 'Remitente', billingType: 'Clientes Habituales', tariffType: 'General',
         customRates: {}, customRatesB2: {}, allowedArticles: [], codFee: '', color: '#ef4444', 
         priority: 'urgent',
-        username: '', password: '',
+        username: '', password: '', accessEmail: '',
         // Factusol extra
         country: '', fax: '', contactPerson: '', agent: '',
         paymentMethod: '', financingPct: '', promptPaymentPct: '',
@@ -1188,6 +1188,25 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                     </div>
 
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                        <div className="md:col-span-2">
+                                            <Field label="Correo de Acceso al Portal">
+                                                <div className="relative">
+                                                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                                    <input
+                                                        type="email"
+                                                        className={`${inputCls} pl-10`}
+                                                        placeholder={formData.email || 'pedidos@empresa.com'}
+                                                        value={formData.accessEmail || ''}
+                                                        onChange={e => set('accessEmail', e.target.value)}
+                                                    />
+                                                </div>
+                                                <p className="text-[10px] text-slate-400 mt-1">
+                                                    Sólo si el cliente quiere entrar en la app con un correo distinto del de la ficha.
+                                                    Vacío = entra con <strong>{formData.email || 'el e-mail de la pestaña Contacto'}</strong>.
+                                                </p>
+                                            </Field>
+                                        </div>
+
                                         <Field label="Nombre de Usuario">
                                             <div className="relative">
                                                 <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -1222,6 +1241,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                     <ul className="text-xs text-slate-600 space-y-2 list-disc pl-4">
                                         <li>El cliente debe entrar en la pestaña <strong>"Cliente"</strong> de la pantalla de inicio.</li>
                                         <li>Indícale que use el usuario y contraseña aquí configurados.</li>
+                                        <li>Su cuenta se crea sobre el <strong>correo de acceso</strong> (o el e-mail de la ficha si aquél está vacío): es el que tiene que escribir si entra por email.</li>
                                         <li>Desde su portal podrá ver el estado de sus envíos y crear nuevos albaranes.</li>
                                     </ul>
                                 </div>
