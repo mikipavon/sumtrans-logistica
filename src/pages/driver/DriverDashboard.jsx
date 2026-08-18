@@ -2642,10 +2642,33 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const [showRouteMap, setShowRouteMap] = useState(false);
     const [routeOptimized, setRouteOptimized] = useState(false);
     const [learningMessage, setLearningMessage] = useState(null);
+    // A qué altura cae el cartel del optimizador. Iba clavado a top-24 y se plantaba
+    // ENCIMA de las pestañas (Entregas, C.Pendientes), que no se podían tocar mientras
+    // estuviera puesto. La cabecera no mide siempre lo mismo — crece con el banner de
+    // "sin conexión" y con la lupa A+/A- —, así que se mide en vivo en vez de a ojo.
+    const [alturaDelAviso, setAlturaDelAviso] = useState(96);
     // Paradas de agencia que el optimizador ha colado por delante de las nuestras
     // porque quedaban de camino. Se marcan en la tarjeta: la última palabra sobre si
     // conviene entregarlas ahí es del transportista, y para eso tiene que verlo.
     const [paradasDeCamino, setParadasDeCamino] = useState(() => new Set());
+
+    // Se mide con offsetHeight y no con getBoundingClientRect a propósito: el panel
+    // entero va dentro de un style={{ zoom }} y el rect viene ya multiplicado por la
+    // lupa, mientras que el `top` del cartel se interpreta sin multiplicar. Con el
+    // rect, en A+ el cartel se iba más abajo de la cuenta.
+    useEffect(() => {
+        if (!learningMessage) return;
+        const medir = () => {
+            const cabecera = document.getElementById('driver-header');
+            if (!cabecera) return;
+            // Cuando no hay cobertura la cabecera baja para dejar sitio al banner.
+            const desplazada = (!isOnline || justReconnected) ? 40 : 0;
+            setAlturaDelAviso(desplazada + cabecera.offsetHeight + 8);
+        };
+        medir();
+        window.addEventListener('resize', medir);
+        return () => window.removeEventListener('resize', medir);
+    }, [learningMessage, isOnline, justReconnected, zoom]);
 
     // Tracks which collection items are being processed (Optimistic UI)
 
@@ -2738,6 +2761,19 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         return { name: clientName, cif: '' };
     };
 
+    // Nombre del remitente para el justificante de reembolso: es quien recibe el
+    // dinero y firma, así que se busca en el envío si el cobro no lo trae.
+    // Los cobros viejos guardaron el literal 'N/A', que aquí vale como vacío.
+    const getReceiptSenderName = (item) => {
+        const raw = item?.sender && item.sender !== 'N/A' ? item.sender : null;
+        const shipmentId = item?.original?.shipmentId || item?.id;
+        const ship = raw ? null : (allShipments || []).find(s => s.id === shipmentId);
+        const name = raw || ship?.originName || ship?.client || '';
+        if (!name) return '__________________________';
+        const legal = getClientLegalInfo(name);
+        return `${legal.name}${legal.cif}`;
+    };
+
     // Print Receipt Function (with QR code for scanning)
     const handlePrintReceipt = (collection) => {
         const legalInfo = getClientLegalInfo(collection.client);
@@ -2756,8 +2792,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         .title { font-size: 16px; font-weight: bold; margin: 0; }
                         .subtitle { font-size: 12px; color: #666; }
                         .details { margin-bottom: 20px; }
-                        .row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px; }
-                        .label { font-weight: bold; }
+                        .row { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px; font-size: 12px; }
+                        .row span:last-child { text-align: right; word-break: break-word; }
+                        .label { font-weight: bold; flex-shrink: 0; }
                         .amount { font-size: 18px; font-weight: bold; text-align: right; margin-top: 10px; border-top: 1px dashed #ccc; padding-top: 10px; }
                         .qr-section { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 20px; }
                         .signature-box { flex: 1; border-top: 1px solid #000; padding-top: 5px; text-align: center; font-size: 10px; margin-right: 15px; }
@@ -2790,8 +2827,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             <span>${legalInfo.name}${legalInfo.cif}</span>
                         </div>
                         <div class="row">
-                            <span class="label">Recibe:</span>
-                            <span>${collection.sender || '__________________'}</span>
+                            <span class="label">Recibe (Remitente):</span>
+                            <span>${getReceiptSenderName(collection)}</span>
                         </div>
                          <div class="row">
                             <span class="label">Concepto:</span>
@@ -2867,7 +2904,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             <div class="card-row"><span class="lbl">Fecha:</span><span>${new Date().toLocaleDateString('es-ES')}</span></div>
                             <div class="card-row"><span class="lbl">ID Envío:</span><span class="mono">${shipmentId}</span></div>
                             <div class="card-row"><span class="lbl">Cliente:</span><span>${legalInfo.name}${legalInfo.cif}</span></div>
-                            <div class="card-row"><span class="lbl">Recibe:</span><span>__________________________</span></div>
+                            <div class="card-row"><span class="lbl">Recibe (Remitente):</span><span>${getReceiptSenderName(item)}</span></div>
                         </div>
                         <div class="card-amount">TOTAL: €${item.amount || item.amountDisplay?.replace('€', '').trim()}</div>
                         <div class="card-bottom">
@@ -2916,8 +2953,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     .card-header h2 { font-size: 18px; margin: 0; font-weight: bold; }
                     .card-header p { font-size: 12px; color: #666; margin: 4px 0 0; }
                     .card-details { margin-bottom: 10px; }
-                    .card-row { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px; }
-                    .lbl { font-weight: bold; }
+                    .card-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 8px; }
+                    .card-row span:last-child { text-align: right; word-break: break-word; }
+                    .lbl { font-weight: bold; flex-shrink: 0; }
                     .mono { font-family: monospace; font-weight: bold; font-size: 14px; }
                     .card-amount { font-size: 24px; font-weight: bold; text-align: right; border-top: 1px dashed #aaa; padding-top: 10px; margin-bottom: 12px; }
                     .card-bottom { display: flex; justify-content: space-between; align-items: flex-end; margin-top: auto; }
@@ -3465,15 +3503,16 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const handleSmartSort = () => {
         if (!localRoute || localRoute.length === 0) return;
 
+        // Sin cartel de "Optimizando ruta...": el propio botón ya pone "Calculando..."
+        // mientras trabaja, y el conductor no necesita nada más.
         setIsOptimizing(true);
-        setLearningMessage("Optimizando ruta...");
 
-        // El resumen se va solo, pero a los 12 segundos y no a los 3: es un texto
-        // largo y en 3 no daba tiempo ni a empezarlo. Y se puede cerrar antes con la X.
+        // Si algo falla, el aviso sí sale (eso sí le importa al que reparte), pero se
+        // va solo a los 5 segundos para no dejarle un cartel puesto en la pantalla.
         const terminar = () => {
             setIsOptimizing(false);
             clearTimeout(mensajeTimeoutRef.current);
-            mensajeTimeoutRef.current = setTimeout(() => setLearningMessage(""), 12000);
+            mensajeTimeoutRef.current = setTimeout(() => setLearningMessage(""), 5000);
         };
 
         // Cuando la parada es una dirección nueva (sin coordenadas propias ni de
@@ -3543,7 +3582,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 setParadasDeCamino(deCamino);
                 setRouteOptimized(true);
                 guardarOrdenEnLaNube(orden);
-                setLearningMessage(mensajeDeOptimizacion(resumen, origenPosicion));
+                // El resumen NO se le enseña al conductor: a él le vale con ver el
+                // orden que le ha quedado. Es información de diagnóstico —con qué ruta
+                // ordenó, si tenía GPS, qué fichas traen el GPS mal puesto— y su sitio
+                // es la consola, para mirarlo desde administración cuando un reparto
+                // salga con un orden raro.
+                console.log('[SmartSort]', mensajeDeOptimizacion(resumen, origenPosicion));
             } catch (error) {
                 console.error("Falló la optimización de la ruta:", error);
                 setLearningMessage("No se ha podido optimizar la ruta.");
@@ -4760,17 +4804,19 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 <DriverTimeLogAlerts currentDriverId={currentDriverId} />
 
                 {/* AI Notification Toast */}
-                {/* Resumen de la optimización.
-                    Era una píldora de una línea que se borraba sola a los 3 segundos:
-                    en el móvil el texto no cabía y no daba tiempo a leerlo, así que el
-                    conductor nunca se enteraba de con qué ruta había ordenado, de
-                    cuántas paradas iban fuera de ruta ni de si lo había hecho sin GPS.
-                    Ahora el texto entero cabe y se queda hasta que se toca. */}
+                {/* Avisos cortos para el conductor: el escáner de bultos y los fallos.
+                    El resumen del optimizador YA NO pasa por aquí — es diagnóstico para
+                    administración y se va a la consola: al que reparte no le aporta
+                    nada y le tapaba la pantalla cada vez que ordenaba el día.
+                    Va DEBAJO de la cabecera (con el top medido, no a ojo) y con menos z
+                    que ella: clavado a top-24 se plantaba encima de las pestañas y esos
+                    toques se los quedaba el cartel en vez de la pestaña. */}
                 {learningMessage && (
                     <button
                         type="button"
                         onClick={() => setLearningMessage("")}
-                        className="fixed top-24 left-1/2 -translate-x-1/2 w-[92vw] max-w-md bg-slate-800/95 backdrop-blur-sm text-white text-left px-4 py-3 rounded-2xl text-xs font-bold shadow-xl animate-in fade-in slide-in-from-top-4 z-50 flex items-start gap-2"
+                        style={{ top: alturaDelAviso }}
+                        className="fixed left-1/2 -translate-x-1/2 w-[92vw] max-w-md bg-slate-800/95 backdrop-blur-sm text-white text-left px-4 py-3 rounded-2xl text-xs font-bold shadow-xl animate-in fade-in slide-in-from-top-4 z-40 flex items-start gap-2"
                     >
                         <BrainCircuit size={14} className="text-purple-400 shrink-0 mt-0.5" />
                         <span className="flex-1 leading-relaxed">{learningMessage}</span>

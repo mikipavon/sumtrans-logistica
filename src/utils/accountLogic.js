@@ -353,7 +353,10 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
                 id: c.shipmentId || c.id,
                 key: c.id,
                 client: c.client,
-                sender: c.sender || 'N/A',
+                // El remitente es a quien se le entrega el dinero, así que el
+                // justificante lo necesita sí o sí. Los cobros antiguos se
+                // guardaron sin este campo: caemos al envío como en los portes.
+                sender: c.sender || (ship ? (ship.originName || ship.client) : 'Remitente'),
                 type: 'Reembolso',
                 detail: `Reembolso Cobrado - ${c.id}`,
                 amount: parseAmount(amountToUse).toFixed(2),
