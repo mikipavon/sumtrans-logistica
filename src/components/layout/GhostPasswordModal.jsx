@@ -25,13 +25,11 @@ export default function GhostPasswordModal({ mode, tieneActual = true, onSubmit,
 
     useEffect(() => { primerCampoRef.current?.focus(); }, []);
 
-    const titulo = esDesbloqueo ? 'Modo Fantasma'
-        : mode === 'crear' ? 'Crear contraseña del Modo Fantasma'
-        : 'Cambiar contraseña del Modo Fantasma';
-
-    const subtitulo = esDesbloqueo
-        ? 'Escribe la contraseña para mostrar los datos confidenciales.'
-        : 'Se guardará cifrada: ni siquiera desde la base de datos se puede leer.';
+    // Títulos secos a propósito: el modal de cambio se abre desde Configuración,
+    // donde puede haber alguien mirando, y no tiene por qué contar para qué sirve.
+    const titulo = esDesbloqueo ? 'Contraseña SUM'
+        : mode === 'crear' ? 'Crear contraseña SUM'
+        : 'Cambiar contraseña SUM';
 
     const enviar = async (e) => {
         e.preventDefault();
@@ -68,13 +66,12 @@ export default function GhostPasswordModal({ mode, tieneActual = true, onSubmit,
                 onSubmit={enviar}
                 className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200"
             >
-                <div className="flex items-start gap-3 mb-5">
+                <div className="flex items-center gap-3 mb-5">
                     <div className="p-2.5 bg-slate-900 text-amber-400 rounded-lg shrink-0">
                         <Shield size={20} />
                     </div>
                     <div className="flex-1 min-w-0">
                         <h2 className="font-bold text-slate-800 leading-tight">{titulo}</h2>
-                        <p className="text-xs text-slate-500 mt-1 leading-snug">{subtitulo}</p>
                     </div>
                     <button
                         type="button"
