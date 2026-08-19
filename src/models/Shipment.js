@@ -119,6 +119,12 @@ export default class Shipment {
     // IDs de cliente
     this.clientId = data.clientId || null;
 
+    // Sede concreta del remitente cuando el cliente tiene delegaciones, y la ficha
+    // padre a la que pertenece. El modelo copia campo a campo (no hace spread de
+    // data), asi que sin estas dos lineas se perdian antes de llegar a Supabase.
+    this.branchId = data.branchId || null;
+    this._parentClientId = data._parentClientId || null;
+
     // Kilos y franjas de peso
     this.weightKg = data.weightKg || null;
     this.weightBracket = data.weightBracket || null;

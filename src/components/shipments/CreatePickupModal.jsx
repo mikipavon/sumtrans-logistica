@@ -8,7 +8,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
         originZip: '',
         originCity: '',
         observations: '',
-        originCoordinates: ''
+        originCoordinates: '',
+        branchId: null,
+        _parentClientId: null
     });
 
     const [gettingGps, setGettingGps] = useState(false);
@@ -65,7 +67,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 originZip: '',
                 originCity: '',
                 observations: '',
-                originCoordinates: ''
+                originCoordinates: '',
+                branchId: null,
+                _parentClientId: null
             });
             setShowSuggestions(false);
         } else {
@@ -145,7 +149,8 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
 
     const handleClientNameChange = (e) => {
         const value = e.target.value;
-        setFormData(prev => ({ ...prev, clientName: value }));
+        // Si reescribe el nombre a mano, la sede que hubiera elegido antes ya no vale
+        setFormData(prev => ({ ...prev, clientName: value, branchId: null, _parentClientId: null }));
         updateSuggestions(value);
     };
 
@@ -154,11 +159,16 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
             const branch = item._branch;
             setFormData(prev => ({
                 ...prev,
-                clientName: item.name,
+                // El nombre de la sede, no el del cliente padre: si se elige
+                // "AGROCOR MONTILLA" la recogida no puede salir a nombre de
+                // "AGROCOR TORRECILLA" (mismo criterio que al crear un albaran).
+                clientName: item._displayName || item.name,
                 originAddress: branch.address || item.address || '',
                 originZip: branch.zip || item.zip || '',
                 originCity: branch.city || item.city || '',
-                originCoordinates: branch.coordinates || ''
+                originCoordinates: branch.coordinates || '',
+                branchId: branch.id,
+                _parentClientId: item.id.split('_')[0]
             }));
         } else {
             setFormData(prev => ({
@@ -167,7 +177,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 originAddress: item.address || '',
                 originZip: item.zip || '',
                 originCity: item.city || '',
-                originCoordinates: item.coordinates || ''
+                originCoordinates: item.coordinates || '',
+                branchId: null,
+                _parentClientId: null
             }));
         }
         setShowSuggestions(false);
@@ -188,6 +200,8 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
             id: `PU-${maxId + 1}`,
             type: 'Recogida', // Essential tag
             client: formData.clientName,
+            branchId: formData.branchId || null,
+            _parentClientId: formData._parentClientId || null,
 
             // Pickup Location (Origin)
             origin: fullOrigin,
