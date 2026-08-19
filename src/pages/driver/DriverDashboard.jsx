@@ -2557,13 +2557,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         const date = shipment.date || new Date().toLocaleDateString('es-ES');
         const origin = shipment.originName || shipment.client;
         const dest = shipment.destinationName || shipment.client;
-        const status = shipment.status || 'Pendiente';
-        
+
         const hasReembolso = parseFloat(String(shipment.codAmount || '0').replace(',', '.').replace(/[^0-9.-]/g, '')) > 0;
         // El mensaje se escribe con saltos de línea de verdad: quien lo codifica para
         // la URL es abrirWhatsApp. Si aquí volviéramos a poner %0A a mano, se
         // codificaría dos veces y el cliente leería el "%0A" en el chat.
-        const codText = hasReembolso ? `*Reembolso a cobrar:* ${shipment.codAmount} €\n` : '';
+        // "a cobrar" solo mientras esté sin cobrar: si ya se ha liquidado, el
+        // justificante diría lo contrario que la línea de Estado.
+        const codText = hasReembolso
+            ? (shipment.codPaid === true
+                ? `*Reembolso cobrado:* ${shipment.codAmount} €\n`
+                : `*Reembolso a cobrar:* ${shipment.codAmount} €\n`)
+            : '';
 
         const normalize = (val) => String(val || '').toLowerCase().trim();
         const originClient = clientsMap?.get(normalizeClientName(shipment.originName || shipment.client));
@@ -2576,7 +2581,13 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         if (mainBillingType.includes('habitual') || mainBillingType.includes('diar') || mainBillingType.includes('libre') || mainBillingType.includes('contado') || mainBillingType.includes('presupuesto')) isSecret = true;
         if (destBillingType.includes('habitual') || destBillingType.includes('diar') || destBillingType.includes('libre') || destBillingType.includes('contado') || destBillingType.includes('presupuesto')) isSecret = true;
 
-        const titleText = isSecret ? `*JUSTIFICANTE DE ENTREGA*` : `*JUSTIFICANTE SUMTRANS LOGISTICA*`;
+        // "DE ENTREGA" solo cuando el paquete está entregado de verdad: el mismo
+        // botón sale en la pestaña de asignar, y ahí el papel afirmaba una entrega
+        // que no había ocurrido. Sin entregar se queda en *JUSTIFICANTE* a secas.
+        const estaEntregado = shipment.status === 'Entregado' || !!shipment.deliveredAt;
+        const titleText = isSecret
+            ? (estaEntregado ? `*JUSTIFICANTE DE ENTREGA*` : `*JUSTIFICANTE*`)
+            : `*JUSTIFICANTE SUMTRANS LOGISTICA*`;
 
         // Calcular precio para el justificante
         const parseAmt = (val) => {
@@ -2597,6 +2608,24 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         const idUpper = String(shipment.id || '').toUpperCase();
         const isContado = idUpper.startsWith('HAB-') || (!idUpper.startsWith('SUM-') && isSecret);
 
+        // El cliente no necesita saber en qué pestaña interna anda el albarán
+        // ("Pendiente de asignar" y compañía son etiquetas nuestras): lo que le
+        // importa del justificante es si el porte queda cobrado o a deber.
+        // Ojo: porte y reembolso se liquidan por separado, así que "PAGADO" solo
+        // vale cuando no queda ninguno de los dos suelto (ver Shipment.js).
+        const porteCobrado = shipment.portePaid === true || shipment.paymentStatus === 'Paid';
+        const reembolsoPendiente = hasReembolso && shipment.codPaid !== true;
+        // 'Tarifa' es un importe por concretar, pero se cobra igual: cuenta como
+        // que hay algo pendiente aunque el precio no salga en el mensaje.
+        const hayQueCobrar = priceBase > 0 || hasReembolso || normalize(shipment.amount) === 'tarifa';
+        const estadoText = !hayQueCobrar
+            ? ''
+            : porteCobrado
+                ? (reembolsoPendiente
+                    ? `*Estado:* Porte pagado · reembolso pendiente\n`
+                    : `*Estado:* PAGADO\n`)
+                : `*Estado:* PENDIENTE DE COBRO\n`;
+
         const fmt = (n) => n.toFixed(2).replace('.', ',');
         const priceText = priceBase > 0
             ? (isContado
@@ -2609,7 +2638,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             `*Fecha:* ${date}\n` +
             `*Remitente:* ${origin}\n` +
             `*Destinatario:* ${dest}\n` +
-            `*Estado:* ${status}\n` +
+            estadoText +
             priceText +
             codText +
             `\n` +
