@@ -8,6 +8,7 @@ import {
     recuperarAprendizaje,
     eliminarDeLaPapelera,
 } from '../../utils/routeKnowledge';
+import { coincideEnCampos } from '../../utils/busqueda';
 
 const ALL_TOWNS = [
     ...BAREMO_1_PUEBLOS.map(p => ({ ...p, baremoLabel: 'Baremo 1' })),
@@ -42,11 +43,11 @@ export default function RoutesManagerModal({ isOpen, onClose, routes = [], onUpd
     const nombreDeConductor = (id) => drivers.find(d => String(d.id) === String(id))?.name || `Conductor ${id}`;
     const plural = (n, singular, plural_) => `${n} ${n === 1 ? singular : plural_}`;
 
-    const filteredTowns = useMemo(() => {
-        const term = searchTerm.toLowerCase().trim();
-        if (!term) return ALL_TOWNS;
-        return ALL_TOWNS.filter(t => t.name.toLowerCase().includes(term) || t.zip.includes(term));
-    }, [searchTerm]);
+    // Busca pueblo o CP ignorando tildes: "cordoba" encuentra "Priego de Córdoba"
+    const filteredTowns = useMemo(
+        () => ALL_TOWNS.filter(t => coincideEnCampos([t.name, t.zip], searchTerm)),
+        [searchTerm]
+    );
 
     const baremo1Towns = useMemo(() => filteredTowns.filter(t => t.baremo === 1), [filteredTowns]);
     const baremo2Towns = useMemo(() => filteredTowns.filter(t => t.baremo === 2), [filteredTowns]);

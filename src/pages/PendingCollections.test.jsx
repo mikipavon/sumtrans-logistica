@@ -104,3 +104,50 @@ describe('PendingCollections · cobrar sin repartidor', () => {
         expect(screen.queryByText('Cobrado, pero nadie lo lleva')).not.toBeInTheDocument();
     });
 });
+
+// ── El buscador no puede depender de quién paga ──
+//
+// Buscar al destinatario ("David Gutiérrez") no devolvía nada porque sólo se
+// miraba el cliente que factura. Ahora se busca en las dos partes y sin tildes.
+describe('PendingCollections · buscador', () => {
+    const conDestinatario = {
+        ...albaran,
+        id: 'ALB-2',
+        client: 'PECOMARK S.A.',
+        destinationName: 'David Gutiérrez'
+    };
+    const otro = { ...albaran, id: 'ALB-3', client: 'PROSERVICE', destinationName: 'Taller Espejo' };
+    const pintar = () => render(
+        <PendingCollections
+            shipments={[conDestinatario, otro]}
+            drivers={drivers}
+            clients={[...clients, { name: 'PECOMARK S.A.', billingType: 'Clientes Habituales' },
+                      { name: 'PROSERVICE', billingType: 'Clientes Habituales' }]}
+            onAssignDriver={vi.fn()}
+            onUpdateShipment={vi.fn().mockResolvedValue(true)}
+        />
+    );
+    const buscar = (texto) => fireEvent.change(
+        screen.getByPlaceholderText(/Buscar por cliente/i), { target: { value: texto } }
+    );
+
+    it('encuentra por el destinatario, no sólo por quien paga', () => {
+        pintar();
+        buscar('david gutierrez');
+        expect(screen.getByText('ALB-2')).toBeInTheDocument();
+        expect(screen.queryByText('ALB-3')).not.toBeInTheDocument();
+    });
+
+    it('sigue encontrando por el cliente que paga', () => {
+        pintar();
+        buscar('pecomark');
+        expect(screen.getByText('ALB-2')).toBeInTheDocument();
+        expect(screen.queryByText('ALB-3')).not.toBeInTheDocument();
+    });
+
+    it('sin texto los muestra todos', () => {
+        pintar();
+        expect(screen.getByText('ALB-2')).toBeInTheDocument();
+        expect(screen.getByText('ALB-3')).toBeInTheDocument();
+    });
+});

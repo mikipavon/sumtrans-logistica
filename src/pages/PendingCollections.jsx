@@ -3,6 +3,7 @@ import { Wallet, Filter, Search, User, Calendar, Truck, Euro, AlertTriangle, Che
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { utils, writeFile } from 'xlsx';
 import { parseCurrency, buildShipmentModel, isPendingCollection, needsDriverAfterCollecting } from '../utils/pendingCollections';
+import { coincideBusqueda } from '../utils/busqueda';
 
 export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onUpdateShipment, driverNamePreference = 'both' }) {
     const getDriverDisplayName = (driver) => {
@@ -127,17 +128,8 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
             if (!hasDriverDebt) return false;
         }
 
-        // Search
-        if (searchTerm) {
-            const searchLower = searchTerm.toLowerCase();
-            return (
-                item.client?.toLowerCase().includes(searchLower) ||
-                item.id.toLowerCase().includes(searchLower) ||
-                item.destinationName?.toLowerCase().includes(searchLower)
-            );
-        }
-
-        return true;
+        // Search: remitente y destinatario a la vez, sin depender de quién paga
+        return coincideBusqueda(item, searchTerm);
     });
 
     const sortedItems = useMemo(() => {
@@ -344,7 +336,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                     <input
                         type="text"
-                        placeholder="Buscar por cliente, referencia..."
+                        placeholder="Buscar por cliente, destinatario, referencia..."
                         className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
