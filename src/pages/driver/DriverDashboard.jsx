@@ -42,6 +42,7 @@ import { geocodificarDireccion } from '../../utils/geocodificar';
 import { adaptarConocimiento, registrarEntrega, contarPueblosMemorizados } from '../../utils/aprendizajeRuta';
 import { turnoQueSeAsignaAhora, turnoQueSeRepartaAhora, etiquetaTurno } from '../../utils/turnos';
 import { resolverLogo, insigniaDeAgencia, buscarClienteDeEnvio } from '../../utils/marca';
+import { abrirWhatsApp, necesitaGestoDelUsuario } from '../../utils/whatsappLink';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import RouteMapModal from '../../components/driver/RouteMapModal';
 import DriverGuidedTour from '../../components/DriverGuidedTour';
@@ -2468,12 +2469,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         // el siguiente albarán del mismo cliente vuelve a salir sin teléfono y se lo
         // tiene que volver a pedir.
         //
-        // OJO CON EL ORDEN: al final de esta función hacemos window.location.assign a
-        // wa.me, y eso descarga la página. Antes esto era una función de fondo que
-        // empezaba por el albarán; su primer await dejaba la escritura de la ficha
-        // para el siguiente tick, el navegador ya se había ido a WhatsApp y el
-        // teléfono no llegaba nunca a la ficha. Ahora se guarda ANTES de navegar, y
-        // primero la ficha, que es el dato que hay que conservar.
+        // OJO CON EL ORDEN (ver el bloque del final, que decide cuándo se llama a
+        // esto): en Android navegamos fuera para abrir WhatsApp y eso descarga la
+        // página. Antes esto era una función de fondo que empezaba por el albarán; su
+        // primer await dejaba la escritura de la ficha para el siguiente tick, el
+        // navegador ya se había ido a WhatsApp y el teléfono no llegaba nunca a la
+        // ficha. Por eso va primero la ficha, que es el dato que hay que conservar.
         const guardarTelefono = async () => {
             const normalizedTarget = normalizeClientName(targetName);
 
@@ -2551,28 +2552,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             }
         };
 
-        if (manualPhone && cleanPhone) {
-            setWhatsappPrompt(prev => prev ? { ...prev, saving: true } : prev);
-            // Tope de espera: sin cobertura la escritura se encola en local y vuelve
-            // enseguida, pero con una red mala de verdad no vamos a dejar al conductor
-            // mirando el botón; a los 6 segundos se abre WhatsApp igual.
-            await Promise.race([
-                guardarTelefono(),
-                new Promise(resolve => setTimeout(resolve, 6000)),
-            ]);
-        }
-
-        // 1. Close prompt modal
-        setWhatsappPrompt(null);
-
-        // 2. Prepare message and Trigger Redirect
+        // El mensaje se arma ANTES de guardar nada: en iPhone hay que abrir la bandeja
+        // de compartir sin esperas de por medio (ver el bloque del final).
         const date = shipment.date || new Date().toLocaleDateString('es-ES');
         const origin = shipment.originName || shipment.client;
         const dest = shipment.destinationName || shipment.client;
         const status = shipment.status || 'Pendiente';
         
         const hasReembolso = parseFloat(String(shipment.codAmount || '0').replace(',', '.').replace(/[^0-9.-]/g, '')) > 0;
-        const codText = hasReembolso ? `*Reembolso a cobrar:* ${shipment.codAmount} €%0A` : '';
+        // El mensaje se escribe con saltos de línea de verdad: quien lo codifica para
+        // la URL es abrirWhatsApp. Si aquí volviéramos a poner %0A a mano, se
+        // codificaría dos veces y el cliente leería el "%0A" en el chat.
+        const codText = hasReembolso ? `*Reembolso a cobrar:* ${shipment.codAmount} €\n` : '';
 
         const normalize = (val) => String(val || '').toLowerCase().trim();
         const originClient = clientsMap?.get(normalizeClientName(shipment.originName || shipment.client));
@@ -2609,19 +2600,19 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         const fmt = (n) => n.toFixed(2).replace('.', ',');
         const priceText = priceBase > 0
             ? (isContado
-                ? `*Precio:* ${fmt(priceBase)} €%0A`
-                : `*Precio:* ${fmt(priceBase)} € + IVA = *${fmt(priceTotal)} €*%0A`)
+                ? `*Precio:* ${fmt(priceBase)} €\n`
+                : `*Precio:* ${fmt(priceBase)} € + IVA = *${fmt(priceTotal)} €*\n`)
             : '';
 
-        const message = `${titleText}%0A%0A` +
-            `*REF:* ${shipment.id}%0A` +
-            `*Fecha:* ${date}%0A` +
-            `*Remitente:* ${origin}%0A` +
-            `*Destinatario:* ${dest}%0A` +
-            `*Estado:* ${status}%0A` +
+        const message = `${titleText}\n\n` +
+            `*REF:* ${shipment.id}\n` +
+            `*Fecha:* ${date}\n` +
+            `*Remitente:* ${origin}\n` +
+            `*Destinatario:* ${dest}\n` +
+            `*Estado:* ${status}\n` +
             priceText +
             codText +
-            `%0A` +
+            `\n` +
             `Gracias por su confianza.`;
 
         let finalPhone = cleanPhone;
@@ -2633,8 +2624,41 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             finalPhone = `34${cleanPhone}`;
         }
         
-        // window.location.assign is very reliable on mobile to trigger app schemes like whatsapp://
-        window.location.assign(`https://wa.me/${finalPhone}?text=${message}`);
+        // --- QUIÉN VA PRIMERO: GUARDAR EL TELÉFONO O ABRIR WHATSAPP ---
+        // Depende del móvil, y por eso no se puede hacer igual en los dos:
+        const hayQueGuardar = Boolean(manualPhone && cleanPhone);
+
+        if (necesitaGestoDelUsuario()) {
+            // iPhone. La bandeja de compartir solo la abre iOS si viene del dedo del
+            // usuario, y esperar a Supabase se come ese permiso: hay que abrirla ya.
+            // Se puede, porque la bandeja NO descarga la página (a diferencia de
+            // navegar a wa.me), así que el teléfono se guarda tranquilamente detrás.
+            setWhatsappPrompt(null);
+            abrirWhatsApp({ telefono: finalPhone, mensaje: message });
+            if (hayQueGuardar) {
+                guardarTelefono().catch(err =>
+                    console.error("[WhatsApp] Error guardando el teléfono:", err));
+            }
+            return;
+        }
+
+        // Android y el resto: aquí sí navegamos fuera y la página se descarga, así que
+        // el teléfono tiene que estar guardado ANTES de salir.
+        if (hayQueGuardar) {
+            setWhatsappPrompt(prev => prev ? { ...prev, saving: true } : prev);
+            // Tope de espera: sin cobertura la escritura se encola en local y vuelve
+            // enseguida, pero con una red mala de verdad no vamos a dejar al conductor
+            // mirando el botón; a los 6 segundos se abre WhatsApp igual.
+            await Promise.race([
+                guardarTelefono(),
+                new Promise(resolve => setTimeout(resolve, 6000)),
+            ]);
+        }
+        setWhatsappPrompt(null);
+
+        // Primero WhatsApp Business (el de trabajo) y, si el móvil no lo tiene, el
+        // WhatsApp normal. Ver src/utils/whatsappLink.js.
+        abrirWhatsApp({ telefono: finalPhone, mensaje: message });
     };
 
     // AI / Smart Features State
