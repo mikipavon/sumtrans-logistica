@@ -12,9 +12,9 @@ export default function Sidebar({ onLogout, currentView, onNavigate, pendingClie
             clickCountRef.current = 0;
         }
         clickCountRef.current += 1;
-        console.log('🔑 Secret click:', clickCountRef.current);
+        // Sin console.log: iba anunciando el conteo y el desbloqueo en la consola,
+        // que es justo donde miraría quien busque el atajo.
         if (clickCountRef.current >= 4) {
-            console.log('🔓 Triggering unlock!');
             if (onSecretUnlock) onSecretUnlock();
             clickCountRef.current = 0;
         }

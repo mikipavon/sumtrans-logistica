@@ -3,6 +3,8 @@ import { Download, Upload, Trash2, Database, Shield, Clock, Folder, CheckCircle,
 import DailySummaryModal from './components/DailySummaryModal';
 import { ALL_BAREMO_PUEBLOS } from './data/baremos';
 import Layout from './components/layout/Layout'
+import GhostPasswordModal from './components/layout/GhostPasswordModal'
+import { hashGhostPassword, verifyGhostPassword } from './utils/ghostPassword'
 import Login from './pages/Login'
 
 // ── Carga diferida de las pantallas ───────────────────────────────────────────
@@ -112,6 +114,12 @@ const normalizeClientName = (name) => {
         .trim()
         .replace(/\s+/g, " "); // collapse multiple spaces
 };
+
+// Clave de `settings` donde vive la huella de la contraseña del Modo Fantasma.
+// El "pass" del nombre no es decorativo: la política driver_select de la fase 09
+// esconde toda clave que lo contenga, así que renombrarla sin tocar el SQL la
+// dejaría al alcance de cualquier repartidor.
+const GHOST_PASS_KEY = 'ghost_mode_pass';
 
 function App() {
   // ── Restaurar sesión LOCAL instantáneamente (para sobrevivir a Android matando la página) ──
@@ -434,20 +442,98 @@ function App() {
   const [orphanEndDate, setOrphanEndDate] = useState('');
 
 
-  const handleSecretUnlock = useCallback(() => {
+  // ── Contraseña del Modo Fantasma ────────────────────────────────────────────
+  // Vive en `settings`, pero SOLO como huella PBKDF2 (ver utils/ghostPassword.js).
+  // La clave lleva "pass" a propósito: la política `driver_select` de la fase 09
+  // excluye de oficio todo lo que case con (pass|secret|token|credential), así que
+  // el móvil del repartidor no se la descarga. Es la lección de `admin_pass`, que
+  // se guardaba en claro y viajaba a todos los terminales.
+  // `ghostPrompt` es el modal que la pide; null = cerrado.
+  const [ghostPrompt, setGhostPrompt] = useState(null);
+  const [ghostPassSet, setGhostPassSet] = useState(null); // null = aún sin comprobar
+
+  const leerGhostHash = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('settings')
+      .select('value')
+      .eq('key', GHOST_PASS_KEY)
+      .maybeSingle();
+    if (error) throw error;
+    return data?.value || null;
+  }, []);
+
+  // Solo para saber qué poner en el botón de Configuración ("Crear" o "Cambiar").
+  useEffect(() => {
+    if (userRole !== 'admin') return;
+    let vigente = true;
+    leerGhostHash()
+      .then((hash) => { if (vigente) setGhostPassSet(!!hash); })
+      .catch((err) => console.warn('[Ghost] No se pudo comprobar la contraseña:', err?.message));
+    return () => { vigente = false; };
+  }, [userRole, leerGhostHash]);
+
+  const handleSecretUnlock = useCallback(async () => {
     if (isGhostModeUnlocked) {
       setIsGhostModeUnlocked(false);
       alert("🔒 Modo Seguro Reactivado. Datos confidenciales ocultos.");
-    } else {
-      // Este atajo solo existe dentro del panel de administración, así que la sesión
-      // ya viene verificada por Supabase Auth. Antes pedía la contraseña de admin
-      // guardada en `settings`, pero esa fila la puede leer cualquier repartidor,
-      // así que no protegía nada: basta con confirmar la intención.
-      if (!window.confirm("¿Mostrar en pantalla los datos confidenciales (Clientes Habituales)?")) return;
+      return;
+    }
+    try {
+      const hash = await leerGhostHash();
+      setGhostPassSet(!!hash);
+      // La primera vez no hay nada guardado: en vez de dejar el atajo abierto,
+      // se obliga a crear la contraseña ahí mismo.
+      setGhostPrompt({ mode: hash ? 'unlock' : 'crear', tieneActual: !!hash, desbloquearAlGuardar: true });
+    } catch (err) {
+      alert('No se ha podido comprobar la contraseña del Modo Fantasma: ' + (err?.message || err));
+    }
+  }, [isGhostModeUnlocked, leerGhostHash]);
+
+  const handleAbrirCambioGhostPassword = useCallback(async () => {
+    try {
+      const hash = await leerGhostHash();
+      setGhostPassSet(!!hash);
+      setGhostPrompt({ mode: hash ? 'cambiar' : 'crear', tieneActual: !!hash, desbloquearAlGuardar: false });
+    } catch (err) {
+      alert('No se ha podido leer la configuración: ' + (err?.message || err));
+    }
+  }, [leerGhostHash]);
+
+  const handleGhostPasswordSubmit = useCallback(async ({ actual, nueva }) => {
+    if (!ghostPrompt) return null;
+    // Se relee siempre: entre abrir el modal y enviarlo pueden haberla cambiado
+    // desde otro equipo, y no queremos validar contra una huella caducada.
+    const guardado = await leerGhostHash();
+
+    if (ghostPrompt.mode === 'unlock') {
+      if (!guardado) return 'Ya no hay contraseña configurada. Cierra y vuelve a intentarlo.';
+      if (!(await verifyGhostPassword(actual, guardado))) return 'Contraseña incorrecta.';
+      setGhostPrompt(null);
       setIsGhostModeUnlocked(true);
       alert("🔓 Desbloqueo Completado: Mostrando registros de Clientes Habituales.");
+      return null;
     }
-  }, [isGhostModeUnlocked]);
+
+    // Crear o cambiar. Si ya existe una, hay que demostrar que se conoce.
+    if (guardado && !(await verifyGhostPassword(actual, guardado))) {
+      return 'La contraseña actual no es correcta.';
+    }
+
+    const { error } = await supabase
+      .from('settings')
+      .upsert({ key: GHOST_PASS_KEY, value: await hashGhostPassword(nueva) });
+    if (error) return 'No se ha podido guardar: ' + error.message;
+
+    setGhostPassSet(true);
+    setGhostPrompt(null);
+    if (ghostPrompt.desbloquearAlGuardar) {
+      setIsGhostModeUnlocked(true);
+      alert('🔓 Contraseña creada. A partir de ahora se pedirá cada vez que desbloquees el Modo Fantasma.');
+    } else {
+      alert('✅ Contraseña del Modo Fantasma actualizada.');
+    }
+    return null;
+  }, [ghostPrompt, leerGhostHash]);
 
   /**
    * Borra los cobros de unos envíos de la caja de todos los conductores.
@@ -3909,6 +3995,41 @@ function App() {
                     <span className="font-bold"> Reset password</span> sobre el usuario administrador.
                   </p>
                </div>
+
+               {/* CONTRASEÑA DEL MODO FANTASMA */}
+               <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 mt-4">
+                  <div className="flex flex-col md:flex-row md:items-center gap-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-slate-800 text-sm">Contraseña del Modo Fantasma</h4>
+                        {ghostPassSet === true && (
+                          <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">CONFIGURADA</span>
+                        )}
+                        {ghostPassSet === false && (
+                          <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">SIN CONFIGURAR</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-600 leading-relaxed mt-2">
+                        Es la que se pide al pulsar cuatro veces sobre <span className="font-bold">SUM</span> para
+                        mostrar los clientes habituales y el Panel de Alta Privacidad. Es independiente de la
+                        contraseña con la que entras en la aplicación, así que puedes cambiarla sin que nadie
+                        pierda el acceso.
+                      </p>
+                      <p className="text-xs text-slate-500 leading-relaxed mt-2">
+                        No se guarda tal cual, sino cifrada de un solo sentido: si se te olvida no hay forma de
+                        recuperarla. Para empezar de cero, borra la fila <span className="font-mono">ghost_mode_pass</span> de
+                        la tabla <span className="font-mono">settings</span> en Supabase y la aplicación volverá a pedirte crearla.
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleAbrirCambioGhostPassword}
+                      className="shrink-0 bg-slate-900 hover:bg-slate-800 text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
+                    >
+                      <Shield size={18} />
+                      {ghostPassSet ? 'Cambiar contraseña' : 'Crear contraseña'}
+                    </button>
+                  </div>
+               </div>
             </div>
 
             {/* MIKI CLEANUP ZONE */}
@@ -4200,6 +4321,15 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {ghostPrompt && (
+        <GhostPasswordModal
+          mode={ghostPrompt.mode}
+          tieneActual={ghostPrompt.tieneActual}
+          onSubmit={handleGhostPasswordSubmit}
+          onCancel={() => setGhostPrompt(null)}
+        />
       )}
     </Layout>
   )
