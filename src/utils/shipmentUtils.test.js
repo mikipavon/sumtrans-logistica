@@ -82,6 +82,15 @@ describe('puedeAsignarloEsteConductor', () => {
         expect(puedeAsignarloEsteConductor(enReparto, MIGUEL)).toBe(false);
     });
 
+    it('un albarán ya cobrado sigue esperando en Asignar', () => {
+        // El cliente crea el albarán con "aplazar cobro" y paga un rato después:
+        // se cobra desde C.Pendientes, pero el paquete NO se ha entregado. Tiene
+        // que seguir saliendo en Asignar hasta que alguien lo lleve.
+        const cobradoSinEntregar = albaranPendiente({ portePaid: true, paymentStatus: 'Paid' });
+
+        expect(puedeAsignarloEsteConductor(cobradoSinEntregar, PACO)).toBe(true);
+    });
+
     it('aguanta huecos en la lista y conductor sin identificar', () => {
         expect(puedeAsignarloEsteConductor(null, MIGUEL)).toBe(false);
         expect(puedeAsignarloEsteConductor(undefined, MIGUEL)).toBe(false);

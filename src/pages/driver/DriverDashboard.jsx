@@ -5602,9 +5602,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                         }
 
                                                         // 3. Sync to Supabase ATOMICALLY
-                                                        // If it was already "Entregado" or becomes one, use onStatusChange
+                                                        // COBRAR NO ES ENTREGAR. Antes bastaba con que no quedara dinero
+                                                        // pendiente (pf && cf) para mandar el albaran a Entregado. Eso rompia
+                                                        // el caso del cliente que crea el albaran con "aplazar cobro" y paga
+                                                        // un rato despues: al cobrarlo aqui el paquete seguia en el almacen,
+                                                        // sin repartidor y sin entregar, pero figuraba como entregado (sin
+                                                        // firma, sin hora de entrega) y desaparecia de la pestana Asignar,
+                                                        // asi que ya no lo llevaba nadie. El estado solo lo cierra la entrega
+                                                        // de verdad: si el albaran aun no esta entregado, aqui solo se guarda
+                                                        // el dinero y se queda donde estaba (Pendiente de asignar / En reparto).
+                                                        // Si ya estaba entregado, onStatusChange cierra el ciclo con las marcas de pago.
                                                         let success = false;
-                                                        if (shipment.status === 'Entregado' || (pf && cf)) {
+                                                        if (shipment.status === 'Entregado') {
                                                             await onStatusChange(shipment.id, 'Entregado', null, null, null, null, updates);
                                                             success = true; // onStatusChange handled it
                                                         } else {
