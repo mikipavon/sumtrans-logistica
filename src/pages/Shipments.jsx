@@ -5,6 +5,7 @@ import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { getPackagesCount } from '../utils/shipmentUtils';
+import { coincideBusqueda } from '../utils/busqueda';
 import ImportExcelShipments from '../components/clients/ImportExcelShipments';
 import BudgetLiquidationModal from '../components/shipments/BudgetLiquidationModal';
 import CodReceiptUploadModal from '../components/shipments/CodReceiptUploadModal';
@@ -80,11 +81,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     const filteredShipments = useMemo(() => {
         const safeShipments = Array.isArray(shipments) ? shipments : [];
         let result = safeShipments.filter(shipment => {
-            const matchesSearch =
-                (shipment.id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (shipment.client || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (shipment.origin || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (shipment.destination || '').toLowerCase().includes(searchTerm.toLowerCase());
+            // Busca en remitente y destinatario a la vez, sin depender de quién paga
+            const matchesSearch = coincideBusqueda(shipment, searchTerm);
 
             const PENDING_STATUSES = ['Pendiente', 'Asignado', 'Pendiente de asignar'];
             const matchesStatus = statusFilter === 'all' || statusFilter === 'cod_no_receipt' || 
@@ -535,7 +533,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                             <input
                                 type="text"
-                                placeholder="Buscar ID, cliente, ciudad..."
+                                placeholder="Buscar ID, cliente, destinatario, ciudad..."
                                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-sm"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}

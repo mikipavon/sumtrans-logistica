@@ -1205,7 +1205,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                     if (!debtShipment.portePaid) {
                         updates.portePaid = true;
                         updates.paymentStatus = 'Paid';
-                        updates.status = 'Entregado';
+                        // OJO: aquí NO se toca el estado del albarán. Antes se ponía
+                        // 'Entregado' al saldar la deuda, y eso daba por entregado un
+                        // paquete que podía seguir en el almacén sin repartidor: salía
+                        // como Entregado y sin conductor, se iba de Cobros Pendientes
+                        // (ya cobrado) y de la lista de pendientes de asignar (ya
+                        // 'entregado'), así que nadie volvía a verlo. Cobrar no es
+                        // entregar: el estado solo lo cambia la entrega de verdad.
                         updates.porteCollectedById = currentDriverId;
                     }
                     if (debtShipment.hasCod && !debtShipment.codPaid) {

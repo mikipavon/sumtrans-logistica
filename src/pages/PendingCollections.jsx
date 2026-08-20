@@ -2,7 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { Wallet, Filter, Search, User, Calendar, Truck, Euro, AlertTriangle, CheckCircle, ArrowRight, Pencil, X, FileText, ChevronUp, ChevronDown } from 'lucide-react';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { utils, writeFile } from 'xlsx';
-import Shipment from '../models/Shipment';
+import { parseCurrency, buildShipmentModel, isPendingCollection, needsDriverAfterCollecting } from '../utils/pendingCollections';
+import { coincideBusqueda } from '../utils/busqueda';
 
 export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onUpdateShipment, driverNamePreference = 'both' }) {
     const getDriverDisplayName = (driver) => {
@@ -20,6 +21,9 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
     const [tempDriverId, setTempDriverId] = useState('');
     const [selectedShipment, setSelectedShipment] = useState(null);
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+    // Albarán que acaba de quedar cobrado y todavía no lo lleva nadie.
+    const [assignPrompt, setAssignPrompt] = useState(null);
+    const [promptDriverId, setPromptDriverId] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
 
     const requestSort = (key) => {
@@ -54,64 +58,12 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
         setTempDriverId('');
     };
 
-    // Helper for safe currency parsing
-    const parseCurrency = (value) => {
-        if (typeof value === 'number') return value;
-        return parseFloat(String(value || '0').replace(/[^0-9.-]+/g, ""));
-    };
     // Logic to identify pending collections - using the Shipment model
     const pendingItems = useMemo(() => {
         if (!Array.isArray(shipments)) return [];
 
-        return shipments.filter(s => {
-            // EXCLUDE: Pagados y entregados completamente
-            if (s.status === 'Entregado' && s.paymentStatus === 'Paid' && s.portePaid !== false && !s.hasCod) return false;
-            if (s.status === 'Anulado') return false;
-
-            const normalize = (val) => String(val || '').trim().toLowerCase();
-            const sName = normalize(s.client);
-            const dName = normalize(s.destinationName);
-
-            // Buscar en la lista de clientes para obtener datos frescos de facturación
-            const senderClient = clients?.find(c => normalize(c.name) === sName || normalize(c.legalName) === sName);
-            const destClient = clients?.find(c => normalize(c.name) === dName || normalize(c.legalName) === dName);
-
-            // Prioridad: dato guardado en el albarán > ficha actual del cliente
-            // (la ficha del cliente puede cambiar pero el albarán refleja el estado real al entregar)
-            const model = new Shipment({
-                ...s,
-                billingType: s.billingType || senderClient?.billingType || 'Clientes Habituales',
-                destinationBillingType: s.destinationBillingType || destClient?.billingType || null
-            });
-
-            // CASO 2 y 5: Remitente cliente habitual + porte PAGADO → siempre en cobros pendientes
-            const senderDebt = model.generatesPendingDebtOnCreation() && s.paymentStatus !== 'Paid';
-
-            // CASO 3 y 6: Porte DEBIDO + cliente habitual destinatario → solo si está ENTREGADO
-            // Usamos el modelo (que ya tiene el billingType correcto del albarán) en lugar de destClient directo
-            const receiverOwesPorte = s.porteType === 'Debido'
-                && s.status === 'Entregado'
-                && !model.isInvoiceBilling(model.destinationBillingType)
-                && s.paymentStatus !== 'Paid';
-
-            // Reembolso pendiente (siempre al entregarse si no se marcó como cobrado)
-            const codPending = s.hasCod && parseCurrency(s.codAmount) > 0 && !s.codPaid && s.status === 'Entregado';
-
-            return senderDebt || receiverOwesPorte || codPending;
-
-        }).map(s => {
-            const normalize = (val) => String(val || '').trim().toLowerCase();
-            const sName = normalize(s.client);
-            const dName = normalize(s.destinationName);
-
-            const senderClient = clients?.find(c => normalize(c.name) === sName || normalize(c.legalName) === sName);
-            const destClient = clients?.find(c => normalize(c.name) === dName || normalize(c.legalName) === dName);
-
-            const model = new Shipment({
-                ...s,
-                billingType: s.billingType || senderClient?.billingType || 'Clientes Habituales',
-                destinationBillingType: s.destinationBillingType || destClient?.billingType || null
-            });
+        return shipments.filter(s => isPendingCollection(s, clients)).map(s => {
+            const model = buildShipmentModel(s, clients);
 
             const codAmount = parseCurrency(s.codAmount);
             const shippingAmount = parseCurrency(s.customAmount) || parseCurrency(s.amount);
@@ -176,17 +128,8 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
             if (!hasDriverDebt) return false;
         }
 
-        // Search
-        if (searchTerm) {
-            const searchLower = searchTerm.toLowerCase();
-            return (
-                item.client?.toLowerCase().includes(searchLower) ||
-                item.id.toLowerCase().includes(searchLower) ||
-                item.destinationName?.toLowerCase().includes(searchLower)
-            );
-        }
-
-        return true;
+        // Search: remitente y destinatario a la vez, sin depender de quién paga
+        return coincideBusqueda(item, searchTerm);
     });
 
     const sortedItems = useMemo(() => {
@@ -262,14 +205,107 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
         writeFile(wb, `Cobros_Pendientes_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
 
+    // ── Cobrar no es entregar ────────────────────────────────────────────────
+    // Al marcar el porte como cobrado el albarán deja de ser un cobro pendiente
+    // y su fila desaparece de esta pantalla. Si además todavía no tiene
+    // repartidor, se perdía de vista justo cuando faltaba lo más importante:
+    // que alguien lo entregue (seguía en Envíos › Pendiente de asignar, pero
+    // aquí ya no había manera de asignarlo). Antes de que la fila se vaya, se
+    // pregunta a quién se le da.
+    const handleDetailsUpdate = async (idOrObject, maybeUpdates) => {
+        const isObjectCall = typeof idOrObject === 'object' && !maybeUpdates;
+        const id = isObjectCall ? idOrObject.id : idOrObject;
+        const updates = isObjectCall ? idOrObject : (maybeUpdates || {});
+        const before = (Array.isArray(shipments) ? shipments : []).find(s => s.id === id);
+
+        const result = onUpdateShipment ? await onUpdateShipment(idOrObject, maybeUpdates) : undefined;
+
+        if (before) {
+            const after = { ...before, ...updates };
+            if (needsDriverAfterCollecting(before, after, clients)) {
+                setPromptDriverId('');
+                setAssignPrompt(after);
+            }
+        }
+
+        return result;
+    };
+
+    const confirmAssignPrompt = () => {
+        if (assignPrompt && promptDriverId && onAssignDriver) {
+            onAssignDriver(assignPrompt.id, promptDriverId);
+        }
+        setAssignPrompt(null);
+        setPromptDriverId('');
+    };
+
+    const dismissAssignPrompt = () => {
+        setAssignPrompt(null);
+        setPromptDriverId('');
+    };
+
+
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
             <ShipmentDetailsModal
                 isOpen={isDetailsModalOpen}
                 onClose={() => { setIsDetailsModalOpen(false); setSelectedShipment(null); }}
                 shipment={selectedShipment}
-                onUpdate={onUpdateShipment}
+                onUpdate={handleDetailsUpdate}
             />
+
+            {/* Aviso: cobrado pero sin repartidor. Se muestra al cerrar la ficha
+                para no tapar el modal de detalles. */}
+            {assignPrompt && !isDetailsModalOpen && (
+                <div className="fixed inset-0 bg-slate-900/70 z-[110] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+                        <div className="flex items-start gap-3">
+                            <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                                <AlertTriangle size={20} />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-800 leading-tight">Cobrado, pero nadie lo lleva</h3>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    El albarán <span className="font-mono font-bold text-slate-700">{assignPrompt.id}</span> ya está cobrado, así que sale de Cobros Pendientes.
+                                    Todavía no tiene repartidor asignado: asígnalo ahora para que no se quede parado.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label htmlFor="assign-prompt-driver" className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Repartidor</label>
+                            <select
+                                id="assign-prompt-driver"
+                                className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                value={promptDriverId}
+                                onChange={(e) => setPromptDriverId(e.target.value)}
+                                autoFocus
+                            >
+                                <option value="">Sin asignar</option>
+                                {Array.isArray(drivers) && drivers.filter(d => d.isActive !== false).map(d => (
+                                    <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-1">
+                            <button
+                                onClick={dismissAssignPrompt}
+                                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
+                            >
+                                Ahora no · queda en Envíos › Pendiente de asignar
+                            </button>
+                            <button
+                                onClick={confirmAssignPrompt}
+                                disabled={!promptDriverId}
+                                className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                            >
+                                Asignar reparto
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
             <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -300,7 +336,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                     <input
                         type="text"
-                        placeholder="Buscar por cliente, referencia..."
+                        placeholder="Buscar por cliente, destinatario, referencia..."
                         className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}

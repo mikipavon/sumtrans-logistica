@@ -3,6 +3,8 @@ import { Download, Upload, Trash2, Database, Shield, Clock, Folder, CheckCircle,
 import DailySummaryModal from './components/DailySummaryModal';
 import { ALL_BAREMO_PUEBLOS } from './data/baremos';
 import Layout from './components/layout/Layout'
+import GhostPasswordModal from './components/layout/GhostPasswordModal'
+import { hashGhostPassword, verifyGhostPassword } from './utils/ghostPassword'
 import Login from './pages/Login'
 
 // ── Carga diferida de las pantallas ───────────────────────────────────────────
@@ -112,6 +114,12 @@ const normalizeClientName = (name) => {
         .trim()
         .replace(/\s+/g, " "); // collapse multiple spaces
 };
+
+// Clave de `settings` donde vive la huella de la contraseña del Modo Fantasma.
+// El "pass" del nombre no es decorativo: la política driver_select de la fase 09
+// esconde toda clave que lo contenga, así que renombrarla sin tocar el SQL la
+// dejaría al alcance de cualquier repartidor.
+const GHOST_PASS_KEY = 'ghost_mode_pass';
 
 function App() {
   // ── Restaurar sesión LOCAL instantáneamente (para sobrevivir a Android matando la página) ──
@@ -434,20 +442,98 @@ function App() {
   const [orphanEndDate, setOrphanEndDate] = useState('');
 
 
-  const handleSecretUnlock = useCallback(() => {
+  // ── Contraseña del Modo Fantasma ────────────────────────────────────────────
+  // Vive en `settings`, pero SOLO como huella PBKDF2 (ver utils/ghostPassword.js).
+  // La clave lleva "pass" a propósito: la política `driver_select` de la fase 09
+  // excluye de oficio todo lo que case con (pass|secret|token|credential), así que
+  // el móvil del repartidor no se la descarga. Es la lección de `admin_pass`, que
+  // se guardaba en claro y viajaba a todos los terminales.
+  // `ghostPrompt` es el modal que la pide; null = cerrado.
+  const [ghostPrompt, setGhostPrompt] = useState(null);
+  const [ghostPassSet, setGhostPassSet] = useState(null); // null = aún sin comprobar
+
+  const leerGhostHash = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('settings')
+      .select('value')
+      .eq('key', GHOST_PASS_KEY)
+      .maybeSingle();
+    if (error) throw error;
+    return data?.value || null;
+  }, []);
+
+  // Solo para saber qué poner en el botón de Configuración ("Crear" o "Cambiar").
+  useEffect(() => {
+    if (userRole !== 'admin') return;
+    let vigente = true;
+    leerGhostHash()
+      .then((hash) => { if (vigente) setGhostPassSet(!!hash); })
+      .catch((err) => console.warn('[Ghost] No se pudo comprobar la contraseña:', err?.message));
+    return () => { vigente = false; };
+  }, [userRole, leerGhostHash]);
+
+  const handleSecretUnlock = useCallback(async () => {
     if (isGhostModeUnlocked) {
       setIsGhostModeUnlocked(false);
       alert("🔒 Modo Seguro Reactivado. Datos confidenciales ocultos.");
-    } else {
-      // Este atajo solo existe dentro del panel de administración, así que la sesión
-      // ya viene verificada por Supabase Auth. Antes pedía la contraseña de admin
-      // guardada en `settings`, pero esa fila la puede leer cualquier repartidor,
-      // así que no protegía nada: basta con confirmar la intención.
-      if (!window.confirm("¿Mostrar en pantalla los datos confidenciales (Clientes Habituales)?")) return;
+      return;
+    }
+    try {
+      const hash = await leerGhostHash();
+      setGhostPassSet(!!hash);
+      // La primera vez no hay nada guardado: en vez de dejar el atajo abierto,
+      // se obliga a crear la contraseña ahí mismo.
+      setGhostPrompt({ mode: hash ? 'unlock' : 'crear', tieneActual: !!hash, desbloquearAlGuardar: true });
+    } catch (err) {
+      alert('No se ha podido comprobar la contraseña del Modo Fantasma: ' + (err?.message || err));
+    }
+  }, [isGhostModeUnlocked, leerGhostHash]);
+
+  const handleAbrirCambioGhostPassword = useCallback(async () => {
+    try {
+      const hash = await leerGhostHash();
+      setGhostPassSet(!!hash);
+      setGhostPrompt({ mode: hash ? 'cambiar' : 'crear', tieneActual: !!hash, desbloquearAlGuardar: false });
+    } catch (err) {
+      alert('No se ha podido leer la configuración: ' + (err?.message || err));
+    }
+  }, [leerGhostHash]);
+
+  const handleGhostPasswordSubmit = useCallback(async ({ actual, nueva }) => {
+    if (!ghostPrompt) return null;
+    // Se relee siempre: entre abrir el modal y enviarlo pueden haberla cambiado
+    // desde otro equipo, y no queremos validar contra una huella caducada.
+    const guardado = await leerGhostHash();
+
+    if (ghostPrompt.mode === 'unlock') {
+      if (!guardado) return 'Ya no hay contraseña configurada. Cierra y vuelve a intentarlo.';
+      if (!(await verifyGhostPassword(actual, guardado))) return 'Contraseña incorrecta.';
+      setGhostPrompt(null);
       setIsGhostModeUnlocked(true);
       alert("🔓 Desbloqueo Completado: Mostrando registros de Clientes Habituales.");
+      return null;
     }
-  }, [isGhostModeUnlocked]);
+
+    // Crear o cambiar. Si ya existe una, hay que demostrar que se conoce.
+    if (guardado && !(await verifyGhostPassword(actual, guardado))) {
+      return 'La contraseña actual no es correcta.';
+    }
+
+    const { error } = await supabase
+      .from('settings')
+      .upsert({ key: GHOST_PASS_KEY, value: await hashGhostPassword(nueva) });
+    if (error) return 'No se ha podido guardar: ' + error.message;
+
+    setGhostPassSet(true);
+    setGhostPrompt(null);
+    if (ghostPrompt.desbloquearAlGuardar) {
+      setIsGhostModeUnlocked(true);
+      alert('🔓 Contraseña creada. A partir de ahora se pedirá cada vez que desbloquees el Modo Fantasma.');
+    } else {
+      alert('✅ Contraseña del Modo Fantasma actualizada.');
+    }
+    return null;
+  }, [ghostPrompt, leerGhostHash]);
 
   /**
    * Borra los cobros de unos envíos de la caja de todos los conductores.
@@ -785,6 +871,51 @@ function App() {
     return Array.from(uniqueMap.values()).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
   }, [coverageZones]);
 
+  // ======= RECARGA DE ENVÍOS ACTIVOS (compartida) =======
+  // Realtime no reenvía lo que pasó mientras el WebSocket estuvo caído (móvil
+  // bloqueado, app en segundo plano, túnel sin cobertura). Esta recarga es la
+  // que rellena ese hueco sin tener que salir y volver a entrar en la app.
+  const refrescarEnviosActivos = useCallback(async () => {
+    try {
+      // Paginado: este refresco SUSTITUYE los activos en memoria, así que una
+      // respuesta truncada a 1.000 filas haría desaparecer envíos del panel.
+      const { data, error } = await fetchAllRows(
+        () => supabase.from('shipments').select('id, data')
+          .not('status', 'in', '("Entregado","Anulado")').order('id'),
+        { label: 'refresh_activos' }
+      );
+      if (error || !data) return;
+      let fresh = data.map(s => ({ ...s.data, id: s.id }));
+
+      // Lo que sigue esperando en la cola offline manda sobre lo que acaba de
+      // llegar del servidor: si no, el refresco pisaría lo que el repartidor ya
+      // ha marcado sin cobertura y el envío volvería a verse como si nada.
+      const pendingOps = await getQueue();
+      for (const op of pendingOps) {
+        const cambios = op.type === 'statusChange' ? op.updatedData
+          : op.type === 'updateShipment' ? op.mergedData
+          : null;
+        if (!cambios) continue;
+        fresh = fresh.map(s => s.id === op.shipmentId ? { ...s, ...cambios } : s);
+      }
+
+      setShipments(prev => {
+        // Merge: actualizar/añadir activos, conservar los terminados ya en estado
+        const finishedInState = prev.filter(s => s.status === 'Entregado' || s.status === 'Anulado');
+        const freshIds = new Set(fresh.map(s => s.id));
+        const stillFinished = finishedInState.filter(s => !freshIds.has(s.id));
+        return [...fresh, ...stillFinished];
+      });
+    } catch (e) {
+      // Silencioso — no mostrar errores al usuario en el refresco de fondo
+    }
+  }, []);
+
+  // El canal de Realtime se monta una sola vez y no debe reengancharse cada vez
+  // que cambie esta función, así que la alcanza por referencia.
+  const refrescarEnviosActivosRef = useRef(refrescarEnviosActivos);
+  useEffect(() => { refrescarEnviosActivosRef.current = refrescarEnviosActivos; }, [refrescarEnviosActivos]);
+
   // Supabase Data Loading (Carga OPTIMIZADA de la nube)
   useEffect(() => {
     const isMissingSupabaseKeys = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -1003,6 +1134,7 @@ function App() {
     loadData()
 
     // ======= SUSCRIPCIÓN EN TIEMPO REAL (Supabase Realtime) =======
+    let yaSuscritoUnaVez = false;
     const channel = supabase.channel('global-db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shipments' }, (payload) => {
         console.log("🔄 [Realtime] Cambio en envíos:", payload.eventType);
@@ -1084,7 +1216,16 @@ function App() {
           try { setDriverAlerts(JSON.parse(payload.new.value)); } catch(e) {}
         }
       })
-      .subscribe();
+      .subscribe((estado) => {
+        console.log('[Realtime] Estado del canal:', estado);
+        // Cada RE-suscripción viene de una desconexión previa (móvil bloqueado,
+        // cambio de red, WiFi a datos...) y Realtime NO reenvía lo que pasó
+        // mientras tanto, así que se recarga para no quedarse con la lista vieja.
+        if (estado === 'SUBSCRIBED') {
+          if (!yaSuscritoUnaVez) { yaSuscritoUnaVez = true; return; }
+          refrescarEnviosActivosRef.current?.();
+        }
+      });
 
     // Limpieza de canales si se desmonta
     return () => {
@@ -1092,40 +1233,101 @@ function App() {
     }
   }, [isAuthenticated])
 
-  // ======= REFRESCO PERIÓDICO DE ENVÍOS ACTIVOS (cada 90s, silencioso) =======
-  // Red de seguridad: si el Realtime falla o está throttleado por cuota,
-  // los envíos activos se recargan solos sin que el admin tenga que hacer nada.
+  // ======= REFRESCO DE ENVÍOS ACTIVOS (silencioso) =======
+  // Red de seguridad por si el Realtime falla, está throttleado por cuota o el
+  // móvil ha tenido la pantalla bloqueada.
+  //   · Oficina  → cada 60s, que es donde se mira la foto completa del día.
+  //   · Conductor→ SOLO al volver a la app o al recuperar cobertura. Esta consulta
+  //     se trae TODOS los envíos activos, y repetirla cada minuto en cada móvil
+  //     se comería la cuota de tráfico del proyecto para nada: lo suyo ya se lo
+  //     trae la vigilancia rápida de aquí abajo pidiendo unos pocos bytes.
   useEffect(() => {
     const isMissingSupabaseKeys = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
     if (isMissingSupabaseKeys) return;
-    if (userRole !== 'admin') return; // Solo para admin
+    if (userRole !== 'admin' && userRole !== 'driver') return;
 
-    const refreshActiveShipments = async () => {
+    // Con la app en segundo plano no se refresca (ni datos ni batería para nada):
+    // en cuanto la pantalla vuelve a estar delante se recarga de inmediato, que
+    // es justo el momento en el que el repartidor mira si tiene algo nuevo.
+    const refrescarSiVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      refrescarEnviosActivos();
+    };
+
+    const interval = userRole === 'admin' ? setInterval(refrescarSiVisible, 60000) : null;
+    document.addEventListener('visibilitychange', refrescarSiVisible);
+    window.addEventListener('online', refrescarEnviosActivos);
+
+    return () => {
+      if (interval) clearInterval(interval);
+      document.removeEventListener('visibilitychange', refrescarSiVisible);
+      window.removeEventListener('online', refrescarEnviosActivos);
+    };
+  }, [userRole, refrescarEnviosActivos]);
+
+  // ======= VIGILANCIA RÁPIDA DE LOS REPARTOS DEL CONDUCTOR (cada 15s) =======
+  // Sondear TODOS los envíos activos cada pocos segundos se comería los datos del
+  // móvil, así que esta consulta pide solo `id` y `status` de los repartos de este
+  // conductor (unos pocos bytes, sin el JSON gordo) y únicamente se descarga las
+  // fichas completas de lo que no cuadra con lo que ya tiene en pantalla.
+  // Es lo que hace que un reparto que le acaban de pasar le salga casi al momento
+  // aunque el Realtime no le llegue.
+  useEffect(() => {
+    const isMissingSupabaseKeys = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (isMissingSupabaseKeys) return;
+    if (userRole !== 'driver' || !currentDriverId) return;
+
+    const vigilarMisRepartos = async () => {
+      if (document.visibilityState !== 'visible') return;
+      // Con la lista aún vacía es que la carga inicial no ha terminado: dejarla
+      // trabajar, si no esto se bajaría por su cuenta lo que ya viene de camino.
+      if (!shipmentsRef.current || shipmentsRef.current.length === 0) return;
+
       try {
-        // Paginado: este refresco SUSTITUYE los activos en memoria, así que una
-        // respuesta truncada a 1.000 filas haría desaparecer envíos del panel.
-        const { data, error } = await fetchAllRows(
-          () => supabase.from('shipments').select('id, data')
-            .not('status', 'in', '("Entregado","Anulado")').order('id'),
-          { label: 'refresh_activos' }
-        );
+        const { data, error } = await supabase.from('shipments')
+          .select('id, status')
+          .eq('assignedDriverId', currentDriverId)
+          .not('status', 'in', '("Entregado","Anulado")');
         if (error || !data) return;
-        const fresh = data.map(s => ({ ...s.data, id: s.id }));
+
+        // Lo que aún espera en la cola offline NO se toca: el conductor ya lo ha
+        // marcado en el móvil y el servidor todavía no se ha enterado.
+        const enCola = new Set((await getQueue()).map(op => op.shipmentId).filter(Boolean));
+
+        const enMemoria = new Map(shipmentsRef.current.map(s => [s.id, s]));
+        const desactualizados = data
+          .filter(fila => {
+            if (enCola.has(fila.id)) return false;
+            const local = enMemoria.get(fila.id);
+            if (!local) return true;                                                    // ni lo tiene
+            if (Number(local.assignedDriverId) !== Number(currentDriverId)) return true; // aún cree que no es suyo
+            return local.status !== fila.status;                                        // se lo han cambiado por fuera
+          })
+          .map(fila => fila.id);
+
+        if (desactualizados.length === 0) return;
+
+        const { data: filas, error: errorFilas } = await supabase
+          .from('shipments').select('id, data').in('id', desactualizados);
+        if (errorFilas || !filas) return;
+
+        const frescos = filas.map(f => ({ ...f.data, id: f.id }));
+        console.log(`[Vigilancia] ${frescos.length} reparto(s) puestos al día sin esperar al Realtime`);
         setShipments(prev => {
-          // Merge: actualizar/añadir activos, conservar los terminados ya en estado
-          const finishedInState = prev.filter(s => s.status === 'Entregado' || s.status === 'Anulado');
-          const freshIds = new Set(fresh.map(s => s.id));
-          const stillFinished = finishedInState.filter(s => !freshIds.has(s.id));
-          return [...fresh, ...stillFinished];
+          const porId = new Map(prev.map(s => [s.id, s]));
+          frescos.forEach(s => porId.set(s.id, s));
+          return Array.from(porId.values());
         });
-      } catch (e) {
-        // Silencioso — no mostrar errores al usuario en el refresco de fondo
+      } catch {
+        // Silencioso — es una red de seguridad de fondo
       }
     };
 
-    const interval = setInterval(refreshActiveShipments, 60000); // cada 60 segundos
-    return () => clearInterval(interval);
-  }, [userRole]);
+    // Sin listener de 'visibilitychange': al volver a la app ya salta el refresco
+    // completo de arriba, y pedir las dos cosas a la vez es tráfico duplicado.
+    const intervalo = setInterval(vigilarMisRepartos, 15000);
+    return () => clearInterval(intervalo);
+  }, [userRole, currentDriverId]);
 
   // ======= OFFLINE QUEUE: FLUSH LOGIC (shared) =======
   const flushQueueRef = useRef(false); // prevent concurrent flushes
@@ -3909,6 +4111,33 @@ function App() {
                     <span className="font-bold"> Reset password</span> sobre el usuario administrador.
                   </p>
                </div>
+
+               {/* CONTRASEÑA SUM
+                   Sin explicaciones a propósito: el texto que había aquí contaba el
+                   atajo de las cuatro pulsaciones y para qué sirve, a la vista de
+                   cualquiera que pasara por Configuración. Lo que hay que saber para
+                   recuperarla si se olvida (borrar la fila `ghost_mode_pass` de
+                   `settings`) está en utils/ghostPassword.js, no en pantalla. */}
+               <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 mt-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <h4 className="font-bold text-slate-800 text-sm">Contraseña SUM</h4>
+                      {ghostPassSet === true && (
+                        <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">CONFIGURADA</span>
+                      )}
+                      {ghostPassSet === false && (
+                        <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">SIN CONFIGURAR</span>
+                      )}
+                    </div>
+                    <button
+                      onClick={handleAbrirCambioGhostPassword}
+                      className="shrink-0 bg-slate-900 hover:bg-slate-800 text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all active:scale-95"
+                    >
+                      <Shield size={18} />
+                      {ghostPassSet ? 'Cambiar' : 'Crear'}
+                    </button>
+                  </div>
+               </div>
             </div>
 
             {/* MIKI CLEANUP ZONE */}
@@ -4200,6 +4429,15 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {ghostPrompt && (
+        <GhostPasswordModal
+          mode={ghostPrompt.mode}
+          tieneActual={ghostPrompt.tieneActual}
+          onSubmit={handleGhostPasswordSubmit}
+          onCancel={() => setGhostPrompt(null)}
+        />
       )}
     </Layout>
   )
