@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isPendingCollection, needsDriverAfterCollecting } from './pendingCollections';
+import { isPendingCollection, needsDriverAfterCollecting, parseCurrency, importeSinValorar } from './pendingCollections';
 
 const clientes = [
     { name: 'Talleres Pepe', billingType: 'Clientes Habituales' },
@@ -75,5 +75,54 @@ describe('needsDriverAfterCollecting', () => {
         const antes = { ...albaranBase, status: 'Entregado', hasCod: true, codAmount: '40', codPaid: false };
         const despues = { ...antes, paymentStatus: 'Paid', portePaid: true };
         expect(needsDriverAfterCollecting(antes, despues, clientes)).toBe(false);
+    });
+});
+
+// ── Una recogida sin precio no puede romper el total ──────────────────────────
+//
+// Las recogidas nacen con amount 'Por valorar' (CreatePickupModal): al recoger
+// todavía no se sabe el precio. parseCurrency devolvía NaN con ese texto, y como
+// en JavaScript cualquier suma que toque un NaN se vuelve NaN, cinco recogidas
+// sin valorar dejaban el TOTAL PENDIENTE de la pantalla en €NaN: no se podía ver
+// cuánto se debía de TODOS los demás albaranes, los que sí se facturan.
+describe('parseCurrency · importes que no son un número', () => {
+    it('un importe de texto vale 0 y no envenena la suma', () => {
+        expect(parseCurrency('Por valorar')).toBe(0);
+        expect(parseCurrency('Tarifa')).toBe(0);
+    });
+
+    it('el total sigue siendo un número aunque haya recogidas sin valorar', () => {
+        const total = ['15.00', 'Por valorar', '5', 'Tarifa']
+            .reduce((suma, importe) => suma + parseCurrency(importe), 0);
+        expect(total).toBe(20);
+        expect(Number.isNaN(total)).toBe(false);
+    });
+
+    it('sigue leyendo los importes normales, con símbolo y con coma', () => {
+        expect(parseCurrency('5.00')).toBe(5);
+        expect(parseCurrency('€12.50')).toBe(12.5);
+        expect(parseCurrency(7)).toBe(7);
+    });
+
+    it('un importe vacío o ausente vale 0, como siempre', () => {
+        expect(parseCurrency('')).toBe(0);
+        expect(parseCurrency(null)).toBe(0);
+        expect(parseCurrency(undefined)).toBe(0);
+    });
+});
+
+describe('importeSinValorar', () => {
+    it('distingue un albarán sin precio de uno que vale cero', () => {
+        expect(importeSinValorar('Por valorar')).toBe(true);
+        expect(importeSinValorar('Tarifa')).toBe(true);
+        // Vacío no es "sin valorar": vale 0 y se enseña como €0.00, como antes.
+        expect(importeSinValorar('')).toBe(false);
+        expect(importeSinValorar(undefined)).toBe(false);
+    });
+
+    it('un importe de verdad nunca está sin valorar', () => {
+        expect(importeSinValorar('15.00')).toBe(false);
+        expect(importeSinValorar('€12,50')).toBe(false);
+        expect(importeSinValorar(0)).toBe(false);
     });
 });

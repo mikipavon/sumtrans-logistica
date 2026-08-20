@@ -6,9 +6,25 @@ import Shipment from '../models/Shipment';
 export const normalizeName = (val) => String(val || '').trim().toLowerCase();
 
 // Helper for safe currency parsing
+// Devuelve SIEMPRE un número. Un importe que no encierra ninguna cifra ("Por
+// valorar" de las recogidas, "Tarifa" de los portes por tarifa) vale 0 aquí: en
+// JavaScript un solo NaN convierte en NaN cualquier suma que lo toque, y así el
+// total de cobros pendientes se quedaba en €NaN por una recogida sin precio.
+// Para saber si el importe era texto está importeSinValorar(), justo debajo.
 export const parseCurrency = (value) => {
-    if (typeof value === 'number') return value;
-    return parseFloat(String(value || '0').replace(/[^0-9.-]+/g, ""));
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+    const num = parseFloat(String(value || '0').replace(/[^0-9.-]+/g, ""));
+    return Number.isFinite(num) ? num : 0;
+};
+
+// ¿El importe es un texto sin cifras, es decir, un albarán todavía sin precio?
+// Se usa para enseñar ese texto tal cual en la columna de importe en vez de un
+// €0.00, que haría parecer que no se debe nada cuando lo que pasa es que aún no
+// se sabe cuánto. Un importe vacío o ausente NO cuenta como sin valorar: sigue
+// valiendo 0, como siempre.
+export const importeSinValorar = (value) => {
+    if (typeof value === 'number') return !Number.isFinite(value);
+    return !Number.isFinite(parseFloat(String(value || '0').replace(/[^0-9.-]+/g, "")));
 };
 
 export const buildShipmentModel = (s, clients) => {
