@@ -197,7 +197,10 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
         }, 0);
 
         const newPickup = {
-            id: `PU-${maxId + 1}`,
+            // REC- desde 2026-08-20; las recogidas anteriores conservan su PU-.
+            // El número no depende del prefijo: maxId sale de quitar las letras a
+            // TODOS los albaranes, así que recogidas y envíos comparten contador.
+            id: `REC-${maxId + 1}`,
             type: 'Recogida', // Essential tag
             client: formData.clientName,
             branchId: formData.branchId || null,

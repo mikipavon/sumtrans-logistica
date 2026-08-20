@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Wallet, Filter, Search, User, Calendar, Truck, Euro, AlertTriangle, CheckCircle, ArrowRight, Pencil, X, FileText, ChevronUp, ChevronDown } from 'lucide-react';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { utils, writeFile } from 'xlsx';
-import { parseCurrency, buildShipmentModel, isPendingCollection, needsDriverAfterCollecting } from '../utils/pendingCollections';
+import { parseCurrency, importeSinValorar, buildShipmentModel, isPendingCollection, needsDriverAfterCollecting } from '../utils/pendingCollections';
 import { coincideBusqueda } from '../utils/busqueda';
 
 export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onUpdateShipment, driverNamePreference = 'both' }) {
@@ -66,8 +66,22 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
             const model = buildShipmentModel(s, clients);
 
             const codAmount = parseCurrency(s.codAmount);
-            const shippingAmount = parseCurrency(s.customAmount) || parseCurrency(s.amount);
+            const customAmount = parseCurrency(s.customAmount);
+            const shippingAmount = customAmount || parseCurrency(s.amount);
             const designatedDriverId = s.assignedDriverId || s.createdById;
+
+            // El albarán puede no tener precio todavía: las recogidas nacen con
+            // amount 'Por valorar' y hay portes marcados como 'Tarifa'. En ese caso
+            // se enseña el texto en la columna de importe (un €0.00 diría que no se
+            // debe nada, y lo que pasa es que aún no se sabe cuánto) y el importe
+            // que suma en el total es 0. Un customAmount válido manda sobre el texto,
+            // igual que en shippingAmount.
+            const porteSinValorar = !customAmount && importeSinValorar(s.amount);
+            const textoImporte = String(s.amount || '').trim();
+            const shippingDisplay = porteSinValorar
+                ? (textoImporte.toLowerCase() === 'tarifa' ? 'Tarifa' : textoImporte)
+                : shippingAmount;
+
             const types = [];
 
             // Porte del REMITENTE (cliente habitual + pagado)
@@ -75,7 +89,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                 types.push({
                     type: 'Portes (Pagado)',
                     amount: shippingAmount,
-                    amountDisplay: String(s.amount).toLowerCase() === 'tarifa' ? 'Tarifa' : shippingAmount,
+                    amountDisplay: shippingDisplay,
                     responsibleDriverId: s.createdById || designatedDriverId,
                     payerName: s.client
                 });
@@ -89,7 +103,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                 types.push({
                     type: 'Portes (Debido)',
                     amount: shippingAmount,
-                    amountDisplay: shippingAmount,
+                    amountDisplay: shippingDisplay,
                     responsibleDriverId: designatedDriverId,
                     payerName: s.destinationName || 'Destinatario'
                 });

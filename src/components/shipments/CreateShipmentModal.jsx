@@ -8,6 +8,7 @@ import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { resolveOwnerAgencyId, getOwnerLabel } from '../../utils/agencyOwnership';
 import CityAutocomplete from '../CityAutocomplete';
 import { supabase } from '../../lib/supabase';
+import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 
 export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, clients, allPoblaciones, prefillData, onAddClient, onUpdateClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
     const [formData, setFormData] = useState({
@@ -369,6 +370,28 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         const bracket = sorted.find(b => weight <= b.maxKg);
         if (bracket) return `Tramo ≤${bracket.maxKg}kg`;
         return `Tramo >${sorted[sorted.length - 1].maxKg}kg (máximo)`;
+    };
+
+    // ── La cuenta del importe vive AQUÍ y sólo aquí ──────────────────────────
+    // El importe se rehacía en cuatro sitios (al teclear los kilos, al recalcular
+    // precios por zona, y al añadir o quitar un artículo) y cada uno hacía su
+    // propia suma. Sólo el de los kilos incluía el porte por peso, así que en
+    // cuanto añadías un artículo DESPUÉS de pesar, la tarifa se perdía y el
+    // albarán se guardaba a 0,00 €: pasó con SUM-70 y SUM-71 de XPO (860 kg,
+    // tramo ≤900kg, 58,51 € cada uno) y se facturaron a cero.
+    //
+    // kilos se pasa aparte porque al teclear en el campo de peso el estado
+    // weightKg todavía no se ha actualizado: ahí vale el valor que viene del
+    // evento, no el del render anterior.
+    const calcularImporteTotal = (articulos, kilos = weightKg) => {
+        const articlesTotal = (articulos || []).reduce((sum, item) => sum + item.totalPrice, 0);
+        const commission = parseFloat(formData.codCommission) || 0;
+        // Sin cliente por kilos el porte por peso es 0 y la cuenta queda igual
+        // que antes, así que esto no toca a los clientes de tarifa normal.
+        const portePorPeso = weightClientData
+            ? calculateWeightPrice(kilos, weightClientData.tariff, weightClientData.client)
+            : 0;
+        return (articlesTotal + portePorPeso + commission).toFixed(2);
     };
 
     useEffect(() => {
@@ -870,9 +893,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         if (hasChanged) {
             console.log("💰 [Precios] Actualizando precios de artículos por cambio de zona:", updatedArticles);
             setSelectedArticles(updatedArticles);
-            const articlesTotal = updatedArticles.reduce((sum, item) => sum + item.totalPrice, 0);
-            const commission = parseFloat(formData.codCommission) || 0;
-            setFormData(prev => ({ ...prev, amount: (articlesTotal + commission).toFixed(2) }));
+            setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedArticles) }));
         }
     }, [formData.porteType, formData.clientName, formData.destinationName, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip, tariffs, selectedArticles]);
 
@@ -916,9 +937,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         const updatedList = [...selectedArticles, newItem];
         setSelectedArticles(updatedList);
 
-        const articlesTotal = updatedList.reduce((sum, item) => sum + item.totalPrice, 0);
-        const commission = parseFloat(formData.codCommission) || 0;
-        setFormData(prev => ({ ...prev, amount: (articlesTotal + commission).toFixed(2) }));
+        setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedList) }));
         setTempArticleId('');
     };
 
@@ -926,9 +945,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         const updatedList = selectedArticles.filter(item => item.uniqueId !== uniqueId);
         setSelectedArticles(updatedList);
 
-        const articlesTotal = updatedList.reduce((sum, item) => sum + item.totalPrice, 0);
-        const commission = parseFloat(formData.codCommission) || 0;
-        setFormData(prev => ({ ...prev, amount: (articlesTotal + commission).toFixed(2) }));
+        setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedList) }));
     };
 
     useEffect(() => {
@@ -1779,10 +1796,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                                     const val = e.target.value;
                                                     setWeightKg(val);
                                                     if (weightClientData) {
-                                                        const price = calculateWeightPrice(val, weightClientData.tariff, weightClientData.client);
-                                                        const articlesTotal = selectedArticles.reduce((sum, item) => sum + item.totalPrice, 0);
-                                                        const commission = parseFloat(formData.codCommission) || 0;
-                                                        setFormData(prev => ({ ...prev, amount: (articlesTotal + price + commission).toFixed(2) }));
+                                                        setFormData(prev => ({ ...prev, amount: calcularImporteTotal(selectedArticles, val) }));
                                                     }
                                                 }}
                                             />
@@ -1835,7 +1849,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                     <Euro className="absolute left-3 top-1/2 -translate-y-1/2 text-red-400" size={16} />
                                     <input type="number" step="0.01" placeholder="REEMBOLSO 0.00" className={inputClass + " pl-9 border-red-200 focus:border-red-500 focus:ring-red-500/20"} value={formData.codAmount} onChange={(e) => {
                                         const val = e.target.value; const amount = parseFloat(val) || 0;
-                                        let fee = 0; if (amount > 0) { const client = resolveBillingClient(formData.clientName, formData._parentClientId); fee = (client && client.codFee) ? parseFloat(client.codFee) : (parseFloat(defaultCodFee) || 3.00); }
+                                        let fee = 0; if (amount > 0) { const client = resolveBillingClient(formData.clientName, formData._parentClientId); fee = calcularComisionReembolso(client, amount, defaultCodFee); }
                                         const prevCommission = parseFloat(formData.codCommission) || 0;
                                         const currentTotal = parseFloat(formData.amount) || 0;
                                         const basePorte = selectedArticles.length > 0 ? selectedArticles.reduce((sum, item) => sum + item.totalPrice, 0) : Math.max(0, currentTotal - prevCommission);
