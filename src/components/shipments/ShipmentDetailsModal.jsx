@@ -10,6 +10,7 @@ import { getPackagesCount } from '../../utils/shipmentUtils';
 
 
 import { Trash2, Plus } from 'lucide-react';
+import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, driverNamePreference = 'both', zoom = 1 }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
@@ -88,6 +89,19 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         ) || null;
     };
 
+    // Misma cuenta única que en CreateShipmentModal, y por el mismo motivo: aquí
+    // el importe se rehacía en tres sitios más (añadir artículo, quitarlo y el
+    // recálculo al cambiar quién paga) y ninguno sumaba el porte por peso, así
+    // que editar un albarán de tarifa por kilos lo devolvía a 0,00 €.
+    const calcularImporteTotal = (articulos, kilos = weightKg) => {
+        const articlesTotal = (articulos || []).reduce((sum, item) => sum + item.totalPrice, 0);
+        const commission = parseFloat(formData.codCommission) || 0;
+        const portePorPeso = weightClientData
+            ? calculateWeightPrice(kilos, weightClientData.tariff, weightClientData.client)
+            : 0;
+        return (articlesTotal + portePorPeso + commission).toFixed(2);
+    };
+
     const addArticle = (articleId) => {
         const idToUse = articleId || tempArticleId;
         if (!idToUse || tempQuantity < 1) return;
@@ -123,9 +137,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         const updatedList = [...selectedArticles, newItem];
         setSelectedArticles(updatedList);
         
-        const articlesTotal = updatedList.reduce((sum, item) => sum + item.totalPrice, 0);
-        const commission = parseFloat(formData.codCommission) || 0;
-        setFormData(prev => ({ ...prev, amount: (articlesTotal + commission).toFixed(2) }));
+        setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedList) }));
         setTempArticleId('');
         setTempQuantity(1);
     };
@@ -133,9 +145,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
     const removeArticle = (uniqueId) => {
         const updatedList = selectedArticles.filter(item => item.uniqueId !== uniqueId);
         setSelectedArticles(updatedList);
-        const articlesTotal = updatedList.reduce((sum, item) => sum + item.totalPrice, 0);
-        const commission = parseFloat(formData.codCommission) || 0;
-        setFormData(prev => ({ ...prev, amount: (articlesTotal + commission).toFixed(2) }));
+        setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedList) }));
     };
 
     // Si el admin corrige quién paga (Pagado ↔ Debido), los artículos ya añadidos
@@ -162,9 +172,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         const hasChanged = JSON.stringify(updatedArticles) !== JSON.stringify(selectedArticles);
         if (hasChanged) {
             setSelectedArticles(updatedArticles);
-            const articlesTotal = updatedArticles.reduce((sum, item) => sum + item.totalPrice, 0);
-            const commission = parseFloat(formData.codCommission) || 0;
-            setFormData(prev => ({ ...prev, amount: (articlesTotal + commission).toFixed(2) }));
+            setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedArticles) }));
         }
     }, [formData.porteType, formData.client, formData.destinationName, clients, weightClientData, selectedArticles, isEditing]);
 
@@ -795,10 +803,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             onChange={(e) => {
                                                 const val = e.target.value;
                                                 setWeightKg(val);
-                                                const p = calculateWeightPrice(val, weightClientData.tariff, weightClientData.client);
-                                                const aTotal = selectedArticles.reduce((sum, item) => sum + item.totalPrice, 0);
-                                                const com = parseFloat(formData.codCommission) || 0;
-                                                setFormData(prev => ({ ...prev, amount: (aTotal + p + com).toFixed(2) }));
+                                                setFormData(prev => ({ ...prev, amount: calcularImporteTotal(selectedArticles, val) }));
                                             }}
                                         />
                                     </div>
@@ -916,7 +921,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                                     String(c.name || '').toLowerCase().trim() === cName ||
                                                     String(c.legalName || '').toLowerCase().trim() === cName
                                                 );
-                                                const fee = (clientObj && clientObj.codFee) ? parseFloat(clientObj.codFee) : 3.00;
+                                                const fee = calcularComisionReembolso(clientObj, amount);
                                                 
                                                 const currentTotal = parseFloat(formData.amount) || 0;
                                                 const prevCommission = parseFloat(formData.codCommission) || 0;
@@ -925,13 +930,15 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                                 if (selectedArticles && selectedArticles.length > 0) {
                                                     basePorte = selectedArticles.reduce((sum, item) => sum + item.totalPrice, 0);
                                                     if (weightClientData && weightKg) {
-                                                        basePorte += calculateWeightPrice(weightKg, weightClientData.tariff);
+                                                        // El tercer argumento faltaba: sin él, un cliente con
+                                                        // tarifa por fórmula caía en el reparto por tramos.
+                                                        basePorte += calculateWeightPrice(weightKg, weightClientData.tariff, weightClientData.client);
                                                     }
                                                 } else {
                                                     basePorte = Math.max(0, currentTotal - prevCommission);
                                                 }
                                                 
-                                                const newCommission = amount > 0 ? fee : 0;
+                                                const newCommission = fee;
                                                 const newTotalAmount = basePorte + newCommission;
                                                 
                                                 setFormData({
