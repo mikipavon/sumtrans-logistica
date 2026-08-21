@@ -2922,8 +2922,12 @@ function App() {
         // la subida y luego pega la URL en el envío. Sin esto la foto se perdía en el
         // único caso en que todo lo demás había ido bien.
         if (Object.keys(mergedPendingUploads).length > 0) {
-          console.warn(`[Queue] ${shipmentId} guardado pero con pruebas pendientes de subir; encolado para reintento.`);
+          console.warn(`[Queue] ${shipmentId} guardado; firma/fotos van detras por la cola.`);
           await enqueueStatusOp();
+          // La fila ya esta guardada y la oficina ya ve la entrega. Las imagenes van
+          // detras, pero SIN esperar al reintento periodico de 15 s: se lanza el flush
+          // aqui mismo para que la firma aparezca en el albaran en cuanto suba.
+          flushOfflineQueue();
         }
 
         // Actualizar posición del conductor con las coordenadas de entrega
