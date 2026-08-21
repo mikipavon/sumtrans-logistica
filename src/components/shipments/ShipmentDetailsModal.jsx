@@ -1285,7 +1285,16 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             {(() => {
                                                 const bt = String(shipment.billingType || '').toLowerCase();
                                                 if (bt.includes('factur')) return 'Administración / Oficina';
-                                                return resolveDriver(shipment.porteCollectedById || shipment.assignedDriverId) || 'Oficina / Automático';
+                                                // Un Porte Pagado se cobra EN ORIGEN, al crear el albarán: si no
+                                                // quedó guardado quién lo cobró, el que cobró es el que lo CREÓ, no
+                                                // el que lo reparte. Cayendo al conductor asignado, la ficha le
+                                                // apuntaba el dinero a otro y no cuadraba con la Cuenta, que sí
+                                                // mira al creador (accountLogic, "prepaidCollections").
+                                                const esConductor = (id) => id && (drivers || []).some(d => String(d.id) === String(id));
+                                                const cobradorId = shipment.porteCollectedById
+                                                    || (shipment.porteType === 'Pagado' && esConductor(shipment.createdById) ? shipment.createdById : null)
+                                                    || shipment.assignedDriverId;
+                                                return resolveDriver(cobradorId) || 'Oficina / Automático';
                                             })()}
                                         </p>
                                     </div>

@@ -68,6 +68,15 @@ export default class Shipment {
     this.simplifiedInvoicePaid = !!data.simplifiedInvoicePaid;
 
     this.assignedDriverId = data.assignedDriverId || null;
+
+    // Conductor que se lleva el dinero encima. El modelo copia campo a campo (no hace
+    // spread de data), asi que sin estas dos lineas se perdian al crear el albaran: el
+    // cobro en origen se guardaba sin dueno y tanto la Cuenta como el "Porte Cobrado
+    // Por" de la oficina acababan apuntandoselo al conductor ASIGNADO al reparto, que
+    // no es quien lo cobro.
+    this.porteCollectedById = data.porteCollectedById || null;
+    this.codCollectedById = data.codCollectedById || null;
+
     this.observations = data.observations || '';
     this.incidentReason = data.incidentReason || '';
     this.incidentPhoto = data.incidentPhoto || null;
