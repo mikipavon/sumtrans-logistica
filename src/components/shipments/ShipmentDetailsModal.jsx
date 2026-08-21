@@ -1261,15 +1261,29 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     <Calendar size={10} /> Fecha Entrega
                                 </span>
                                 <p className={`text-sm font-semibold ${shipment.status === 'Entregado' ? 'text-emerald-700' : 'text-slate-400 italic text-xs'}`}>
-                                    {formatDate(shipment.paidAt) || formatDate(shipment.updatedAt) || (shipment.status === 'Entregado' ? '—' : 'Aún no entregado')}
+                                    {/* Solo hay fecha de entrega cuando el albarán está entregado. Antes se
+                                        usaba paidAt, que en un Porte Pagado es la hora en que se COBRÓ al
+                                        crearlo: un albarán aún en reparto salía "entregado" a la misma hora
+                                        que se creó. Para los entregados de antes, que no guardaban
+                                        deliveredAt, se sigue tirando de paidAt/updatedAt. */}
+                                    {shipment.status === 'Entregado'
+                                        ? (formatDate(shipment.deliveredAt) || formatDate(shipment.paidAt) || formatDate(shipment.updatedAt) || '—')
+                                        : 'Aún no entregado'}
                                 </p>
                             </div>
                             <div className={`bg-white rounded-lg border p-3 ${shipment.status === 'Entregado' ? 'border-emerald-100' : 'border-slate-100'}`}>
                                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1 flex items-center gap-1">
-                                    <Truck size={10} /> Entregado por
+                                    {/* Mientras no esté entregado, el conductor que figura es al que se le ha
+                                        asignado el reparto, no el que lo ha entregado: se dice tal cual, que
+                                        poner "Entregado por" en un albarán que sigue en la furgoneta daba por
+                                        hecha una entrega que no ha pasado. */}
+                                    <Truck size={10} /> {shipment.status === 'Entregado' ? 'Entregado por' : 'Asignado a'}
                                 </span>
                                 <p className={`text-sm font-semibold ${shipment.status === 'Entregado' ? 'text-emerald-700' : 'text-slate-400 italic text-xs'}`}>
-                                    {resolveDriver(shipment.assignedDriverId) || <span className="text-slate-300 italic text-xs">Sin asignar</span>}
+                                    {resolveDriver(shipment.status === 'Entregado'
+                                        ? (shipment.deliveredById || shipment.assignedDriverId)
+                                        : shipment.assignedDriverId
+                                    ) || <span className="text-slate-300 italic text-xs">Sin asignar</span>}
                                 </p>
                             </div>
                         </div>

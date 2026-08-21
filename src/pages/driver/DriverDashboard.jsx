@@ -4386,6 +4386,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
                 if (targetStatus === 'Entregado' && original?.status !== 'Entregado') {
                     flags.deliveredAt = flags.updatedAt;
+                    // Quién la entrega de verdad, por el mismo motivo que porteCollectedById:
+                    // el que cubre la ruta de otro no puede salir como el conductor asignado.
+                    flags.deliveredById = currentDriverId;
                 }
 
                 console.log(`🔍 [BatchSync] SID: ${sid} | pf: ${pf} | cf: ${cf} | target: ${targetStatus} | flags:`, flags);
