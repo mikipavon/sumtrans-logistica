@@ -914,10 +914,30 @@ function App() {
     }
   }, []);
 
+  // ======= REFRESCO DE CONDUCTORES (silencioso) =======
+  // La tabla `drivers` lleva la posición GPS y el ORDEN DE LA RUTA que el
+  // repartidor arrastra en su móvil, y hasta ahora sólo se leía UNA vez, en la
+  // carga inicial: todo lo demás llegaba por Realtime. Si ese aviso no entra
+  // —el canal se cae al bloquear el móvil, cambia de WiFi a datos, o la tabla
+  // no está publicada— no hay segunda oportunidad, y en la oficina el orden de
+  // las paradas se queda como estaba hasta que alguien recarga la página.
+  // Son pocas filas (una por conductor), así que releerlas sale barato.
+  const refrescarConductores = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.from('drivers').select('id, data, username').order('id');
+      if (error || !data) return;
+      setDrivers(data.map(d => ({ ...d.data, id: d.id, username: d.username })));
+    } catch (e) {
+      // Silencioso — es una red de seguridad de fondo
+    }
+  }, []);
+
   // El canal de Realtime se monta una sola vez y no debe reengancharse cada vez
-  // que cambie esta función, así que la alcanza por referencia.
+  // que cambien estas funciones, así que las alcanza por referencia.
   const refrescarEnviosActivosRef = useRef(refrescarEnviosActivos);
   useEffect(() => { refrescarEnviosActivosRef.current = refrescarEnviosActivos; }, [refrescarEnviosActivos]);
+  const refrescarConductoresRef = useRef(refrescarConductores);
+  useEffect(() => { refrescarConductoresRef.current = refrescarConductores; }, [refrescarConductores]);
 
   // Supabase Data Loading (Carga OPTIMIZADA de la nube)
   useEffect(() => {
@@ -1229,6 +1249,7 @@ function App() {
         if (estado === 'SUBSCRIBED') {
           if (!yaSuscritoUnaVez) { yaSuscritoUnaVez = true; return; }
           refrescarEnviosActivosRef.current?.();
+          refrescarConductoresRef.current?.();
         }
       });
 
@@ -1254,21 +1275,26 @@ function App() {
     // Con la app en segundo plano no se refresca (ni datos ni batería para nada):
     // en cuanto la pantalla vuelve a estar delante se recarga de inmediato, que
     // es justo el momento en el que el repartidor mira si tiene algo nuevo.
+    const refrescarTodo = () => {
+      refrescarEnviosActivos();
+      refrescarConductores();
+    };
+
     const refrescarSiVisible = () => {
       if (document.visibilityState !== 'visible') return;
-      refrescarEnviosActivos();
+      refrescarTodo();
     };
 
     const interval = userRole === 'admin' ? setInterval(refrescarSiVisible, 60000) : null;
     document.addEventListener('visibilitychange', refrescarSiVisible);
-    window.addEventListener('online', refrescarEnviosActivos);
+    window.addEventListener('online', refrescarTodo);
 
     return () => {
       if (interval) clearInterval(interval);
       document.removeEventListener('visibilitychange', refrescarSiVisible);
-      window.removeEventListener('online', refrescarEnviosActivos);
+      window.removeEventListener('online', refrescarTodo);
     };
-  }, [userRole, refrescarEnviosActivos]);
+  }, [userRole, refrescarEnviosActivos, refrescarConductores]);
 
   // ======= VIGILANCIA RÁPIDA DE LOS REPARTOS DEL CONDUCTOR (cada 15s) =======
   // Sondear TODOS los envíos activos cada pocos segundos se comería los datos del
