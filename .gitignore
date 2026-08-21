@@ -28,3 +28,7 @@ dist-ssr
 # Scripts sueltos de mantenimiento: suelen llevar la service_role key de Supabase
 # en claro, así que nunca deben acabar en el repo.
 tmp/
+
+# Carpeta de trabajo del CLI de Supabase: guarda a que proyecto estas enlazado
+# y que versiones cachea. Se regenera sola, no hace falta versionarla.
+supabase/.temp/
