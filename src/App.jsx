@@ -1360,6 +1360,72 @@ function App() {
     return () => clearInterval(intervalo);
   }, [userRole, currentDriverId]);
 
+  // ======= VIGILANCIA RÁPIDA DE LA OFICINA (cada 10s) =======
+  // Lo mismo que hace el móvil del repartidor aquí arriba, pero para el panel.
+  //
+  // El Realtime es quien debería traer los cambios al instante. Cuando no llega
+  // —el canal se cae, la tabla no está publicada, la cuota lo frena— el único
+  // respaldo era el refresco completo de 60s, así que una entrega tardaba en
+  // aparecer entre 0 y 60 segundos: de media, medio minuto.
+  //
+  // Esta consulta pide sólo `id` y `status` de los envíos activos (unos pocos
+  // bytes, sin el JSON gordo) y compara con lo que hay en pantalla:
+  //   · si a alguno le ha cambiado el estado → se baja su ficha entera;
+  //   · si alguno YA NO sale en la lista de activos, es que lo acaban de
+  //     entregar o anular → también se baja, que es justo el caso que se
+  //     estaba esperando medio minuto.
+  useEffect(() => {
+    const isMissingSupabaseKeys = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
+    if (isMissingSupabaseKeys) return;
+    if (userRole !== 'admin') return;
+
+    const vigilarLosEnvios = async () => {
+      if (document.visibilityState !== 'visible') return;
+      // Con la lista vacía es que la carga inicial no ha terminado: dejarla trabajar.
+      if (!shipmentsRef.current || shipmentsRef.current.length === 0) return;
+
+      try {
+        const { data, error } = await supabase.from('shipments')
+          .select('id, status')
+          .not('status', 'in', '("Entregado","Anulado")');
+        if (error || !data) return;
+
+        const enMemoria = new Map(shipmentsRef.current.map(s => [s.id, s]));
+        const idsRemotos = new Set(data.map(fila => fila.id));
+
+        // Estado distinto del que se ve, o envío nuevo que aún no está en pantalla.
+        const cambiados = data
+          .filter(fila => enMemoria.get(fila.id)?.status !== fila.status)
+          .map(fila => fila.id);
+
+        // Ha dejado de estar activo: entregado o anulado hace un momento.
+        const cerrados = shipmentsRef.current
+          .filter(s => s.status !== 'Entregado' && s.status !== 'Anulado' && !idsRemotos.has(s.id))
+          .map(s => s.id);
+
+        const aRefrescar = [...new Set([...cambiados, ...cerrados])];
+        if (aRefrescar.length === 0) return;
+
+        const { data: filas, error: errorFilas } = await supabase
+          .from('shipments').select('id, data').in('id', aRefrescar);
+        if (errorFilas || !filas) return;
+
+        const frescos = filas.map(fila => ({ ...fila.data, id: fila.id }));
+        console.log(`[Vigilancia oficina] ${frescos.length} envío(s) puestos al día sin esperar al Realtime`);
+        setShipments(prev => {
+          const porId = new Map(prev.map(s => [s.id, s]));
+          frescos.forEach(s => porId.set(s.id, s));
+          return Array.from(porId.values());
+        });
+      } catch (e) {
+        // Silencioso — es una red de seguridad de fondo
+      }
+    };
+
+    const intervaloOficina = setInterval(vigilarLosEnvios, 10000);
+    return () => clearInterval(intervaloOficina);
+  }, [userRole]);
+
   // ======= OFFLINE QUEUE: FLUSH LOGIC (shared) =======
   const flushQueueRef = useRef(false); // prevent concurrent flushes
 
