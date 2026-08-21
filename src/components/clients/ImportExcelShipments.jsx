@@ -3,6 +3,7 @@ import { Upload, FileText, CheckCircle, AlertCircle, ArrowRight, ArrowLeft, Tras
 import * as XLSX from 'xlsx';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
+import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 
 // ─── Diccionario de sinónimos para mapeo inteligente ───
 const FIELD_SYNONYMS = {
@@ -205,7 +206,7 @@ export default function ImportExcelShipments({ client, onCreateShipment, allShip
                 }
 
                 const codAmt = parseFloat(row.codAmount) || 0;
-                const codFee = codAmt > 0 ? parseFloat(effectiveClient.codFee || 3) : 0;
+                const codFee = calcularComisionReembolso(effectiveClient, codAmt);
 
                 const shipmentData = {
                     id: `${prefix}-${maxId}`,
