@@ -1546,7 +1546,7 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
                                         }
                                         try {
                                             const hash = await hashPIN(pinInput);
-                                            const { data: driverRes } = await supabase.from('drivers').select('*').eq('id', currentDriverId).single();
+                                            const { data: driverRes } = await supabase.from('drivers').select('data').eq('id', currentDriverId).single();
                                             const driverObj = driverRes || {};
                                             const driverDataObj = driverObj.data || {};
                                             const updatedData = { ...driverDataObj, signaturePinHash: hash };
@@ -1569,7 +1569,7 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
                                         }
                                         try {
                                             const hash = await hashPIN(pinInput);
-                                            const { data: driverRes } = await supabase.from('drivers').select('*').eq('id', currentDriverId).single();
+                                            const { data: driverRes } = await supabase.from('drivers').select('data').eq('id', currentDriverId).single();
                                             const driverObj = driverRes || {};
                                             const driverDataObj = driverObj.data || {};
                                             

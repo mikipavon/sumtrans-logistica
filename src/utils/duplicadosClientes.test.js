@@ -6,7 +6,9 @@ const CARTERA = {
     name: 'Activa La Mejor Compra, S.L.',
     cif: 'B-14.123.456',
     email: 'administracion@activa.com',
-    password: 'secreta123',
+    // La señal de "esta ficha entra en el portal" ya no es tener contraseña
+    // guardada, sino esta marca. Ver utils/clientAccess.js y la fase 16.
+    tieneAccesoPortal: true,
 };
 const SIN_ACCESO = { id: 11, name: 'Ferretería Luna', cif: 'B99887766', email: 'luna@ferreteria.com' };
 const CLIENTES = [CARTERA, SIN_ACCESO];

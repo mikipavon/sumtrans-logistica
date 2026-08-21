@@ -25,6 +25,22 @@ export function emailDeAcceso(client) {
     return String(client.email || '').trim().toLowerCase();
 }
 
+// ── ¿Esta ficha entra en el portal? ──
+//
+// Antes esto se preguntaba con `Boolean(client.password)`: si la ficha guardaba
+// una contraseña, es que alguien le había dado acceso. Esa señal desapareció al
+// dejar de guardar contraseñas en claro (supabase/16_contrasenas_con_huella.sql),
+// así que ahora se escribe aparte, en `tieneAccesoPortal`: lo pone la propia
+// migración en todas las fichas que ya tenían contraseña, y lo pone la
+// aplicación cada vez que le crea la cuenta de Auth a un cliente.
+//
+// Importa en dos sitios donde equivocarse tiene coste: avisar de que cambiar el
+// correo de acceso deja la cuenta atrás, y marcar en las fichas duplicadas cuál
+// de ellas YA entra en el portal antes de aprobar un alta.
+export function tieneAccesoAlPortal(client) {
+    return Boolean(client?.tieneAccesoPortal);
+}
+
 // ¿La ficha lleva un correo de acceso propio, distinto del de la ficha?
 // Sirve para avisar en pantalla de que el usuario del portal ya no es el email
 // que se ve en la pestaña de contacto.

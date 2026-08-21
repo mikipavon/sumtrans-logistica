@@ -18,7 +18,7 @@
 // con los ojos abiertos. El CIF es información pública y quien rellena el
 // formulario puede no ser de esa empresa.
 
-import { emailDeAcceso } from './clientAccess';
+import { emailDeAcceso, tieneAccesoAlPortal } from './clientAccess';
 
 const normalizarTexto = (valor) => String(valor || '')
     .toLowerCase()
@@ -88,7 +88,7 @@ export function buscarFichasParecidas(pendiente, clients = []) {
                 motivos,
                 // El caso delicado: si esa ficha YA entra en el portal, aprobar
                 // esto es dar acceso a una empresa que ya tiene su cuenta.
-                yaTieneAcceso: Boolean(client.password),
+                yaTieneAcceso: tieneAccesoAlPortal(client),
             });
         }
     }

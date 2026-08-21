@@ -27,7 +27,11 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                 alias: driver.alias || '',
                 phone: driver.phone || '',
                 username: driver.username || '',
-                password: driver.password || '',
+                // Siempre en blanco, a propósito: la contraseña ya no se guarda
+                // en la ficha, así que no hay ninguna que traer (fase 16).
+                // Escribir una aquí es fijar una NUEVA en Supabase Auth; dejarlo
+                // vacío deja la que tuviera.
+                password: '',
                 email: driver.email || '',
                 routeId: driver.routeId || '',
                 morningTowns: driver.morningTowns || [],

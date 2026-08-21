@@ -36,7 +36,7 @@ import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { fetchAllRows } from './utils/fetchAllRows';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
-import { emailDeAcceso } from './utils/clientAccess';
+import { emailDeAcceso, tieneAccesoAlPortal } from './utils/clientAccess';
 import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre } from './utils/ventanaPadre';
 import { getIrregularReasons } from './utils/shipmentUtils';
@@ -413,7 +413,10 @@ function App() {
 
         // 2. Limpiar coordenadas de todos los clientes
         const { data: allCli, error: err2 } = await fetchAllRows(
-          () => supabase.from('clients').select('*').order('id'),
+          // Sólo hacen falta id y data (aquí se limpian coordenadas), así que
+          // no se pide '*': trae menos por la red y no arrastra columnas que
+          // esta pantalla no tiene por qué ver.
+          () => supabase.from('clients').select('id, data').order('id'),
           { label: 'clients_reset' }
         );
         if (err2) throw err2;
@@ -958,7 +961,9 @@ function App() {
         ];
 
         const results = await Promise.allSettled([
-          fetchAllRows(() => supabase.from('drivers').select('id, data, username, password').order('id'), { label: 'drivers' }),
+          // Sin `password`: la contraseña ya no está en claro en la tabla, y la
+          // huella que la sustituye no sale de la base de datos (ver fase 16).
+          fetchAllRows(() => supabase.from('drivers').select('id, data, username').order('id'), { label: 'drivers' }),
           fetchAllRows(() => supabase.from('shipments').select('id, data')                    // 1 - active
             .not('status', 'in', '("Entregado","Anulado")').order('id'), { label: 'shipments_active' }),
           fetchAllRows(() => supabase.from('shipments').select('id, data')                    // 2 - finished recent
@@ -1010,7 +1015,7 @@ function App() {
         const criticalLoaded = [drv, (shpActive || shpFinished), cli].filter(Boolean).length;
         const activeShipmentsTimedOut = !shpActive && shpFinished; // timeout en activos pero no en terminados
         
-        if (drv) setDrivers(drv.map(d => ({ ...d.data, id: d.id, username: d.username, password: d.password })))
+        if (drv) setDrivers(drv.map(d => ({ ...d.data, id: d.id, username: d.username })))
         
         // ── Merge active + recent finished shipments ──
         if (shpActive || shpFinished) {
@@ -1173,7 +1178,7 @@ function App() {
               const exists = prev.find(d => d.id === id);
               return exists ? prev.map(d => d.id === id ? { ...d, ...topLevelFields } : d) : prev;
             }
-            const item = { ...payload.new.data, id: payload.new.id, username: payload.new.username, password: payload.new.password };
+            const item = { ...payload.new.data, id: payload.new.id, username: payload.new.username };
             const exists = prev.find(d => d.id === item.id);
             if (exists && payload.eventType === 'INSERT') return prev;
             return exists ? prev.map(d => d.id === item.id ? item : d) : [...prev, item];
@@ -1541,7 +1546,10 @@ function App() {
              const payload = { id: item.id || item.key, data: item };
              if (sync.table === 'drivers') {
                payload.username = item.username;
-               payload.password = item.password;
+               // La contraseña no se copia: la tabla ya no la guarda (fase 16).
+               // Quien venga de localStorage tendrá que recibir acceso desde el
+               // panel, que es lo que crea su cuenta de Supabase Auth.
+               delete payload.data.password;
              }
              if (sync.table === 'clients') {
                payload.name = item.name;
@@ -1567,9 +1575,11 @@ function App() {
   }
 
   const handleLogin = async (role = 'admin', username = '', password = '') => {
+    // ── Construir el email para Supabase Auth ──
+    // Vive fuera del try para que el respaldo del catch también sepa con qué
+    // correo se estaba intentando entrar.
+    let authEmail = username;
     try {
-      // ── Construir el email para Supabase Auth ──
-      let authEmail = username;
 
       // Para drivers: si no es un email, buscar el email usando RPC segura (bypasa RLS)
       if (role === 'driver' && !username.includes('@')) {
@@ -1616,7 +1626,7 @@ function App() {
       if (authError || !authData.user) {
         console.warn('[Login] Supabase Auth failed:', authError?.message);
         // ── FALLBACK: login legacy (para transición mientras se migran usuarios) ──
-        return await handleLegacyLogin(role, username, password);
+        return await handleLegacyLogin(role, username, password, authEmail);
       }
 
       // ── Obtener perfil con rol ──
@@ -1628,7 +1638,7 @@ function App() {
 
       if (!profile) {
         console.warn('[Login] No profile found for auth user, falling back to legacy');
-        return await handleLegacyLogin(role, username, password);
+        return await handleLegacyLogin(role, username, password, authEmail);
       }
 
       // ── Verificar que el driver está activo ──
@@ -1669,141 +1679,109 @@ function App() {
     } catch (e) {
       console.error('[Login] Error:', e);
       // Fallback a login legacy
-      return await handleLegacyLogin(role, username, password);
+      return await handleLegacyLogin(role, username, password, authEmail);
     }
   }
 
   // ── Login legacy (compatibilidad durante la transición) ──
-  const handleLegacyLogin = async (role = 'admin', username = '', password = '') => {
+  //
+  // Aquí ya NO se comprueba ninguna contraseña. Antes esto llamaba a
+  // verify_driver_login desde el navegador; esa función comparaba texto en
+  // claro y estaba abierta a cualquiera, así que era un probador de
+  // contraseñas público y sin límite de intentos. Y después, si no había
+  // sesión, quedaba una caché local que comparaba `d.password === password`,
+  // lo que obligaba a descargarse las contraseñas de toda la plantilla al
+  // móvil. Ver supabase/16_contrasenas_con_huella.sql.
+  //
+  // Ahora sólo queda un camino: pedirle a create-auth-user que migre al
+  // conductor. Corre en el servidor, es la única que puede comprobar la
+  // contraseña antigua (contra la huella), y si acierta le crea su cuenta de
+  // Supabase Auth. A partir de ahí manda Auth y este camino no se usa más.
+  const handleLegacyLogin = async (role = 'admin', username = '', password = '', authEmail = '') => {
     if (role === 'driver') {
-      // Usar RPC segura para verificar credenciales (bypasa RLS)
       try {
-        const { data: driverInfo } = await supabase.rpc('verify_driver_login', { 
-          p_username: username, 
-          p_password: password 
-        });
-        
-        if (driverInfo && driverInfo.found) {
-          // Guardar nombre del conductor para mostrarlo de inmediato
-          if (driverInfo.name) setCachedDriverName(driverInfo.name);
-
-          // Si tiene email, intentar login con Supabase Auth para tener sesión
-          if (driverInfo.email) {
-            const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
-              email: driverInfo.email,
-              password: password,
-            });
-            if (!authErr && authData?.user) {
-              console.log('[LegacyLogin] Driver auth session established ✅');
-              setIsAuthenticated(true);
-              setUserRole(role);
-              setCurrentDriverId(driverInfo.id);
-              setCurrentClientId(null);
-              return true;
-            } else {
-              console.log('[LegacyLogin] Auth failed but legacy RPC succeeded. Sincronizando contraseña en Auth...');
-              try {
-                // Se manda el usuario tal cual lo ha escrito: la función vuelve a
-                // verificarlo contra la ficha antes de tocar nada en Auth. El rol y
-                // el vínculo los decide ella a partir de la base de datos, no de aquí.
-                const res = await supabase.functions.invoke('create-auth-user', {
-                  body: {
-                    legacy_username: username,
-                    password: password,
-                  }
-                });
-                
-                if (!res.error) {
-                  console.log('[LegacyLogin] Contraseña sincronizada en Auth ✅. Reintentando signIn...');
-                  const { data: retryAuthData, error: retryAuthErr } = await supabase.auth.signInWithPassword({
-                    email: driverInfo.email,
-                    password: password,
-                  });
-                  if (!retryAuthErr && retryAuthData?.user) {
-                    console.log('[LegacyLogin] Driver auth session established after sync ✅');
-                    setIsAuthenticated(true);
-                    setUserRole(role);
-                    setCurrentDriverId(driverInfo.id);
-                    setCurrentClientId(null);
-                    return true;
-                  }
-                }
-              } catch (syncErr) {
-                console.warn('[LegacyLogin] Failed to sync auth password:', syncErr);
-              }
-            }
+        // El usuario va tal cual lo ha escrito: la función lo verifica contra
+        // la ficha antes de tocar nada. El rol y el vínculo los decide ella a
+        // partir de la base de datos, nunca de lo que se le mande desde aquí.
+        const res = await supabase.functions.invoke('create-auth-user', {
+          body: {
+            legacy_username: username,
+            password: password,
           }
-          
-          // Fallback sin sesión Auth (funcionalidad limitada)
-          console.warn('[LegacyLogin] Driver sin sesión Auth — funcionalidad limitada');
-          setIsAuthenticated(true);
-          setUserRole(role);
-          setCurrentDriverId(driverInfo.id);
-          setCurrentClientId(null);
-          return true;
-        }
-      } catch (e) {
-        console.warn('[LegacyLogin] RPC verify failed:', e);
-      }
+        });
 
-      // Último fallback: caché local
-      const normalize = (val) => String(val || '').toLowerCase().trim();
-      const normInputUser = normalize(username);
-
-      const driverFound = drivers.find(
-        d => (normalize(d.username) === normInputUser || normalize(d.email) === normInputUser) && d.password === password
-      );
-      if (driverFound) {
-        if (driverFound.isActive === false) {
-          alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
+        if (res.error) {
+          console.warn('[LegacyLogin] create-auth-user no ha migrado al conductor');
           return false;
         }
-        if (driverFound.name) setCachedDriverName(driverFound.name);
+
+        // Ya tiene cuenta: a partir de aquí entra como todo el mundo.
+        const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+          email: authEmail || username,
+          password: password,
+        });
+        if (authErr || !authData?.user) {
+          console.warn('[LegacyLogin] Migrado, pero el signIn ha fallado:', authErr?.message);
+          return false;
+        }
+
+        // El vínculo con la ficha sale de `profiles`, que es de donde lo saca
+        // RLS. Antes lo devolvía el propio RPC; ahora no hace falta preguntarlo.
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authData.user.id)
+          .single();
+
+        if (!profile) {
+          console.warn('[LegacyLogin] Migrado pero sin perfil — se cierra la sesión');
+          await supabase.auth.signOut();
+          return false;
+        }
+
+        if (profile.linked_id) {
+          const { data: driverCheck } = await supabase
+            .from('drivers')
+            .select('data')
+            .eq('id', profile.linked_id)
+            .single();
+          if (driverCheck?.data?.isActive === false) {
+            await supabase.auth.signOut();
+            alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
+            return false;
+          }
+        }
+
+        console.log('[LegacyLogin] Conductor migrado a Supabase Auth ✅');
+        if (profile.display_name) setCachedDriverName(profile.display_name);
         setIsAuthenticated(true);
         setUserRole(role);
-        setCurrentDriverId(driverFound.id);
+        setCurrentDriverId(profile.linked_id);
         setCurrentClientId(null);
         return true;
+      } catch (e) {
+        console.warn('[LegacyLogin] Error migrando al conductor:', e);
+        return false;
       }
-      return false;
 
     } else if (role === 'client') {
-      // Usar datos en memoria si ya están cargados — evita round-trip de red innecesario
-      let currentClients = clients;
-      if (!currentClients || currentClients.length === 0) {
-        // Solo consultar Supabase si la caché local está vacía (arranque frío)
-        try {
-          // Paginado: aquí se busca al cliente que intenta entrar. Truncar a 1.000
-          // filas dejaría fuera del login a los clientes que caigan más abajo.
-          const { data } = await fetchAllRows(
-            () => supabase.from('clients').select('*').order('id'),
-            { label: 'clients_login' }
-          );
-          if (data && data.length > 0) {
-            currentClients = data.map(c => ({ ...c.data, id: c.id }));
-            setClients(currentClients);
-          }
-        } catch (e) {
-          console.warn('Error fetching clients for login:', e);
-        }
-      }
-      
-      const normalize = (val) => String(val || '').toLowerCase().trim();
-      const normInputUser = normalize(username);
-
-      const client = currentClients.find(c =>
-        (normalize(c.username) === normInputUser || normalize(c.email) === normInputUser || emailDeAcceso(c) === normInputUser || normalize(c.name).includes(normInputUser))
-        && c.password === password
-      );
-      if (client) {
-        setIsAuthenticated(true);
-        setUserRole(role);
-        setCurrentClientId(client.id);
-        setCurrentDriverId(null);
-        // Notificar a la web padre (iframe) que el login fue exitoso
-        avisarAlPadre({ type: 'SUM_CLIENT_LOGIN_SUCCESS', clientId: client.id });
-        return true;
-      }
+      // El respaldo del cliente ya no existe, y no se echa de menos.
+      //
+      // Comparaba `c.password === password` en el propio navegador, lo que
+      // obligaba a descargarse la ficha entera de TODOS los clientes, con su
+      // contraseña dentro, sólo para poder mirarla. Eso es justo lo que se ha
+      // quitado en la fase 16.
+      //
+      // Y aunque acertara, no creaba sesión de Supabase: la aplicación daba el
+      // login por bueno pero RLS le bloqueaba todo, así que el cliente entraba,
+      // veía el portal a cero y lo que intentaba crear se quedaba en la cola sin
+      // sincronizar (está contado en el comentario de handleLogin, más arriba).
+      //
+      // Quien no tenga cuenta de Supabase Auth tiene que recibirla desde el
+      // panel: al guardar su ficha con contraseña, syncClientAuthAccount se la
+      // crea. Negarle la entrada aquí es más honesto que dejarle dentro con un
+      // portal vacío que parece una avería.
+      console.warn('[LegacyLogin] Cliente sin cuenta de Supabase Auth — acceso denegado');
       return false;
 
     } else {
@@ -1847,7 +1825,9 @@ function App() {
       // Add credentials to previous local-storage items
       if (c.name === 'Industrias Apex' && !c.username) {
         updated.username = 'apex';
-        updated.password = 'password123';
+        // Aquí había un `updated.password = 'password123'`. Ni las fichas de
+        // ejemplo deben llevar contraseña escrita: se le da acceso desde el
+        // panel, que es lo que crea la cuenta de Supabase Auth.
       }
       return updated;
     }));
@@ -1955,7 +1935,7 @@ function App() {
   // Sólo importa si la ficha ya tenía acceso configurado: si nunca lo tuvo, no
   // hay ninguna cuenta de Auth que se quede atrás y no hay nada que avisar.
   const correoDeAccesoCambiado = (anterior, nuevo) => {
-    if (!anterior?.password) return false;
+    if (!tieneAccesoAlPortal(anterior)) return false;
     return emailDeAcceso(anterior) !== emailDeAcceso(nuevo);
   };
 
@@ -2019,11 +1999,15 @@ function App() {
 
   const handleAddDriver = async (newDriver) => {
     try {
-      const { data, error } = await supabase.from('drivers').insert([{ 
-        id: newDriver.id, 
-        username: newDriver.username?.trim() || null, 
-        password: newDriver.password || null, 
-        data: newDriver 
+      // La contraseña no se guarda aquí: va sólo a Supabase Auth, un poco más
+      // abajo, en syncDriverAuthAccount. La tabla dejó de guardarla en la
+      // fase 16, así que tampoco puede colarse dentro de `data`.
+      const { password: _sinGuardar, ...datosDelConductor } = newDriver;
+
+      const { data, error } = await supabase.from('drivers').insert([{
+        id: newDriver.id,
+        username: newDriver.username?.trim() || null,
+        data: datosDelConductor
       }]).select();
       
       if (error) {
@@ -2040,7 +2024,7 @@ function App() {
         displayName: newDriver.name || newDriver.username,
       });
 
-      if (data && data[0]) setDrivers(prev => [...prev, { ...data[0].data, id: data[0].id, username: data[0].username, password: data[0].password }])
+      if (data && data[0]) setDrivers(prev => [...prev, { ...data[0].data, id: data[0].id, username: data[0].username }])
       return true
     } catch (e) { 
       console.error(e)
@@ -2225,10 +2209,15 @@ function App() {
         return;
       }
 
-      const { data, error } = await supabase.from('drivers').update({ 
-        username: mergedData.username?.trim() || null, 
-        password: mergedData.password || null, 
-        data: mergedData 
+      // Igual que en el alta: la contraseña sólo viaja a Supabase Auth. Ojo con
+      // `mergedData`, que es el objeto entero del formulario: si no se le quita
+      // la contraseña, acaba dentro del JSON de `data`, que es exactamente como
+      // se coló ahí durante años (ver fase 16).
+      const { password: _sinGuardar, ...datosDelConductor } = mergedData;
+
+      const { data, error } = await supabase.from('drivers').update({
+        username: mergedData.username?.trim() || null,
+        data: datosDelConductor
       }).eq('id', driverId).select();
       if (error) throw error;
 
@@ -2242,7 +2231,7 @@ function App() {
 
       // Usar String() para evitar problemas de tipo number vs string en el ID
       setDrivers(prev => prev.map(d => String(d.id) === String(driverId) 
-        ? { ...data[0].data, id: data[0].id, username: data[0].username, password: data[0].password } 
+        ? { ...data[0].data, id: data[0].id, username: data[0].username }
         : d
       ));
 
@@ -2251,12 +2240,33 @@ function App() {
       }
 
       // ── Crear/actualizar cuenta Supabase Auth ──
-      await syncDriverAuthAccount({
-        email: mergedData.email,
-        password: mergedData.password,
-        driverId,
-        displayName: mergedData.name || mergedData.username,
-      });
+      // Sólo cuando se ha escrito una contraseña nueva, igual que en los
+      // clientes. Antes el formulario venía relleno con la contraseña guardada,
+      // así que aquí siempre había una; desde que dejó de guardarse (fase 16) el
+      // campo llega vacío, y sin esta condición cualquier cambio de teléfono o
+      // de ruta soltaría el aviso de "no tendrá acceso a la app" a un conductor
+      // que lleva meses entrando.
+      const correoAnterior = String(previousDriver.email || '').trim().toLowerCase();
+      const correoNuevo    = String(mergedData.email || '').trim().toLowerCase();
+
+      if (updatedData?.password) {
+        await syncDriverAuthAccount({
+          email: mergedData.email,
+          password: updatedData.password,
+          driverId,
+          displayName: mergedData.name || mergedData.username,
+        });
+      } else if (correoAnterior && correoNuevo && correoAnterior !== correoNuevo) {
+        // Gemelo del aviso de los clientes (correoDeAccesoCambiado): mover la
+        // cuenta de Auth a otro correo exige pasar por create-auth-user, y esa
+        // función pide contraseña. Sin ella la ficha diría un email y la cuenta
+        // seguiría en el anterior, así que el conductor escribiría el nuevo en
+        // la pantalla de entrada y no podría acceder.
+        alert(
+          `⚠️ Has cambiado el email del conductor, pero su cuenta de acceso sigue en el anterior.\n\n` +
+          `Para aplicarlo, vuelve a abrir la ficha y escribe también una contraseña antes de guardar.`
+        );
+      }
     } catch (e) {
       const msg = e?.message || e?.details || String(e);
       console.error('[UpdateDriver] Error completo:', e);
@@ -3070,7 +3080,13 @@ function App() {
     }
 
     try {
-      const { data, error } = await supabase.from('clients').update({ name: updated.name, data: updated }).eq('id', clientId).select();
+      // La contraseña no se guarda en la ficha: viaja sólo a Supabase Auth, un
+      // poco más abajo. En su lugar queda constancia de que este cliente entra
+      // en el portal, que es lo único que la aplicación necesitaba saber.
+      const { password: _sinGuardar, ...datosDelCliente } = updated;
+      if (updatedData?.password) datosDelCliente.tieneAccesoPortal = true;
+
+      const { data, error } = await supabase.from('clients').update({ name: updated.name, data: datosDelCliente }).eq('id', clientId).select();
       if (error) throw error;
       if (data && data[0]) setClients(prev => prev.map(item => item.id === clientId ? { ...data[0].data, id: data[0].id } : item));
 
@@ -3154,7 +3170,11 @@ function App() {
         lastInteraction: new Date().toISOString().split('T')[0] 
     };
     try {
-      const { data, error } = await supabase.from('clients').insert([{ id: clientWithMeta.id, name: clientWithMeta.name, data: clientWithMeta }]).select();
+      // Igual que al editar: la contraseña va a Auth, no a la ficha.
+      const { password: _sinGuardar, ...datosDelCliente } = clientWithMeta;
+      if (clientWithMeta.password) datosDelCliente.tieneAccesoPortal = true;
+
+      const { data, error } = await supabase.from('clients').insert([{ id: clientWithMeta.id, name: clientWithMeta.name, data: datosDelCliente }]).select();
       if (error) throw error;
       if (data && data[0]) setClients(prev => [...prev, { ...data[0].data, id: data[0].id }]);
       else setClients(prev => [...prev, clientWithMeta]);
@@ -3709,7 +3729,13 @@ function App() {
       const upsertPromises = [];
 
       if (restoreOptions.drivers && data.drivers) {
-        upsertPromises.push(supabase.from('drivers').upsert(data.drivers.map(d => ({ id: d.id, username: d.username, password: d.password, data: d }))));
+        // Sin contraseña: si la copia de seguridad es antigua puede traerla en
+        // claro, y restaurarla volvería a meter en la tabla justo lo que se
+        // sacó en la fase 16. El acceso se da desde el panel.
+        upsertPromises.push(supabase.from('drivers').upsert(data.drivers.map(conductor => {
+          const { password: _sinRestaurar, ...d } = conductor;
+          return { id: d.id, username: d.username, data: d };
+        })));
       }
       if (restoreOptions.shipments && data.shipments) {
         upsertPromises.push(supabase.from('shipments').upsert(data.shipments.map(s => ({ id: s.id, status: s.status, assignedDriverId: s.assignedDriverId, data: s }))));
