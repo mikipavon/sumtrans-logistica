@@ -1159,6 +1159,38 @@ function App() {
     loadData()
 
     // ======= SUSCRIPCIÓN EN TIEMPO REAL (Supabase Realtime) =======
+    //
+    // ⚠️ El canal hay que FIRMARLO con la sesión del usuario.
+    // Un canal de Realtime no hereda la sesión del cliente REST: sale con la
+    // clave anónima salvo que se le pase el token a mano. Y como las tablas
+    // tienen RLS (la política de la fase 04 exige get_user_role() = 'admin'),
+    // con la clave anónima el canal se suscribe sin protestar... y no recibe
+    // NADA: para 'anon' no hay ninguna fila visible, así que no hay nada de qué
+    // avisar. Silencio absoluto, sin un solo error por consola.
+    //
+    // Eso es lo que estaba pasando: la oficina se enteraba de todo por los
+    // sondeos de respaldo (10 s los envíos, 60 s el resto), nunca por Realtime.
+    //
+    // Se firma al montar y en cada cambio de sesión, porque el token caduca a la
+    // hora: sin renovarlo, el canal se quedaría mudo otra vez a mitad de mañana.
+    const firmarElCanal = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          supabase.realtime.setAuth(session.access_token);
+          console.log('[Realtime] Canal firmado con la sesión del usuario');
+        } else {
+          console.warn('[Realtime] Sin sesión: el canal saldría como anónimo y no recibiría nada');
+        }
+      } catch (e) {
+        console.warn('[Realtime] No se ha podido firmar el canal:', e);
+      }
+    };
+    firmarElCanal();
+    const { data: escuchaDeSesion } = supabase.auth.onAuthStateChange((_evento, session) => {
+      if (session?.access_token) supabase.realtime.setAuth(session.access_token);
+    });
+
     let yaSuscritoUnaVez = false;
     const channel = supabase.channel('global-db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shipments' }, (payload) => {
@@ -1255,6 +1287,7 @@ function App() {
 
     // Limpieza de canales si se desmonta
     return () => {
+      escuchaDeSesion?.subscription?.unsubscribe();
       supabase.removeChannel(channel);
     }
   }, [isAuthenticated])
