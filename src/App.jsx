@@ -1422,7 +1422,49 @@ function App() {
       }
     };
 
-    const intervaloOficina = setInterval(vigilarLosEnvios, 10000);
+    // ── El ORDEN DE LA RUTA, en la misma vuelta ──
+    // El orden vive dentro del JSON de `drivers`, y ese JSON lleva encima los
+    // cobros del día: pedirlo entero cada 10 s serían cientos de kilobytes por
+    // conductor. Se pide SÓLO el orden (`data->routeOrder`, una lista de ids) y,
+    // si no cuadra con lo que hay en pantalla, se corrige ahí mismo. No hace
+    // falta bajar nada más: es el único campo que ha cambiado.
+    // Si la consulta estrecha fallara, hay que enterarse: en silencio, la
+    // oficina volvería a esperar al refresco de 60 s sin que nadie sepa por qué.
+    let avisadoDelFallo = false;
+    const vigilarElOrdenDeRuta = async () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!driversRef.current || driversRef.current.length === 0) return;
+
+      try {
+        const { data, error } = await supabase.from('drivers').select('id, orden:data->routeOrder');
+        if (error && !avisadoDelFallo) {
+          avisadoDelFallo = true;
+          console.warn('[Vigilancia oficina] No se puede leer el orden de ruta; queda el refresco de 60 s:', error.message);
+        }
+        if (error || !data) return;
+
+        const mismoOrden = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+        const enMemoria = new Map(driversRef.current.map(d => [String(d.id), d]));
+        const cambios = new Map();
+        data.forEach(fila => {
+          const local = enMemoria.get(String(fila.id));
+          if (local && !mismoOrden(local.routeOrder, fila.orden)) cambios.set(String(fila.id), fila.orden);
+        });
+        if (cambios.size === 0) return;
+
+        console.log(`[Vigilancia oficina] orden de ruta al día de ${cambios.size} conductor(es)`);
+        setDrivers(prev => prev.map(d => cambios.has(String(d.id))
+          ? { ...d, routeOrder: cambios.get(String(d.id)) }
+          : d));
+      } catch (e) {
+        // Silencioso — es una red de seguridad de fondo
+      }
+    };
+
+    const intervaloOficina = setInterval(() => {
+      vigilarLosEnvios();
+      vigilarElOrdenDeRuta();
+    }, 10000);
     return () => clearInterval(intervaloOficina);
   }, [userRole]);
 
