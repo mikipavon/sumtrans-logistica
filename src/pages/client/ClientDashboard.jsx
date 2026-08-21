@@ -11,6 +11,7 @@ import { getPackagesCount } from '../../utils/shipmentUtils';
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { avisarAlPadre, estamosEmbebidos } from '../../utils/ventanaPadre';
+import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 
 export default function ClientDashboard({
     client,
@@ -348,7 +349,7 @@ export default function ClientDashboard({
             porteType: porteType,
             hasCod: amountNum > 0,
             codAmount: amountNum,
-            codCommission: amountNum > 0 ? parseFloat(client.codFee || 3) : 0
+            codCommission: calcularComisionReembolso(client, amountNum)
         };
 
         onCreateShipment(shipmentData);

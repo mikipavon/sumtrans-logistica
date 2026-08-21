@@ -1736,7 +1736,15 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                             let availableArticles = [...(articles || [])];
                                             const client = resolveBillingClient(formData.clientName, formData._parentClientId);
                                             const destClient = resolveBillingClient(formData.destinationName, formData._destParentClientId);
-                                            const STD_IDS = ['1774442159060', '1774442159061', '1774442159062', '1774442159063']; // BLT_1-4
+                                            // BLT_1 a BLT_10. Es lo que ve un cliente que no tiene lista
+                                            // propia de artículos en su ficha (36 de 503). A los otros 467
+                                            // se les añadieron BLT_5..10 a la ficha en el SQL 17; esto es la
+                                            // otra mitad del mismo cambio, para que no dependa de la ficha.
+                                            const STD_IDS = [
+                                                '1774442159060', '1774442159061', '1774442159062', '1774442159063', // BLT_1-4
+                                                '1774442159095', '1774442159096', '1774442159097',                  // BLT_5-7
+                                                '1774442159098', '1774442159099', '1774442159100',                  // BLT_8-10
+                                            ];
 
                                             // Para clientes "Por Kilos" sin artículos personalizados,
                                             // mostramos todos los Bultos (BLT_) y Palets disponibles

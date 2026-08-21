@@ -1,7 +1,8 @@
-import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Mail, Image as ImageIcon, Upload, Trash2, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
+import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Mail, Image as ImageIcon, Upload, Trash2, Percent, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { uploadProof } from '../../utils/storage';
 import { getAgencies } from '../../utils/agencyOwnership';
+import { calcularComisionReembolso, COMISION_FIJA, COMISION_PORCENTAJE } from '../../utils/comisionReembolso';
 
 const TABS = [
     { id: 'general', label: 'General', icon: FileCode },
@@ -51,7 +52,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         phone: '', mobile: '', email: '', coordinates: '',
         opAddress: '', opCity: '', opZip: '',
         type: 'Remitente', billingType: 'Clientes Habituales', tariffType: 'General',
-        customRates: {}, customRatesB2: {}, allowedArticles: [], codFee: '', color: '#ef4444', 
+        customRates: {}, customRatesB2: {}, allowedArticles: [], codFee: '', codFeeMode: COMISION_FIJA, codFeePercent: '', codFeeMin: '', color: '#ef4444', 
         priority: 'urgent',
         username: '', password: '', accessEmail: '',
         // Factusol extra
@@ -623,14 +624,61 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                                 ))}
                                             </div>
                                         </Field>
-                                        <Field label="Precio Servicio Reembolso (COD)">
-                                            <div className="relative">
-                                                <Euro className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
-                                                <input type="number" step="0.01" className={`${inputCls} pl-9`} placeholder="0.00"
-                                                    value={formData.codFee || ''} onChange={e => set('codFee', e.target.value)} />
+                                        <div className="md:col-span-2">
+                                            <label className={labelCls}>Servicio de Reembolso (COD)</label>
+                                            <div className="flex flex-wrap gap-4 mt-1 mb-3">
+                                                {[{ id: COMISION_FIJA, label: 'Importe fijo' }, { id: COMISION_PORCENTAJE, label: '% del reembolso' }].map(m => (
+                                                    <label key={m.id} className="flex items-center gap-2 cursor-pointer">
+                                                        <input type="radio" name="codFeeMode" value={m.id}
+                                                            checked={(formData.codFeeMode || COMISION_FIJA) === m.id}
+                                                            onChange={e => set('codFeeMode', e.target.value)} />
+                                                        <span className={`text-sm font-medium ${(formData.codFeeMode || COMISION_FIJA) === m.id ? 'text-green-700' : 'text-slate-500'}`}>
+                                                            {m.label}
+                                                        </span>
+                                                    </label>
+                                                ))}
                                             </div>
-                                            <p className="text-[10px] text-slate-400 mt-1">Se suma al porte si el envío lleva reembolso.</p>
-                                        </Field>
+                                            {(formData.codFeeMode || COMISION_FIJA) === COMISION_PORCENTAJE ? (
+                                                <>
+                                                    <div className="grid grid-cols-2 gap-3">
+                                                        <div>
+                                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Porcentaje</label>
+                                                            <div className="relative">
+                                                                <Percent className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                                                                <input type="number" step="0.01" min="0" className={`${inputCls} pl-9`} placeholder="3.00"
+                                                                    value={formData.codFeePercent || ''} onChange={e => set('codFeePercent', e.target.value)} />
+                                                            </div>
+                                                        </div>
+                                                        <div>
+                                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Mínimo</label>
+                                                            <div className="relative">
+                                                                <Euro className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                                                                <input type="number" step="0.01" min="0" className={`${inputCls} pl-9`} placeholder="0.00"
+                                                                    value={formData.codFeeMin || ''} onChange={e => set('codFeeMin', e.target.value)} />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    {/* Lo que de verdad se le va a cobrar, para no tener que fiarse de la cuenta mental. */}
+                                                    <p className="text-[10px] text-slate-500 mt-2">
+                                                        {[50, 100, 500].map(ejemplo => (
+                                                            <span key={ejemplo} className="mr-3 whitespace-nowrap">
+                                                                Reembolso {ejemplo} € → <strong className="text-green-700">{calcularComisionReembolso(formData, ejemplo).toFixed(2)} €</strong>
+                                                            </span>
+                                                        ))}
+                                                    </p>
+                                                    <p className="text-[10px] text-slate-400 mt-1">Se cobra el porcentaje del reembolso, y nunca menos del mínimo.</p>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <div className="relative">
+                                                        <Euro className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                                                        <input type="number" step="0.01" min="0" className={`${inputCls} pl-9`} placeholder="0.00"
+                                                            value={formData.codFee || ''} onChange={e => set('codFee', e.target.value)} />
+                                                    </div>
+                                                    <p className="text-[10px] text-slate-400 mt-1">Se suma al porte si el envío lleva reembolso, dé lo que dé el reembolso.</p>
+                                                </>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
 

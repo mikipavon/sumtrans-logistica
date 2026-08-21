@@ -29,7 +29,6 @@ import { calculateDailyAccount, parseAmount, isToday, isCashClient } from '../..
 import { generateCashReportPDF } from '../../utils/cashReportPdf';
 import { printShipmentTicket } from '../../utils/printShipment';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
-import { uploadProof } from '../../utils/storage';
 import ScannerModal from '../../components/delivery/ScannerModal';
 import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
@@ -1547,7 +1546,7 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
                                         }
                                         try {
                                             const hash = await hashPIN(pinInput);
-                                            const { data: driverRes } = await supabase.from('drivers').select('*').eq('id', currentDriverId).single();
+                                            const { data: driverRes } = await supabase.from('drivers').select('data').eq('id', currentDriverId).single();
                                             const driverObj = driverRes || {};
                                             const driverDataObj = driverObj.data || {};
                                             const updatedData = { ...driverDataObj, signaturePinHash: hash };
@@ -1570,7 +1569,7 @@ const DriverTimeLogsHistory = ({ currentDriverId, driverName }) => {
                                         }
                                         try {
                                             const hash = await hashPIN(pinInput);
-                                            const { data: driverRes } = await supabase.from('drivers').select('*').eq('id', currentDriverId).single();
+                                            const { data: driverRes } = await supabase.from('drivers').select('data').eq('id', currentDriverId).single();
                                             const driverObj = driverRes || {};
                                             const driverDataObj = driverObj.data || {};
                                             
@@ -4187,7 +4186,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         //    anular o rectificar sin arrastrar al otro.
         const construirPruebaPara = async (sid) => {
             const finalProof = { ...proof };
-            const uploads = {}; // Holds base64 data to be uploaded when back online
+            const uploads = {}; // base64 que la cola sube a Storage en segundo plano
             if (!(status === 'Entregado' && proof?.type === 'multi')) return { finalProof, uploads };
 
             if (!isOnline) {
@@ -4211,21 +4210,24 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 delete finalProof.photoData2;
                 console.log('[Offline] Firma/fotos guardadas como base64 local para', sid);
             } else {
-                // ---- MODO ONLINE: subir a Supabase Storage normalmente ----
-                try {
-                    if (proof.signatureData) {
-                        finalProof.signatureUrl = await uploadProof(sid, proof.signatureData, 'signatures');
-                    }
-                    if (proof.photoData) {
-                        finalProof.photoUrl = await uploadProof(sid, proof.photoData, 'delivery_photos');
-                    }
-                    if (proof.photoData2) {
-                        finalProof.photoUrl2 = await uploadProof(sid, proof.photoData2, 'delivery_photos');
-                    }
-                    delete finalProof.signatureData;
-                    delete finalProof.photoData;
-                    delete finalProof.photoData2;
-                } catch (err) { console.error("Proof upload error:", err); }
+                // ---- MODO ONLINE ----
+                // Las imagenes NO se suben aqui. Subirlas antes de guardar el albaran
+                // dejaba la entrega sin registrar en la oficina hasta que terminaban las
+                // tres subidas SEGUIDAS: con mala cobertura son ~20 s en los que el
+                // conductor ya ha entregado y en administracion el envio sigue en reparto.
+                // Ahora el albaran se guarda al momento (que es lo que el Realtime lleva a
+                // la oficina) y las imagenes salen justo detras por la cola, que las sube
+                // y pega las URLs en el envio.
+                //
+                // Aqui NO se mete el base64 en finalProof a proposito (al contrario que en
+                // el modo offline): esto se escribe en la fila de Supabase, y meter la
+                // imagen entera dentro engordaria el envio para todo el que lo cargue.
+                if (proof.signatureData) uploads.signatureData = proof.signatureData;
+                if (proof.photoData) uploads.photoData = proof.photoData;
+                if (proof.photoData2) uploads.photoData2 = proof.photoData2;
+                delete finalProof.signatureData;
+                delete finalProof.photoData;
+                delete finalProof.photoData2;
             } // end isOnline else
 
             return { finalProof, uploads };
