@@ -22,6 +22,10 @@ import { Camera, X, RefreshCw, Check, Smartphone } from 'lucide-react';
  * `style={{ zoom }}` (la lupa A+/A-) y el zoom de CSS no ajusta las unidades de
  * pantalla, así que un modal medido en vh se descuadra. Fuera del zoom y midiendo
  * con `inset-0`, ocupa exactamente lo que mide la pantalla.
+ *
+ * Y va POR ENCIMA DE TODO. La cámara se abre desde dentro de otros modales: el del
+ * albarán está en la capa 9999 y el tutorial guiado llega a 10001, así que con una
+ * capa normal la cámara se abría por detrás y no se podía hacer la foto.
  */
 const CameraCaptureModal = ({
     isOpen,
@@ -153,7 +157,7 @@ const CameraCaptureModal = ({
     if (!isOpen) return null;
 
     return createPortal(
-        <div className="fixed inset-0 z-[120] bg-black flex flex-col">
+        <div className="fixed inset-0 z-[10050] bg-black flex flex-col">
             <div className="flex items-center justify-between p-4 bg-slate-900 text-white shrink-0">
                 <div className="flex items-center gap-2">
                     <Camera size={20} className="text-blue-400" />
