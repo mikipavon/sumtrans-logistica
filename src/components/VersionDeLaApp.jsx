@@ -6,11 +6,12 @@
  * con la versión anterior hasta que se cierra del todo. Hasta ahora no había forma de
  * saberlo: `app_version` salía de package.json y siempre valía lo mismo.
  *
- * Se enseña la FECHA en grande, que es lo que se puede preguntar por teléfono
- * ("¿qué pone ahí abajo?"), y el commit debajo para poder localizarlo en el
- * repositorio.
+ * El NÚMERO sube con cada cambio, así que dos versiones nunca se confunden y se ve de
+ * un vistazo cuál es más nueva. Debajo, la fecha (para preguntarla por teléfono) y el
+ * commit en pequeño (para localizarlo en el repositorio).
  */
 const VersionDeLaApp = () => {
+    const numero = typeof __APP_BUILD_NUMBER__ !== 'undefined' ? __APP_BUILD_NUMBER__ : null;
     const version = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev';
     const compilada = typeof __APP_BUILD_DATE__ !== 'undefined' ? __APP_BUILD_DATE__ : null;
 
@@ -26,7 +27,10 @@ const VersionDeLaApp = () => {
             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                 Versión de la app
             </p>
-            <p className="text-sm font-bold text-slate-500 mt-0.5">
+            <p className="text-2xl font-black text-slate-600 leading-none mt-1">
+                {numero != null ? numero : '—'}
+            </p>
+            <p className="text-xs font-bold text-slate-500 mt-1">
                 {fecha || 'sin fecha'}
             </p>
             <p className="text-[10px] text-slate-400 font-mono mt-0.5">{version}</p>
