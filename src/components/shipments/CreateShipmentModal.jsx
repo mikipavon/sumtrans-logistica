@@ -4,6 +4,7 @@ import Shipment from '../../models/Shipment';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
+import CameraCaptureModal from '../CameraCaptureModal';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { resolveOwnerAgencyId, getOwnerLabel } from '../../utils/agencyOwnership';
 import CityAutocomplete from '../CityAutocomplete';
@@ -191,30 +192,42 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
     const [porteMissing, setPorteMissing] = useState(false); // Se intentó guardar sin elegir Pagado/Debido
     const fileInputRef = useRef(null);
     const cameraOpenRef = useRef(false); // Track if the native camera is open
+    const [camaraAbierta, setCamaraAbierta] = useState(false); // Cámara DENTRO de la app
 
     // ── Persistencia Android: guardar/restaurar formulario ──
-    // Android mata la pestaña del navegador al abrir la cámara nativa.
-    // Guardamos el estado del formulario en sessionStorage para poder restaurarlo.
+    // Android mata la app entera cuando pasa a segundo plano (la cámara del móvil,
+    // una llamada, WhatsApp). En localStorage y NO en sessionStorage: sessionStorage
+    // se va con la pestaña, que es justo lo que Android se lleva por delante, así que
+    // el salvavidas no salvaba nada. La foto también entra en el borrador (ya viene
+    // encogida, unos 150 KB).
     const SESSION_KEY = 'sumtrans_shipment_draft';
 
-    const saveFormToSession = useCallback(() => {
+    const saveFormToSession = useCallback((foto = merchandisePhoto) => {
         try {
             const draft = {
                 formData,
                 selectedArticles,
                 weightKg,
                 keepOrigin,
+                merchandisePhoto: foto,
                 savedAt: Date.now()
             };
-            sessionStorage.setItem(SESSION_KEY, JSON.stringify(draft));
-        } catch { /* sessionStorage may be full or unavailable */ }
-    }, [formData, selectedArticles, weightKg, keepOrigin]);
+            localStorage.setItem(SESSION_KEY, JSON.stringify(draft));
+        } catch { /* la cuota puede estar llena: el borrador es un extra, no se insiste */ }
+    }, [formData, selectedArticles, weightKg, keepOrigin, merchandisePhoto]);
+
+    const borrarBorrador = useCallback(() => {
+        try {
+            localStorage.removeItem(SESSION_KEY);
+            sessionStorage.removeItem(SESSION_KEY); // Restos de la versión anterior
+        } catch { /* da igual */ }
+    }, []);
 
     // Restaurar borrador al abrir el modal (si Android mató la página)
     useEffect(() => {
         if (!isOpen) return;
         try {
-            const saved = sessionStorage.getItem(SESSION_KEY);
+            const saved = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
             if (saved) {
                 const draft = JSON.parse(saved);
                 // Solo restaurar si se guardó hace menos de 10 minutos
@@ -227,7 +240,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
                     }
                     if (draft.weightKg) setWeightKg(draft.weightKg);
                     if (draft.keepOrigin !== undefined) setKeepOrigin(draft.keepOrigin);
+                    if (draft.merchandisePhoto) setMerchandisePhoto(draft.merchandisePhoto);
                 }
+                localStorage.removeItem(SESSION_KEY);
                 sessionStorage.removeItem(SESSION_KEY);
             }
         } catch { /* ignore parse errors */ }
@@ -979,11 +994,25 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
         }
     };
 
-    // Guardar formulario antes de abrir la cámara (por si Android mata la página)
+    // La cámara de dentro de la app: no cede el turno a otra aplicación, así que
+    // Android no puede matarnos mientras el repartidor hace la foto.
     const handleOpenCamera = () => {
+        saveFormToSession();
+        setCamaraAbierta(true);
+    };
+
+    // Respaldo: la cámara del móvil. Sólo se llega aquí si la de dentro no arranca.
+    // Se guarda el borrador porque a partir de aquí la app puede morir.
+    const abrirCamaraDelMovil = () => {
         cameraOpenRef.current = true;
         saveFormToSession();
         fileInputRef.current?.click();
+    };
+
+    const alHacerFoto = (foto) => {
+        setMerchandisePhoto(foto);
+        setCamaraAbierta(false);
+        saveFormToSession(foto); // Que la foto no se pierda si cae la app después
     };
 
     const handleInitialSubmit = async (e) => {
@@ -1328,6 +1357,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
         // no contiene el que se acaba de guardar.
         await onSave({ ...finalData, _capturedGps: capturedGpsRef.current });
         setShowPaymentAlert(false);
+        // Guardado: el borrador ya no sirve. Si se quedara, el siguiente albarán
+        // saldría relleno con los datos de éste.
+        borrarBorrador();
 
         if (keepOrigin) {
             // A partir de aquí sí: cambiar el remitente rompe la cadena y
@@ -1925,6 +1957,14 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
                                     )}
                                 </div>
                                 
+                                <CameraCaptureModal
+                                    isOpen={camaraAbierta}
+                                    onClose={() => setCamaraAbierta(false)}
+                                    onCapture={alHacerFoto}
+                                    onFallback={abrirCamaraDelMovil}
+                                    titulo="Foto de la mercancía"
+                                />
+
                                 {/* El input va FUERA del botón: dentro, su click programático
                                     rebotaba al botón y volvía a disparar handleOpenCamera. */}
                                 <input
