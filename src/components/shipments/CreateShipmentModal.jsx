@@ -4,13 +4,17 @@ import Shipment from '../../models/Shipment';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
+import CameraCaptureModal from '../CameraCaptureModal';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { resolveOwnerAgencyId, getOwnerLabel } from '../../utils/agencyOwnership';
 import CityAutocomplete from '../CityAutocomplete';
 import { supabase } from '../../lib/supabase';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 
-export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, clients, allPoblaciones, prefillData, onAddClient, onUpdateClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
+// `drivers` ya no se lee aquí: el nombre de quien crea la ficha lo pone App.jsx,
+// que sabe caer en la sesión guardada si la lista aún no ha cargado. Los que
+// llaman lo siguen pasando y no molesta.
+export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, allPoblaciones, prefillData, onAddClient, onUpdateClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
     const [formData, setFormData] = useState({
         // Remitente (Sender)
         clientName: '',
@@ -188,30 +192,42 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
     const [porteMissing, setPorteMissing] = useState(false); // Se intentó guardar sin elegir Pagado/Debido
     const fileInputRef = useRef(null);
     const cameraOpenRef = useRef(false); // Track if the native camera is open
+    const [camaraAbierta, setCamaraAbierta] = useState(false); // Cámara DENTRO de la app
 
     // ── Persistencia Android: guardar/restaurar formulario ──
-    // Android mata la pestaña del navegador al abrir la cámara nativa.
-    // Guardamos el estado del formulario en sessionStorage para poder restaurarlo.
+    // Android mata la app entera cuando pasa a segundo plano (la cámara del móvil,
+    // una llamada, WhatsApp). En localStorage y NO en sessionStorage: sessionStorage
+    // se va con la pestaña, que es justo lo que Android se lleva por delante, así que
+    // el salvavidas no salvaba nada. La foto también entra en el borrador (ya viene
+    // encogida, unos 150 KB).
     const SESSION_KEY = 'sumtrans_shipment_draft';
 
-    const saveFormToSession = useCallback(() => {
+    const saveFormToSession = useCallback((foto = merchandisePhoto) => {
         try {
             const draft = {
                 formData,
                 selectedArticles,
                 weightKg,
                 keepOrigin,
+                merchandisePhoto: foto,
                 savedAt: Date.now()
             };
-            sessionStorage.setItem(SESSION_KEY, JSON.stringify(draft));
-        } catch { /* sessionStorage may be full or unavailable */ }
-    }, [formData, selectedArticles, weightKg, keepOrigin]);
+            localStorage.setItem(SESSION_KEY, JSON.stringify(draft));
+        } catch { /* la cuota puede estar llena: el borrador es un extra, no se insiste */ }
+    }, [formData, selectedArticles, weightKg, keepOrigin, merchandisePhoto]);
+
+    const borrarBorrador = useCallback(() => {
+        try {
+            localStorage.removeItem(SESSION_KEY);
+            sessionStorage.removeItem(SESSION_KEY); // Restos de la versión anterior
+        } catch { /* da igual */ }
+    }, []);
 
     // Restaurar borrador al abrir el modal (si Android mató la página)
     useEffect(() => {
         if (!isOpen) return;
         try {
-            const saved = sessionStorage.getItem(SESSION_KEY);
+            const saved = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
             if (saved) {
                 const draft = JSON.parse(saved);
                 // Solo restaurar si se guardó hace menos de 10 minutos
@@ -224,7 +240,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                     }
                     if (draft.weightKg) setWeightKg(draft.weightKg);
                     if (draft.keepOrigin !== undefined) setKeepOrigin(draft.keepOrigin);
+                    if (draft.merchandisePhoto) setMerchandisePhoto(draft.merchandisePhoto);
                 }
+                localStorage.removeItem(SESSION_KEY);
                 sessionStorage.removeItem(SESSION_KEY);
             }
         } catch { /* ignore parse errors */ }
@@ -953,31 +971,48 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         return;
     }, [formData.destinationCity, formData.destinationZip, tariffs, isOpen, selectedArticles]);
 
-    const handlePhotoChange = (e) => {
+    const handlePhotoChange = async (e) => {
         cameraOpenRef.current = false; // Camera returned
         const file = e.target.files[0];
+        e.target.value = ''; // Permite repetir la misma foto y suelta el fichero
         if (!file) return;
         if (file.size > 20 * 1024 * 1024) {
             alert("La imagen es demasiado grande. Máximo 20MB.");
             return;
         }
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-            try {
-                const compressed = await compressImage(reader.result, 1200, 1200, 0.75);
-                setMerchandisePhoto(compressed);
-            } catch {
-                setMerchandisePhoto(reader.result); // Fallback sin compresión
-            }
-        };
-        reader.readAsDataURL(file);
+        // El fichero va DIRECTO al compresor. Antes se convertía entero a base64 y se
+        // descomprimía a tamaño completo: con una foto de 48 MP Android se quedaba sin
+        // memoria y cerraba la app en mitad del albarán.
+        setIsUploadingPhoto(true);
+        try {
+            setMerchandisePhoto(await compressImage(file, 1200, 1200, 0.75));
+        } catch (error) {
+            console.error('[Foto mercancia] No se pudo comprimir la foto:', error);
+            alert("No se ha podido procesar la foto. Vuelve a intentarlo; el albarán no se ha perdido.");
+        } finally {
+            setIsUploadingPhoto(false);
+        }
     };
 
-    // Guardar formulario antes de abrir la cámara (por si Android mata la página)
+    // La cámara de dentro de la app: no cede el turno a otra aplicación, así que
+    // Android no puede matarnos mientras el repartidor hace la foto.
     const handleOpenCamera = () => {
+        saveFormToSession();
+        setCamaraAbierta(true);
+    };
+
+    // Respaldo: la cámara del móvil. Sólo se llega aquí si la de dentro no arranca.
+    // Se guarda el borrador porque a partir de aquí la app puede morir.
+    const abrirCamaraDelMovil = () => {
         cameraOpenRef.current = true;
         saveFormToSession();
         fileInputRef.current?.click();
+    };
+
+    const alHacerFoto = (foto) => {
+        setMerchandisePhoto(foto);
+        setCamaraAbierta(false);
+        saveFormToSession(foto); // Que la foto no se pierda si cae la app después
     };
 
     const handleInitialSubmit = async (e) => {
@@ -1246,42 +1281,27 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
         setSelectedDebtIds([]);
 
-        // ── Auto-crear clientes desconocidos ──
-        if (onAddClient && clients) {
-            // Si el porte lo paga una agencia (TSB/TXT/XPO), las fichas que nazcan de este
-            // albarán son suyas, no de la cartera de SUM. Las fichas que YA existen no
-            // cambian de dueño: un cliente propio sigue siendo propio aunque le traigan
-            // mercancía desde una agencia.
-            const ownerAgencyId = resolveOwnerAgencyId(finalData, clients);
-            const normalize = (s) => String(s || '').normalize("NFD").replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
-            const checkAndCreateClient = (name, type, address, zip, city, phone) => {
-                if (!name || String(name).trim() === '') return;
-                const nName = normalize(name);
-                const exists = clients.some(c => 
-                    normalize(c.name) === nName || 
-                    normalize(c.legalName) === nName || 
-                    (c.branches && c.branches.some(b => normalize(b.name) === nName))
-                );
-                if (!exists) {
-                    onAddClient({
-                        name: name.trim(),
-                        type: type,
-                        address: address || '',
-                        zip: zip || '',
-                        city: city || '',
-                        phone: phone || '',
-                        status: 'pending',
-                        billingType: 'Clientes Habituales',
-                        ownerAgencyId,
-                        createdFrom: 'Albarán Automático',
-                        createdBy: isDriver ? 'Conductor' : 'Administración',
-                        creatorId: currentDriverId || 'admin'
-                    });
-                }
-            };
-            checkAndCreateClient(finalData.client, 'Remitente', finalData.originAddress, finalData.originZip, finalData.originCity, finalData.originPhone);
-            checkAndCreateClient(finalData.destinationName, 'Destinatario', finalData.destinationAddress, finalData.destinationZip, finalData.destinationCity, finalData.destinationPhone);
-        }
+        // ── Aquí ya NO se da de alta a nadie ──
+        //
+        // Este bloque creaba al remitente y al destinatario, y era el origen de
+        // las fichas repetidas en Validar Clientes: un segundo después
+        // handleAddShipment volvía a crear al remitente por su cuenta y con
+        // otros datos, y en la pantalla salían las dos («Albarán Automático /
+        // Por: Conductor» sin GPS al lado de «Albarán / Por: Cond.Fulano» con
+        // GPS). Dos sitios creando lo mismo es una carrera que tarde o temprano
+        // se pierde; con uno solo no hay carrera que perder.
+        //
+        //  · El REMITENTE lo crea handleAddShipment (App.jsx). Es además el
+        //    único camino de las recogidas, del importador de Excel y del agente
+        //    de impresión, le llega el GPS en `originCoordinates` y resuelve el
+        //    nombre del conductor mejor que aquí: si la lista de conductores aún
+        //    no ha cargado, tira del nombre que guardó la sesión.
+        //  · El DESTINATARIO se crea en la ENTREGA, que es cuando el conductor
+        //    está en su puerta y se le coge el GPS. Antes nacía aquí, sin
+        //    coordenadas, para un paquete que a lo mejor ni llegaba a entregarse.
+        //
+        // Si hace falta la ficha del destinatario antes de entregar, está el
+        // botón de guardar que hay al lado del campo.
 
         // ── Auto-aprendizaje de coordenadas del REMITENTE ──
         // Solo guardamos las coords del remitente al crear el albarán (estamos en su ubicación).
@@ -1337,6 +1357,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
         // no contiene el que se acaba de guardar.
         await onSave({ ...finalData, _capturedGps: capturedGpsRef.current });
         setShowPaymentAlert(false);
+        // Guardado: el borrador ya no sirve. Si se quedara, el siguiente albarán
+        // saldría relleno con los datos de éste.
+        borrarBorrador();
 
         if (keepOrigin) {
             // A partir de aquí sí: cambiar el remitente rompe la cadena y
@@ -1934,24 +1957,38 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
                                     )}
                                 </div>
                                 
+                                <CameraCaptureModal
+                                    isOpen={camaraAbierta}
+                                    onClose={() => setCamaraAbierta(false)}
+                                    onCapture={alHacerFoto}
+                                    onFallback={abrirCamaraDelMovil}
+                                    titulo="Foto de la mercancía"
+                                />
+
+                                {/* El input va FUERA del botón: dentro, su click programático
+                                    rebotaba al botón y volvía a disparar handleOpenCamera. */}
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    capture="environment"
+                                    onChange={handlePhotoChange}
+                                    className="hidden"
+                                />
+
                                 {!merchandisePhoto ? (
                                     <button
                                         type="button"
                                         onClick={handleOpenCamera}
-                                        className="w-full py-4 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-100 hover:border-slate-300 transition-all flex flex-col items-center justify-center gap-1.5 active:scale-95 group"
+                                        disabled={isUploadingPhoto}
+                                        className="w-full py-4 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-100 hover:border-slate-300 transition-all flex flex-col items-center justify-center gap-1.5 active:scale-95 group disabled:opacity-60"
                                     >
                                         <div className="p-2 bg-white rounded-full shadow-sm group-hover:scale-110 transition-transform">
                                             <Camera size={20} className="text-blue-500" />
                                         </div>
-                                        <span className="text-[10px] font-bold uppercase tracking-wider">Capturar o Subir Foto</span>
-                                        <input 
-                                            ref={fileInputRef}
-                                            type="file" 
-                                            accept="image/*" 
-                                            capture="environment" 
-                                            onChange={handlePhotoChange} 
-                                            className="hidden" 
-                                        />
+                                        <span className="text-[10px] font-bold uppercase tracking-wider">
+                                            {isUploadingPhoto ? 'Procesando foto...' : 'Capturar o Subir Foto'}
+                                        </span>
                                     </button>
                                 ) : (
                                     <div className="relative rounded-xl overflow-hidden aspect-video bg-slate-900 flex items-center justify-center ring-2 ring-blue-500/20 mx-1">

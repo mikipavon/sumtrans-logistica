@@ -1,7 +1,9 @@
-import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Mail, Image as ImageIcon, Upload, Trash2, Percent, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck } from 'lucide-react';
+import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Mail, Image as ImageIcon, Upload, Trash2, Percent, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { uploadProof } from '../../utils/storage';
+import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 import { getAgencies } from '../../utils/agencyOwnership';
+import { esRegistroWeb } from '../../utils/altaClientes';
 import { calcularComisionReembolso, COMISION_FIJA, COMISION_PORCENTAJE } from '../../utils/comisionReembolso';
 
 const TABS = [
@@ -41,6 +43,55 @@ const SPAIN_PROVINCES = {
     '46': 'Valencia', '47': 'Valladolid', '48': 'Vizcaya', '49': 'Zamora', '50': 'Zaragoza',
     '51': 'Ceuta', '52': 'Melilla'
 };
+
+// ── Dónde ha ido a parar la ficha que estorba ──
+//
+// El listado de Clientes no las enseña todas: las que están pendientes de
+// validar no salen ahí, salen en Validar Clientes. Así que decir sólo "el Nº 73
+// ya está cogido" deja a quien lo lee buscando en el listado una ficha que
+// nunca va a aparecer. Aquí se dice en qué pantalla está.
+function dondeEstaLaFicha(ficha) {
+    if (!ficha) return 'Usa otro número.';
+    if (ficha.status === 'pending') {
+        // Las de prueba no salen NI en el listado ni en Validar —ese filtra por
+        // !isTest—, así que ocupan un número sin aparecer por ninguna parte. Si
+        // no se dice aquí, no hay forma humana de dar con ellas.
+        if (ficha.isTest) {
+            return 'Esa ficha es de PRUEBAS y está pendiente, así que no sale ni en Clientes ni en Validar Clientes: sólo ocupa el número. Usa otro número.';
+        }
+        // Validar Clientes abre en la pestaña "Creados al hacer albaranes", que
+        // esconde los registros de la web. Están ahí, pero en la otra pestaña.
+        if (esRegistroWeb(ficha)) {
+            return 'Esa ficha está pendiente y viene de un REGISTRO DE LA WEB: en "Validar Clientes" pulsa la pestaña "Todos" para verla, que la de inicio no la enseña.';
+        }
+        return 'Esa ficha está PENDIENTE DE VALIDAR, por eso no la ves en el listado de Clientes: búscala en "Validar Clientes", pestaña "Todos". Valídala, bórrala, o usa otro número.';
+    }
+    if (ficha.ownerAgencyId) {
+        return 'Esa ficha es de la base de datos de una agencia, así que sólo la ves con el filtro de esa agencia puesto. Usa otro número.';
+    }
+    return 'Usa otro número, o deja el campo en blanco y se pone solo.';
+}
+
+// Qué decirle a quien está delante cuando la ficha no se ha guardado. Cada
+// motivo lleva su salida: si el nombre choca, la ficha que estorba tiene nombre
+// y número para poder ir a buscarla.
+function explicarFalloDeAlta(resultado) {
+    const ficha = resultado?.ficha;
+    const comoSeLlama = ficha ? `"${ficha.name || 'sin nombre'}"${ficha.clientNumber ? ` (Nº ${ficha.clientNumber})` : ''}` : 'otra ficha';
+
+    switch (resultado?.motivo) {
+        case 'sin-nombre':
+            return 'La ficha necesita un nombre para poder guardarse.';
+        case 'duplicado':
+            return resultado.esSede
+                ? `Ese nombre ya es una SEDE de ${`"${resultado.fichaMadre?.name || ''}"`}. Edita esa sede, o ponle un nombre distinto a la ficha nueva.`
+                : `Ya existe la ficha ${comoSeLlama} con ese mismo nombre. Edítala, o ponle un nombre distinto a la nueva.`;
+        case 'duplicado-en-base':
+            return `Ya existe la ficha ${comoSeLlama} con ese nombre, creada desde otro equipo. Búscala en el listado y edítala.`;
+        default:
+            return `No se ha podido guardar la ficha: ${resultado?.error?.message || 'revisa la conexión e inténtalo otra vez'}.`;
+    }
+}
 
 export default function CreateClientModal({ isOpen, onClose, onSave, articles, tariffs, initialData, allPoblaciones, allClients }) {
     const [activeTab, setActiveTab] = useState('general');
@@ -86,6 +137,9 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
     const fileInputRef = useRef(null);
     const [isUploading, setIsUploading] = useState(false);
     const [clientNumberError, setClientNumberError] = useState('');
+    // Por qué no se ha podido guardar la ficha. Se enseña dentro del formulario,
+    // que sigue abierto con los datos puestos, en vez de cerrarlo sin más.
+    const [saveError, setSaveError] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: 'category', direction: 'asc' });
     const [searchArticle, setSearchArticle] = useState('');
 
@@ -189,20 +243,32 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         }
     };
 
-    const handleFileChange = (e) => {
+    const handleFileChange = async (e) => {
         const file = e.target.files[0];
+        e.target.value = '';
         if (!file) return;
-
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            set('agencyLogoUrl', reader.result); // Base64 temporal para previsualización
-        };
-        reader.readAsDataURL(file);
+        try {
+            // El logo se encoge pero se guarda en PNG: en JPEG perdería el fondo
+            // transparente. Los SVG van tal cual.
+            const dataUrl = esImagenComprimible(file)
+                ? await compressImage(file, 600, 300, 1, 'image/png')
+                : await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+            set('agencyLogoUrl', dataUrl); // Base64 temporal para previsualización
+        } catch (err) {
+            console.error('[Logo] No se pudo procesar la imagen:', err);
+            alert('No se ha podido procesar la imagen. Prueba con otra.');
+        }
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setClientNumberError('');
+        setSaveError('');
 
         // --- Validación de Nº Cliente duplicado ---
         const enteredNumber = String(formData.clientNumber || '').trim();
@@ -213,7 +279,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                 return String(c.clientNumber || '').trim() === enteredNumber;
             });
             if (duplicate) {
-                setClientNumberError(`Nº ${enteredNumber} ya asignado a "${duplicate.name || 'otro cliente'}". Usa otro número.`);
+                setClientNumberError(`Nº ${enteredNumber} ya asignado a "${duplicate.name || 'otro cliente'}". ${dondeEstaLaFicha(duplicate)}`);
                 setActiveTab('general');
                 return;
             }
@@ -237,7 +303,19 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                 }
             }
 
-            onSave(initialData ? { ...formData, agencyLogoUrl: finalLogoUrl, id: initialData.id } : { ...formData, agencyLogoUrl: finalLogoUrl });
+            // Se espera la respuesta: si la ficha no llega a guardarse, cerrar
+            // aquí borraría todo lo tecleado sin decir por qué. Es lo que
+            // pasaba cuando el nombre ya existía en otra ficha o en una sede:
+            // el alta se descartaba en silencio y el formulario se cerraba
+            // como si hubiera ido bien.
+            const resultado = await onSave(initialData ? { ...formData, agencyLogoUrl: finalLogoUrl, id: initialData.id } : { ...formData, agencyLogoUrl: finalLogoUrl });
+
+            if (resultado && resultado.ok === false) {
+                setSaveError(explicarFalloDeAlta(resultado));
+                setActiveTab('general');
+                return;
+            }
+
             onClose();
         } catch (error) {
             console.error("Error al guardar cliente con logo:", error);
@@ -1410,6 +1488,15 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
 
 
                     </div>
+
+                    {/* Por qué no se ha guardado. Encima del botón, donde se está
+                        mirando al pulsar, y con el formulario todavía lleno. */}
+                    {saveError && (
+                        <div className="px-6 py-3 border-t border-red-100 bg-red-50 shrink-0 flex items-start gap-2">
+                            <AlertTriangle size={16} className="text-red-500 shrink-0 mt-0.5" />
+                            <p className="text-xs text-red-700 font-semibold leading-relaxed">{saveError}</p>
+                        </div>
+                    )}
 
                     {/* Footer */}
                     <div className="px-6 py-4 border-t border-slate-100 flex justify-between items-center shrink-0 bg-slate-50 rounded-b-2xl">

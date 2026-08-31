@@ -8,6 +8,7 @@ import LabelPrintModal from '../../components/clients/LabelPrintModal';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { construirAgendaDestinatarios, filtrarAgendaDestinatarios } from '../../utils/agendaDestinatarios';
 import { getPackagesCount } from '../../utils/shipmentUtils';
+import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { avisarAlPadre, estamosEmbebidos } from '../../utils/ventanaPadre';
@@ -1073,16 +1074,25 @@ export default function ClientDashboard({
                                                 type="file" 
                                                 accept="image/*" 
                                                 className="hidden" 
-                                                onChange={(e) => {
+                                                onChange={async (e) => {
                                                     const file = e.target.files[0];
-                                                    if (file) {
-                                                        const reader = new FileReader();
-                                                        reader.onloadend = () => {
-                                                            if (onUpdateClient) {
-                                                                onUpdateClient(client.id, { customLogo: reader.result });
-                                                            }
-                                                        };
-                                                        reader.readAsDataURL(file);
+                                                    e.target.value = '';
+                                                    if (!file || !onUpdateClient) return;
+                                                    try {
+                                                        // El logo se encoge pero se guarda en PNG: si saliera en JPEG
+                                                        // perdería el fondo transparente. Los SVG van tal cual.
+                                                        const dataUrl = esImagenComprimible(file)
+                                                            ? await compressImage(file, 600, 300, 1, 'image/png')
+                                                            : await new Promise((resolve, reject) => {
+                                                                const reader = new FileReader();
+                                                                reader.onloadend = () => resolve(reader.result);
+                                                                reader.onerror = reject;
+                                                                reader.readAsDataURL(file);
+                                                            });
+                                                        onUpdateClient(client.id, { customLogo: dataUrl });
+                                                    } catch (err) {
+                                                        console.error('[Logo] No se pudo procesar la imagen:', err);
+                                                        alert('No se ha podido procesar la imagen. Prueba con otra.');
                                                     }
                                                 }}
                                             />

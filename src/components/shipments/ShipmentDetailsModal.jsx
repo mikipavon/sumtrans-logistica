@@ -6,6 +6,8 @@ import { printShipmentTicket } from '../../utils/printShipment';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { generateDeliveryPDF } from '../../utils/deliveryPdf';
 import { uploadProof } from '../../utils/storage';
+import { compressImage } from '../../utils/imageCompression';
+import CameraCaptureModal from '../CameraCaptureModal';
 import { getPackagesCount } from '../../utils/shipmentUtils';
 
 
@@ -22,6 +24,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
     const [isSavingInvoice, setIsSavingInvoice] = useState(false);
     const fileInputRef = useRef(null);
     const codReceiptInputRef = useRef(null);
+    // Cámara dentro de la app: 'mercancia' o 'justificante'. Salir a la del móvil
+    // deja que Android mate la app con la ficha a medio editar.
+    const [camaraAbierta, setCamaraAbierta] = useState(null);
     
     const [selectedArticles, setSelectedArticles] = useState([]);
     const [tempArticleId, setTempArticleId] = useState('');
@@ -293,18 +298,46 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         }
     };
 
-    const handlePhotoChange = (e) => {
+    const handlePhotoChange = async (e) => {
         const file = e.target.files[0];
+        e.target.value = ''; // Permite repetir la misma foto y suelta el fichero
         if (!file) return;
-        if (file.size > 5 * 1024 * 1024) {
-            alert("La imagen es demasiado grande. Máximo 5MB.");
+        if (file.size > 20 * 1024 * 1024) {
+            alert("La imagen es demasiado grande. Máximo 20MB.");
             return;
         }
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            setNewPhoto(reader.result);
-        };
-        reader.readAsDataURL(file);
+        // Aquí la foto se guardaba en crudo: además de pesar en la nube, descomprimir
+        // una foto de móvil entera dejaba sin memoria al navegador y cerraba la app.
+        try {
+            setNewPhoto(await compressImage(file, 1200, 1200, 0.75));
+        } catch (err) {
+            console.error('[Foto mercancia] No se pudo comprimir la foto:', err);
+            alert("No se ha podido procesar la foto. Vuelve a intentarlo.");
+        }
+    };
+
+    // El justificante se sube en cuanto se hace la foto, igual que por el input.
+    const subirJustificante = async (dataUrl) => {
+        setIsUploadingCodReceipt(true);
+        try {
+            const uploadedUrl = await uploadProof(shipment.id, dataUrl, 'delivery_photos');
+            if (uploadedUrl && onUpdate) {
+                await onUpdate(shipment.id, { codReceiptPhoto: uploadedUrl });
+                setCodReceiptPhoto(uploadedUrl);
+            }
+        } catch (err) {
+            console.error('Error uploading COD receipt:', err);
+            alert('Error al subir el justificante: ' + err.message);
+        } finally {
+            setIsUploadingCodReceipt(false);
+        }
+    };
+
+    const alHacerFoto = (foto) => {
+        const destino = camaraAbierta;
+        setCamaraAbierta(null);
+        if (destino === 'justificante') subirJustificante(foto);
+        else setNewPhoto(foto);
     };
 
     const handleChange = (field, value) => {
@@ -995,35 +1028,34 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             capture="environment"
                                             onChange={async (e) => {
                                                 const file = e.target.files[0];
+                                                e.target.value = ''; // Permite repetir la misma foto
                                                 if (!file) return;
-                                                if (file.size > 5 * 1024 * 1024) {
-                                                    alert('La imagen es demasiado grande. Máximo 5MB.');
+                                                if (file.size > 20 * 1024 * 1024) {
+                                                    alert('La imagen es demasiado grande. Máximo 20MB.');
                                                     return;
                                                 }
                                                 setIsUploadingCodReceipt(true);
-                                                const reader = new FileReader();
-                                                reader.onloadend = async () => {
-                                                    try {
-                                                        const dataUrl = reader.result;
-                                                        // Utilizamos el bucket 'delivery_photos' que ya existe y tiene permisos configurados
-                                                        const uploadedUrl = await uploadProof(shipment.id, dataUrl, 'delivery_photos');
-                                                        if (uploadedUrl && onUpdate) {
-                                                            await onUpdate(shipment.id, { codReceiptPhoto: uploadedUrl });
-                                                            setCodReceiptPhoto(uploadedUrl);
-                                                        }
-                                                    } catch (err) {
-                                                        console.error('Error uploading COD receipt:', err);
-                                                        alert('Error al subir el justificante: ' + err.message);
-                                                    } finally {
-                                                        setIsUploadingCodReceipt(false);
+                                                try {
+                                                    // Comprimir ANTES de subir: la foto entera en crudo dejaba
+                                                    // sin memoria al móvil y cerraba la app.
+                                                    const dataUrl = await compressImage(file, 1200, 1200, 0.8);
+                                                    // Utilizamos el bucket 'delivery_photos' que ya existe y tiene permisos configurados
+                                                    const uploadedUrl = await uploadProof(shipment.id, dataUrl, 'delivery_photos');
+                                                    if (uploadedUrl && onUpdate) {
+                                                        await onUpdate(shipment.id, { codReceiptPhoto: uploadedUrl });
+                                                        setCodReceiptPhoto(uploadedUrl);
                                                     }
-                                                };
-                                                reader.readAsDataURL(file);
+                                                } catch (err) {
+                                                    console.error('Error uploading COD receipt:', err);
+                                                    alert('Error al subir el justificante: ' + err.message);
+                                                } finally {
+                                                    setIsUploadingCodReceipt(false);
+                                                }
                                             }}
                                         />
                                         <button
                                             type="button"
-                                            onClick={() => codReceiptInputRef.current?.click()}
+                                            onClick={() => setCamaraAbierta('justificante')}
                                             disabled={isUploadingCodReceipt}
                                             className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
                                         >
@@ -1106,7 +1138,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                         />
                                         <button
                                             type="button"
-                                            onClick={() => fileInputRef.current?.click()}
+                                            onClick={() => setCamaraAbierta('mercancia')}
                                             className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
                                         >
                                             <ImageIcon size={12} /> {shipment.merchandisePhoto || newPhoto ? 'Cambiar' : 'Añadir'}
@@ -1261,15 +1293,29 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     <Calendar size={10} /> Fecha Entrega
                                 </span>
                                 <p className={`text-sm font-semibold ${shipment.status === 'Entregado' ? 'text-emerald-700' : 'text-slate-400 italic text-xs'}`}>
-                                    {formatDate(shipment.paidAt) || formatDate(shipment.updatedAt) || (shipment.status === 'Entregado' ? '—' : 'Aún no entregado')}
+                                    {/* Solo hay fecha de entrega cuando el albarán está entregado. Antes se
+                                        usaba paidAt, que en un Porte Pagado es la hora en que se COBRÓ al
+                                        crearlo: un albarán aún en reparto salía "entregado" a la misma hora
+                                        que se creó. Para los entregados de antes, que no guardaban
+                                        deliveredAt, se sigue tirando de paidAt/updatedAt. */}
+                                    {shipment.status === 'Entregado'
+                                        ? (formatDate(shipment.deliveredAt) || formatDate(shipment.paidAt) || formatDate(shipment.updatedAt) || '—')
+                                        : 'Aún no entregado'}
                                 </p>
                             </div>
                             <div className={`bg-white rounded-lg border p-3 ${shipment.status === 'Entregado' ? 'border-emerald-100' : 'border-slate-100'}`}>
                                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1 flex items-center gap-1">
-                                    <Truck size={10} /> Entregado por
+                                    {/* Mientras no esté entregado, el conductor que figura es al que se le ha
+                                        asignado el reparto, no el que lo ha entregado: se dice tal cual, que
+                                        poner "Entregado por" en un albarán que sigue en la furgoneta daba por
+                                        hecha una entrega que no ha pasado. */}
+                                    <Truck size={10} /> {shipment.status === 'Entregado' ? 'Entregado por' : 'Asignado a'}
                                 </span>
                                 <p className={`text-sm font-semibold ${shipment.status === 'Entregado' ? 'text-emerald-700' : 'text-slate-400 italic text-xs'}`}>
-                                    {resolveDriver(shipment.assignedDriverId) || <span className="text-slate-300 italic text-xs">Sin asignar</span>}
+                                    {resolveDriver(shipment.status === 'Entregado'
+                                        ? (shipment.deliveredById || shipment.assignedDriverId)
+                                        : shipment.assignedDriverId
+                                    ) || <span className="text-slate-300 italic text-xs">Sin asignar</span>}
                                 </p>
                             </div>
                         </div>
@@ -1698,6 +1744,16 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
                 )}
             </div>
+
+            <CameraCaptureModal
+                isOpen={camaraAbierta !== null}
+                onClose={() => setCamaraAbierta(null)}
+                onCapture={alHacerFoto}
+                onFallback={() => (camaraAbierta === 'justificante'
+                    ? codReceiptInputRef.current?.click()
+                    : fileInputRef.current?.click())}
+                titulo={camaraAbierta === 'justificante' ? 'Foto del justificante' : 'Foto de la mercancía'}
+            />
         </div>,
         document.body
     );

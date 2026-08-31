@@ -4,6 +4,8 @@ import BrandLogo from './BrandLogo';
 import MaintenanceIcon, { getMaintenanceConfig } from './MaintenanceIcon';
 import PdfPreview from './PdfPreview';
 import { uploadFileToBucket } from '../../utils/storage';
+import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
+import CameraCaptureModal from '../CameraCaptureModal';
 
 const BRANDS = [
     { key: 'fiat',       name: 'FIAT' },
@@ -96,6 +98,8 @@ function getExpiryStatus(expiryDate) {
 
 export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers, onUpdateVehicle }) {
     const [activeTab, setActiveTab] = useState('detalles');
+    // Foto de factura hecha dentro de la app (sin ceder el turno a la del móvil).
+    const [camaraFactura, setCamaraFactura] = useState(false);
     const [assignedDriverId, setAssignedDriverId] = useState('');
     const [documents, setDocuments] = useState([]);
     const [maintenanceLogs, setMaintenanceLogs] = useState([]);
@@ -354,14 +358,29 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
         setShowMaintForm(true);
     };
 
-    const handleInvoicePhotoUpload = (e) => {
+    const handleInvoicePhotoUpload = async (e) => {
         const file = e.target.files[0];
-        if (!file) return;
-        if (file.size > 4 * 1024 * 1024) { alert('Imagen demasiado grande. Límite: 4MB.'); return; }
-        const reader = new FileReader();
-        reader.onload = (ev) => setMInvoicePhoto(ev.target.result);
-        reader.readAsDataURL(file);
         e.target.value = '';
+        if (!file) return;
+        // Las fotos se encogen antes de guardarse en la ficha; los PDF van tal cual
+        // y siguen con el límite de siempre.
+        if (!esImagenComprimible(file) && file.size > 4 * 1024 * 1024) {
+            alert('Archivo demasiado grande. Límite: 4MB.'); return;
+        }
+        if (file.size > 20 * 1024 * 1024) { alert('Archivo demasiado grande. Límite: 20MB.'); return; }
+        try {
+            setMInvoicePhoto(esImagenComprimible(file)
+                ? await compressImage(file, 1600, 1600, 0.75)
+                : await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => resolve(ev.target.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                }));
+        } catch (err) {
+            console.error('[Factura taller] No se pudo procesar el archivo:', err);
+            alert('No se ha podido procesar el archivo. Vuelve a intentarlo.');
+        }
     };
 
     const handleDeleteMaint = (id) => {
@@ -724,10 +743,19 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                                 </div>
                                             </div>
                                         ) : (
-                                            <label className="cursor-pointer flex items-center justify-center gap-2 border-2 border-dashed border-slate-300 hover:border-blue-400 bg-white hover:bg-blue-50 text-slate-500 hover:text-blue-600 font-medium rounded-xl py-3 text-sm transition-all">
-                                                <Camera size={16} /> Seleccionar foto o PDF
-                                                <input type="file" className="hidden" accept="image/*,.pdf" ref={invoiceInputRef} onChange={handleInvoicePhotoUpload} />
-                                            </label>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCamaraFactura(true)}
+                                                    className="cursor-pointer flex items-center justify-center gap-2 border-2 border-dashed border-slate-300 hover:border-blue-400 bg-white hover:bg-blue-50 text-slate-500 hover:text-blue-600 font-medium rounded-xl py-3 text-sm transition-all"
+                                                >
+                                                    <Camera size={16} /> Hacer foto
+                                                </button>
+                                                <label className="cursor-pointer flex items-center justify-center gap-2 border-2 border-dashed border-slate-300 hover:border-blue-400 bg-white hover:bg-blue-50 text-slate-500 hover:text-blue-600 font-medium rounded-xl py-3 text-sm transition-all">
+                                                    <FileText size={16} /> Foto o PDF
+                                                    <input type="file" className="hidden" accept="image/*,.pdf" ref={invoiceInputRef} onChange={handleInvoicePhotoUpload} />
+                                                </label>
+                                            </div>
                                         )}
                                     </div>
 
@@ -995,6 +1023,15 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                 </div>
             );
         })()}
+
+        <CameraCaptureModal
+            isOpen={camaraFactura}
+            onClose={() => setCamaraFactura(false)}
+            onCapture={(foto) => { setMInvoicePhoto(foto); setCamaraFactura(false); }}
+            titulo="Factura del taller"
+            maxLado={1600}
+            calidad={0.75}
+        />
         </>
     );
 }

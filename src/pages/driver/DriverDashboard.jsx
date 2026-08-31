@@ -30,6 +30,7 @@ import { generateCashReportPDF } from '../../utils/cashReportPdf';
 import { printShipmentTicket } from '../../utils/printShipment';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import ScannerModal from '../../components/delivery/ScannerModal';
+import VersionDeLaApp from '../../components/VersionDeLaApp';
 import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
@@ -1955,9 +1956,16 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         } catch {}
     }, [isNoteModalOpen]);
 
-    const currentDriver = useMemo(() => 
+    const currentDriver = useMemo(() =>
         drivers?.find(d => String(d.id) === String(currentDriverId)),
     [drivers, currentDriverId]);
+
+    // Cómo se firma este conductor en las fichas que crea. Mismo formato que usa
+    // la oficina al hacer el albarán (quienEstaCreando, en App.jsx): antes aquí
+    // se guardaba el nombre pelado y en Validar Clientes salían las dos formas
+    // mezcladas, "Cond.FRANCISCO JAVIER PAVON MAIZ" en una tarjeta y "JUAN JESUS
+    // GUERRERO SANCHEZ" en la de al lado, como si fueran cosas distintas.
+    const firmaDelConductor = currentDriver?.name ? `Cond.${currentDriver.name} ` : 'Conductor';
 
     // 'idle' | 'requesting' | 'success' | 'denied' (permiso denegado) | 'timeout' (no dio tiempo a fijar posición)
     // | 'unavailable' (sin cobertura de satélites) | 'db_error' (GPS OK pero no se guardó) | 'error_unsecure'
@@ -2525,7 +2533,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             // Si el porte lo paga una agencia, el cliente es suyo (ver agencyOwnership.js)
                             ownerAgencyId: resolveOwnerAgencyId(shipment, clients),
                             createdFrom: 'WhatsApp Justificante',
-                            createdBy: currentDriver?.name || 'Driver',
+                            createdBy: firmaDelConductor,
+                            creatorId: currentDriverId,
                             isTest: isTestMode,
                         });
                     }
@@ -4300,7 +4309,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         // Si el porte lo paga una agencia, el destinatario es suyo (ver agencyOwnership.js)
                         ownerAgencyId: resolveOwnerAgencyId(currentShip, clients),
                         createdFrom: 'Reparto (Driver)',
-                        createdBy: currentDriver?.name || 'Driver',
+                        createdBy: firmaDelConductor,
+                        creatorId: currentDriverId,
                         // Quien ha recibido hoy, para sugerirlo en la próxima entrega.
                         ...(receptorAprendido || {}),
                     });
@@ -4386,6 +4396,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
                 if (targetStatus === 'Entregado' && original?.status !== 'Entregado') {
                     flags.deliveredAt = flags.updatedAt;
+                    // Quién la entrega de verdad, por el mismo motivo que porteCollectedById:
+                    // el que cubre la ruta de otro no puede salir como el conductor asignado.
+                    flags.deliveredById = currentDriverId;
                 }
 
                 console.log(`🔍 [BatchSync] SID: ${sid} | pf: ${pf} | cf: ${cf} | target: ${targetStatus} | flags:`, flags);
@@ -6132,6 +6145,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
                         {/* Mis Fichajes del Mes - Cumplimiento Legal RDL 8/2019 */}
                         <DriverTimeLogsHistory currentDriverId={currentDriverId} driverName={drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name} />
+
+                        {/* Qué versión lleva este móvil: es lo primero que hay que preguntar
+                            cuando un repartidor llama diciendo que algo falla. */}
+                        <VersionDeLaApp />
 
                         {/* Modal: Mis Nóminas */}
                         {showPayrollsModal && (

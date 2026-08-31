@@ -37,6 +37,7 @@ import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { fetchAllRows } from './utils/fetchAllRows';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
 import { emailDeAcceso, tieneAccesoAlPortal } from './utils/clientAccess';
+import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNombreCliente } from './utils/altaClientes';
 import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre } from './utils/ventanaPadre';
 import { getIrregularReasons } from './utils/shipmentUtils';
@@ -336,6 +337,13 @@ function App() {
   // Para saber qué aprendizaje había ANTES de un cambio del administrador y deducir
   // qué filas por conductor hay que reescribir.
   const routeKnowledgeRef = useRef(routeKnowledge);
+
+  // Un turno por cliente para las altas de ficha. `clientsRef` se refresca en un
+  // useEffect —o sea, un render más tarde—, así que dos altas del mismo cliente
+  // en el mismo tick (el remitente que crea CreateShipmentModal y el que crea
+  // handleAddShipment justo después) leían las dos la foto anterior y las dos
+  // insertaban. Ver crearColaDeAltas.
+  const altasEnVueloRef = useRef(crearColaDeAltas());
 
   useEffect(() => { shipmentsRef.current = shipments; }, [shipments]);
   useEffect(() => { driversRef.current = drivers; }, [drivers]);
@@ -938,6 +946,11 @@ function App() {
   useEffect(() => { refrescarEnviosActivosRef.current = refrescarEnviosActivos; }, [refrescarEnviosActivos]);
   const refrescarConductoresRef = useRef(refrescarConductores);
   useEffect(() => { refrescarConductoresRef.current = refrescarConductores; }, [refrescarConductores]);
+
+  // El alta del remitente, alcanzable desde la cola offline. Va por referencia
+  // por lo mismo que las de arriba: flushOfflineQueue se crea con dependencias
+  // vacías y se quedaría con la versión del primer render.
+  const altaDeRemitenteRef = useRef(null);
 
   // Supabase Data Loading (Carga OPTIMIZADA de la nube)
   useEffect(() => {
@@ -1621,6 +1634,13 @@ function App() {
           }]);
           if (!error) {
             await dequeue(op.id);
+            // El remitente, ahora que hay cobertura. Este albarán se hizo sin
+            // red, así que su ficha no llegó a crearse y el envío se quedaba
+            // apuntando a un cliente que no estaba en ninguna parte.
+            // handleAddClient no duplica: si ya existe, sólo le tapa los huecos.
+            if (op.shipmentData?.client) {
+              await altaDeRemitenteRef.current?.(op.shipmentData);
+            }
             console.log(`[OfflineQueue] Synced createShipment: ${op.shipmentId}`);
           } else {
             console.warn(`[OfflineQueue] Failed to sync createShipment ${op.shipmentId}:`, error);
@@ -2574,25 +2594,67 @@ function App() {
   }
 
 
-  const handleAddShipment = async (newShipment, originalPickupId = null) => {
-    // Determine creator
-    let creatorName = 'Administrador';
-    let creatorId = null;
-
+  // Quién está creando esto ahora mismo, con nombre y apellidos. Se usa tanto
+  // para el albarán como para las fichas que nacen de él: en Validar Clientes
+  // hay que poder preguntarle a alguien de dónde ha salido cada ficha, y un
+  // "Conductor" a secas no vale para eso.
+  const quienEstaCreando = () => {
     if (userRole === 'driver') {
       // Comparar con String() como en el resto de la app: el id del conductor llega
       // unas veces como número (tabla drivers) y otras como texto (perfil de Supabase
       // o sesión guardada). Con `===` la búsqueda fallaba y el albarán se guardaba
       // como "Conductor" a secas, sin saber quién lo había hecho.
-      const driver = drivers.find(d => String(d.id) === String(currentDriverId));
+      const driver = driversRef.current.find(d => String(d.id) === String(currentDriverId));
       const nombre = driver?.name || cachedDriverName;
-      creatorName = nombre ? `Cond.${nombre} ` : 'Conductor';
-      creatorId = currentDriverId;
-    } else if (userRole === 'client') {
-      const client = clients.find(c => c.id === currentClientId);
-      creatorName = client ? `ClienteWeb: ${client.name}` : 'Portal Cliente';
-      creatorId = currentClientId;
+      return { creatorName: nombre ? `Cond.${nombre} ` : 'Conductor', creatorId: currentDriverId };
     }
+    if (userRole === 'client') {
+      const client = clientsRef.current.find(c => c.id === currentClientId);
+      return {
+        creatorName: client ? `ClienteWeb: ${client.name}` : 'Portal Cliente',
+        creatorId: currentClientId,
+      };
+    }
+    return { creatorName: 'Administrador', creatorId: null };
+  };
+
+  // La ficha del remitente tal como sale de un albarán. Vive aparte porque la
+  // usan dos momentos distintos: el albarán que se guarda al vuelo y el que se
+  // quedó en la cola sin cobertura y se sincroniza más tarde. Cuando esto estaba
+  // escrito a mano dentro de handleAddShipment, el albarán encolado sincronizaba
+  // el envío pero no daba de alta al remitente: el envío quedaba en Supabase
+  // apuntando a un cliente que no existía en ninguna parte.
+  const fichaDeRemitente = (shipment, creatorName, creatorId, isTest = false) => ({
+    id: Date.now(),
+    name: shipment.client,
+    legalName: '',
+    address: shipment.originAddress || shipment.origin || '',
+    city: shipment.originCity || '',
+    zip: shipment.originZip || '',
+    phone: shipment.originPhone || '',
+    coordinates: shipment.originCoordinates || '',
+    type: 'Remitente',
+    billingType: 'Clientes Habituales',
+    status: 'pending',
+    // Si el porte lo paga una agencia, el remitente también es gente suya
+    ownerAgencyId: resolveOwnerAgencyId(shipment, clientsRef.current),
+    createdFrom: shipment.type === 'Recogida' ? 'Recogida' : 'Albarán',
+    createdBy: creatorName,
+    lastInteraction: new Date().toISOString().split('T')[0],
+    creatorId: creatorId,
+    isTest,
+  });
+
+  // Lo que ejecuta la cola offline al sincronizar un albarán que se hizo sin
+  // red: crear al remitente, que en ese momento no se pudo. El creador sale del
+  // propio albarán, que lo guardó cuando aún se sabía quién estaba delante.
+  altaDeRemitenteRef.current = (shipmentData) => handleAddClient(
+    fichaDeRemitente(shipmentData, shipmentData.createdBy, shipmentData.createdById, !!shipmentData.isTest)
+  );
+
+  const handleAddShipment = async (newShipment, originalPickupId = null) => {
+    // Determine creator
+    const { creatorName, creatorId } = quienEstaCreando();
 
     // Usar el modelo para normalizar los datos
     const shipmentModel = new Shipment({
@@ -2722,27 +2784,7 @@ function App() {
       }
 
       if (!targetClient && newShipment.client) {
-        const newClientData = {
-          id: Date.now(),
-          name: newShipment.client,
-          legalName: '',
-          address: newShipment.originAddress || newShipment.origin || '',
-          city: newShipment.originCity || '',
-          zip: newShipment.originZip || '',
-          phone: newShipment.originPhone || '',
-          coordinates: newShipment.originCoordinates || '',
-          type: 'Remitente',
-          billingType: 'Clientes Habituales',
-          status: 'pending',
-          // Si el porte lo paga una agencia, el remitente también es gente suya
-          ownerAgencyId: resolveOwnerAgencyId(newShipment, clientsRef.current),
-          createdFrom: newShipment.type === 'Recogida' ? 'Recogida' : 'Albarán',
-          createdBy: creatorName,
-          lastInteraction: new Date().toISOString().split('T')[0],
-          creatorId: creatorId,
-          isTest: isActuallyTest
-        };
-        await handleAddClient(newClientData);
+        await handleAddClient(fichaDeRemitente(newShipment, creatorName, creatorId, isActuallyTest));
       }
 
       // Check sender as well if it already exists but has no coordinates
@@ -3170,7 +3212,16 @@ function App() {
               }
           }
         } else {
-          // Create new client with coordinates
+          // ── Aquí nace la ficha del destinatario, y sólo aquí ──
+          // El albarán ya no la crea (ver CreateShipmentModal): allí no sabemos
+          // dónde vive esta gente y la ficha salía en Validar sin coordenadas,
+          // para un paquete que a lo mejor ni llegaba a entregarse. Ahora la
+          // ficha se crea en la entrega, con el GPS del sitio en la mano.
+          //
+          // Esto corre en TODAS las entregas, también las que cierra la oficina
+          // desde el panel, así que ningún destinatario se queda sin ficha; lo
+          // que puede faltarle es el GPS, que sólo trae el móvil del conductor.
+          const quien = quienEstaCreando();
           const newClientData = {
             id: Date.now(),
             name: shipment.destinationName,
@@ -3186,6 +3237,10 @@ function App() {
             // Si el porte lo paga una agencia, el destinatario es suyo (ver agencyOwnership.js)
             ownerAgencyId: resolveOwnerAgencyId(shipment, clientsRef.current),
             createdFrom: 'Entrega',
+            // Sin esto la ficha salía en Validar sin ninguna línea "Por:", y no
+            // había a quién preguntarle de dónde había salido.
+            createdBy: quien.creatorName,
+            creatorId: quien.creatorId,
             lastInteraction: new Date().toISOString().split('T')[0],
             isTest: false
           };
@@ -3233,6 +3288,10 @@ function App() {
     // Optimistic update — este handler se usa mucho como efecto secundario silencioso
     // (aprendizaje de GPS/receptor en la entrega), así que nunca debe bloquear al
     // conductor con un alert ni perder el dato si falla la red.
+    // El ref se toca a la vez que el estado: dos retoques seguidos a la misma
+    // ficha (el GPS del remitente y el teléfono del destinatario, en el mismo
+    // albarán) leían los dos la versión de antes y el segundo pisaba al primero.
+    clientsRef.current = (clientsRef.current || []).map(item => item.id === clientId ? updated : item);
     setClients(prev => prev.map(item => item.id === clientId ? updated : item));
 
     const enqueueClientOp = async () => {
@@ -3314,49 +3373,145 @@ function App() {
     return `${prefix}${next}`;
   };
 
-  const handleAddClient = async (newClient) => {
-    // ── Anti-duplicados ──
-    // Si ya existe un cliente con el mismo nombre (activo o pendiente de validar),
-    // no crear otro. Evita duplicados cuando el conductor entrega varias veces
-    // al mismo destinatario desconocido.
-    const normalize = (s) => String(s || '').toLowerCase().trim().replace(/\s+/g, ' ');
-    const alreadyExists = (clientsRef.current || []).some(
-      c => normalize(c.name) === normalize(newClient.name)
-    );
-    if (alreadyExists) {
-      console.log(`[AddClient] Omitido duplicado: "${newClient.name}" ya existe en la BD.`);
-      return;
-    }
+  // ── Una sola ficha por cliente ──
+  //
+  // Todas las altas automáticas pasan por aquí: el albarán, la entrega, el
+  // reparto y el justificante de WhatsApp. Cuando el mismo cliente llega dos
+  // veces no se descarta la segunda a secas —así se perdía el GPS que traía—,
+  // sino que se aprovecha para rellenarle a la primera los huecos que tuviera.
+  // `manual` = lo está creando una persona desde el botón "Nuevo Cliente", no un
+  // albarán. Cambia dos cosas: si el nombre ya existe NO se le tapan los huecos a
+  // la ficha de al lado —quien escribe a mano decide, no lo decide el programa— y
+  // el motivo se devuelve para poder enseñarlo. Un alta a mano que no se guarda
+  // sin decir nada es lo peor que puede pasar aquí: se pierde todo lo tecleado.
+  const handleAddClient = async (newClient, { manual = false } = {}) => {
+    const clave = normalizarNombreCliente(newClient?.name);
+    if (!clave) return { ok: false, motivo: 'sin-nombre' };
 
-    const prefix = getClientPrefix(newClient.billingType);
-    const nextNum = getNextClientNumber(clientsRef.current, prefix);
-    const clientWithMeta = { 
-        ...newClient, 
-        id: newClient.id || Date.now(), 
-        clientNumber: newClient.clientNumber || nextNum,
-        lastInteraction: new Date().toISOString().split('T')[0] 
-    };
-    try {
-      // Igual que al editar: la contraseña va a Auth, no a la ficha.
-      const { password: _sinGuardar, ...datosDelCliente } = clientWithMeta;
-      if (clientWithMeta.password) datosDelCliente.tieneAccesoPortal = true;
+    // Por turnos, uno por nombre (ver crearColaDeAltas). Quien llama no espera a
+    // que esto termine —el albarán de un conductor no puede quedarse colgado
+    // mientras Supabase contesta con mala cobertura—, así que sin turnos las dos
+    // altas del mismo remitente arrancarían a la vez, mirarían las dos la lista
+    // de antes y crearían las dos su ficha.
+    return altasEnVueloRef.current.encolar(clave, async () => {
+      try {
+        // Se busca por nombre, razón social y sedes, y sin acentos: la comparación
+        // anterior sólo miraba `name` en crudo, así que "Rafa Martínez" y "Rafa
+        // Martinez" acababan siendo dos fichas pendientes de la misma empresa.
+        const yaExiste = buscarFichaPorNombre(newClient.name, clientsRef.current || []);
+        if (yaExiste) {
+          const choque = {
+            ok: false,
+            motivo: 'duplicado',
+            ficha: yaExiste.branch || yaExiste.client,
+            fichaMadre: yaExiste.client,
+            esSede: !!yaExiste.branch,
+          };
+          // A mano no se toca la ficha de al lado: se avisa y que decida quien
+          // está delante (editar la que hay, o cambiarle el nombre a la nueva).
+          if (manual) {
+            console.log(`[AddClient] Alta manual detenida: "${newClient.name}" ya existe como ${yaExiste.branch ? 'sede' : 'ficha'}.`);
+            return choque;
+          }
+          const destino = yaExiste.branch || yaExiste.client;
+          const huecos = huecosQueRellena(destino, newClient);
+          if (Object.keys(huecos).length > 0) {
+            console.log(`[AddClient] "${newClient.name}" ya existe — se le completa: ${Object.keys(huecos).join(', ')}`);
+            await handleUpdateClient(yaExiste.client.id, huecos, yaExiste.branch ? yaExiste.branch.id : null);
+          } else {
+            console.log(`[AddClient] Omitido duplicado: "${newClient.name}" ya existe en la BD.`);
+          }
+          return choque;
+        }
 
-      const { data, error } = await supabase.from('clients').insert([{ id: clientWithMeta.id, name: clientWithMeta.name, data: datosDelCliente }]).select();
-      if (error) throw error;
-      if (data && data[0]) setClients(prev => [...prev, { ...data[0].data, id: data[0].id }]);
-      else setClients(prev => [...prev, clientWithMeta]);
+        // ── Segundo cerrojo: preguntárselo a la base de datos ──
+        // Lo de arriba mira la lista que tiene cargada ESTE móvil, y esa lista
+        // puede ir por detrás: dos conductores recogiendo del mismo cliente
+        // nuevo la misma mañana no se ven el uno al otro, y ninguna cola local
+        // los va a poner de acuerdo. Es una consulta de más por cada cliente que
+        // parece nuevo —casi nunca—, y no retrasa el albarán, que ya va por su
+        // cuenta. Si falla (sin cobertura, o RLS) se sigue adelante: esto es una
+        // red de seguridad, no un permiso.
+        try {
+          // Sin cobertura no se pregunta: la consulta tardaría en fallar y el
+          // insert de después va a fallar igual.
+          if (!navigator.onLine) throw new Error('sin conexión');
+          const { data: enLaBase } = await supabase
+            .from('clients')
+            .select('id, data')
+            .ilike('name', String(newClient.name).trim());
+          const gemela = (enLaBase || [])
+            .map(f => ({ ...f.data, id: f.id }))
+            .find(f => normalizarNombreCliente(f.name) === clave);
+          if (gemela) {
+            console.log(`[AddClient] "${newClient.name}" ya estaba en la base — lo creó otro. No se duplica.`);
+            // Entra en la lista local, que no la tenía, y se le tapan los huecos
+            // con lo que trae esta alta.
+            if (!clientsRef.current.some(c => String(c.id) === String(gemela.id))) {
+              clientsRef.current = [...clientsRef.current, gemela];
+              setClients(prev => prev.some(c => String(c.id) === String(gemela.id)) ? prev : [...prev, gemela]);
+            }
+            if (manual) return { ok: false, motivo: 'duplicado-en-base', ficha: gemela, fichaMadre: gemela, esSede: false };
+            const huecos = huecosQueRellena(gemela, newClient);
+            if (Object.keys(huecos).length > 0) await handleUpdateClient(gemela.id, huecos);
+            return { ok: false, motivo: 'duplicado-en-base', ficha: gemela, fichaMadre: gemela, esSede: false };
+          }
+        } catch (e) {
+          console.warn('[AddClient] No se pudo comprobar en la base si ya existía:', e);
+        }
 
-      // Ficha guardada con contraseña = alguien le está dando acceso al portal,
-      // así que necesita cuenta de Auth o entrará y lo verá todo vacío.
-      if (clientWithMeta.password) {
-        await syncClientAuthAccount({
-          email: emailDeAcceso(clientWithMeta),
-          password: clientWithMeta.password,
-          clientId: clientWithMeta.id,
-          displayName: clientWithMeta.name,
-        });
+        const prefix = getClientPrefix(newClient.billingType);
+        const nextNum = getNextClientNumber(clientsRef.current, prefix);
+        const clientWithMeta = {
+          ...newClient,
+          id: newClient.id || Date.now(),
+          clientNumber: newClient.clientNumber || nextNum,
+          lastInteraction: new Date().toISOString().split('T')[0]
+        };
+
+        // La oficina no se valida a sí misma: si la ficha la está escribiendo
+        // una persona desde "Nuevo Cliente", ya está revisada por definición y
+        // entra directa al listado. Validar Clientes es para lo que llega solo
+        // —albaranes, entregas, registros de la web—, que es lo que hay que
+        // mirar antes de darlo por bueno.
+        if (manual && !newClient.status) clientWithMeta.status = 'approved';
+
+        // Igual que al editar: la contraseña va a Auth, no a la ficha.
+        const { password: _sinGuardar, ...datosDelCliente } = clientWithMeta;
+        if (clientWithMeta.password) datosDelCliente.tieneAccesoPortal = true;
+
+        const { data, error } = await supabase.from('clients').insert([{ id: clientWithMeta.id, name: clientWithMeta.name, data: datosDelCliente }]).select();
+        if (error) throw error;
+
+        const guardada = (data && data[0]) ? { ...data[0].data, id: data[0].id } : clientWithMeta;
+        // El ref, al día en el acto: el useEffect que lo sincroniza no corre hasta
+        // el render siguiente, y para entonces el alta del destinatario —o la del
+        // mismo remitente desde handleAddShipment— ya ha mirado y no la ha visto.
+        clientsRef.current = [...(clientsRef.current || []), guardada];
+        setClients(prev => [...prev, guardada]);
+
+        // Ficha guardada con contraseña = alguien le está dando acceso al portal,
+        // así que necesita cuenta de Auth o entrará y lo verá todo vacío.
+        if (clientWithMeta.password) {
+          await syncClientAuthAccount({
+            email: emailDeAcceso(clientWithMeta),
+            password: clientWithMeta.password,
+            clientId: clientWithMeta.id,
+            displayName: clientWithMeta.name,
+          });
+        }
+
+        return { ok: true, cliente: guardada };
+      } catch (e) {
+        // Se avisa aquí dentro y no se relanza: el que espera turno detrás sólo
+        // necesita saber que ya puede volver a mirar, no si a éste le fue bien.
+        // A mano sí se devuelve el motivo, para no cerrar el formulario y que no
+        // haya que teclear la ficha entera otra vez.
+        console.error(e);
+        if (!manual) alert('Error al guardar cliente');
+        return { ok: false, motivo: 'error', error: e };
       }
-    } catch (e) { alert('Error al guardar cliente'); console.error(e); }
+    });
   }
 
   const handleDeleteClient = async (clientId) => {

@@ -128,15 +128,22 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
     };
 
     // Save Handler: Distinguishes between Create and Update based on presence of ID
-    const handleSave = (clientData) => {
+    // Devuelve el resultado del alta para que el modal sepa si puede cerrarse: si
+    // la ficha no llega a guardarse (nombre repetido, o falla la red) el
+    // formulario tiene que quedarse abierto con todo lo tecleado dentro.
+    const handleSave = async (clientData) => {
         if (clientData.id) {
             // Update existing
-            onUpdateClient(clientData.id, clientData);
-        } else {
-            // Create new
-            onAddClient(clientData);
+            await onUpdateClient(clientData.id, clientData);
+            setEditingClient(null);
+            return { ok: true };
         }
+
+        // Create new
+        const resultado = await onAddClient(clientData, { manual: true });
+        if (resultado && resultado.ok === false) return resultado;
         setEditingClient(null); // Clear editing state
+        return { ok: true };
     };
 
     const handleModalClose = () => {
@@ -547,10 +554,17 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
                                             </div>
                                         )}
                                         {client.coordinates && (
-                                            <div className="ml-5 text-blue-400 text-[10px] mt-0.5 font-mono flex items-center gap-1">
+                                            <a
+                                                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(client.coordinates).trim())}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                onClick={(e) => e.stopPropagation()}
+                                                title="Ver ubicación en Google Maps"
+                                                className="ml-5 text-blue-400 hover:text-blue-600 hover:underline text-[10px] mt-0.5 font-mono flex items-center gap-1 w-fit"
+                                            >
                                                 <MapPin size={8} />
                                                 {client.coordinates}
-                                            </div>
+                                            </a>
                                         )}
                                     </div>
                                 </td>
@@ -675,10 +689,17 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
                                                     </div>
                                                 )}
                                                 {branch.coordinates && (
-                                                    <div className="ml-5 text-blue-400 text-[10px] mt-0.5 font-mono flex items-center gap-1">
+                                                    <a
+                                                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(branch.coordinates).trim())}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        title="Ver ubicación en Google Maps"
+                                                        className="ml-5 text-blue-400 hover:text-blue-600 hover:underline text-[10px] mt-0.5 font-mono flex items-center gap-1 w-fit"
+                                                    >
                                                         <MapPin size={8} />
                                                         {branch.coordinates}
-                                                    </div>
+                                                    </a>
                                                 )}
                                             </div>
                                         </td>

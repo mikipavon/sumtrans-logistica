@@ -5,6 +5,7 @@ import SignatureCanvas from 'react-signature-canvas';
 import Shipment from '../../models/Shipment';
 import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
+import CameraCaptureModal from '../CameraCaptureModal';
 
 // Reintentos de localización GPS al abrir el modal: en sitios con mala señal
 // (naves, sótanos) un solo intento sin timeout se queda esperando para siempre.
@@ -19,6 +20,11 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
     const sigCanvas = useRef({});
     const [photoPreview, setPhotoPreview] = useState(null);
     const [photoPreview2, setPhotoPreview2] = useState(null);
+    // Cámara DENTRO de la app: 1 = foto de agencia/sello, 2 = documento firmado.
+    // Salir a la cámara del móvil deja que Android mate la app y se pierde la entrega.
+    const [camaraFoto, setCamaraFoto] = useState(null);
+    const fotoRespaldoRef = useRef(1); // A qué foto vuelve el respaldo del móvil
+    const inputRespaldoRef = useRef(null);
 
     const [receiverName, setReceiverName] = useState('');
     const [receiverId, setReceiverId] = useState('');
@@ -362,29 +368,35 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
     const handlePhotoUpload = async (e, photoIndex = 1) => {
         const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = async () => {
-                const base64 = reader.result;
-                try {
-                    // Compress immediately to save memory and ensure successful upload later
-                    const compressed = await compressImage(base64);
-                    if (photoIndex === 1) {
-                        setPhotoPreview(compressed);
-                    } else {
-                        setPhotoPreview2(compressed);
-                    }
-                } catch (err) {
-                    console.error("Compression error:", err);
-                    if (photoIndex === 1) {
-                        setPhotoPreview(base64); // Fallback to original if compression fails
-                    } else {
-                        setPhotoPreview2(base64);
-                    }
-                }
-            };
-            reader.readAsDataURL(file);
+        e.target.value = ''; // Permite repetir la misma foto y suelta el fichero
+        if (!file) return;
+        // El fichero va DIRECTO al compresor: convertirlo antes a base64 y
+        // descomprimirlo entero dejaba sin memoria al móvil y Android cerraba la app.
+        try {
+            const compressed = await compressImage(file);
+            if (photoIndex === 1) {
+                setPhotoPreview(compressed);
+            } else {
+                setPhotoPreview2(compressed);
+            }
+        } catch (err) {
+            console.error("Compression error:", err);
+            alert("No se ha podido procesar la foto. Vuelve a intentarlo; la entrega no se ha perdido.");
         }
+    };
+
+    const abrirCamara = (indice) => setCamaraFoto(indice);
+
+    const alHacerFoto = (foto) => {
+        if (camaraFoto === 2) setPhotoPreview2(foto);
+        else setPhotoPreview(foto);
+        setCamaraFoto(null);
+    };
+
+    // Sólo si la cámara de dentro no arranca: se sale a la del móvil, con su riesgo.
+    const usarCamaraDelMovil = () => {
+        fotoRespaldoRef.current = camaraFoto || 1;
+        inputRespaldoRef.current?.click();
     };
 
     const handleClearSignature = () => {
@@ -986,13 +998,12 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                                 {photoPreview ? (
                                                     <img src={photoPreview} alt="Agencia Proof" className="w-full h-full object-contain" />
                                                 ) : (
-                                                    <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-2 text-center">
+                                                    <button type="button" onClick={() => abrirCamara(1)} className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-2 text-center">
                                                         <div className="p-2 bg-white rounded-full shadow-sm mb-1 text-blue-500">
                                                             <Camera size={20} />
                                                         </div>
                                                         <span className="text-[10px] text-slate-500 font-black uppercase tracking-tight">Foto Agencia</span>
-                                                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handlePhotoUpload(e, 1)} />
-                                                    </label>
+                                                    </button>
                                                 )}
                                             </div>
                                         </div>
@@ -1011,13 +1022,12 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                                 {photoPreview2 ? (
                                                     <img src={photoPreview2} alt="Document Proof" className="w-full h-full object-contain" />
                                                 ) : (
-                                                    <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-2 text-center">
+                                                    <button type="button" onClick={() => abrirCamara(2)} className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-2 text-center">
                                                         <div className="p-2 bg-white rounded-full shadow-sm mb-1 text-emerald-500">
                                                             <FileText size={20} />
                                                         </div>
                                                         <span className="text-[10px] text-slate-500 font-black uppercase tracking-tight">Doc. Firmado</span>
-                                                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handlePhotoUpload(e, 2)} />
-                                                    </label>
+                                                    </button>
                                                 )}
                                             </div>
                                         </div>
@@ -1042,7 +1052,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                             {photoPreview ? (
                                                 <img src={photoPreview} alt="Proof" className="w-full h-full object-contain" />
                                             ) : (
-                                                <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-6">
+                                                <button type="button" onClick={() => abrirCamara(1)} className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-6">
                                                     <div className="p-4 bg-white rounded-full shadow-sm mb-2 text-blue-500">
                                                         <Camera size={32} />
                                                     </div>
@@ -1050,8 +1060,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                                         {shipment.needsSignatureReturn ? "Tomar Foto del Doc. Firmado" : "Tomar Foto del Sello"}
                                                     </span>
                                                     <span className="text-xs text-slate-400">Captura la evidencia visual</span>
-                                                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handlePhotoUpload(e, 1)} />
-                                                </label>
+                                                </button>
                                             )}
                                         </div>
                                     </div>
@@ -1182,6 +1191,25 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                     </div>
                 )}
             </div>
+
+            <CameraCaptureModal
+                isOpen={camaraFoto !== null}
+                onClose={() => setCamaraFoto(null)}
+                onCapture={alHacerFoto}
+                onFallback={usarCamaraDelMovil}
+                titulo={camaraFoto === 2 ? 'Documento firmado' : 'Foto de la entrega'}
+                maxLado={1200}
+                calidad={0.7}
+            />
+            {/* Respaldo: la cámara del móvil, sólo si la de dentro no arranca. */}
+            <input
+                ref={inputRespaldoRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => handlePhotoUpload(e, fotoRespaldoRef.current)}
+            />
         </div>,
         document.body
     );

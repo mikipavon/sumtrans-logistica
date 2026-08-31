@@ -1,4 +1,4 @@
-import { X, Truck, Phone, MapPin, Package, Clock, Euro, Wallet, Calendar, CheckCircle, AlertTriangle, Edit2, Save, Eye, EyeOff, Key, BarChart2, TrendingUp, Target, Activity, Printer, Sun, Moon, FileText, Trash2, Download } from 'lucide-react';
+import { X, Truck, Phone, Smartphone, MapPin, Package, Clock, Euro, Wallet, Calendar, CheckCircle, AlertTriangle, Edit2, Save, Eye, EyeOff, Key, BarChart2, TrendingUp, Target, Activity, Printer, Sun, Moon, FileText, Trash2, Download } from 'lucide-react';
 import { useMemo, useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { calculateDailyAccount, isToday } from '../../utils/accountLogic';
@@ -26,6 +26,7 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                 name: driver.name || '',
                 alias: driver.alias || '',
                 phone: driver.phone || '',
+                personalPhone: driver.personalPhone || '',
                 username: driver.username || '',
                 // Siempre en blanco, a propósito: la contraseña ya no se guarda
                 // en la ficha, así que no hay ninguna que traer (fase 16).
@@ -208,6 +209,16 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                             placeholder="Teléfono"
                                         />
                                     </div>
+                                    <div className="flex items-center gap-2 mt-2">
+                                        <Smartphone size={14} className="text-slate-400" />
+                                        <input
+                                            type="text"
+                                            value={formData.personalPhone}
+                                            onChange={(e) => setFormData({ ...formData, personalPhone: e.target.value })}
+                                            className="text-sm text-slate-600 border border-blue-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full md:w-1/3"
+                                            placeholder="Teléfono personal (Opcional)"
+                                        />
+                                    </div>
                                 </div>
                             ) : (
                                 <>
@@ -217,6 +228,12 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                     <p className="text-sm text-slate-500 flex items-center gap-2 mt-1">
                                         <Phone size={14} /> {driver.phone}
                                     </p>
+                                    {driver.personalPhone && (
+                                        <p className="text-sm text-slate-500 flex items-center gap-2 mt-1">
+                                            <Smartphone size={14} /> {driver.personalPhone}
+                                            <span className="text-xs text-slate-400">personal</span>
+                                        </p>
+                                    )}
                                     <div className="flex items-center gap-2 mt-2">
                                         <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${driver.status === 'En Ruta' ? 'bg-blue-100 text-blue-700' :
                                             driver.status === 'Descanso' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'

@@ -77,6 +77,10 @@ export default class Shipment {
     this.porteCollectedById = data.porteCollectedById || null;
     this.codCollectedById = data.codCollectedById || null;
 
+    // Conductor que hizo la entrega. No tiene por que ser el asignado: el dia que uno
+    // cubre la ruta de otro, el albaran salia a nombre del que faltaba.
+    this.deliveredById = data.deliveredById || null;
+
     this.observations = data.observations || '';
     this.incidentReason = data.incidentReason || '';
     this.incidentPhoto = data.incidentPhoto || null;

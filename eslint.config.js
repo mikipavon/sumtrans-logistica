@@ -20,6 +20,8 @@ export default defineConfig([
         // Lo inyecta Vite en build (ver vite.config.js): la versión con la que se
         // compiló, para poder saber con cuál falló un móvil.
         __APP_VERSION__: 'readonly',
+        __APP_BUILD_DATE__: 'readonly',
+        __APP_BUILD_NUMBER__: 'readonly',
       },
       parserOptions: {
         ecmaVersion: 'latest',
@@ -29,6 +31,14 @@ export default defineConfig([
     },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+  {
+    // Los ficheros de configuración se ejecutan en Node, no en el navegador: ahí sí
+    // existen process, __dirname y compañía.
+    files: ['*.config.js', 'vite.config.js', 'vitest.config.js', 'eslint.config.js'],
+    languageOptions: {
+      globals: { ...globals.node },
     },
   },
 ])
