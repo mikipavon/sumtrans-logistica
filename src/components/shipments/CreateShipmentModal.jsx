@@ -10,7 +10,10 @@ import CityAutocomplete from '../CityAutocomplete';
 import { supabase } from '../../lib/supabase';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 
-export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, clients, allPoblaciones, prefillData, onAddClient, onUpdateClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
+// `drivers` ya no se lee aquí: el nombre de quien crea la ficha lo pone App.jsx,
+// que sabe caer en la sesión guardada si la lista aún no ha cargado. Los que
+// llaman lo siguen pasando y no molesta.
+export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, allPoblaciones, prefillData, onAddClient, onUpdateClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
     const [formData, setFormData] = useState({
         // Remitente (Sender)
         clientName: '',
@@ -1246,42 +1249,27 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers, 
 
         setSelectedDebtIds([]);
 
-        // ── Auto-crear clientes desconocidos ──
-        if (onAddClient && clients) {
-            // Si el porte lo paga una agencia (TSB/TXT/XPO), las fichas que nazcan de este
-            // albarán son suyas, no de la cartera de SUM. Las fichas que YA existen no
-            // cambian de dueño: un cliente propio sigue siendo propio aunque le traigan
-            // mercancía desde una agencia.
-            const ownerAgencyId = resolveOwnerAgencyId(finalData, clients);
-            const normalize = (s) => String(s || '').normalize("NFD").replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
-            const checkAndCreateClient = (name, type, address, zip, city, phone) => {
-                if (!name || String(name).trim() === '') return;
-                const nName = normalize(name);
-                const exists = clients.some(c => 
-                    normalize(c.name) === nName || 
-                    normalize(c.legalName) === nName || 
-                    (c.branches && c.branches.some(b => normalize(b.name) === nName))
-                );
-                if (!exists) {
-                    onAddClient({
-                        name: name.trim(),
-                        type: type,
-                        address: address || '',
-                        zip: zip || '',
-                        city: city || '',
-                        phone: phone || '',
-                        status: 'pending',
-                        billingType: 'Clientes Habituales',
-                        ownerAgencyId,
-                        createdFrom: 'Albarán Automático',
-                        createdBy: isDriver ? 'Conductor' : 'Administración',
-                        creatorId: currentDriverId || 'admin'
-                    });
-                }
-            };
-            checkAndCreateClient(finalData.client, 'Remitente', finalData.originAddress, finalData.originZip, finalData.originCity, finalData.originPhone);
-            checkAndCreateClient(finalData.destinationName, 'Destinatario', finalData.destinationAddress, finalData.destinationZip, finalData.destinationCity, finalData.destinationPhone);
-        }
+        // ── Aquí ya NO se da de alta a nadie ──
+        //
+        // Este bloque creaba al remitente y al destinatario, y era el origen de
+        // las fichas repetidas en Validar Clientes: un segundo después
+        // handleAddShipment volvía a crear al remitente por su cuenta y con
+        // otros datos, y en la pantalla salían las dos («Albarán Automático /
+        // Por: Conductor» sin GPS al lado de «Albarán / Por: Cond.Fulano» con
+        // GPS). Dos sitios creando lo mismo es una carrera que tarde o temprano
+        // se pierde; con uno solo no hay carrera que perder.
+        //
+        //  · El REMITENTE lo crea handleAddShipment (App.jsx). Es además el
+        //    único camino de las recogidas, del importador de Excel y del agente
+        //    de impresión, le llega el GPS en `originCoordinates` y resuelve el
+        //    nombre del conductor mejor que aquí: si la lista de conductores aún
+        //    no ha cargado, tira del nombre que guardó la sesión.
+        //  · El DESTINATARIO se crea en la ENTREGA, que es cuando el conductor
+        //    está en su puerta y se le coge el GPS. Antes nacía aquí, sin
+        //    coordenadas, para un paquete que a lo mejor ni llegaba a entregarse.
+        //
+        // Si hace falta la ficha del destinatario antes de entregar, está el
+        // botón de guardar que hay al lado del campo.
 
         // ── Auto-aprendizaje de coordenadas del REMITENTE ──
         // Solo guardamos las coords del remitente al crear el albarán (estamos en su ubicación).

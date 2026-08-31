@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
-import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2, AlertTriangle, KeyRound, Globe } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2, AlertTriangle, KeyRound, Globe, Merge, Copy } from 'lucide-react';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import { supabase } from '../lib/supabase';
 import { getOwnerLabel } from '../utils/agencyOwnership';
-import { buscarFichasParecidas, explicarMotivos } from '../utils/duplicadosClientes';
+import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, loQueAportanLasGemelas, explicarAportacion } from '../utils/duplicadosClientes';
+import { esRegistroWeb } from '../utils/altaClientes';
 
 // ── Llama a la Edge Function para enviar email de acceso al cliente ──
 async function sendAccessEmail(clientId) {
@@ -45,10 +46,10 @@ async function sendAccessEmail(clientId) {
 //   - empresas que han rellenado el formulario de sumtransportes.com. Ésas SÍ
 //     están esperando: traen correo, CIF y contraseña, y al aprobarlas se les
 //     abre el portal.
-// Mezcladas entre decenas de las primeras, las segundas no se encuentran.
-function esRegistroWeb(client) {
-    return String(client?.createdFrom || '') === 'web-registro';
-}
+// Mezcladas entre decenas de las primeras, las segundas no se encuentran, y de
+// ahí las pestañas de abajo. Quien las distingue es `esRegistroWeb`, que vive en
+// utils/altaClientes.js porque el alta a mano también lo necesita: para poder
+// decir en qué pestaña de aquí está la ficha que le está bloqueando el número.
 
 // Fecha y hora del registro. El formulario guarda `createdAt` en ISO; las
 // fichas creadas en un albarán sólo dejan `lastInteraction` (día suelto).
@@ -103,9 +104,88 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
         return mapa;
     }, [pendingClients, clients]);
 
+    // ── Solicitudes pendientes que son la misma empresa ──
+    // Cada camino de alta creaba la suya sin saber de las demás: el albarán una,
+    // la entrega otra, el reparto otra. Salían dos y tres tarjetas del mismo
+    // cliente, cada una a medias —ésta con GPS y sin teléfono, aquélla al revés—.
+    // Ya no deberían nacer así (ver altaClientes.js), pero las de antes siguen
+    // aquí y hay que poder juntarlas sin perder lo que traiga cada una.
+    const gemelasPorCliente = useMemo(() => {
+        const mapa = new Map();
+        pendingClients.forEach(p => {
+            const gemelas = buscarSolicitudesGemelas(p, pendingClients);
+            if (gemelas.length > 0) mapa.set(p.id, gemelas);
+        });
+        return mapa;
+    }, [pendingClients]);
+
+    // Cuántos clientes distintos están repetidos (no cuántas tarjetas sobran).
+    const cuantosRepetidos = useMemo(() => {
+        const vistos = new Set();
+        let grupos = 0;
+        pendingClients.forEach(p => {
+            if (vistos.has(p.id) || !gemelasPorCliente.has(p.id)) return;
+            grupos += 1;
+            vistos.add(p.id);
+            gemelasPorCliente.get(p.id).forEach(g => vistos.add(g.id));
+        });
+        return grupos;
+    }, [pendingClients, gemelasPorCliente]);
+
+    // Unir: la ficha que se está mirando se queda, se le copian los huecos que
+    // rellenan las otras y las otras se borran. No se aprueba nada aquí: el
+    // administrativo sigue decidiendo después, pero ya sobre una ficha entera.
+    const [uniendoId, setUniendoId] = useState(null);
+
+    const handleUnirGemelas = async (client) => {
+        const gemelas = gemelasPorCliente.get(client.id);
+        if (!gemelas || gemelas.length === 0) return;
+
+        const aportado = loQueAportanLasGemelas(client, gemelas);
+        const detalle = explicarAportacion(aportado);
+
+        const confirmado = window.confirm(
+            `Se queda esta ficha de «${client.name}» y se borran las otras ${gemelas.length}:\n\n` +
+            gemelas.map(g => `   • ${g.name}${g.city ? ` — ${g.city}` : ''}${g.coordinates ? ' — con coordenadas' : ''}`).join('\n') +
+            (detalle ? `\n\nAntes de borrarlas se le copia ${detalle}.` : '\n\nNo aportan ningún dato que a ésta le falte.') +
+            `\n\n¿Unirlas?`
+        );
+        if (!confirmado) return;
+
+        setUniendoId(client.id);
+        try {
+            if (Object.keys(aportado).length > 0 && onUpdateClient) {
+                await onUpdateClient(client.id, aportado);
+            }
+            if (onDeleteClients) {
+                await onDeleteClients(gemelas.map(g => g.id));
+            }
+            // Las que se han borrado no pueden quedar marcadas para el borrado masivo.
+            const borradas = gemelas.map(g => g.id);
+            setSelectedIds(prev => prev.filter(id => !borradas.includes(id)));
+        } finally {
+            setUniendoId(null);
+        }
+    };
+
     // Aviso antes de aprobar algo que ya está en cartera. Devuelve true si se
     // puede seguir adelante.
     const confirmarSiEsDuplicado = (clientId) => {
+        // Primero lo de casa: si hay más solicitudes de este mismo cliente en la
+        // lista, aprobar una deja las otras pendientes y tira lo que trajeran
+        // (normalmente las coordenadas, que es lo que menos se puede recuperar).
+        const gemelas = gemelasPorCliente.get(clientId);
+        if (gemelas && gemelas.length > 0) {
+            const seguir = window.confirm(
+                `⚠️ Hay ${gemelas.length + 1} solicitudes de este mismo cliente en la lista.\n\n` +
+                `Si apruebas sólo ésta, las otras se quedan pendientes y se pierde lo que traigan ` +
+                `(coordenadas, teléfono...).\n\n` +
+                `Lo suyo es usar antes «Quedarme con ésta y unir las demás».\n\n` +
+                `¿Aprobar sólo ésta de todas formas?`
+            );
+            if (!seguir) return false;
+        }
+
         const parecidas = duplicadosPorCliente.get(clientId);
         if (!parecidas || parecidas.length === 0) return true;
 
@@ -132,13 +212,11 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
         .replace(/[óòöô]/g, 'o')
         .replace(/[úùüû]/g, 'u');
 
-    // Origen: 'web' | 'app' | 'todos'. Mientras no se toque el filtro vale null
-    // y manda lo que haya: si hay registros de la web se enseñan ésos, que es a
-    // lo que se entra aquí después de mandar el correo pidiendo el alta. No se
-    // puede decidir en el useState inicial porque en el primer render los
-    // clientes aún no han llegado de Supabase.
-    const [origen, setOrigen] = useState(null);
-    const origenActivo = origen ?? (registrosWeb.length > 0 ? 'web' : 'todos');
+    // Origen: 'web' | 'app' | 'todos'. Se entra siempre por las fichas que crea
+    // la app sola al hacer albaranes, que son las que hay que repasar a diario;
+    // los registros de la web son cuatro y se miran cuando toca.
+    const [origen, setOrigen] = useState('app');
+    const origenActivo = origen;
 
     const clientesPorOrigen = origenActivo === 'web'
         ? registrosWeb
@@ -257,6 +335,13 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                         <span className="font-bold text-amber-700">{pendingClients.length}</span>
                         <span className="text-amber-600">pendientes</span>
                     </div>
+                    {cuantosRepetidos > 0 && (
+                        <div className="flex items-center gap-2 px-4 py-2 bg-orange-50 border border-orange-200 rounded-xl">
+                            <Copy size={18} className="text-orange-600" />
+                            <span className="font-bold text-orange-700">{cuantosRepetidos}</span>
+                            <span className="text-orange-600">repetidos en la lista</span>
+                        </div>
+                    )}
                     {duplicadosPorCliente.size > 0 && (
                         <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border border-red-200 rounded-xl">
                             <AlertTriangle size={18} className="text-red-600" />
@@ -271,8 +356,8 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
             {pendingClients.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2">
                     {[
-                        { clave: 'web', texto: 'Registrados en la web', cuantos: registrosWeb.length, icono: <Globe size={15} /> },
                         { clave: 'app', texto: 'Creados al hacer albaranes', cuantos: pendingClients.length - registrosWeb.length, icono: <Building2 size={15} /> },
+                        { clave: 'web', texto: 'Registrados en la web', cuantos: registrosWeb.length, icono: <Globe size={15} /> },
                         { clave: 'todos', texto: 'Todos', cuantos: pendingClients.length, icono: <Clock size={15} /> },
                     ].map(({ clave, texto, cuantos, icono }) => (
                         <button
@@ -350,9 +435,17 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                             ? <Globe size={16} className="text-blue-600" />
                                             : <Building2 size={16} className="text-amber-600" />}
                                     </div>
-                                    <span className="font-bold text-slate-800 truncate max-w-[150px]" title={client.name}>
-                                        {client.name}
-                                    </span>
+                                    <div className="min-w-0">
+                                        <span className="block font-bold text-slate-800 truncate max-w-[150px]" title={client.name}>
+                                            {client.name}
+                                        </span>
+                                        {/* El número, que estas fichas ya lo tienen cogido aunque no salgan
+                                            en el listado de Clientes. Sin verlo aquí no hay manera de saber
+                                            cuál es la que bloquea un Nº al dar de alta a mano. */}
+                                        {client.clientNumber && (
+                                            <span className="block text-[10px] font-mono text-slate-500">Nº {client.clientNumber}</span>
+                                        )}
+                                    </div>
                                 </div>
                                 <span className={`text-xs font-bold px-2 py-1 rounded-full shrink-0 ${client.type === 'Remitente'
                                         ? 'bg-blue-100 text-blue-700'
@@ -401,6 +494,49 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                     </div>
                                 </div>
                             )}
+
+                            {/* Aviso de repetida — la misma empresa, varias veces en esta lista */}
+                            {gemelasPorCliente.has(client.id) && (() => {
+                                const gemelas = gemelasPorCliente.get(client.id);
+                                const aportado = loQueAportanLasGemelas(client, gemelas);
+                                const detalle = explicarAportacion(aportado);
+                                return (
+                                    <div className="bg-orange-50 border-b border-orange-200 px-4 py-3">
+                                        <div className="flex items-start gap-2">
+                                            <Copy size={15} className="text-orange-600 mt-0.5 shrink-0" />
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-xs font-bold text-orange-800">
+                                                    Repetida: {gemelas.length + 1} solicitudes de este mismo cliente
+                                                </p>
+                                                <ul className="mt-1 space-y-0.5">
+                                                    {gemelas.map(g => (
+                                                        <li key={g.id} className="text-xs text-orange-700 leading-snug">
+                                                            <span className="break-words">{g.name}</span>
+                                                            <span className="text-orange-500">
+                                                                {g.createdFrom ? ` — ${g.createdFrom}` : ''}
+                                                                {g.coordinates ? ' — con coordenadas' : ''}
+                                                            </span>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                                <p className="text-[10px] text-orange-600 mt-1.5 leading-snug">
+                                                    {detalle
+                                                        ? `Al unirlas, ésta se queda ${detalle} de las otras.`
+                                                        : 'Las otras no aportan ningún dato que a ésta le falte.'}
+                                                </p>
+                                                <button
+                                                    onClick={() => handleUnirGemelas(client)}
+                                                    disabled={uniendoId === client.id}
+                                                    className="mt-2 w-full flex items-center justify-center gap-2 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white font-bold rounded-lg text-xs transition-colors"
+                                                >
+                                                    <Merge size={13} />
+                                                    {uniendoId === client.id ? 'Uniendo…' : 'Quedarme con ésta y unir las demás'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
 
                             {/* Aviso de duplicado — la empresa ya está en cartera */}
                             {duplicadosPorCliente.has(client.id) && (
@@ -453,10 +589,17 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                     </div>
                                 )}
                                 {client.coordinates && (
-                                    <div className="flex items-center gap-2">
+                                    <a
+                                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(client.coordinates).trim())}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        title="Ver ubicación en Google Maps"
+                                        className="flex items-center gap-2 w-fit"
+                                    >
                                         <MapPin size={14} className="text-emerald-500" />
-                                        <span className="text-emerald-600 text-xs font-mono">{client.coordinates}</span>
-                                    </div>
+                                        <span className="text-emerald-600 hover:text-emerald-700 hover:underline text-xs font-mono">{client.coordinates}</span>
+                                    </a>
                                 )}
 
                                 {/* Meta info */}
@@ -526,7 +669,9 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                             ? `Ningún cliente pendiente${origenActivo === 'web' ? ' registrado en la web' : ''} coincide con "${searchTerm}".`
                             : origenActivo === 'web'
                                 ? 'Nadie se ha registrado por la web todavía. En «Todos» tienes las fichas que crea la app sola al hacer albaranes.'
-                                : 'No hay fichas pendientes creadas al hacer albaranes.'}
+                                : origenActivo === 'app' && registrosWeb.length > 0
+                                    ? `No hay fichas pendientes creadas al hacer albaranes. En «Registrados en la web» esperan ${registrosWeb.length}.`
+                                    : 'No hay fichas pendientes creadas al hacer albaranes.'}
                     </p>
                 </div>
             ) : (

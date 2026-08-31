@@ -1955,9 +1955,16 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         } catch {}
     }, [isNoteModalOpen]);
 
-    const currentDriver = useMemo(() => 
+    const currentDriver = useMemo(() =>
         drivers?.find(d => String(d.id) === String(currentDriverId)),
     [drivers, currentDriverId]);
+
+    // Cómo se firma este conductor en las fichas que crea. Mismo formato que usa
+    // la oficina al hacer el albarán (quienEstaCreando, en App.jsx): antes aquí
+    // se guardaba el nombre pelado y en Validar Clientes salían las dos formas
+    // mezcladas, "Cond.FRANCISCO JAVIER PAVON MAIZ" en una tarjeta y "JUAN JESUS
+    // GUERRERO SANCHEZ" en la de al lado, como si fueran cosas distintas.
+    const firmaDelConductor = currentDriver?.name ? `Cond.${currentDriver.name} ` : 'Conductor';
 
     // 'idle' | 'requesting' | 'success' | 'denied' (permiso denegado) | 'timeout' (no dio tiempo a fijar posición)
     // | 'unavailable' (sin cobertura de satélites) | 'db_error' (GPS OK pero no se guardó) | 'error_unsecure'
@@ -2525,7 +2532,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             // Si el porte lo paga una agencia, el cliente es suyo (ver agencyOwnership.js)
                             ownerAgencyId: resolveOwnerAgencyId(shipment, clients),
                             createdFrom: 'WhatsApp Justificante',
-                            createdBy: currentDriver?.name || 'Driver',
+                            createdBy: firmaDelConductor,
+                            creatorId: currentDriverId,
                             isTest: isTestMode,
                         });
                     }
@@ -4300,7 +4308,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         // Si el porte lo paga una agencia, el destinatario es suyo (ver agencyOwnership.js)
                         ownerAgencyId: resolveOwnerAgencyId(currentShip, clients),
                         createdFrom: 'Reparto (Driver)',
-                        createdBy: currentDriver?.name || 'Driver',
+                        createdBy: firmaDelConductor,
+                        creatorId: currentDriverId,
                         // Quien ha recibido hoy, para sugerirlo en la próxima entrega.
                         ...(receptorAprendido || {}),
                     });

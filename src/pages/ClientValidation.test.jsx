@@ -50,8 +50,17 @@ const props = {
 };
 
 describe('Validar Clientes — quién se ha registrado por la web', () => {
-    it('al entrar enseña sólo los registros de la web, no las fichas de albarán', () => {
+    it('al entrar enseña sólo las fichas de albarán, no los registros de la web', () => {
         render(<ClientValidation clients={[creadoEnAlbaran, registroWeb]} {...props} />);
+
+        expect(screen.getByText('FERRETERÍA EL TORNILLO')).toBeInTheDocument();
+        expect(screen.queryByText('PANADERÍA LA ESPIGA')).not.toBeInTheDocument();
+    });
+
+    it('en «Registrados en la web» salen los de la web y no las fichas de albarán', () => {
+        render(<ClientValidation clients={[creadoEnAlbaran, registroWeb]} {...props} />);
+
+        fireEvent.click(screen.getByRole('button', { name: /Registrados en la web/ }));
 
         expect(screen.getByText('PANADERÍA LA ESPIGA')).toBeInTheDocument();
         expect(screen.queryByText('FERRETERÍA EL TORNILLO')).not.toBeInTheDocument();
@@ -59,6 +68,7 @@ describe('Validar Clientes — quién se ha registrado por la web', () => {
 
     it('la tarjeta del registro web identifica a quien se ha dado de alta', () => {
         render(<ClientValidation clients={[registroWeb]} {...props} />);
+        fireEvent.click(screen.getByRole('button', { name: /Registrados en la web/ }));
 
         expect(screen.getByText('Se ha registrado en la web')).toBeInTheDocument();
         // Lo que hace falta para reconocer la empresa y llamarla.
@@ -79,10 +89,18 @@ describe('Validar Clientes — quién se ha registrado por la web', () => {
         expect(screen.getByText('FERRETERÍA EL TORNILLO')).toBeInTheDocument();
     });
 
+    it('si al entrar no hay fichas de albarán, avisa de los que esperan en la web', () => {
+        render(<ClientValidation clients={[registroWeb]} {...props} />);
+
+        // Se entra por «Creados al hacer albaranes» y ahí no hay nada: sin este
+        // aviso la pantalla parecería vacía teniendo a alguien esperando.
+        expect(screen.getByText(/En «Registrados en la web» esperan 1/)).toBeInTheDocument();
+    });
+
     it('la ficha creada en un albarán no finge ser un registro de la web', () => {
         render(<ClientValidation clients={[creadoEnAlbaran]} {...props} />);
 
-        // Sin registros web el filtro arranca en «Todos», así que ya se ve.
+        // El filtro arranca en «Creados al hacer albaranes», así que ya se ve.
         expect(screen.getByText('FERRETERÍA EL TORNILLO')).toBeInTheDocument();
         expect(screen.queryByText('Se ha registrado en la web')).not.toBeInTheDocument();
 
@@ -95,6 +113,7 @@ describe('Validar Clientes — quién se ha registrado por la web', () => {
     it('el buscador encuentra por correo y por CIF, no sólo por nombre', () => {
         const otroWeb = { ...registroWeb, id: 3, name: 'BODEGAS MONTILLA', email: 'admin@bodegas.com', cif: 'B99999999', contactPerson: '', legalName: '' };
         render(<ClientValidation clients={[registroWeb, otroWeb]} {...props} />);
+        fireEvent.click(screen.getByRole('button', { name: /Registrados en la web/ }));
 
         const buscador = screen.getByPlaceholderText(/Buscar por nombre/);
         fireEvent.change(buscador, { target: { value: 'pedidos@laespiga' } });
@@ -122,5 +141,89 @@ describe('Validar Clientes — quién se ha registrado por la web', () => {
 
         const chip = screen.getByText('registrados en la web').closest('div');
         expect(within(chip).getByText('1')).toBeInTheDocument();
+    });
+});
+
+// ── La misma empresa, dos y tres veces en la lista ──
+//
+// Cada camino de alta creaba su propia ficha sin saber de las demás, así que en
+// esta pantalla salían varias tarjetas del mismo cliente y ninguna entera: una
+// con coordenadas y sin teléfono, otra al revés. No había ningún aviso, y
+// aprobar a ojo significaba tirar lo que trajera la otra.
+describe('Validar Clientes — solicitudes repetidas del mismo cliente', () => {
+    const sinGps = {
+        id: 10,
+        name: 'BasicRoca',
+        status: 'pending',
+        type: 'Remitente',
+        createdFrom: 'Albarán Automático',
+        createdBy: 'Conductor',
+        city: 'Cordoba',
+        lastInteraction: '2026-08-20',
+    };
+    const conGps = {
+        id: 11,
+        name: 'BasicRoca',
+        status: 'pending',
+        type: 'Remitente',
+        createdFrom: 'Albarán',
+        createdBy: 'Cond.FRANCISCO JAVIER PAVON MAIZ',
+        city: 'Cordoba',
+        address: ', 14000 Cordoba',
+        coordinates: '37.547904, -4.663849',
+        lastInteraction: '2026-08-20',
+    };
+    const sola = { id: 12, name: 'Zuricar', status: 'pending', type: 'Destinatario', city: 'Espejo' };
+
+    const renderLista = (extra = {}) =>
+        render(<ClientValidation clients={[sinGps, conGps, sola]} {...props} {...extra} />);
+
+    it('avisa en la tarjeta de cuántas solicitudes hay de ese cliente', () => {
+        renderLista();
+        const avisos = screen.getAllByText('Repetida: 2 solicitudes de este mismo cliente');
+        // Una en cada una de las dos tarjetas de BasicRoca.
+        expect(avisos).toHaveLength(2);
+    });
+
+    it('dice qué se gana al unirlas, para saber con cuál quedarse', () => {
+        renderLista();
+        // La que no tiene GPS gana el GPS de la otra; la que sí lo tiene no gana nada.
+        expect(screen.getByText(/ésta se queda la dirección y las coordenadas/)).toBeInTheDocument();
+        expect(screen.getByText('Las otras no aportan ningún dato que a ésta le falte.')).toBeInTheDocument();
+    });
+
+    it('no marca como repetida a la que no tiene pareja', () => {
+        renderLista();
+        const zuricar = screen.getByText('Zuricar').closest('div.bg-white');
+        expect(within(zuricar).queryByText(/Repetida:/)).not.toBeInTheDocument();
+    });
+
+    it('al unir, copia los huecos en la que se queda y borra la otra', async () => {
+        const onUpdateClient = vi.fn().mockResolvedValue();
+        const onDeleteClients = vi.fn().mockResolvedValue();
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+        renderLista({ onUpdateClient, onDeleteClients });
+
+        // La tarjeta sin GPS: es la única que tiene algo que ganar al unir.
+        const tarjetaSinGps = screen
+            .getByText(/ésta se queda la dirección y las coordenadas/)
+            .closest('div.bg-white');
+        const boton = within(tarjetaSinGps).getByRole('button', { name: /unir las demás/i });
+        fireEvent.click(boton);
+        await screen.findByText('Zuricar');
+
+        expect(onUpdateClient).toHaveBeenCalledWith(10, {
+            address: ', 14000 Cordoba',
+            coordinates: '37.547904, -4.663849',
+        });
+        expect(onDeleteClients).toHaveBeenCalledWith([11]);
+        window.confirm.mockRestore();
+    });
+
+    it('el encabezado dice cuántos clientes están repetidos, no cuántas tarjetas sobran', () => {
+        renderLista();
+        const contador = screen.getByText('repetidos en la lista').closest('div');
+        expect(within(contador).getByText('1')).toBeInTheDocument();
     });
 });

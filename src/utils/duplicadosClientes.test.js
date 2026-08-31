@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buscarFichasParecidas, explicarMotivos } from './duplicadosClientes';
+import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, loQueAportanLasGemelas, explicarAportacion } from './duplicadosClientes';
 
 const CARTERA = {
     id: 10,
@@ -88,5 +88,63 @@ describe('explicarMotivos', () => {
         expect(explicarMotivos(['el mismo CIF', 'el mismo correo', 'el mismo nombre']))
             .toBe('el mismo CIF, el mismo correo y el mismo nombre');
         expect(explicarMotivos([])).toBe('');
+    });
+});
+
+describe('buscarSolicitudesGemelas', () => {
+    // El caso real de la pantalla: el modal del albarán creó la ficha sin GPS y
+    // handleAddShipment la volvió a crear con él. Dos tarjetas, ninguna entera.
+    const pendientes = [
+        { id: 1, name: 'BasicRoca', city: 'Cordoba', status: 'pending', createdFrom: 'Albarán Automático', createdBy: 'Conductor' },
+        { id: 2, name: 'BasicRoca', city: 'Cordoba', address: ', 14000 Cordoba', coordinates: '37.547904, -4.663849', status: 'pending', createdFrom: 'Albarán', createdBy: 'Cond.FRANCISCO JAVIER PAVON MAIZ' },
+        { id: 3, name: 'Rafa Martínez', status: 'pending' },
+        { id: 4, name: 'Rafa Martinez', phone: '957000000', status: 'pending' },
+        { id: 5, name: 'Zuricar', status: 'pending' },
+    ];
+
+    it('junta las dos altas de la misma empresa', () => {
+        const gemelas = buscarSolicitudesGemelas(pendientes[0], pendientes);
+        expect(gemelas.map(g => g.id)).toEqual([2]);
+    });
+
+    it('las reconoce aunque una lleve acento y la otra no', () => {
+        const gemelas = buscarSolicitudesGemelas(pendientes[2], pendientes);
+        expect(gemelas.map(g => g.id)).toEqual([4]);
+    });
+
+    it('no empareja a una solicitud sin pareja, ni consigo misma', () => {
+        expect(buscarSolicitudesGemelas(pendientes[4], pendientes)).toEqual([]);
+    });
+
+    it('empareja por CIF y por correo cuando el nombre está escrito distinto', () => {
+        const lista = [
+            { id: 10, name: 'Transportes Espejo', cif: 'B-12345678' },
+            { id: 11, name: 'TTES ESPEJO SL', cif: 'B12345678' },
+            { id: 12, name: 'Otra cosa', email: 'jefe@espejo.es' },
+            { id: 13, name: 'Y otra más', email: 'JEFE@ESPEJO.ES' },
+        ];
+        expect(buscarSolicitudesGemelas(lista[0], lista).map(g => g.id)).toEqual([11]);
+        expect(buscarSolicitudesGemelas(lista[2], lista).map(g => g.id)).toEqual([13]);
+    });
+});
+
+describe('loQueAportanLasGemelas', () => {
+    it('dice qué le falta a la que se queda y traen las otras', () => {
+        const principal = { id: 1, name: 'BasicRoca', city: 'Cordoba' };
+        const gemelas = [{ id: 2, name: 'BasicRoca', address: ', 14000 Cordoba', coordinates: '37.5, -4.6', city: 'OTRA' }];
+        const aportado = loQueAportanLasGemelas(principal, gemelas);
+        expect(aportado).toEqual({ address: ', 14000 Cordoba', coordinates: '37.5, -4.6' });
+        // La población de la principal no se toca: es la que está mirando quien valida.
+        expect(aportado.city).toBeUndefined();
+    });
+
+    it('con la primera gemela que traiga el dato basta', () => {
+        const aportado = loQueAportanLasGemelas({ id: 1 }, [{ phone: '957111111' }, { phone: '957222222' }]);
+        expect(aportado.phone).toBe('957111111');
+    });
+
+    it('lo cuenta en castellano', () => {
+        expect(explicarAportacion({ coordinates: 'x', phone: 'y' })).toBe('las coordenadas y el teléfono');
+        expect(explicarAportacion({})).toBe('');
     });
 });

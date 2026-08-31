@@ -103,3 +103,87 @@ export function explicarMotivos(motivos = []) {
     if (motivos.length === 1) return motivos[0];
     return `${motivos.slice(0, -1).join(', ')} y ${motivos[motivos.length - 1]}`;
 }
+
+// ── Solicitudes pendientes que son la misma empresa ──
+//
+// Lo de arriba mira contra la cartera, y a propósito salta lo que está
+// pendiente: para avisar de "esto ya lo tienes" la otra solicitud no cuenta.
+// Pero en Validar Clientes el problema es justo el otro: la misma empresa
+// aparecía dos y tres veces seguidas, porque cada camino de alta creaba la suya
+// —el albarán una, la entrega otra, el reparto otra— y ninguna sabía de las
+// demás. Salían tarjetas a medias: una con coordenadas y sin teléfono, otra al
+// revés, y había que aprobar a ojo.
+//
+// Ya no deberían nacer duplicadas (ver altaClientes.js y handleAddClient), pero
+// las que se crearon antes siguen ahí y hay que poder juntarlas.
+export function buscarSolicitudesGemelas(pendiente, pendientes = []) {
+    if (!pendiente) return [];
+
+    const nombre = normalizarTexto(pendiente.name);
+    const legal = normalizarTexto(pendiente.legalName);
+    const cif = normalizarCif(pendiente.cif);
+    const correos = correosDe(pendiente);
+
+    return pendientes.filter(otra => {
+        if (!otra || otra.id === pendiente.id || otra.isTest) return false;
+
+        // Por nombre o razón social: es lo único que traen las fichas que nacen
+        // de un albarán, que no tienen ni CIF ni correo.
+        const nombreOtra = normalizarTexto(otra.name);
+        const legalOtra = normalizarTexto(otra.legalName);
+        if (nombre && (nombreOtra === nombre || legalOtra === nombre)) return true;
+        if (legal && (nombreOtra === legal || legalOtra === legal)) return true;
+
+        if (cif && normalizarCif(otra.cif) === cif) return true;
+
+        const correosOtra = correosDe(otra);
+        if (correos.some(c => correosOtra.includes(c))) return true;
+
+        return false;
+    });
+}
+
+// Qué aporta cada gemela que la principal no tenga. Sirve para dos cosas: para
+// enseñar en la tarjeta por qué merece la pena juntarlas ("la otra trae el GPS")
+// y para saber qué copiar al unirlas.
+const CAMPOS_A_JUNTAR = ['address', 'city', 'zip', 'phone', 'mobile', 'email', 'cif', 'coordinates', 'contactPerson', 'legalName'];
+
+const vacio = (valor) => String(valor ?? '').trim() === '';
+
+export function loQueAportanLasGemelas(principal, gemelas = []) {
+    const aportado = {};
+    if (!principal) return aportado;
+
+    for (const gemela of gemelas) {
+        if (!gemela) continue;
+        for (const campo of CAMPOS_A_JUNTAR) {
+            // Sólo huecos: nunca se pisa un dato de la principal, que es la que
+            // el administrativo está mirando y la que decide quedarse.
+            if (vacio(principal[campo]) && vacio(aportado[campo]) && !vacio(gemela[campo])) {
+                aportado[campo] = String(gemela[campo]).trim();
+            }
+        }
+    }
+    return aportado;
+}
+
+// Nombre corto de cada campo, para el aviso de la tarjeta.
+const NOMBRE_DEL_CAMPO = {
+    address: 'la dirección',
+    city: 'la población',
+    zip: 'el código postal',
+    phone: 'el teléfono',
+    mobile: 'el móvil',
+    email: 'el correo',
+    cif: 'el CIF',
+    coordinates: 'las coordenadas',
+    contactPerson: 'la persona de contacto',
+    legalName: 'la razón social',
+};
+
+export function explicarAportacion(aportado = {}) {
+    const partes = Object.keys(aportado).map(c => NOMBRE_DEL_CAMPO[c] || c);
+    if (partes.length === 0) return '';
+    if (partes.length === 1) return partes[0];
+    return `${partes.slice(0, -1).join(', ')} y ${partes[partes.length - 1]}`;
+}
