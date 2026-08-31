@@ -70,29 +70,26 @@ export default function CodReceiptUploadModal({ isOpen, onClose, shipments = [],
     }, []);
 
     // Handle individual photo selection for a specific shipment
-    const handleIndividualPhoto = (shipmentId, e) => {
+    const handleIndividualPhoto = async (shipmentId, e) => {
         const file = e.target.files[0];
+        e.target.value = ''; // Permite repetir la misma foto y suelta el fichero
         if (!file) return;
         if (file.size > 20 * 1024 * 1024) {
             alert('La imagen es demasiado grande. Máximo 20MB.');
             return;
         }
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-            try {
-                const compressed = await compressImage(reader.result, 1200, 1200, 0.8);
-                setPendingPhotos(prev => ({
-                    ...prev,
-                    [shipmentId]: { preview: compressed, file, status: 'ready' }
-                }));
-            } catch {
-                setPendingPhotos(prev => ({
-                    ...prev,
-                    [shipmentId]: { preview: reader.result, file, status: 'ready' }
-                }));
-            }
-        };
-        reader.readAsDataURL(file);
+        // El fichero va DIRECTO al compresor: descomprimir la foto entera dejaba
+        // sin memoria al móvil y Android cerraba la app.
+        try {
+            const compressed = await compressImage(file, 1200, 1200, 0.8);
+            setPendingPhotos(prev => ({
+                ...prev,
+                [shipmentId]: { preview: compressed, file, status: 'ready' }
+            }));
+        } catch (err) {
+            console.error('[Justificante] No se pudo comprimir la foto:', err);
+            alert('No se ha podido procesar la foto. Vuelve a intentarlo.');
+        }
     };
 
     // Handle folder/batch scan — select folder via File System Access API, read QR codes, auto-match

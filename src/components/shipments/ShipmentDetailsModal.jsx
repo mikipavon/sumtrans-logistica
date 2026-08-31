@@ -6,6 +6,7 @@ import { printShipmentTicket } from '../../utils/printShipment';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { generateDeliveryPDF } from '../../utils/deliveryPdf';
 import { uploadProof } from '../../utils/storage';
+import { compressImage } from '../../utils/imageCompression';
 import { getPackagesCount } from '../../utils/shipmentUtils';
 
 
@@ -293,18 +294,22 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         }
     };
 
-    const handlePhotoChange = (e) => {
+    const handlePhotoChange = async (e) => {
         const file = e.target.files[0];
+        e.target.value = ''; // Permite repetir la misma foto y suelta el fichero
         if (!file) return;
-        if (file.size > 5 * 1024 * 1024) {
-            alert("La imagen es demasiado grande. Máximo 5MB.");
+        if (file.size > 20 * 1024 * 1024) {
+            alert("La imagen es demasiado grande. Máximo 20MB.");
             return;
         }
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            setNewPhoto(reader.result);
-        };
-        reader.readAsDataURL(file);
+        // Aquí la foto se guardaba en crudo: además de pesar en la nube, descomprimir
+        // una foto de móvil entera dejaba sin memoria al navegador y cerraba la app.
+        try {
+            setNewPhoto(await compressImage(file, 1200, 1200, 0.75));
+        } catch (err) {
+            console.error('[Foto mercancia] No se pudo comprimir la foto:', err);
+            alert("No se ha podido procesar la foto. Vuelve a intentarlo.");
+        }
     };
 
     const handleChange = (field, value) => {
@@ -995,30 +1000,29 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             capture="environment"
                                             onChange={async (e) => {
                                                 const file = e.target.files[0];
+                                                e.target.value = ''; // Permite repetir la misma foto
                                                 if (!file) return;
-                                                if (file.size > 5 * 1024 * 1024) {
-                                                    alert('La imagen es demasiado grande. Máximo 5MB.');
+                                                if (file.size > 20 * 1024 * 1024) {
+                                                    alert('La imagen es demasiado grande. Máximo 20MB.');
                                                     return;
                                                 }
                                                 setIsUploadingCodReceipt(true);
-                                                const reader = new FileReader();
-                                                reader.onloadend = async () => {
-                                                    try {
-                                                        const dataUrl = reader.result;
-                                                        // Utilizamos el bucket 'delivery_photos' que ya existe y tiene permisos configurados
-                                                        const uploadedUrl = await uploadProof(shipment.id, dataUrl, 'delivery_photos');
-                                                        if (uploadedUrl && onUpdate) {
-                                                            await onUpdate(shipment.id, { codReceiptPhoto: uploadedUrl });
-                                                            setCodReceiptPhoto(uploadedUrl);
-                                                        }
-                                                    } catch (err) {
-                                                        console.error('Error uploading COD receipt:', err);
-                                                        alert('Error al subir el justificante: ' + err.message);
-                                                    } finally {
-                                                        setIsUploadingCodReceipt(false);
+                                                try {
+                                                    // Comprimir ANTES de subir: la foto entera en crudo dejaba
+                                                    // sin memoria al móvil y cerraba la app.
+                                                    const dataUrl = await compressImage(file, 1200, 1200, 0.8);
+                                                    // Utilizamos el bucket 'delivery_photos' que ya existe y tiene permisos configurados
+                                                    const uploadedUrl = await uploadProof(shipment.id, dataUrl, 'delivery_photos');
+                                                    if (uploadedUrl && onUpdate) {
+                                                        await onUpdate(shipment.id, { codReceiptPhoto: uploadedUrl });
+                                                        setCodReceiptPhoto(uploadedUrl);
                                                     }
-                                                };
-                                                reader.readAsDataURL(file);
+                                                } catch (err) {
+                                                    console.error('Error uploading COD receipt:', err);
+                                                    alert('Error al subir el justificante: ' + err.message);
+                                                } finally {
+                                                    setIsUploadingCodReceipt(false);
+                                                }
                                             }}
                                         />
                                         <button

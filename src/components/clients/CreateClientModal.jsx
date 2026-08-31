@@ -1,6 +1,7 @@
 import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Mail, Image as ImageIcon, Upload, Trash2, Percent, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { uploadProof } from '../../utils/storage';
+import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 import { getAgencies } from '../../utils/agencyOwnership';
 import { esRegistroWeb } from '../../utils/altaClientes';
 import { calcularComisionReembolso, COMISION_FIJA, COMISION_PORCENTAJE } from '../../utils/comisionReembolso';
@@ -242,15 +243,26 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         }
     };
 
-    const handleFileChange = (e) => {
+    const handleFileChange = async (e) => {
         const file = e.target.files[0];
+        e.target.value = '';
         if (!file) return;
-
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            set('agencyLogoUrl', reader.result); // Base64 temporal para previsualización
-        };
-        reader.readAsDataURL(file);
+        try {
+            // El logo se encoge pero se guarda en PNG: en JPEG perdería el fondo
+            // transparente. Los SVG van tal cual.
+            const dataUrl = esImagenComprimible(file)
+                ? await compressImage(file, 600, 300, 1, 'image/png')
+                : await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+            set('agencyLogoUrl', dataUrl); // Base64 temporal para previsualización
+        } catch (err) {
+            console.error('[Logo] No se pudo procesar la imagen:', err);
+            alert('No se ha podido procesar la imagen. Prueba con otra.');
+        }
     };
 
     const handleSubmit = async (e) => {

@@ -956,24 +956,27 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
         return;
     }, [formData.destinationCity, formData.destinationZip, tariffs, isOpen, selectedArticles]);
 
-    const handlePhotoChange = (e) => {
+    const handlePhotoChange = async (e) => {
         cameraOpenRef.current = false; // Camera returned
         const file = e.target.files[0];
+        e.target.value = ''; // Permite repetir la misma foto y suelta el fichero
         if (!file) return;
         if (file.size > 20 * 1024 * 1024) {
             alert("La imagen es demasiado grande. Máximo 20MB.");
             return;
         }
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-            try {
-                const compressed = await compressImage(reader.result, 1200, 1200, 0.75);
-                setMerchandisePhoto(compressed);
-            } catch {
-                setMerchandisePhoto(reader.result); // Fallback sin compresión
-            }
-        };
-        reader.readAsDataURL(file);
+        // El fichero va DIRECTO al compresor. Antes se convertía entero a base64 y se
+        // descomprimía a tamaño completo: con una foto de 48 MP Android se quedaba sin
+        // memoria y cerraba la app en mitad del albarán.
+        setIsUploadingPhoto(true);
+        try {
+            setMerchandisePhoto(await compressImage(file, 1200, 1200, 0.75));
+        } catch (error) {
+            console.error('[Foto mercancia] No se pudo comprimir la foto:', error);
+            alert("No se ha podido procesar la foto. Vuelve a intentarlo; el albarán no se ha perdido.");
+        } finally {
+            setIsUploadingPhoto(false);
+        }
     };
 
     // Guardar formulario antes de abrir la cámara (por si Android mata la página)
@@ -1922,24 +1925,30 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
                                     )}
                                 </div>
                                 
+                                {/* El input va FUERA del botón: dentro, su click programático
+                                    rebotaba al botón y volvía a disparar handleOpenCamera. */}
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    capture="environment"
+                                    onChange={handlePhotoChange}
+                                    className="hidden"
+                                />
+
                                 {!merchandisePhoto ? (
                                     <button
                                         type="button"
                                         onClick={handleOpenCamera}
-                                        className="w-full py-4 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-100 hover:border-slate-300 transition-all flex flex-col items-center justify-center gap-1.5 active:scale-95 group"
+                                        disabled={isUploadingPhoto}
+                                        className="w-full py-4 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 text-slate-400 hover:bg-slate-100 hover:border-slate-300 transition-all flex flex-col items-center justify-center gap-1.5 active:scale-95 group disabled:opacity-60"
                                     >
                                         <div className="p-2 bg-white rounded-full shadow-sm group-hover:scale-110 transition-transform">
                                             <Camera size={20} className="text-blue-500" />
                                         </div>
-                                        <span className="text-[10px] font-bold uppercase tracking-wider">Capturar o Subir Foto</span>
-                                        <input 
-                                            ref={fileInputRef}
-                                            type="file" 
-                                            accept="image/*" 
-                                            capture="environment" 
-                                            onChange={handlePhotoChange} 
-                                            className="hidden" 
-                                        />
+                                        <span className="text-[10px] font-bold uppercase tracking-wider">
+                                            {isUploadingPhoto ? 'Procesando foto...' : 'Capturar o Subir Foto'}
+                                        </span>
                                     </button>
                                 ) : (
                                     <div className="relative rounded-xl overflow-hidden aspect-video bg-slate-900 flex items-center justify-center ring-2 ring-blue-500/20 mx-1">

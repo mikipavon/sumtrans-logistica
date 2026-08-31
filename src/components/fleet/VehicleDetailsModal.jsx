@@ -4,6 +4,7 @@ import BrandLogo from './BrandLogo';
 import MaintenanceIcon, { getMaintenanceConfig } from './MaintenanceIcon';
 import PdfPreview from './PdfPreview';
 import { uploadFileToBucket } from '../../utils/storage';
+import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 
 const BRANDS = [
     { key: 'fiat',       name: 'FIAT' },
@@ -354,14 +355,29 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
         setShowMaintForm(true);
     };
 
-    const handleInvoicePhotoUpload = (e) => {
+    const handleInvoicePhotoUpload = async (e) => {
         const file = e.target.files[0];
-        if (!file) return;
-        if (file.size > 4 * 1024 * 1024) { alert('Imagen demasiado grande. Límite: 4MB.'); return; }
-        const reader = new FileReader();
-        reader.onload = (ev) => setMInvoicePhoto(ev.target.result);
-        reader.readAsDataURL(file);
         e.target.value = '';
+        if (!file) return;
+        // Las fotos se encogen antes de guardarse en la ficha; los PDF van tal cual
+        // y siguen con el límite de siempre.
+        if (!esImagenComprimible(file) && file.size > 4 * 1024 * 1024) {
+            alert('Archivo demasiado grande. Límite: 4MB.'); return;
+        }
+        if (file.size > 20 * 1024 * 1024) { alert('Archivo demasiado grande. Límite: 20MB.'); return; }
+        try {
+            setMInvoicePhoto(esImagenComprimible(file)
+                ? await compressImage(file, 1600, 1600, 0.75)
+                : await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => resolve(ev.target.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                }));
+        } catch (err) {
+            console.error('[Factura taller] No se pudo procesar el archivo:', err);
+            alert('No se ha podido procesar el archivo. Vuelve a intentarlo.');
+        }
     };
 
     const handleDeleteMaint = (id) => {

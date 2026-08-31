@@ -14,22 +14,18 @@ export default function IncidentModal({ isOpen, onClose, onConfirm, shipment, in
         }
     }, [isOpen, initialReason]);
 
-    const handlePhotoUpload = (e) => {
+    const handlePhotoUpload = async (e) => {
         const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = async () => {
-                const base64 = reader.result;
-                try {
-                    // Comprimir aquí (no sólo al subir) para que también pese poco
-                    // si el envío se hace en cola sin cobertura.
-                    setPhoto(await compressImage(base64));
-                } catch (err) {
-                    console.error("Compression error:", err);
-                    setPhoto(base64); // Fallback a la original si falla la compresión
-                }
-            };
-            reader.readAsDataURL(file);
+        e.target.value = ''; // Permite repetir la misma foto y suelta el fichero
+        if (!file) return;
+        try {
+            // Comprimir aquí (no sólo al subir) para que también pese poco
+            // si el envío se hace en cola sin cobertura. El fichero va directo al
+            // compresor: pasarlo antes a base64 dejaba sin memoria al móvil.
+            setPhoto(await compressImage(file));
+        } catch (err) {
+            console.error("Compression error:", err);
+            alert("No se ha podido procesar la foto. Vuelve a intentarlo; la incidencia no se ha perdido.");
         }
     };
 

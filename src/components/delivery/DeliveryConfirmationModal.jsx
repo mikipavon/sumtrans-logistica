@@ -362,28 +362,20 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
     const handlePhotoUpload = async (e, photoIndex = 1) => {
         const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = async () => {
-                const base64 = reader.result;
-                try {
-                    // Compress immediately to save memory and ensure successful upload later
-                    const compressed = await compressImage(base64);
-                    if (photoIndex === 1) {
-                        setPhotoPreview(compressed);
-                    } else {
-                        setPhotoPreview2(compressed);
-                    }
-                } catch (err) {
-                    console.error("Compression error:", err);
-                    if (photoIndex === 1) {
-                        setPhotoPreview(base64); // Fallback to original if compression fails
-                    } else {
-                        setPhotoPreview2(base64);
-                    }
-                }
-            };
-            reader.readAsDataURL(file);
+        e.target.value = ''; // Permite repetir la misma foto y suelta el fichero
+        if (!file) return;
+        // El fichero va DIRECTO al compresor: convertirlo antes a base64 y
+        // descomprimirlo entero dejaba sin memoria al móvil y Android cerraba la app.
+        try {
+            const compressed = await compressImage(file);
+            if (photoIndex === 1) {
+                setPhotoPreview(compressed);
+            } else {
+                setPhotoPreview2(compressed);
+            }
+        } catch (err) {
+            console.error("Compression error:", err);
+            alert("No se ha podido procesar la foto. Vuelve a intentarlo; la entrega no se ha perdido.");
         }
     };
 

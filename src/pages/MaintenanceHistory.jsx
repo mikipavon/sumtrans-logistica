@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import BrandLogo from '../components/fleet/BrandLogo';
 import MaintenanceIcon, { getMaintenanceConfig } from '../components/fleet/MaintenanceIcon';
+import { compressImage, esImagenComprimible } from '../utils/imageCompression';
 
 const MAINTENANCE_TYPES = [
     { value: 'Aceite',    label: 'Cambio de Aceite',        icon: Droplets,     color: 'text-amber-500 bg-amber-50 border-amber-200' },
@@ -117,21 +118,35 @@ export default function MaintenanceHistory({ vehicles = [], onUpdateVehicle, onN
     };
 
     // Handle invoice photo
-    const handlePhotoUpload = (vehicleId, logId, e) => {
+    const handlePhotoUpload = async (vehicleId, logId, e) => {
         const file = e.target.files[0];
+        e.target.value = '';
         if (!file) return;
-        if (file.size > 4 * 1024 * 1024) { alert('Imagen demasiado grande. Límite: 4MB.'); return; }
-        const reader = new FileReader();
-        reader.onload = (ev) => {
+        // El límite de 4 MB era para que la foto cupiera en la ficha. Ahora la foto se
+        // encoge antes, así que entra cualquier foto de móvil (los PDF siguen igual).
+        if (!esImagenComprimible(file) && file.size > 4 * 1024 * 1024) {
+            alert('Archivo demasiado grande. Límite: 4MB.'); return;
+        }
+        if (file.size > 20 * 1024 * 1024) { alert('Archivo demasiado grande. Límite: 20MB.'); return; }
+        try {
+            const dataUrl = esImagenComprimible(file)
+                ? await compressImage(file, 1600, 1600, 0.75)
+                : await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => resolve(ev.target.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
             const vehicle = vehicles.find(v => v.id === vehicleId);
             if (!vehicle) return;
             const updatedLogs = (vehicle.maintenanceLogs || []).map(l =>
-                l.id === logId ? { ...l, invoicePhoto: ev.target.result } : l
+                l.id === logId ? { ...l, invoicePhoto: dataUrl } : l
             );
             onUpdateVehicle && onUpdateVehicle(vehicleId, { maintenanceLogs: updatedLogs });
-        };
-        reader.readAsDataURL(file);
-        e.target.value = '';
+        } catch (err) {
+            console.error('[Factura taller] No se pudo procesar el archivo:', err);
+            alert('No se ha podido procesar el archivo. Vuelve a intentarlo.');
+        }
     };
 
     const handleDeletePhoto = (vehicleId, logId) => {
