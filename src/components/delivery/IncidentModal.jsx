@@ -1,11 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, AlertTriangle, Camera, Trash2, CheckCircle, Mic, MicOff } from 'lucide-react';
 import { compressImage } from '../../utils/imageCompression';
+import CameraCaptureModal from '../CameraCaptureModal';
 
 export default function IncidentModal({ isOpen, onClose, onConfirm, shipment, initialReason = '' }) {
     const [reason, setReason] = useState('');
     const [photo, setPhoto] = useState(null);
     const [isListening, setIsListening] = useState(false);
+    // La foto se hace dentro de la app: salir a la cámara del móvil deja que Android
+    // mate la app y la incidencia se pierde a medias.
+    const [camaraAbierta, setCamaraAbierta] = useState(false);
+    const inputRespaldoRef = useRef(null);
 
     useEffect(() => {
         if (isOpen) {
@@ -144,19 +149,16 @@ export default function IncidentModal({ isOpen, onClose, onConfirm, shipment, in
                                     </button>
                                 </>
                             ) : (
-                                <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setCamaraAbierta(true)}
+                                    className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-slate-100 transition-colors p-4"
+                                >
                                     <div className="p-3 bg-white rounded-full shadow-sm mb-2 text-red-500">
                                         <Camera size={24} />
                                     </div>
-                                    <span className="text-sm text-slate-500 font-medium">Hacer foto / Subir archivo</span>
-                                    <input 
-                                        type="file" 
-                                        accept="image/*" 
-                                        capture="environment" 
-                                        className="hidden" 
-                                        onChange={handlePhotoUpload} 
-                                    />
-                                </label>
+                                    <span className="text-sm text-slate-500 font-medium">Hacer foto</span>
+                                </button>
                             )}
                         </div>
                     </div>
@@ -178,6 +180,25 @@ export default function IncidentModal({ isOpen, onClose, onConfirm, shipment, in
                     </button>
                 </div>
             </div>
+
+            <CameraCaptureModal
+                isOpen={camaraAbierta}
+                onClose={() => setCamaraAbierta(false)}
+                onCapture={(foto) => { setPhoto(foto); setCamaraAbierta(false); }}
+                onFallback={() => inputRespaldoRef.current?.click()}
+                titulo="Foto de la incidencia"
+                maxLado={1200}
+                calidad={0.7}
+            />
+            {/* Respaldo: la cámara del móvil, sólo si la de dentro no arranca. */}
+            <input
+                ref={inputRespaldoRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={handlePhotoUpload}
+            />
         </div>
     );
 }

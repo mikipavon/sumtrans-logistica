@@ -30,6 +30,7 @@ import { generateCashReportPDF } from '../../utils/cashReportPdf';
 import { printShipmentTicket } from '../../utils/printShipment';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import ScannerModal from '../../components/delivery/ScannerModal';
+import VersionDeLaApp from '../../components/VersionDeLaApp';
 import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
@@ -6144,6 +6145,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
                         {/* Mis Fichajes del Mes - Cumplimiento Legal RDL 8/2019 */}
                         <DriverTimeLogsHistory currentDriverId={currentDriverId} driverName={drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name} />
+
+                        {/* Qué versión lleva este móvil: es lo primero que hay que preguntar
+                            cuando un repartidor llama diciendo que algo falla. */}
+                        <VersionDeLaApp />
 
                         {/* Modal: Mis Nóminas */}
                         {showPayrollsModal && (

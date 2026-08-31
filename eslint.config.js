@@ -20,6 +20,7 @@ export default defineConfig([
         // Lo inyecta Vite en build (ver vite.config.js): la versión con la que se
         // compiló, para poder saber con cuál falló un móvil.
         __APP_VERSION__: 'readonly',
+        __APP_BUILD_DATE__: 'readonly',
       },
       parserOptions: {
         ecmaVersion: 'latest',

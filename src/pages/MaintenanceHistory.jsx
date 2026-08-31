@@ -2,11 +2,12 @@ import { useState, useMemo, useRef } from 'react';
 import {
     Wrench, Droplets, Circle, CheckCircle, AlertTriangle, Clock,
     Euro, Truck, Filter, Download, ChevronDown, ChevronUp,
-    Trash2, Camera, X, Search, CalendarRange
+    Trash2, Camera, X, Search, CalendarRange, FileText
 } from 'lucide-react';
 import BrandLogo from '../components/fleet/BrandLogo';
 import MaintenanceIcon, { getMaintenanceConfig } from '../components/fleet/MaintenanceIcon';
 import { compressImage, esImagenComprimible } from '../utils/imageCompression';
+import CameraCaptureModal from '../components/CameraCaptureModal';
 
 const MAINTENANCE_TYPES = [
     { value: 'Aceite',    label: 'Cambio de Aceite',        icon: Droplets,     color: 'text-amber-500 bg-amber-50 border-amber-200' },
@@ -118,6 +119,20 @@ export default function MaintenanceHistory({ vehicles = [], onUpdateVehicle, onN
     };
 
     // Handle invoice photo
+    // Foto hecha dentro de la app (sin ceder el turno a la cámara del móvil).
+    const [camaraDestino, setCamaraDestino] = useState(null); // { vehicleId, logId }
+
+    const guardarFotoDeCamara = (dataUrl) => {
+        const { vehicleId, logId } = camaraDestino || {};
+        setCamaraDestino(null);
+        const vehicle = vehicles.find(v => v.id === vehicleId);
+        if (!vehicle) return;
+        const updatedLogs = (vehicle.maintenanceLogs || []).map(l =>
+            l.id === logId ? { ...l, invoicePhoto: dataUrl } : l
+        );
+        onUpdateVehicle && onUpdateVehicle(vehicleId, { maintenanceLogs: updatedLogs });
+    };
+
     const handlePhotoUpload = async (vehicleId, logId, e) => {
         const file = e.target.files[0];
         e.target.value = '';
@@ -405,15 +420,24 @@ export default function MaintenanceHistory({ vehicles = [], onUpdateVehicle, onN
                                                             <Camera size={10} /> Ver
                                                         </button>
                                                     ) : (
-                                                        <label className="cursor-pointer inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200 hover:border-blue-300 hover:text-blue-500 transition-colors">
-                                                            <Camera size={10} /> Añadir
-                                                            <input
-                                                                type="file" className="hidden"
-                                                                accept="image/*,.pdf"
-                                                                ref={el => photoInputRefs.current[rowKey] = el}
-                                                                onChange={e => handlePhotoUpload(row.vehicleId, row.id, e)}
-                                                            />
-                                                        </label>
+                                                        <span className="inline-flex items-center gap-1">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setCamaraDestino({ vehicleId: row.vehicleId, logId: row.id })}
+                                                                className="cursor-pointer inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200 hover:border-blue-300 hover:text-blue-500 transition-colors"
+                                                            >
+                                                                <Camera size={10} /> Foto
+                                                            </button>
+                                                            <label className="cursor-pointer inline-flex items-center gap-1 text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200 hover:border-blue-300 hover:text-blue-500 transition-colors">
+                                                                <FileText size={10} /> Archivo
+                                                                <input
+                                                                    type="file" className="hidden"
+                                                                    accept="image/*,.pdf"
+                                                                    ref={el => photoInputRefs.current[rowKey] = el}
+                                                                    onChange={e => handlePhotoUpload(row.vehicleId, row.id, e)}
+                                                                />
+                                                            </label>
+                                                        </span>
                                                     )}
                                                 </td>
                                                 {/* Actions */}
@@ -505,6 +529,15 @@ export default function MaintenanceHistory({ vehicles = [], onUpdateVehicle, onN
                     </div>
                 </div>
             )}
+
+            <CameraCaptureModal
+                isOpen={camaraDestino !== null}
+                onClose={() => setCamaraDestino(null)}
+                onCapture={guardarFotoDeCamara}
+                titulo="Factura del taller"
+                maxLado={1600}
+                calidad={0.75}
+            />
         </div>
     );
 }

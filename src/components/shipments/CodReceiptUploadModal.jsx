@@ -3,6 +3,7 @@ import { X, Upload, Camera, CheckCircle, AlertTriangle, Loader2, FileText, Trash
 import jsQR from 'jsqr';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
+import CameraCaptureModal from '../CameraCaptureModal';
 
 /**
  * Modal for managing and uploading COD receipt photos.
@@ -17,6 +18,9 @@ export default function CodReceiptUploadModal({ isOpen, onClose, shipments = [],
     const [unmatchedFiles, setUnmatchedFiles] = useState([]); // Files from folder scan that couldn't be matched
     const [dirHandle, setDirHandle] = useState(null);
     const individualInputRefs = useRef({});
+    // Justificante hecho con la cámara de dentro de la app. Guarda de qué envío es:
+    // salir a la cámara del móvil deja que Android mate la app a media tanda.
+    const [camaraEnvioId, setCamaraEnvioId] = useState(null);
 
     // COD shipments that need receipt upload
     const pendingShipments = (shipments || []).filter(s => 
@@ -358,13 +362,13 @@ export default function CodReceiptUploadModal({ isOpen, onClose, shipments = [],
                                                     />
                                                     {/* Camera / Photo button */}
                                                     <button
-                                                        onClick={() => individualInputRefs.current[shipment.id]?.click()}
+                                                        onClick={() => setCamaraEnvioId(shipment.id)}
                                                         className={`p-2.5 rounded-xl transition-colors text-xs font-bold flex items-center gap-1.5 ${
                                                             hasPhoto 
                                                                 ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
                                                                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                                                         }`}
-                                                        title="Seleccionar foto o hacer foto"
+                                                        title="Hacer la foto del justificante"
                                                     >
                                                         <Camera size={14} />
                                                         {hasPhoto ? 'Cambiar' : 'Foto'}
@@ -418,6 +422,22 @@ export default function CodReceiptUploadModal({ isOpen, onClose, shipments = [],
                     </div>
                 </div>
             </div>
+
+            <CameraCaptureModal
+                isOpen={camaraEnvioId !== null}
+                onClose={() => setCamaraEnvioId(null)}
+                onCapture={(foto) => {
+                    setPendingPhotos(prev => ({
+                        ...prev,
+                        [camaraEnvioId]: { preview: foto, status: 'ready' }
+                    }));
+                    setCamaraEnvioId(null);
+                }}
+                onFallback={() => individualInputRefs.current[camaraEnvioId]?.click()}
+                titulo="Foto del justificante"
+                maxLado={1200}
+                calidad={0.8}
+            />
         </div>
     );
 }

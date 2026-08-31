@@ -7,6 +7,7 @@ import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { generateDeliveryPDF } from '../../utils/deliveryPdf';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
+import CameraCaptureModal from '../CameraCaptureModal';
 import { getPackagesCount } from '../../utils/shipmentUtils';
 
 
@@ -23,6 +24,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
     const [isSavingInvoice, setIsSavingInvoice] = useState(false);
     const fileInputRef = useRef(null);
     const codReceiptInputRef = useRef(null);
+    // Cámara dentro de la app: 'mercancia' o 'justificante'. Salir a la del móvil
+    // deja que Android mate la app con la ficha a medio editar.
+    const [camaraAbierta, setCamaraAbierta] = useState(null);
     
     const [selectedArticles, setSelectedArticles] = useState([]);
     const [tempArticleId, setTempArticleId] = useState('');
@@ -310,6 +314,30 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
             console.error('[Foto mercancia] No se pudo comprimir la foto:', err);
             alert("No se ha podido procesar la foto. Vuelve a intentarlo.");
         }
+    };
+
+    // El justificante se sube en cuanto se hace la foto, igual que por el input.
+    const subirJustificante = async (dataUrl) => {
+        setIsUploadingCodReceipt(true);
+        try {
+            const uploadedUrl = await uploadProof(shipment.id, dataUrl, 'delivery_photos');
+            if (uploadedUrl && onUpdate) {
+                await onUpdate(shipment.id, { codReceiptPhoto: uploadedUrl });
+                setCodReceiptPhoto(uploadedUrl);
+            }
+        } catch (err) {
+            console.error('Error uploading COD receipt:', err);
+            alert('Error al subir el justificante: ' + err.message);
+        } finally {
+            setIsUploadingCodReceipt(false);
+        }
+    };
+
+    const alHacerFoto = (foto) => {
+        const destino = camaraAbierta;
+        setCamaraAbierta(null);
+        if (destino === 'justificante') subirJustificante(foto);
+        else setNewPhoto(foto);
     };
 
     const handleChange = (field, value) => {
@@ -1027,7 +1055,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                         />
                                         <button
                                             type="button"
-                                            onClick={() => codReceiptInputRef.current?.click()}
+                                            onClick={() => setCamaraAbierta('justificante')}
                                             disabled={isUploadingCodReceipt}
                                             className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 disabled:opacity-50"
                                         >
@@ -1110,7 +1138,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                         />
                                         <button
                                             type="button"
-                                            onClick={() => fileInputRef.current?.click()}
+                                            onClick={() => setCamaraAbierta('mercancia')}
                                             className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
                                         >
                                             <ImageIcon size={12} /> {shipment.merchandisePhoto || newPhoto ? 'Cambiar' : 'Añadir'}
@@ -1716,6 +1744,16 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
                 )}
             </div>
+
+            <CameraCaptureModal
+                isOpen={camaraAbierta !== null}
+                onClose={() => setCamaraAbierta(null)}
+                onCapture={alHacerFoto}
+                onFallback={() => (camaraAbierta === 'justificante'
+                    ? codReceiptInputRef.current?.click()
+                    : fileInputRef.current?.click())}
+                titulo={camaraAbierta === 'justificante' ? 'Foto del justificante' : 'Foto de la mercancía'}
+            />
         </div>,
         document.body
     );

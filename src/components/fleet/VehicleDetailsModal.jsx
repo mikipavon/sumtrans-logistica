@@ -5,6 +5,7 @@ import MaintenanceIcon, { getMaintenanceConfig } from './MaintenanceIcon';
 import PdfPreview from './PdfPreview';
 import { uploadFileToBucket } from '../../utils/storage';
 import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
+import CameraCaptureModal from '../CameraCaptureModal';
 
 const BRANDS = [
     { key: 'fiat',       name: 'FIAT' },
@@ -97,6 +98,8 @@ function getExpiryStatus(expiryDate) {
 
 export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers, onUpdateVehicle }) {
     const [activeTab, setActiveTab] = useState('detalles');
+    // Foto de factura hecha dentro de la app (sin ceder el turno a la del móvil).
+    const [camaraFactura, setCamaraFactura] = useState(false);
     const [assignedDriverId, setAssignedDriverId] = useState('');
     const [documents, setDocuments] = useState([]);
     const [maintenanceLogs, setMaintenanceLogs] = useState([]);
@@ -740,10 +743,19 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                                                 </div>
                                             </div>
                                         ) : (
-                                            <label className="cursor-pointer flex items-center justify-center gap-2 border-2 border-dashed border-slate-300 hover:border-blue-400 bg-white hover:bg-blue-50 text-slate-500 hover:text-blue-600 font-medium rounded-xl py-3 text-sm transition-all">
-                                                <Camera size={16} /> Seleccionar foto o PDF
-                                                <input type="file" className="hidden" accept="image/*,.pdf" ref={invoiceInputRef} onChange={handleInvoicePhotoUpload} />
-                                            </label>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setCamaraFactura(true)}
+                                                    className="cursor-pointer flex items-center justify-center gap-2 border-2 border-dashed border-slate-300 hover:border-blue-400 bg-white hover:bg-blue-50 text-slate-500 hover:text-blue-600 font-medium rounded-xl py-3 text-sm transition-all"
+                                                >
+                                                    <Camera size={16} /> Hacer foto
+                                                </button>
+                                                <label className="cursor-pointer flex items-center justify-center gap-2 border-2 border-dashed border-slate-300 hover:border-blue-400 bg-white hover:bg-blue-50 text-slate-500 hover:text-blue-600 font-medium rounded-xl py-3 text-sm transition-all">
+                                                    <FileText size={16} /> Foto o PDF
+                                                    <input type="file" className="hidden" accept="image/*,.pdf" ref={invoiceInputRef} onChange={handleInvoicePhotoUpload} />
+                                                </label>
+                                            </div>
                                         )}
                                     </div>
 
@@ -1011,6 +1023,15 @@ export default function VehicleDetailsModal({ isOpen, onClose, vehicle, drivers,
                 </div>
             );
         })()}
+
+        <CameraCaptureModal
+            isOpen={camaraFactura}
+            onClose={() => setCamaraFactura(false)}
+            onCapture={(foto) => { setMInvoicePhoto(foto); setCamaraFactura(false); }}
+            titulo="Factura del taller"
+            maxLado={1600}
+            calidad={0.75}
+        />
         </>
     );
 }
