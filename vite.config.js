@@ -15,20 +15,17 @@ const commit = (() => {
   }
 })()
 
-// El número de versión es el conteo de commits: sube solo con cada cambio, sin que
-// nadie tenga que acordarse de tocarlo. El suelo de version.json es el seguro: si el
-// servidor de despliegue clona el repositorio recortado, el conteo saldría bajísimo y
-// la versión bajaría de golpe. Nunca baja.
+// El número de versión sale de version.json y de ningún otro sitio.
+//
+// Antes se calculaba contando los commits, y en el despliegue salía mal: Vercel clona
+// el repositorio recortado, así que allí no hay historia que contar. La primera vez que
+// se desplegó, producción se quedó en 172 mientras aquí ponía 181. Cualquier número
+// calculado durante la compilación tiene ese problema; éste viaja dentro del repositorio.
+//
+// Se sube con: npm run subir-version
 const numeroDeVersion = (() => {
-  const { minimo } = JSON.parse(readFileSync(new URL('./version.json', import.meta.url), 'utf-8'))
-  try {
-    const superficial = execSync('git rev-parse --is-shallow-repository', { encoding: 'utf-8' }).trim()
-    if (superficial !== 'true') {
-      const conteo = parseInt(execSync('git rev-list --count HEAD', { encoding: 'utf-8' }).trim(), 10)
-      if (Number.isFinite(conteo)) return Math.max(conteo, minimo)
-    }
-  } catch { /* sin git: nos quedamos con el suelo */ }
-  return minimo
+  const { numero } = JSON.parse(readFileSync(new URL('./version.json', import.meta.url), 'utf-8'))
+  return Number(numero) || 0
 })()
 
 const fechaDeCompilacion = new Date().toISOString()

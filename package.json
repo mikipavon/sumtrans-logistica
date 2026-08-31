@@ -10,7 +10,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest"
+    "test": "vitest",
+    "subir-version": "node scripts/subir-version.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
