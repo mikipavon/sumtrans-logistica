@@ -754,7 +754,9 @@ function App() {
       });
 
       let totalDeleted = 0;
-      const buckets = ['signatures', 'delivery_photos', 'merchandise_photos', 'incident_photos'];
+      // 'incident_photos' no está: nunca se creó, y las fotos de incidencia viven en
+      // 'delivery_photos'. Listarlo sólo daba un error por cada limpieza.
+      const buckets = ['signatures', 'delivery_photos', 'merchandise_photos'];
 
       const start = orphanStartDate ? new Date(orphanStartDate).getTime() : 0;
       const end = orphanEndDate ? new Date(orphanEndDate).getTime() + 86400000 : Infinity; // Add 24h to include end day
@@ -1561,7 +1563,7 @@ function App() {
             { key: 'signatureData',     campo: 'deliverySignature', bucket: 'signatures',      etiqueta: 'firma' },
             { key: 'photoData',         campo: 'deliveryPhoto',     bucket: 'delivery_photos', etiqueta: 'foto' },
             { key: 'photoData2',        campo: 'deliveryPhoto2',    bucket: 'delivery_photos', etiqueta: 'foto 2' },
-            { key: 'incidentPhotoData', campo: 'incidentPhoto',     bucket: 'incident_photos', etiqueta: 'foto de incidencia' },
+            { key: 'incidentPhotoData', campo: 'incidentPhoto',     bucket: 'delivery_photos', etiqueta: 'foto de incidencia' },
           ];
 
           let dataToSave = { ...op.updatedData };
@@ -3027,7 +3029,14 @@ function App() {
     if (newStatus === 'Incidencia' && photo) {
       if (navigator.onLine) {
         try {
-          finalPhoto = await uploadProof(shipmentId, photo, 'incident_photos');
+          // Al cubo 'delivery_photos', que existe y tiene permisos, igual que el
+          // justificante de reembolso. 'incident_photos' NUNCA se llegó a crear en
+          // Supabase: la subida daba "Bucket not found", la foto se iba a la cola y
+          // allí reintentaba contra el mismo cubo inexistente para siempre. La oficina
+          // veía la incidencia sin foto y nadie sabía por qué. Los cubos no se pueden
+          // crear desde el navegador (hace falta service_role), así que se usa uno que
+          // ya está.
+          finalPhoto = await uploadProof(shipmentId, photo, 'delivery_photos');
         } catch (e) {
           // Había cobertura pero Storage falló. El fallback era guardar el base64 en la
           // fila "mejor que perderla", y eso es un falso dilema: la cola ya es disco y

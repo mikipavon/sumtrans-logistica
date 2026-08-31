@@ -144,7 +144,9 @@ export const uploadFileToBucket = async (fileName, file, bucketName) => {
  * Si algún día falta un bucket, `uploadProof` y `uploadFileToBucket` ya lo dicen
  * con un error claro ("El contenedor 'X' no existe").
  */
+// Ojo: 'incident_photos' no está en la lista a propósito. Nunca se creó en Supabase y
+// las fotos de incidencia se guardan en 'delivery_photos'.
 export const STORAGE_BUCKETS = [
   'signatures', 'delivery_photos', 'agency_logos',
-  'merchandise_photos', 'cod_receipts', 'payrolls', 'incident_photos',
+  'merchandise_photos', 'cod_receipts', 'payrolls',
 ];
