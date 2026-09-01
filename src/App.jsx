@@ -976,6 +976,14 @@ function App() {
       }
 
       setIsSyncing(true)
+      // Si al terminar esta vuelta hay que reintentar, la carga NO ha terminado y el
+      // cartel de "cargando" no puede bajar. Hace falta la variable porque no basta
+      // con el `return`: el `finally` de abajo se ejecuta TAMBIEN al salir por
+      // `return`, asi que hasta ahora se avisaba de "carga terminada" con la lista a
+      // medias. En el movil del repartidor eso vale un reparto entero: da su ruta por
+      // vacia, la fija, y lo que llega con el reintento entra como si fuera nuevo y se
+      // le coloca todo arriba, deshaciendole el orden que habia puesto a mano.
+      let habraReintento = false;
       try {
 
         // ── Date threshold: only load finished shipments from the last 90 days ──
@@ -1050,11 +1058,17 @@ function App() {
         // Track how many critical queries succeeded
         const criticalLoaded = [drv, (shpActive || shpFinished), cli].filter(Boolean).length;
         const activeShipmentsTimedOut = !shpActive && shpFinished; // timeout en activos pero no en terminados
-        
+        habraReintento = (criticalLoaded < 3 || activeShipmentsTimedOut) && retryCount < MAX_RETRIES;
+
         if (drv) setDrivers(drv.map(d => ({ ...d.data, id: d.id, username: d.username })))
         
         // ── Merge active + recent finished shipments ──
-        if (shpActive || shpFinished) {
+        // Si los activos no han llegado y vamos a reintentar, NO se publica nada: una
+        // lista de solo terminados es, para el repartidor, un reparto vacio. Antes se
+        // publicaba igual y su movil daba el dia por hecho hasta que entraba el
+        // reintento, que le recolocaba todas las paradas de golpe.
+        const fotoIncompleta = activeShipmentsTimedOut && habraReintento;
+        if (!fotoIncompleta && (shpActive || shpFinished)) {
           const allShp = [...(shpActive || []), ...(shpFinished || [])];
           let loadedShipments = allShp.map(s => ({ ...s.data, id: s.id }));
           
@@ -1151,7 +1165,7 @@ function App() {
 
 
         // If critical data failed to load OR active shipments timed out, retry automatically
-        if ((criticalLoaded < 3 || activeShipmentsTimedOut) && retryCount < MAX_RETRIES) {
+        if (habraReintento) {
           retryCount++;
           const delay = retryCount === 1 ? 3000 : 8000; // 3s primer reintento, 8s segundo
           console.warn(`[LoadData] ${activeShipmentsTimedOut ? 'Active shipments timed out' : `Only ${criticalLoaded}/3 critical tables loaded`}. Auto-retrying in ${delay/1000}s... (attempt ${retryCount}/${MAX_RETRIES})`);
@@ -1164,12 +1178,13 @@ function App() {
         // Auto-retry on total failure
         if (retryCount < MAX_RETRIES) {
           retryCount++;
+          habraReintento = true;
           console.warn(`[LoadData] Total failure. Auto-retrying in 3s... (attempt ${retryCount}/${MAX_RETRIES})`);
           setTimeout(() => loadData(), 3000);
           return;
         }
       } finally {
-        setIsSyncing(false)
+        if (!habraReintento) setIsSyncing(false)
       }
     }
     loadData()

@@ -2857,6 +2857,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 const idsToSave = newRoute.filter(Boolean).map(s => s.id);
                 
                 // 1. localStorage inmediato (por si cierra la app antes de que Supabase responda)
+                ordenGuardadoRef.current = idsToSave;
                 try {
                     localStorage.setItem(`drv_route_${currentDriverId}`, JSON.stringify(idsToSave));
                 } catch (e) { console.warn('localStorage save failed:', e); }
@@ -2879,6 +2880,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     // Derived State Logic
     const [localRoute, setLocalRoute] = useState([]);
     const [isInitialized, setIsInitialized] = useState(false);
+    // El último orden que el conductor dio por bueno (ids). Sirve para distinguir una
+    // parada NUEVA de verdad (la oficina le acaba de pasar trabajo, va arriba) de una
+    // que ya estaba en su orden y sólo ha llegado tarde del servidor: ésa vuelve a SU
+    // sitio, no arriba.
+    const ordenGuardadoRef = useRef(null);
 
 
 
@@ -3322,8 +3328,33 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
             const cloudOrder = currentDriver?.routeOrder;
             const localStorageRoute = JSON.parse(localStorage.getItem(`drv_route_${currentDriverId}`) || 'null');
-            const savedRoute = cloudOrder || localStorageRoute;
-            
+            // Un `routeOrder` vacío en la nube es lista vacía, no "no hay orden": tal
+            // y como estaba, tapaba el orden bueno que el móvil tenía guardado.
+            const savedRoute = (Array.isArray(cloudOrder) && cloudOrder.length > 0)
+                ? cloudOrder
+                : localStorageRoute;
+
+            // Hay orden guardado con paradas pero no ha llegado NINGÚN envío: la carga
+            // viene a medias (lo típico al reabrir la app después de una llamada, con
+            // la cobertura aún volviendo). Si se inicializa aquí, el reparto queda
+            // fijado en vacío y todo lo que llegue después entra por la puerta de
+            // "envíos nuevos", que los coloca arriba: adiós al orden del conductor. Se
+            // espera a la siguiente vuelta, que la hay en cuanto lleguen los envíos.
+            //
+            // "No ha llegado" se distingue de "reparto terminado" mirando si alguna de
+            // las paradas guardadas aparece siquiera en la lista: al terminar el día
+            // siguen estando ahí, marcadas como entregadas.
+            if (assigned.length === 0 && Array.isArray(savedRoute) && savedRoute.length > 0) {
+                const idsCargados = new Set((allShipments || []).map(s => s?.id));
+                const alguna = savedRoute
+                    .map(item => (typeof item === 'object' && item !== null ? item.id : item))
+                    .some(id => idsCargados.has(id));
+                if (!alguna) {
+                    console.log("[RouteInit] Orden guardado pero los envíos aún no han llegado: se espera");
+                    return;
+                }
+            }
+
             console.log("[RouteInit] Initializing:", { 
                 cloudOrder: cloudOrder ? cloudOrder.length + ' items' : 'null', 
                 localStorage: localStorageRoute ? localStorageRoute.length + ' items' : 'null',
@@ -3349,13 +3380,22 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     
                     const finalRoute = [...completelyNew, ...uniqueRestored];
                     setLocalRoute(finalRoute);
+                    // El orden guardado COMPLETO, no el que ha sobrevivido al filtro:
+                    // las paradas que aún no han llegado del servidor siguen teniendo
+                    // sitio reservado en él.
+                    ordenGuardadoRef.current = savedRoute.map(getSavedId);
                     console.log(`[RouteInit] Restored ${uniqueRestored.length} items + ${completelyNew.length} new at top`);
                 } catch (e) {
                     console.warn("[RouteInit] Error rehydrating route:", e);
                     setLocalRoute(assigned);
+                    ordenGuardadoRef.current = assigned.map(a => a.id);
                 }
             } else {
                 setLocalRoute(assigned);
+                // Aún sin orden propio, el de esta primera carga vale de referencia:
+                // si luego llega una parada rezagada, sabrá volver a su sitio en vez
+                // de plantarse arriba.
+                ordenGuardadoRef.current = assigned.map(a => a.id);
                 console.log("[RouteInit] No saved order found, using default assignment order");
             }
             setIsInitialized(true);
@@ -3381,9 +3421,35 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
             // 2. Detectar envíos completamente nuevos (asignados desde oficina, etc.)
             const onlyNew = assigned.filter(s => !existingIds.has(s.id));
-            
-            // 3. Nuevos van ARRIBA, existentes mantienen su orden
-            const newRoute = [...onlyNew, ...updatedExisting];
+
+            // 3. Nuevos ARRIBA... pero sólo los nuevos DE VERDAD.
+            //    Una parada que ya estaba en el orden guardado y aparece ahora no es
+            //    trabajo nuevo: es trabajo que llegó tarde (reintento de carga, vuelta
+            //    de la cobertura). Mandarla arriba le deshacía el reparto al conductor,
+            //    y encima se subía así a la nube. Vuelve a su sitio.
+            const posicionGuardada = new Map(
+                (ordenGuardadoRef.current || []).map((id, i) => [String(id), i])
+            );
+            const reaparecidos = onlyNew
+                .filter(s => posicionGuardada.has(String(s.id)))
+                .sort((a, b) => posicionGuardada.get(String(a.id)) - posicionGuardada.get(String(b.id)));
+            const nuevosDeVerdad = onlyNew.filter(s => !posicionGuardada.has(String(s.id)));
+
+            // Cada reaparecido entra detrás de la última parada que le precedía en el
+            // orden guardado. Así respeta el orden aunque falten paradas por llegar.
+            const conReaparecidos = reaparecidos.reduce((lista, envio) => {
+                const suSitio = posicionGuardada.get(String(envio.id));
+                let detrasDe = -1;
+                lista.forEach((yaPuesto, i) => {
+                    const pos = posicionGuardada.get(String(yaPuesto.id));
+                    if (pos !== undefined && pos < suSitio) detrasDe = i;
+                });
+                const copia = [...lista];
+                copia.splice(detrasDe + 1, 0, envio);
+                return copia;
+            }, updatedExisting);
+
+            const newRoute = [...nuevosDeVerdad, ...conReaparecidos];
             setLocalRoute(newRoute);
             
             // 4. Persistir a localStorage (solo backup local rápido, NO tocar la nube)
@@ -3394,9 +3460,21 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             } catch (e) {
                 console.warn("Storage Quota Exceeded Safari:", e);
             }
+            // El espejo del orden conserva las paradas que aún no han llegado: si se
+            // recortara a lo que hay hoy en pantalla, la que llegue después se quedaría
+            // sin sitio reservado y volvería a colocarse arriba.
+            ordenGuardadoRef.current = [
+                ...newRoute.map(s => String(s.id)),
+                ...(ordenGuardadoRef.current || [])
+                    .map(String)
+                    .filter(id => !newRoute.some(s => String(s.id) === id))
+            ];
 
-            // 5. Si hay envíos REALMENTE nuevos, persistir a la nube
-            if (onlyNew.length > 0 && currentDriverId) {
+            // 5. Si hay envíos REALMENTE nuevos, persistir a la nube.
+            //    Los reaparecidos no cuentan: sólo están volviendo al orden que la nube
+            //    ya tiene guardado, y escribirlo desde una carga a medias es justo lo
+            //    que le borraba el orden al conductor para siempre.
+            if (nuevosDeVerdad.length > 0 && currentDriverId) {
                 const idsToSave = newRoute.map(s => s.id);
                 (async () => {
                     try {
@@ -3814,6 +3892,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const guardarOrdenEnLaNube = (orden) => {
         if (!currentDriverId) return;
         const ids = orden.map(s => s.id);
+        ordenGuardadoRef.current = ids;
         try {
             localStorage.setItem(`drv_route_${currentDriverId}`, JSON.stringify(ids));
         } catch (e) {
