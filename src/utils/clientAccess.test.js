@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { emailDeAcceso, tieneCorreoDeAccesoPropio } from './clientAccess';
+import { emailDeAcceso, tieneCorreoDeAccesoPropio, accesosAdicionales, correosDeAcceso, fichaSinContrasenas } from './clientAccess';
 
 describe('emailDeAcceso', () => {
     it('usa el correo de acceso cuando la ficha lo trae', () => {
@@ -31,5 +31,87 @@ describe('tieneCorreoDeAccesoPropio', () => {
         expect(tieneCorreoDeAccesoPropio({ email: 'a@x.com', accessEmail: 'A@X.com' })).toBe(false);
         expect(tieneCorreoDeAccesoPropio({ email: 'a@x.com' })).toBe(false);
         expect(tieneCorreoDeAccesoPropio({})).toBe(false);
+    });
+});
+
+describe('accesosAdicionales', () => {
+    it('devuelve los correos adicionales con su contraseña', () => {
+        const ficha = {
+            accessEmail: 'pedidos@empresa.com',
+            accessEmailsExtra: [{ email: 'dueno@empresa.com', password: 'secreta1' }],
+        };
+        expect(accesosAdicionales(ficha)).toEqual([{ email: 'dueno@empresa.com', password: 'secreta1' }]);
+    });
+
+    it('normaliza igual que el principal: minúsculas y sin espacios', () => {
+        const ficha = { accessEmailsExtra: [{ email: '  Dueno@Empresa.COM ' }] };
+        expect(accesosAdicionales(ficha)).toEqual([{ email: 'dueno@empresa.com', password: '' }]);
+    });
+
+    it('descarta filas vacías, repetidas y la que repite el principal', () => {
+        const ficha = {
+            accessEmail: 'pedidos@empresa.com',
+            accessEmailsExtra: [
+                { email: '' },
+                { email: 'dueno@empresa.com' },
+                { email: 'DUENO@empresa.com' },
+                { email: 'pedidos@empresa.com' },
+            ],
+        };
+        expect(accesosAdicionales(ficha).map(a => a.email)).toEqual(['dueno@empresa.com']);
+    });
+
+    it('el principal también se descarta cuando sale del email de contacto', () => {
+        const ficha = {
+            email: 'oficina@empresa.com',
+            accessEmailsExtra: [{ email: 'oficina@empresa.com' }, { email: 'dueno@empresa.com' }],
+        };
+        expect(accesosAdicionales(ficha).map(a => a.email)).toEqual(['dueno@empresa.com']);
+    });
+
+    it('una ficha de siempre no tiene ninguno', () => {
+        expect(accesosAdicionales({ email: 'cliente@empresa.com' })).toEqual([]);
+        expect(accesosAdicionales(null)).toEqual([]);
+    });
+});
+
+describe('correosDeAcceso', () => {
+    it('el principal primero y detrás los adicionales', () => {
+        const ficha = {
+            email: 'facturas@empresa.com',
+            accessEmail: 'pedidos@empresa.com',
+            accessEmailsExtra: [{ email: 'dueno@empresa.com' }],
+        };
+        expect(correosDeAcceso(ficha)).toEqual(['pedidos@empresa.com', 'dueno@empresa.com']);
+    });
+
+    it('sin correo ninguno devuelve la lista vacía, no una llena de huecos', () => {
+        expect(correosDeAcceso({})).toEqual([]);
+    });
+});
+
+describe('fichaSinContrasenas', () => {
+    it('quita la contraseña principal y las de los accesos adicionales', () => {
+        const guardada = fichaSinContrasenas({
+            name: 'ACTIVA',
+            password: 'principal1',
+            accessEmail: 'pedidos@empresa.com',
+            accessEmailsExtra: [{ email: 'dueno@empresa.com', password: 'secreta1' }],
+        });
+        expect(guardada.password).toBeUndefined();
+        expect(guardada.accessEmailsExtra).toEqual([{ email: 'dueno@empresa.com' }]);
+        expect(guardada.name).toBe('ACTIVA');
+    });
+
+    it('no inventa el array en las fichas que no lo traen', () => {
+        const guardada = fichaSinContrasenas({ name: 'ACTIVA', email: 'cliente@empresa.com' });
+        expect('accessEmailsExtra' in guardada).toBe(false);
+    });
+
+    it('no toca la ficha original', () => {
+        const original = { password: 'principal1', accessEmailsExtra: [{ email: 'a@x.com', password: 'p1' }] };
+        fichaSinContrasenas(original);
+        expect(original.password).toBe('principal1');
+        expect(original.accessEmailsExtra[0].password).toBe('p1');
     });
 });

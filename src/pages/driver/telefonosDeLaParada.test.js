@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { telefonosDeLaParada } from './DriverDashboard';
+import { telefonosDeLaParada, movilesDelEnvio } from './DriverDashboard';
 
 // Un cliente típico: el fijo de la nave en 'phone' (el que baja al albarán) y el
 // móvil del encargado en 'mobile', que hasta ahora no lo miraba nadie.
@@ -74,5 +74,102 @@ describe('telefonosDeLaParada', () => {
     it('sin cliente ni teléfono no devuelve nada', () => {
         expect(telefonosDeLaParada(entregaA('Desconocido SL', ''), CLIENTES)).toEqual([]);
         expect(telefonosDeLaParada(null, CLIENTES)).toEqual([]);
+    });
+});
+
+describe('movilesDelEnvio', () => {
+    // Un albarán normal: lo manda el kiosco y lo recibe el bar, que en el albarán
+    // solo tiene el fijo de la nave.
+    const ENTREGA = {
+        type: 'Entrega',
+        originName: 'Kiosco Ana',
+        originPhone: '',
+        destinationName: 'Bar Pepe',
+        destinationPhone: '957 123 456',
+    };
+
+    it('ofrece las dos puntas del albarán, la parada delante', () => {
+        expect(movilesDelEnvio(ENTREGA, CLIENTES)).toEqual([
+            { numero: '600 111 222', papel: 'Destinatario', nombre: 'Bar Pepe', paga: false },
+            { numero: '655443322', papel: 'Remitente', nombre: 'Kiosco Ana', paga: true },
+        ]);
+    });
+
+    it('en una recogida el remitente va primero', () => {
+        expect(movilesDelEnvio({ ...ENTREGA, type: 'Recogida' }, CLIENTES).map(o => o.papel))
+            .toEqual(['Remitente', 'Destinatario']);
+    });
+
+    it('deja fuera los fijos: a un fijo el justificante no llega', () => {
+        const soloFijos = {
+            type: 'Entrega',
+            originName: 'Desconocido SL',
+            originPhone: '',
+            destinationName: 'Ferretería Luna',
+            destinationPhone: '954112233',
+        };
+        expect(movilesDelEnvio(soloFijos, CLIENTES)).toEqual([]);
+    });
+
+    it('no repite el número cuando las dos puntas son el mismo cliente', () => {
+        const ambos = {
+            type: 'Entrega',
+            originName: 'Bar Pepe',
+            originPhone: '600111222',
+            destinationName: 'Bar Pepe',
+            destinationPhone: '+34 600 111 222',
+        };
+        expect(movilesDelEnvio(ambos, CLIENTES)).toEqual([
+            { numero: '+34 600 111 222', papel: 'Destinatario', nombre: 'Bar Pepe', paga: true },
+        ]);
+    });
+
+    it("el nombre suelto del albarán solo vale para la punta que es la parada", () => {
+        // Sin destinationName, 'client' es el destinatario; el remitente se queda
+        // vacío en vez de heredar ese nombre y ofrecer un teléfono que no es suyo.
+        expect(movilesDelEnvio({ type: 'Entrega', client: 'Kiosco Ana' }, CLIENTES)).toEqual([
+            { numero: '655443322', papel: 'Destinatario', nombre: 'Kiosco Ana', paga: false },
+        ]);
+    });
+
+    // Quién paga marca qué justificante lleva precio (ver lineasDeDineroDelJustificante).
+    it('con porte Pagado paga el remitente', () => {
+        const opciones = movilesDelEnvio({ ...ENTREGA, porteType: 'Pagado' }, CLIENTES);
+        expect(opciones.map(o => [o.papel, o.paga])).toEqual([
+            ['Destinatario', false],
+            ['Remitente', true],
+        ]);
+    });
+
+    it('con porte Debido paga el destinatario', () => {
+        const opciones = movilesDelEnvio({ ...ENTREGA, porteType: 'Debido' }, CLIENTES);
+        expect(opciones.map(o => [o.papel, o.paga])).toEqual([
+            ['Destinatario', true],
+            ['Remitente', false],
+        ]);
+    });
+
+    it('un albarán antiguo sin porteType lo paga el remitente', () => {
+        expect(movilesDelEnvio(ENTREGA, CLIENTES).find(o => o.papel === 'Remitente').paga).toBe(true);
+    });
+
+    it('si el mismo móvil está en las dos puntas, cuenta como que paga', () => {
+        // Remitente y destinatario son la misma empresa y el porte es Debido: el único
+        // botón que queda es el del destinatario, y ese sí tiene que llevar el precio.
+        const ambos = {
+            type: 'Recogida',
+            porteType: 'Debido',
+            originName: 'Bar Pepe',
+            originPhone: '600111222',
+            destinationName: 'Bar Pepe',
+            destinationPhone: '+34 600 111 222',
+        };
+        expect(movilesDelEnvio(ambos, CLIENTES)).toEqual([
+            { numero: '600111222', papel: 'Remitente', nombre: 'Bar Pepe', paga: true },
+        ]);
+    });
+
+    it('sin albarán no devuelve nada', () => {
+        expect(movilesDelEnvio(null, CLIENTES)).toEqual([]);
     });
 });

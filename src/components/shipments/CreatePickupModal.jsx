@@ -1,7 +1,7 @@
-import { X, Building2, Package, FileText, MapPin, Loader2, Mic, MicOff } from 'lucide-react';
+import { X, Building2, Package, FileText, MapPin, Loader2, Mic, MicOff, Truck } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
-export default function CreatePickupModal({ isOpen, onClose, onSave, clients, allPoblaciones, allShipments }) {
+export default function CreatePickupModal({ isOpen, onClose, onSave, clients, allPoblaciones, allShipments, drivers = [], driverNamePreference = 'both', isDriver }) {
     const [formData, setFormData] = useState({
         clientName: '',
         originAddress: '',
@@ -10,7 +10,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
         observations: '',
         originCoordinates: '',
         branchId: null,
-        _parentClientId: null
+        _parentClientId: null,
+        assignedDriverId: '',
+        scheduledDate: '' // Hora a la que le sale al conductor. Solo la pone la oficina.
     });
 
     const [gettingGps, setGettingGps] = useState(false);
@@ -69,7 +71,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 observations: '',
                 originCoordinates: '',
                 branchId: null,
-                _parentClientId: null
+                _parentClientId: null,
+                assignedDriverId: '',
+                scheduledDate: ''
             });
             setShowSuggestions(false);
         } else {
@@ -217,7 +221,12 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
             destination: 'Almacén Central',
 
             address: fullOrigin, // Main display address for functionality
-            status: 'Pendiente de asignar', // Initial status
+            // Si la oficina ya eligió conductor aquí mismo, la recogida nace igual que
+            // si la hubiera asignado luego desde el listado: «En reparto» y con la hora
+            // programada. Hasta esa hora no le aparece al conductor.
+            status: (!isDriver && formData.assignedDriverId) ? 'En reparto' : 'Pendiente de asignar',
+            assignedDriverId: (!isDriver && formData.assignedDriverId) ? Number(formData.assignedDriverId) : null,
+            scheduledDate: (!isDriver && formData.assignedDriverId && formData.scheduledDate) ? formData.scheduledDate : null,
             date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }),
             amount: 'Por valorar',
             observations: formData.observations,
@@ -231,6 +240,22 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
     };
 
     if (!isOpen) return null;
+
+    // La hora de ahora tal y como la quiere un <input type="datetime-local">: en local,
+    // no en UTC. Es lo mismo que hace el cuadro de asignar del listado.
+    const ahoraParaInputLocal = () => {
+        const d = new Date();
+        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+        return d.toISOString().slice(0, 16);
+    };
+
+    const nombreDeConductor = (d) => {
+        const name = d?.name || '';
+        const alias = d?.alias || '';
+        if (driverNamePreference === 'alias' && alias) return alias;
+        if (driverNamePreference === 'name') return name;
+        return alias ? `${name} (${alias})` : name;
+    };
 
     const inputClass = "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-sm";
     const labelClass = "block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1";
@@ -385,6 +410,58 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                                 onChange={(e) => setFormData({ ...formData, observations: e.target.value })}
                             ></textarea>
                         </div>
+
+                        {/* ── PROGRAMAR LA ASIGNACIÓN (solo oficina) ──
+                            Mismo par conductor + fecha/hora que el cuadro «Programar
+                            Asignación» del listado, para dejarlo hecho al crear. */}
+                        {!isDriver && (
+                            <div className="pt-2 border-t border-slate-100">
+                                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2 mb-2">
+                                    <Truck size={14} className="text-amber-600" />
+                                    Programar Asignación
+                                    <span className="font-medium normal-case tracking-normal text-[10px] text-slate-400">(opcional)</span>
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className={labelClass}>Conductor</label>
+                                        <select
+                                            className={inputClass}
+                                            value={formData.assignedDriverId}
+                                            onChange={(e) => {
+                                                const driverId = e.target.value;
+                                                setFormData(prev => ({
+                                                    ...prev,
+                                                    assignedDriverId: driverId,
+                                                    // Al elegir conductor se propone «ahora»; si se quita, se
+                                                    // borra también la hora.
+                                                    scheduledDate: driverId ? (prev.scheduledDate || ahoraParaInputLocal()) : ''
+                                                }));
+                                            }}
+                                        >
+                                            <option value="">-- Sin asignar --</option>
+                                            {(drivers || []).filter(d => d.isActive !== false).map(d => (
+                                                <option key={d.id} value={d.id}>{nombreDeConductor(d)}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className={labelClass}>Fecha y Hora de Asignación</label>
+                                        <input
+                                            type="datetime-local"
+                                            className={inputClass}
+                                            value={formData.scheduledDate}
+                                            disabled={!formData.assignedDriverId}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, scheduledDate: e.target.value }))}
+                                        />
+                                        <p className="text-[10px] text-slate-400 mt-1 leading-tight">
+                                            {formData.assignedDriverId
+                                                ? 'No le aparece al conductor hasta esa hora.'
+                                                : 'Elige conductor para poder programar la hora.'}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="flex gap-3 pt-2">
                             <button

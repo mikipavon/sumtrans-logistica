@@ -18,7 +18,7 @@
 // con los ojos abiertos. El CIF es información pública y quien rellena el
 // formulario puede no ser de esa empresa.
 
-import { emailDeAcceso, tieneAccesoAlPortal } from './clientAccess';
+import { correosDeAcceso, tieneAccesoAlPortal } from './clientAccess';
 
 const normalizarTexto = (valor) => String(valor || '')
     .toLowerCase()
@@ -33,12 +33,13 @@ const normalizarCif = (valor) => String(valor || '')
     .replace(/[^A-Z0-9]/g, '');
 
 // Todos los correos por los que se puede reconocer a una ficha: el de contacto,
-// el de acceso al portal y el usuario cuando es un email.
+// los de acceso al portal —el principal y los adicionales, que son cuentas de
+// personas distintas de la misma empresa— y el usuario cuando es un email.
 const correosDe = (client) => {
     const usuario = String(client?.username || '').trim().toLowerCase();
     return [
         String(client?.email || '').trim().toLowerCase(),
-        emailDeAcceso(client),
+        ...correosDeAcceso(client),
         usuario.includes('@') ? usuario : '',
     ].filter(Boolean);
 };

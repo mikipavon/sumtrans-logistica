@@ -28,6 +28,11 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
     // deja que Android mate la app con la ficha a medio editar.
     const [camaraAbierta, setCamaraAbierta] = useState(null);
     
+    // Porte tecleado a mano cuando el precio va oculto (cliente de facturación /
+    // presupuesto). null = no se ha tocado, así el precio de tarifa sigue sin verse.
+    // Mismo mecanismo que el alta (CreateShipmentModal), donde sí se podía.
+    const [priceOverride, setPriceOverride] = useState(null);
+
     const [selectedArticles, setSelectedArticles] = useState([]);
     const [tempArticleId, setTempArticleId] = useState('');
     const [tempQuantity, setTempQuantity] = useState(1);
@@ -201,6 +206,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
             });
             setIsEditing(false);
             setCodReceiptPhoto(null);
+            setPriceOverride(null);
         }
     }, [shipment, isOpen]);
 
@@ -745,11 +751,33 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     {!isClientView && (
                         <div id="tour-edit-amounts" className="grid grid-cols-2 gap-4">
                                                 {hidePrices ? (
+                            /* Precio oculto (cliente de facturación/presupuesto): el conductor no
+                               ve la tarifa, pero SÍ puede teclear otro porte si este envío lleva
+                               un precio distinto — igual que en el alta. Mientras no escriba nada
+                               la casilla va vacía y el importe guardado no se toca. */
                             <div className="space-y-1">
                                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
                                     <Euro size={12} /> Precio Final Porte
                                 </span>
-                                <p className="text-slate-400 italic font-medium text-sm">FACTURACIÓN (OCULTO)</p>
+                                {isEditing && !isReadOnly ? (
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        inputMode="decimal"
+                                        placeholder="FACTURACIÓN - pulsa para cambiar"
+                                        value={priceOverride !== null ? priceOverride : ''}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            // Si la vacía, se vuelve al importe que ya tenía el albarán:
+                                            // borrar la casilla no puede dejar el porte a cero.
+                                            setPriceOverride(val === '' ? null : val);
+                                            handleChange('amount', val === '' ? (shipment.amount ?? '') : val);
+                                        }}
+                                        className={`w-full text-sm border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none font-bold ${priceOverride === null ? 'text-slate-400 italic' : 'text-slate-700'}`}
+                                    />
+                                ) : (
+                                    <p className="text-slate-400 italic font-medium text-sm">FACTURACIÓN (OCULTO)</p>
+                                )}
                             </div>
                         ) : (
                             renderField("Precio Final Porte", formData.amount, "amount", <Euro />)

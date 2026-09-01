@@ -5,9 +5,15 @@ import { supabase } from '../lib/supabase';
 import { getOwnerLabel } from '../utils/agencyOwnership';
 import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, loQueAportanLasGemelas, explicarAportacion } from '../utils/duplicadosClientes';
 import { esRegistroWeb } from '../utils/altaClientes';
+import { planDeAcceso, explicarElAcceso } from '../utils/accesoFichaExistente';
+import { emailDeAcceso } from '../utils/clientAccess';
 
 // ── Llama a la Edge Function para enviar email de acceso al cliente ──
-async function sendAccessEmail(clientId) {
+// `email` es opcional y sólo se usa cuando el que espera el aviso no es el
+// correo principal de la ficha: otra persona de la misma empresa, o el cliente
+// de siempre al que se le acaba de dar el acceso a su ficha de toda la vida.
+// La función de servidor lo comprueba contra los correos de esa ficha.
+async function sendAccessEmail(clientId, email = null) {
     try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.access_token) {
@@ -23,7 +29,7 @@ async function sendAccessEmail(clientId) {
                 // quien llama es admin antes de dar acceso al cliente.
                 'Authorization': `Bearer ${session.access_token}`,
             },
-            body: JSON.stringify({ clientId }),
+            body: JSON.stringify({ clientId, ...(email ? { email } : {}) }),
         });
         const result = await res.json();
         if (result.ok) {
@@ -73,7 +79,7 @@ function momentoDeRegistro(client) {
     return isNaN(t) ? 0 : t;
 }
 
-export default function ClientValidation({ clients, onValidateClient, onUpdateClient, onDeleteClients, articles, tariffs, allPoblaciones }) {
+export default function ClientValidation({ clients, onValidateClient, onUpdateClient, onDeleteClients, onGrantAccessToExisting, articles, tariffs, allPoblaciones }) {
     // Filter only pending clients — exclude test-mode clients (isTest: true)
     // Los registros web van primero, y entre ellos el último de arriba: son los
     // únicos que tienen a alguien esperando al otro lado.
@@ -165,6 +171,45 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
             setSelectedIds(prev => prev.filter(id => !borradas.includes(id)));
         } finally {
             setUniendoId(null);
+        }
+    };
+
+    // ── Darle el acceso a la ficha que ya existe, en vez de aprobar otra ──
+    //
+    // Es el caso de casi todos los registros web que salen en rojo: no es un
+    // cliente nuevo, es el de siempre pidiendo entrar en la app. Aprobarlo deja
+    // dos fichas y ata el portal a la nueva, que está vacía. Esto se queda con
+    // la ficha buena —su número, su tarifa, su histórico—, le pone SÓLO el
+    // acceso y borra la solicitud.
+    const [dandoAccesoId, setDandoAccesoId] = useState(null);
+
+    const handleDarAcceso = async (solicitud, ficha) => {
+        const plan = planDeAcceso(solicitud, ficha);
+        if (!plan.posible) {
+            alert(`Esta solicitud no trae acceso que dar: ${plan.motivo}.`);
+            return;
+        }
+
+        if (!window.confirm(explicarElAcceso(solicitud, ficha, plan))) return;
+
+        setDandoAccesoId(solicitud.id);
+        try {
+            const hecho = await onGrantAccessToExisting?.(solicitud, ficha);
+            if (!hecho) return;
+
+            // El aviso va a quien se ha registrado, que puede no ser el correo
+            // principal de la ficha si ahí ya entraba otra persona.
+            await sendAccessEmail(ficha.id, plan.correo);
+
+            // La solicitud ya no existe: que no se quede marcada para el borrado.
+            setSelectedIds(prev => prev.filter(id => id !== solicitud.id));
+
+            alert(
+                `✅ «${ficha.name}» ya entra en el portal con ${plan.correo}.\n\n` +
+                `Se le ha enviado el email de acceso y la solicitud de la web se ha borrado.`
+            );
+        } finally {
+            setDandoAccesoId(null);
         }
     };
 
@@ -545,7 +590,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                         <AlertTriangle size={15} className="text-red-600 mt-0.5 shrink-0" />
                                         <div className="min-w-0">
                                             <p className="text-xs font-bold text-red-800">Ya parece estar en tu cartera</p>
-                                            <ul className="mt-1 space-y-1">
+                                            <ul className="mt-1 space-y-2">
                                                 {duplicadosPorCliente.get(client.id).map(({ client: ficha, motivos, yaTieneAcceso }) => (
                                                     <li key={ficha.id} className="text-xs text-red-700 leading-snug">
                                                         <span className="font-bold break-words">{ficha.name}</span>
@@ -557,11 +602,25 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                                                 Esa ficha ya entra en el portal
                                                             </span>
                                                         )}
+                                                        {/* Lo que casi siempre hay que hacer con un registro web en rojo:
+                                                            no es un cliente nuevo, es el de siempre pidiendo entrar. */}
+                                                        {emailDeAcceso(client) && (
+                                                            <button
+                                                                onClick={() => handleDarAcceso(client, ficha)}
+                                                                disabled={dandoAccesoId === client.id}
+                                                                className="mt-1.5 w-full flex items-center justify-center gap-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold rounded-lg text-xs transition-colors"
+                                                            >
+                                                                <KeyRound size={13} />
+                                                                {dandoAccesoId === client.id ? 'Dando el acceso…' : 'Dar el acceso a esta ficha'}
+                                                            </button>
+                                                        )}
                                                     </li>
                                                 ))}
                                             </ul>
                                             <p className="text-[10px] text-red-600 mt-1.5 leading-snug">
-                                                Aprobarla crea una segunda ficha, y el cliente entrará a la nueva —vacía—, no a la suya.
+                                                {emailDeAcceso(client)
+                                                    ? 'Con el botón, la ficha de siempre se queda como está y sólo se le pone el acceso: la solicitud se borra y no queda una segunda ficha. Aprobarla, en cambio, crea la segunda y el cliente entrará a la nueva —vacía—, no a la suya.'
+                                                    : 'Aprobarla crea una segunda ficha, y el cliente entrará a la nueva —vacía—, no a la suya.'}
                                             </p>
                                         </div>
                                     </div>

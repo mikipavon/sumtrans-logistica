@@ -36,7 +36,8 @@ import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { fetchAllRows } from './utils/fetchAllRows';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
-import { emailDeAcceso, tieneAccesoAlPortal } from './utils/clientAccess';
+import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, fichaSinContrasenas } from './utils/clientAccess';
+import { planDeAcceso } from './utils/accesoFichaExistente';
 import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNombreCliente } from './utils/altaClientes';
 import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre } from './utils/ventanaPadre';
@@ -2138,7 +2139,13 @@ function App() {
   // Sólo se llama cuando se guarda una ficha CON contraseña: las fichas de
   // destinatario que crean solos los repartidores al entregar no llevan, y no
   // deben disparar ningún aviso.
-  const syncClientAuthAccount = async ({ email, password, clientId, displayName }) => {
+  //
+  // Con `adicional` se crea una cuenta MÁS para la misma ficha en vez de mover
+  // la que ya hay: es la del dueño de la empresa junto a la del que hace los
+  // albaranes. Sin ese aviso, la función de servidor encuentra la cuenta que ya
+  // está vinculada al cliente y le cambia el correo, así que en vez de dos
+  // personas entrando quedaría una sola con el correo del otro.
+  const syncClientAuthAccount = async ({ email, password, clientId, displayName, adicional = false }) => {
     const motivo = !email
       ? 'la ficha no tiene correo de acceso ni e-mail de contacto'
       : (!password || password.length < 6)
@@ -2162,6 +2169,7 @@ function App() {
           role: 'client',
           linked_id: String(clientId),
           display_name: displayName || email,
+          acceso_adicional: adicional,
         }
       });
 
@@ -2183,6 +2191,76 @@ function App() {
         `Hasta que se resuelva, entrará en el portal pero lo verá todo vacío.`
       );
       return false;
+    }
+  };
+
+  // ── Las demás personas de la empresa que entran al portal ──
+  //
+  // El dueño y quien hace los albaranes entran cada uno con su correo y ven la
+  // misma ficha. Cada uno tiene su cuenta de Auth apuntando al mismo cliente,
+  // que es lo que mira RLS (`profiles.linked_id`), así que no hay que tocar
+  // ninguna política: se crean cuentas y ya está.
+  //
+  // `anterior` es la ficha tal como estaba guardada y sirve para lo que ya no
+  // aparece: un correo que se borra de la lista es un acceso que hay que
+  // retirar de verdad, o esa persona seguiría entrando con su contraseña de
+  // siempre aunque su correo ya no esté en ninguna pantalla.
+  const sincronizarAccesosAdicionales = async (anterior, nueva, clientId) => {
+    const ahora = accesosAdicionales(nueva);
+    const antes = accesosAdicionales(anterior).map(a => a.email);
+    const correosAhora = ahora.map(a => a.email);
+
+    // 1. Los que ya no están: se les quita el acceso, avisando antes. Borrar una
+    //    cuenta no tiene vuelta atrás, y desde la ficha no se ve a quién afecta.
+    for (const email of antes.filter(e => !correosAhora.includes(e))) {
+      const confirmado = window.confirm(
+        `¿Quitarle el acceso al portal a ${email}?\n\n` +
+        `Su cuenta se borra y dejará de poder entrar. Los albaranes que haya creado no se tocan.`
+      );
+      if (!confirmado) continue;
+
+      try {
+        const res = await supabase.functions.invoke('create-auth-user', {
+          body: { accion: 'revocar_acceso_adicional', email, linked_id: String(clientId) },
+        });
+        if (res.error) throw new Error(res.error.message);
+        console.log(`[ClientAuth] Acceso adicional retirado: ${email}`);
+      } catch (e) {
+        console.warn('[ClientAuth] No se pudo retirar el acceso:', e);
+        alert(
+          `⚠️ ${email} ya no aparece en la ficha, pero NO se ha podido borrar su cuenta:\n\n${e.message}\n\n` +
+          `Sigue pudiendo entrar. Vuelve a intentarlo o bórrala desde Supabase.`
+        );
+      }
+    }
+
+    // 2. Los nuevos y los que cambian de contraseña. Sin contraseña no hay nada
+    //    que crear: Auth no admite cuentas sin ella.
+    for (const { email, password } of ahora) {
+      if (!password) {
+        // Escribir sólo el correo y guardar es el error fácil de cometer, y sin
+        // aviso el cliente se queda esperando unas credenciales que no existen.
+        if (!antes.includes(email)) {
+          alert(
+            `⚠️ ${email} no tiene acceso todavía: le falta la contraseña.\n\n` +
+            `Vuelve a la pestaña Acceso, escríbele una de 6 caracteres o más y guarda.`
+          );
+        }
+        continue;
+      }
+
+      if (password.length < 6) {
+        alert(`⚠️ La contraseña de ${email} tiene menos de 6 caracteres, así que no se le ha creado la cuenta.`);
+        continue;
+      }
+
+      await syncClientAuthAccount({
+        email,
+        password,
+        clientId,
+        displayName: nueva.name,
+        adicional: true,
+      });
     }
   };
 
@@ -3281,7 +3359,13 @@ function App() {
     } catch (e) { alert('Error al añadir respuesta a incidencia'); console.error(e); }
   };
 
-  const handleUpdateClient = async (clientId, updatedData, branchId = null) => {
+  // `opciones.accesosYaCreados` es para el único sitio que crea las cuentas
+  // antes de guardar la ficha: darle el acceso a un cliente que ya estaba en
+  // cartera (handleDarAccesoAFichaExistente). Allí el correo entra en la lista
+  // SIN contraseña —la suya ya está en Auth desde que se registró—, y sin este
+  // aviso la sincronización de abajo lo vería como un acceso a medias y le
+  // diría a la oficina que le falta escribirle una.
+  const handleUpdateClient = async (clientId, updatedData, branchId = null, opciones = {}) => {
     const c = clientsRef.current.find(item => item.id === clientId);
     if (!c) return;
 
@@ -3315,11 +3399,15 @@ function App() {
     }
 
     try {
-      // La contraseña no se guarda en la ficha: viaja sólo a Supabase Auth, un
-      // poco más abajo. En su lugar queda constancia de que este cliente entra
-      // en el portal, que es lo único que la aplicación necesitaba saber.
-      const { password: _sinGuardar, ...datosDelCliente } = updated;
-      if (updatedData?.password) datosDelCliente.tieneAccesoPortal = true;
+      // Las contraseñas no se guardan en la ficha: viajan sólo a Supabase Auth,
+      // un poco más abajo. Ni la principal ni las de los accesos adicionales,
+      // que van dentro de un array y por eso pasan por fichaSinContrasenas() en
+      // vez de por un destructuring suelto. En su lugar queda constancia de que
+      // este cliente entra en el portal, que es lo único que la aplicación
+      // necesitaba saber.
+      const datosDelCliente = fichaSinContrasenas(updated);
+      const accesosNuevos = accesosAdicionales(updated).some(a => a.password);
+      if (updatedData?.password || accesosNuevos) datosDelCliente.tieneAccesoPortal = true;
 
       const { data, error } = await supabase.from('clients').update({ name: updated.name, data: datosDelCliente }).eq('id', clientId).select();
       if (error) throw error;
@@ -3345,6 +3433,15 @@ function App() {
           `Para aplicarlo, vuelve a abrir la ficha y escribe también la contraseña antes de guardar.\n\n` +
           `Hasta entonces el cliente tiene que seguir entrando con: ${emailDeAcceso(c) || '(sin correo)'}`
         );
+      }
+
+      // Sólo cuando quien guarda ha tocado de verdad la lista de accesos, que es
+      // el formulario de la ficha. Este handler se usa mucho como efecto
+      // silencioso —el GPS que aprende el repartidor al entregar— y esos
+      // guardados no traen la lista: si se mirara igualmente, un albarán
+      // entregado podría acabar retirándole el acceso al dueño de la empresa.
+      if (updatedData && !opciones.accesosYaCreados && Object.prototype.hasOwnProperty.call(updatedData, 'accessEmailsExtra')) {
+        await sincronizarAccesosAdicionales(c, updated, clientId);
       }
     } catch (e) {
       console.warn(`[Queue] Error actualizando cliente ${clientId}, encolando para reintento:`, e);
@@ -3485,9 +3582,10 @@ function App() {
         // mirar antes de darlo por bueno.
         if (manual && !newClient.status) clientWithMeta.status = 'approved';
 
-        // Igual que al editar: la contraseña va a Auth, no a la ficha.
-        const { password: _sinGuardar, ...datosDelCliente } = clientWithMeta;
-        if (clientWithMeta.password) datosDelCliente.tieneAccesoPortal = true;
+        // Igual que al editar: las contraseñas van a Auth, no a la ficha.
+        const datosDelCliente = fichaSinContrasenas(clientWithMeta);
+        const traeAccesosAdicionales = accesosAdicionales(clientWithMeta).some(a => a.password);
+        if (clientWithMeta.password || traeAccesosAdicionales) datosDelCliente.tieneAccesoPortal = true;
 
         const { data, error } = await supabase.from('clients').insert([{ id: clientWithMeta.id, name: clientWithMeta.name, data: datosDelCliente }]).select();
         if (error) throw error;
@@ -3508,6 +3606,12 @@ function App() {
             clientId: clientWithMeta.id,
             displayName: clientWithMeta.name,
           });
+        }
+
+        // Y las cuentas de las demás personas de la empresa. En un alta no hay
+        // nada anterior que retirar, así que sólo se crean.
+        if (traeAccesosAdicionales) {
+          await sincronizarAccesosAdicionales({}, clientWithMeta, clientWithMeta.id);
         }
 
         return { ok: true, cliente: guardada };
@@ -3896,6 +4000,75 @@ function App() {
       } catch (e) { alert('Error al rechazar cliente'); console.error(e); }
     }
   }
+
+  // ── El cliente de siempre que sólo quería entrar en el portal ──
+  //
+  // Aprobar un registro web cuyo CIF ya está en cartera deja DOS fichas de la
+  // misma empresa, y el portal atado a la nueva —la vacía—, porque RLS filtra
+  // los envíos por el vínculo de la cuenta. Esto es lo contrario: la ficha que
+  // se queda es la de siempre, con su número, su tarifa y su histórico, y lo
+  // único que se le pone es el acceso. La solicitud se borra.
+  //
+  // El orden importa. Primero la cuenta de Auth, que es lo único que puede
+  // fallar de verdad (la cuenta ya existe desde el registro y hay que moverla
+  // de ficha): si falla, no se ha tocado nada y la solicitud sigue ahí para
+  // volver a intentarlo. Sólo después se escribe la ficha y se borra la
+  // solicitud, que sí es irreversible.
+  const handleDarAccesoAFichaExistente = async (solicitud, ficha) => {
+    const plan = planDeAcceso(solicitud, ficha);
+    if (!plan.posible) {
+      alert(`No se le puede dar el acceso a «${ficha?.name || 'esa ficha'}» porque ${plan.motivo}.`);
+      return false;
+    }
+
+    // supabase.functions.invoke esconde el cuerpo de las respuestas de error
+    // detrás de un "non-2xx status code" que no dice nada. Lo que hay dentro sí:
+    // es el aviso de que ese correo ya es de otro.
+    const motivoDelFallo = async (error) => {
+      try {
+        const cuerpo = await error?.context?.json?.();
+        if (cuerpo?.error) return cuerpo.error;
+      } catch { /* la respuesta no traía JSON */ }
+      return error?.message || 'error desconocido';
+    };
+
+    try {
+      const res = await supabase.functions.invoke('create-auth-user', {
+        body: {
+          accion: 'mover_acceso',
+          email: plan.correo,
+          linked_id: String(ficha.id),
+          // De dónde viene la cuenta: la función sólo mueve la del registro que
+          // se está validando, para no llevarse por delante la de un conductor
+          // o la de otro cliente que use ese mismo correo.
+          desde_linked_id: String(solicitud.id),
+          display_name: ficha.name,
+          acceso_adicional: plan.adicional,
+          // Sólo se usa si no hubiera cuenta que mover (registros antiguos).
+          password: solicitud.password || undefined,
+        },
+      });
+
+      if (res.error) throw new Error(await motivoDelFallo(res.error));
+      if (res.data?.error) throw new Error(res.data.error);
+    } catch (e) {
+      console.warn('[ClientAuth] No se pudo mover el acceso:', e);
+      alert(
+        `⚠️ No se le ha dado el acceso a «${ficha.name}»:\n\n${e.message}\n\n` +
+        `No se ha tocado nada: la solicitud sigue pendiente.`
+      );
+      return false;
+    }
+
+    // La cuenta ya mira a la ficha buena: ahora la ficha dice con qué correo se
+    // entra. Las cuentas están hechas, así que no hay que volver a crearlas.
+    await handleUpdateClient(ficha.id, plan.cambios, null, { accesosYaCreados: true });
+
+    // Y la solicitud sobra: ya no hay una segunda ficha de esta empresa.
+    await handleDeleteClients([solicitud.id]);
+
+    return true;
+  };
 
   // --- NUEVOS ESTADOS PARA COPIA DE SEGURIDAD (Movid@s tras TODAS las declaraciones de estado) ---
   const [backupDirHandle, setBackupDirHandle] = useState(null)
@@ -4292,7 +4465,7 @@ function App() {
       />}
       {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onReply={handleIncidentReply} drivers={drivers} driverNamePreference={driverNamePreference} />}
       {currentView === 'notifications' && <NotificationCenter shipments={visibleShipments} drivers={drivers} clients={visibleClients} onUpdateShipment={handleUpdateShipment} articles={articles} tariffs={tariffs} defaultCodFee={defaultCodFee} familyOrder={familyOrder} coverageZones={coverageZones} />}
-      {currentView === 'clientValidation' && <ClientValidation clients={clients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} onDeleteClients={handleDeleteClients} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
+      {currentView === 'clientValidation' && <ClientValidation clients={clients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} onDeleteClients={handleDeleteClients} onGrantAccessToExisting={handleDarAccesoAFichaExistente} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
       </Suspense>
       {currentView === 'settings' && (
         <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">

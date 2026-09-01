@@ -72,7 +72,7 @@ serve(async (req: Request) => {
       })
     }
 
-    const { clientId } = await req.json()
+    const { clientId, email: correoPedido } = await req.json()
 
     if (!clientId) {
       return new Response(JSON.stringify({ error: 'clientId es obligatorio' }), {
@@ -101,9 +101,42 @@ serve(async (req: Request) => {
     // El correo de acceso manda sobre el de la ficha: es el que identifica la
     // cuenta en Auth. Si la ficha no lo trae (que es lo normal), se usa el email
     // de siempre. Mismo criterio que emailDeAcceso() en la app.
-    const email = String(
+    let email = String(
       clientData.accessEmail || clientData.email || clientData.username || ''
     ).trim().toLowerCase()
+
+    // ── A quién se le manda, cuando en la ficha entra más de uno ──
+    // El aviso normal va al correo de acceso de la ficha. Pero cuando lo que se
+    // acaba de aprobar es el acceso de otra persona de la misma empresa (el
+    // dueño además del que hace los albaranes, o el cliente de siempre que se
+    // registró por la web y se le ha dado el acceso a su ficha), el que espera
+    // el email es ÉL, no el correo principal.
+    //
+    // Se acepta a quién mandarlo, pero sólo si es uno de los correos de esa
+    // ficha: así esta función no se puede usar para mandarle las credenciales
+    // de un cliente a una dirección de fuera.
+    const pedido = String(correoPedido || '').trim().toLowerCase()
+    if (pedido) {
+      const suyos = [
+        clientData.accessEmail,
+        clientData.email,
+        clientData.username,
+        ...(Array.isArray(clientData.accessEmailsExtra)
+          ? clientData.accessEmailsExtra.map((a: { email?: string }) => a?.email)
+          : []),
+      ].map((v: unknown) => String(v || '').trim().toLowerCase()).filter(Boolean)
+
+      if (!suyos.includes(pedido)) {
+        console.warn(`[confirmar-acceso] ${pedido} no es un correo del cliente ${clientId} — no se le manda nada`)
+        return new Response(JSON.stringify({ error: 'Ese correo no es de este cliente' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      email = pedido
+    }
+
     const password = clientData.password || ''
 
     if (!email) {
