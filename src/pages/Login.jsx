@@ -162,7 +162,12 @@ export default function Login({ onLogin }) {
             }
         } catch (err) {
             console.error('Login error:', err);
-            setError('Error al iniciar sesión. Inténtalo de nuevo.');
+            // "El servidor no contesta" no es un error cualquiera y no puede salir como
+            // tal: si no se dice, quien está delante da por hecho que ha metido mal la
+            // contraseña y se pone a cambiarla. Ese mensaje va tal cual lo trae.
+            setError(err?.esFalloDeConexion
+                ? err.message
+                : 'Error al iniciar sesión. Inténtalo de nuevo.');
             triggerShake();
         } finally {
             setIsLoading(false);

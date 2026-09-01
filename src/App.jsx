@@ -35,6 +35,7 @@ const NotificationCenter = lazy(() => import('./pages/NotificationCenter'))
 import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { fetchAllRows } from './utils/fetchAllRows';
+import { conTopeDeTiempo } from './utils/topeDeTiempo';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
 import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, fichaSinContrasenas } from './utils/clientAccess';
 import { planDeAcceso } from './utils/accesoFichaExistente';
@@ -1779,6 +1780,13 @@ function App() {
     }
   }
 
+  // Cuánto se espera al servidor antes de rendirse y decírselo a la persona. Ninguna
+  // de las llamadas de aquí abajo se rinde por su cuenta: ver utils/topeDeTiempo.js.
+  // La búsqueda del email tiene un tope más corto porque es sólo una traducción de
+  // nombre de usuario a correo; si no llega, se sigue con lo que se haya tecleado.
+  const SEGUNDOS_ESPERA_LOGIN = 15;
+  const SEGUNDOS_ESPERA_BUSQUEDA_EMAIL = 8;
+
   const handleLogin = async (role = 'admin', username = '', password = '') => {
     // ── Construir el email para Supabase Auth ──
     // Vive fuera del try para que el respaldo del catch también sepa con qué
@@ -1789,7 +1797,10 @@ function App() {
       // Para drivers: si no es un email, buscar el email usando RPC segura (bypasa RLS)
       if (role === 'driver' && !username.includes('@')) {
         try {
-          const { data: email } = await supabase.rpc('get_driver_email_by_username', { p_username: username });
+          const { data: email } = await conTopeDeTiempo(
+            supabase.rpc('get_driver_email_by_username', { p_username: username }),
+            SEGUNDOS_ESPERA_BUSQUEDA_EMAIL
+          );
           if (email) {
             authEmail = email;
             console.log('[Login] Driver username →', authEmail);
@@ -1812,7 +1823,10 @@ function App() {
       // quien escriba el de facturación caería otra vez en el login antiguo.
       if (role === 'client') {
         try {
-          const { data: email } = await supabase.rpc('get_client_email_by_username', { p_username: username });
+          const { data: email } = await conTopeDeTiempo(
+            supabase.rpc('get_client_email_by_username', { p_username: username }),
+            SEGUNDOS_ESPERA_BUSQUEDA_EMAIL
+          );
           if (email && email.toLowerCase() !== username.toLowerCase()) {
             authEmail = email;
             console.log('[Login] Client username →', authEmail);
@@ -1823,10 +1837,13 @@ function App() {
       }
 
       // ── Autenticación con Supabase Auth ──
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: authEmail,
-        password: password,
-      });
+      const { data: authData, error: authError } = await conTopeDeTiempo(
+        supabase.auth.signInWithPassword({
+          email: authEmail,
+          password: password,
+        }),
+        SEGUNDOS_ESPERA_LOGIN
+      );
 
       if (authError || !authData.user) {
         console.warn('[Login] Supabase Auth failed:', authError?.message);
@@ -1835,11 +1852,14 @@ function App() {
       }
 
       // ── Obtener perfil con rol ──
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authData.user.id)
-        .single();
+      const { data: profile } = await conTopeDeTiempo(
+        supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authData.user.id)
+          .single(),
+        SEGUNDOS_ESPERA_LOGIN
+      );
 
       if (!profile) {
         console.warn('[Login] No profile found for auth user, falling back to legacy');
@@ -1848,11 +1868,14 @@ function App() {
 
       // ── Verificar que el driver está activo ──
       if (profile.role === 'driver' && profile.linked_id) {
-        const { data: driverCheck } = await supabase
-          .from('drivers')
-          .select('data')
-          .eq('id', profile.linked_id)
-          .single();
+        const { data: driverCheck } = await conTopeDeTiempo(
+          supabase
+            .from('drivers')
+            .select('data')
+            .eq('id', profile.linked_id)
+            .single(),
+          SEGUNDOS_ESPERA_LOGIN
+        );
         if (driverCheck?.data?.isActive === false) {
           await supabase.auth.signOut();
           alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
@@ -1882,6 +1905,10 @@ function App() {
       // No reload needed — el useEffect [isAuthenticated] carga datos automáticamente
       return true;
     } catch (e) {
+      // Si el servidor no contesta, el login antiguo tampoco va a contestar: son las
+      // mismas tripas. Reintentar por ahí sólo son otros 15 segundos de "Comprobando..."
+      // antes de acabar en el mismo sitio, así que se le dice a la persona y punto.
+      if (e?.esFalloDeConexion) throw e;
       console.error('[Login] Error:', e);
       // Fallback a login legacy
       return await handleLegacyLogin(role, username, password, authEmail);
