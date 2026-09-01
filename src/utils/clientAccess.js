@@ -49,3 +49,64 @@ export function tieneCorreoDeAccesoPropio(client) {
     if (!acceso) return false;
     return acceso !== String(client?.email || '').trim().toLowerCase();
 }
+
+// ── Varias personas de la misma empresa entrando al portal ──
+//
+// El dueño y quien hace los albaranes necesitan entrar cada uno con su correo,
+// pero mirando la MISMA ficha: los mismos envíos, la misma tarifa, el mismo
+// histórico. Eso ya se podía hacer sin tocar la seguridad, porque el portal no
+// reconoce al cliente por el correo sino por `profiles.linked_id` (ver
+// supabase/04_restrictive_rls_policies.sql). Dos cuentas de Auth apuntando al
+// mismo `linked_id` ven exactamente lo mismo.
+//
+// `accessEmail` sigue siendo el correo PRINCIPAL y no cambia de significado: es
+// el que resuelve el login cuando alguien escribe el nombre de la empresa
+// ("ACTIVA") en vez de un correo. Los adicionales viven aparte, en
+// `accessEmailsExtra`, y entran escribiendo su correo entero — con varias
+// cuentas, el nombre de la empresa ya no puede decidir a cuál de ellas mandar.
+//
+// En la ficha se guarda sólo el correo. La contraseña de cada uno viaja a Auth
+// y no se queda aquí, igual que la principal (supabase/16_contrasenas_con_huella.sql).
+export function accesosAdicionales(client) {
+    const filas = Array.isArray(client?.accessEmailsExtra) ? client.accessEmailsExtra : [];
+    // El principal ya cuenta con su propia cuenta: si alguien lo repite abajo no
+    // se crea nada, se le trataría como adicional y se pisarían entre ellos.
+    const vistos = new Set([emailDeAcceso(client)].filter(Boolean));
+    const salida = [];
+
+    for (const fila of filas) {
+        const email = String(fila?.email || '').trim().toLowerCase();
+        if (!email || vistos.has(email)) continue;
+        vistos.add(email);
+        salida.push({ email, password: String(fila?.password || '') });
+    }
+
+    return salida;
+}
+
+// Todos los correos con los que se puede entrar a esta ficha, el principal
+// primero. Sirve para enseñarlos juntos y para reconocer una ficha por
+// cualquiera de sus correos.
+export function correosDeAcceso(client) {
+    const principal = emailDeAcceso(client);
+    return [principal, ...accesosAdicionales(client).map(a => a.email)].filter(Boolean);
+}
+
+// ── Lo que se guarda en la tabla, sin ninguna contraseña ──
+//
+// La ficha nunca guarda contraseñas, ni la principal ni las de los accesos
+// adicionales: van sólo a Supabase Auth. Antes esto era un `const { password,
+// ...resto }` suelto en cada guardado; con los accesos adicionales hay
+// contraseñas también dentro del array, y un destructuring de primer nivel no
+// las ve. Que pase todo por aquí evita que la próxima contraseña anidada acabe
+// escrita en claro en la base de datos.
+//
+// De paso deja el array limpio: sin filas vacías, en minúsculas y sin repetir,
+// que es como Auth guarda los correos.
+export function fichaSinContrasenas(client) {
+    const { password: _fueraDeLaFicha, ...ficha } = client || {};
+    if (Array.isArray(ficha.accessEmailsExtra)) {
+        ficha.accessEmailsExtra = accesosAdicionales(client).map(({ email }) => ({ email }));
+    }
+    return ficha;
+}

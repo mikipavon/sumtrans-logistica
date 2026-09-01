@@ -105,7 +105,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         type: 'Remitente', billingType: 'Clientes Habituales', tariffType: 'General',
         customRates: {}, customRatesB2: {}, allowedArticles: [], codFee: '', codFeeMode: COMISION_FIJA, codFeePercent: '', codFeeMin: '', color: '#ef4444', 
         priority: 'urgent',
-        username: '', password: '', accessEmail: '',
+        username: '', password: '', accessEmail: '', accessEmailsExtra: [],
         // Factusol extra
         country: '', fax: '', contactPerson: '', agent: '',
         paymentMethod: '', financingPct: '', promptPaymentPct: '',
@@ -1362,12 +1362,92 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                     </div>
                                 </div>
 
+                                {/* ── Otras personas de la misma empresa ──
+                                    El dueño y quien hace los albaranes entran cada uno con su
+                                    correo y ven la MISMA ficha. La contraseña no se guarda aquí:
+                                    va sólo a la cuenta de Supabase Auth, igual que la principal. */}
+                                <div className="bg-white border border-slate-200 rounded-xl p-5">
+                                    <div className="flex items-start justify-between gap-3 mb-3">
+                                        <div>
+                                            <h4 className="font-bold text-slate-800 text-sm">Otros correos con acceso</h4>
+                                            <p className="text-[11px] text-slate-500 mt-0.5">
+                                                Para que entren varias personas de la misma empresa —el dueño y quien hace los
+                                                albaranes— cada una con su correo. Todas ven la misma ficha y los mismos envíos.
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => set('accessEmailsExtra', [...(formData.accessEmailsExtra || []), { email: '', password: '' }])}
+                                            className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition-colors"
+                                        >
+                                            <Plus size={14} /> Añadir correo
+                                        </button>
+                                    </div>
+
+                                    {(formData.accessEmailsExtra || []).length === 0 ? (
+                                        <p className="text-xs text-slate-400 italic py-2">
+                                            Sólo entra el correo de acceso de arriba.
+                                        </p>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {(formData.accessEmailsExtra || []).map((fila, i) => (
+                                                <div key={i} className="flex flex-col md:flex-row gap-2 md:items-end">
+                                                    <div className="flex-1">
+                                                        <label className={labelCls}>Correo</label>
+                                                        <div className="relative">
+                                                            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                                            <input
+                                                                type="email"
+                                                                className={`${inputCls} pl-10`}
+                                                                placeholder="dueno@empresa.com"
+                                                                value={fila.email || ''}
+                                                                onChange={e => set('accessEmailsExtra', (formData.accessEmailsExtra || []).map((f, j) => j === i ? { ...f, email: e.target.value } : f))}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex-1">
+                                                        <label className={labelCls}>Contraseña</label>
+                                                        <div className="relative">
+                                                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                                            <input
+                                                                type="text"
+                                                                className={`${inputCls} pl-10`}
+                                                                placeholder={fila.email ? 'Escríbela para cambiarla' : 'Mínimo 6 caracteres'}
+                                                                value={fila.password || ''}
+                                                                onChange={e => set('accessEmailsExtra', (formData.accessEmailsExtra || []).map((f, j) => j === i ? { ...f, password: e.target.value } : f))}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        title="Quitarle el acceso"
+                                                        onClick={() => set('accessEmailsExtra', (formData.accessEmailsExtra || []).filter((_, j) => j !== i))}
+                                                        className="shrink-0 p-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    <div className="flex items-start gap-2 mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2.5">
+                                        <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                        <span>
+                                            Estas personas entran escribiendo <strong>su correo entero</strong>, no el nombre de
+                                            la empresa: con varias cuentas, el nombre no puede decidir a cuál de ellas entrar.
+                                            La contraseña no se guarda en la ficha; si la olvida, se escribe una nueva aquí.
+                                        </span>
+                                    </div>
+                                </div>
+
                                 <div className="p-4 bg-slate-50 rounded-xl border border-dashed border-slate-200">
                                     <h5 className="text-[11px] font-bold text-slate-500 uppercase mb-2">Instrucciones para el Cliente</h5>
                                     <ul className="text-xs text-slate-600 space-y-2 list-disc pl-4">
                                         <li>El cliente debe entrar en la pestaña <strong>"Cliente"</strong> de la pantalla de inicio.</li>
                                         <li>Indícale que use el usuario y contraseña aquí configurados.</li>
                                         <li>Su cuenta se crea sobre el <strong>correo de acceso</strong> (o el e-mail de la ficha si aquél está vacío): es el que tiene que escribir si entra por email.</li>
+                                        <li>Si has añadido <strong>otros correos con acceso</strong>, cada uno entra con su correo entero y su contraseña, y todos ven la misma ficha.</li>
                                         <li>Desde su portal podrá ver el estado de sus envíos y crear nuevos albaranes.</li>
                                     </ul>
                                 </div>
