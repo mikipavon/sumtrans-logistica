@@ -73,27 +73,26 @@ const esFijoEspanol = (numero) => {
     return nacional.length === 9 && /^[89]/.test(nacional);
 };
 
-// Los teléfonos de una parada, MÓVILES PRIMERO: a un cliente se le localiza antes
-// en el móvil, y el fijo de la nave no lo coge nadie a media tarde. De aquí salen
-// tanto el número del justificante de WhatsApp (que solo puede ser un móvil) como
-// la lista del botón de llamar.
+// Mismo número escrito de dos formas (con prefijo, con espacios) es uno solo.
+const claveDeTelefono = (numero) => String(numero || '')
+    .replace(/[\s.\-()+]/g, '')
+    .replace(/^34/, '');
+
+// Los teléfonos de UN contacto del albarán (el remitente o el destinatario), MÓVILES
+// PRIMERO: a un cliente se le localiza antes en el móvil, y el fijo de la nave no lo
+// coge nadie a media tarde. De aquí salen tanto los números del justificante de
+// WhatsApp (que solo pueden ser móviles) como la lista del botón de llamar.
 //
 // Se juntan dos fuentes porque ninguna basta sola: el teléfono del albarán es el
 // más concreto —lo tecleó quien creó el envío— pero el autorrelleno solo baja el
 // 'phone' de la ficha, así que un móvil guardado en 'mobile' no llega nunca al
 // albarán.
 //
-// Se busca por nombre exacto del destinatario (o del remitente si es recogida), no
-// con la tolerancia de marca de buscarClienteDeEnvio: esa empareja también por
-// etiqueta de agencia, y un albarán de TSB acabaría ofreciendo el teléfono de la
-// agencia en vez del de quien recibe el paquete.
-export const telefonosDeLaParada = (stop, clientes) => {
-    if (!stop) return [];
-    const esRecogida = stop.type === 'Recogida';
-    const nombre = normalizeClientName(esRecogida
-        ? (stop.originName || stop.client)
-        : (stop.destinationName || stop.client));
-    const delAlbaran = esRecogida ? stop.originPhone : stop.destinationPhone;
+// Se busca por nombre exacto, no con la tolerancia de marca de buscarClienteDeEnvio:
+// esa empareja también por etiqueta de agencia, y un albarán de TSB acabaría
+// ofreciendo el teléfono de la agencia en vez del de quien recibe el paquete.
+const telefonosDelContacto = (nombreCrudo, delAlbaran, clientes) => {
+    const nombre = normalizeClientName(nombreCrudo);
 
     let fichaPhone = null;
     let fichaMobile = null;
@@ -121,8 +120,7 @@ export const telefonosDeLaParada = (stop, clientes) => {
     [delAlbaran, fichaMobile, fichaPhone].forEach(numero => {
         const texto = String(numero || '').trim();
         if (!texto) return;
-        // Mismo número escrito de dos formas (con prefijo, con espacios) es uno solo.
-        const clave = texto.replace(/[\s.\-()+]/g, '').replace(/^34/, '');
+        const clave = claveDeTelefono(texto);
         if (!clave || vistos.has(clave)) return;
         vistos.add(clave);
         lista.push({ numero: texto, esFijo: esFijoEspanol(texto) });
@@ -130,6 +128,64 @@ export const telefonosDeLaParada = (stop, clientes) => {
 
     // Móviles delante, respetando dentro de cada grupo el orden de arriba.
     return [...lista.filter(t => !t.esFijo), ...lista.filter(t => t.esFijo)];
+};
+
+// La parada de ESTE conductor: el remitente si va a recoger, el destinatario si va
+// a entregar. De aquí salen el botón de llamar y la ficha donde se guarda un número
+// nuevo.
+export const telefonosDeLaParada = (stop, clientes) => {
+    if (!stop) return [];
+    const esRecogida = stop.type === 'Recogida';
+    return telefonosDelContacto(
+        esRecogida ? (stop.originName || stop.client) : (stop.destinationName || stop.client),
+        esRecogida ? stop.originPhone : stop.destinationPhone,
+        clientes,
+    );
+};
+
+// Los MÓVILES de las dos puntas del albarán, para el justificante de WhatsApp: el
+// justificante le interesa tanto a quien recibe el paquete como a quien lo mandó
+// (que muchas veces es quien paga el porte y quiere ver que llegó). Antes solo se
+// ofrecía la parada y al remitente había que teclearle el número a mano.
+//
+// Delante va la punta donde está el conductor ahora mismo, que es la que va a usar
+// nueve de cada diez veces. Los fijos no salen: no tienen WhatsApp.
+export const movilesDelEnvio = (stop, clientes) => {
+    if (!stop) return [];
+    const esRecogida = stop.type === 'Recogida';
+
+    // 'client' es el nombre suelto del albarán: solo vale como respaldo en la punta
+    // que es la parada, que es de la que habla ese campo.
+    const lados = [
+        {
+            papel: 'Remitente',
+            nombre: stop.originName || (esRecogida ? stop.client : '') || '',
+            telefono: stop.originPhone,
+        },
+        {
+            papel: 'Destinatario',
+            nombre: stop.destinationName || (!esRecogida ? stop.client : '') || '',
+            telefono: stop.destinationPhone,
+        },
+    ];
+    if (!esRecogida) lados.reverse();
+
+    const vistos = new Set();
+    const opciones = [];
+    lados.forEach(lado => {
+        telefonosDelContacto(lado.nombre, lado.telefono, clientes)
+            .filter(t => !t.esFijo)
+            .forEach(({ numero }) => {
+                // El mismo número en las dos puntas (remitente y destinatario son la
+                // misma empresa) es un solo botón, el de la punta que va delante.
+                const clave = claveDeTelefono(numero);
+                if (vistos.has(clave)) return;
+                vistos.add(clave);
+                opciones.push({ numero, papel: lado.papel, nombre: lado.nombre });
+            });
+    });
+
+    return opciones;
 };
 
 const isCityInBaremo = (city, zip) => {
@@ -2438,7 +2494,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
     };
 
-    const handleWhatsAppShare = async (shipment, manualPhone = null) => {
+    // `manualPhone` es el número al que mandar; null significa "todavía no se ha
+    // elegido" y abre el modal. `tecleado` distingue el número que el conductor
+    // escribe a mano (que puede acabar en la ficha) del que sale de la lista de
+    // botones, que ya estaba guardado en alguna parte y no hay que volver a guardar.
+    const handleWhatsAppShare = async (shipment, manualPhone = null, { tecleado = false } = {}) => {
         // Correct logic: If it's a pickup, use origin phone. If it's a delivery, use destination phone.
         const isPickup = shipment.type === 'Recogida';
         const targetName = isPickup
@@ -2446,20 +2506,35 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             : (shipment.destinationName || shipment.client);
         const targetPhone = isPickup ? shipment.originPhone : shipment.destinationPhone;
 
-        // Aquí solo vale un móvil: a un fijo el justificante no llega. Se coge el
-        // primer móvil que haya entre el albarán y la ficha (telefonosDeLaParada ya
-        // los devuelve en ese orden) y los fijos se descartan del todo.
+        // Aquí solo vale un móvil: a un fijo el justificante no llega. Este es el de la
+        // parada (a quien el conductor tiene delante), y sirve para dos cosas: es el
+        // que se manda cuando ya viene elegido de fuera, y su ausencia es la que decide
+        // si el número tecleado hay que guardarlo en la ficha.
         const telefonosDelCliente = telefonosDeLaParada(shipment, clients);
         const movilDisponible = telefonosDelCliente.find(t => !t.esFijo)?.numero || null;
         const phone = manualPhone || movilDisponible;
 
-        if (!phone && manualPhone === null) {
-            // 'motivo' solo cambia el texto del modal: si aquí queda algún teléfono es
-            // que todos son fijos, y el conductor tiene que entender por qué le pedimos
-            // otro número teniendo el cliente teléfono.
+        // El justificante ya no sale directo ni aunque el cliente tenga móvil: quien
+        // recibe el paquete no es siempre el de la ficha (un vecino, el encargado de
+        // turno) y el conductor no tenía dónde decirlo, el mensaje se iba al número de
+        // siempre sin preguntar. El modal ofrece los móviles de las dos puntas del
+        // albarán en un toque y deja teclear otro.
+        if (manualPhone === null) {
+            const opciones = movilesDelEnvio(shipment, clients);
             setWhatsappPrompt({
                 shipment,
                 phone: '',
+                opciones,
+                // Sin ningún móvil que ofrecer no hay nada que elegir: directo al teclado.
+                editando: opciones.length === 0,
+                // Si la parada no tiene móvil propio, el número que se teclee es el que
+                // le falta a su ficha y sí se guarda. Se decide aquí, con el modal ya
+                // abierto delante, y no al enviar: para entonces el móvil elegido puede
+                // ser el de la otra punta del albarán.
+                guardaEnFicha: !movilDisponible,
+                // 'motivo' solo cambia el texto del modal: si no hay móvil pero sí queda
+                // algún teléfono es que todos son fijos, y el conductor tiene que entender
+                // por qué le pedimos otro número teniendo el cliente teléfono.
                 motivo: telefonosDelCliente.length > 0 ? 'fijo' : 'sin_telefono',
             });
             return;
@@ -2663,7 +2738,15 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         
         // --- QUIÉN VA PRIMERO: GUARDAR EL TELÉFONO O ABRIR WHATSAPP ---
         // Depende del móvil, y por eso no se puede hacer igual en los dos:
-        const hayQueGuardar = Boolean(manualPhone && cleanPhone);
+        // Solo se guarda lo que el conductor teclea, y solo si la parada no tenía móvil:
+        // ese es el dato que le falta a la ficha. Los demás casos NO se guardan:
+        // · un número elegido de la lista ya está guardado donde toca — y si es el de
+        //   la otra punta del albarán, copiarlo aquí le metería a esta ficha el
+        //   teléfono de otra empresa;
+        // · un número tecleado teniendo la parada móvil bueno es el contacto puntual de
+        //   este reparto (un vecino, el encargado de turno) y no puede quedarse pegado
+        //   a la ficha del cliente para siempre.
+        const hayQueGuardar = Boolean(tecleado && cleanPhone && !movilDisponible);
 
         if (necesitaGestoDelUsuario()) {
             // iPhone. La bandeja de compartir solo la abre iOS si viene del dedo del
@@ -4722,43 +4805,94 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                 <MessageSquare size={24} />
                             </div>
                             <h3 className="text-lg font-bold text-slate-800 mb-1">Enviar Justificante</h3>
-                            <p className="text-sm text-slate-500 mb-6">
-                                {whatsappPrompt.motivo === 'fijo'
-                                    ? 'El teléfono del cliente es un fijo y no tiene WhatsApp. Introduce un móvil:'
-                                    : 'El cliente no tiene teléfono guardado. Introduce el número de WhatsApp:'}
-                            </p>
-                            
-                            <input 
-                                type="tel"
-                                autoFocus
-                                value={whatsappPrompt.phone}
-                                onChange={(e) => setWhatsappPrompt(prev => ({ ...prev, phone: e.target.value }))}
-                                placeholder="Ej: 600123456"
-                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all font-bold text-lg text-slate-700 mb-4"
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && !whatsappPrompt.saving) handleWhatsAppShare(whatsappPrompt.shipment, whatsappPrompt.phone);
-                                }}
-                            />
 
-                            <div className="flex gap-3">
-                                <button
-                                    onClick={() => setWhatsappPrompt(null)}
-                                    disabled={whatsappPrompt.saving}
-                                    className="flex-1 py-3 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors disabled:opacity-40"
-                                >
-                                    Cancelar
-                                </button>
-                                <button
-                                    onClick={() => handleWhatsAppShare(whatsappPrompt.shipment, whatsappPrompt.phone)}
-                                    disabled={whatsappPrompt.saving}
-                                    className="flex-1 py-3 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-70"
-                                >
-                                    {/* El botón se queda un instante en "Guardando..." a propósito: es el
-                                        tiempo que tarda el número en llegar a la ficha, y si abriéramos
-                                        WhatsApp antes la página se descarga y el dato se pierde. */}
-                                    {whatsappPrompt.saving ? 'Guardando...' : 'Abrir WhatsApp'}
-                                </button>
-                            </div>
+                            {/* Dos pantallas en el mismo modal: la de elegir (solo si el cliente
+                                tiene algún móvil guardado) y la de teclear un número a mano. */}
+                            {!whatsappPrompt.editando ? (
+                                <>
+                                    <p className="text-sm text-slate-500 mb-5">
+                                        {whatsappPrompt.opciones?.length > 1
+                                            ? '¿A qué WhatsApp lo mando?'
+                                            : 'Se enviará a este WhatsApp:'}
+                                    </p>
+
+                                    <div className="space-y-2 mb-4">
+                                        {(whatsappPrompt.opciones || []).map((opcion) => (
+                                            <button
+                                                key={`${opcion.papel}-${opcion.numero}`}
+                                                onClick={() => handleWhatsAppShare(whatsappPrompt.shipment, opcion.numero)}
+                                                className="w-full px-4 py-3 text-left text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-lg shadow-emerald-500/20 transition-all"
+                                            >
+                                                {/* El papel va delante del número a propósito: el conductor
+                                                    no reconoce un teléfono de memoria, pero sí sabe si se lo
+                                                    quiere mandar a quien recibe o a quien lo mandó. */}
+                                                <span className="block text-[10px] font-bold uppercase tracking-wider text-white/70">{opcion.papel}</span>
+                                                {opcion.nombre && (
+                                                    <span className="block text-sm font-semibold truncate">{opcion.nombre}</span>
+                                                )}
+                                                <span className="block font-bold text-lg tracking-wide">{opcion.numero}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    <button
+                                        onClick={() => setWhatsappPrompt(prev => ({ ...prev, editando: true, phone: '' }))}
+                                        className="w-full py-3 text-sm font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors"
+                                    >
+                                        Enviar a otro número
+                                    </button>
+                                    <button
+                                        onClick={() => setWhatsappPrompt(null)}
+                                        className="w-full py-3 mt-2 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors"
+                                    >
+                                        Cancelar
+                                    </button>
+                                </>
+                            ) : (
+                                <>
+                                    <p className="text-sm text-slate-500 mb-6">
+                                        {!whatsappPrompt.guardaEnFicha
+                                            ? 'Solo para este envío: el justificante irá a este número y la ficha del cliente se queda como está.'
+                                            : whatsappPrompt.motivo === 'fijo'
+                                                ? 'El teléfono del cliente es un fijo y no tiene WhatsApp. Introduce un móvil:'
+                                                : 'El cliente no tiene teléfono guardado. Introduce el número de WhatsApp:'}
+                                    </p>
+
+                                    <input
+                                        type="tel"
+                                        autoFocus
+                                        value={whatsappPrompt.phone}
+                                        onChange={(e) => setWhatsappPrompt(prev => ({ ...prev, phone: e.target.value }))}
+                                        placeholder="Ej: 600123456"
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all font-bold text-lg text-slate-700 mb-4"
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && !whatsappPrompt.saving) handleWhatsAppShare(whatsappPrompt.shipment, whatsappPrompt.phone, { tecleado: true });
+                                        }}
+                                    />
+
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={() => setWhatsappPrompt(prev => (
+                                                prev?.opciones?.length > 0 ? { ...prev, editando: false } : null
+                                            ))}
+                                            disabled={whatsappPrompt.saving}
+                                            className="flex-1 py-3 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors disabled:opacity-40"
+                                        >
+                                            {whatsappPrompt.opciones?.length > 0 ? 'Volver' : 'Cancelar'}
+                                        </button>
+                                        <button
+                                            onClick={() => handleWhatsAppShare(whatsappPrompt.shipment, whatsappPrompt.phone, { tecleado: true })}
+                                            disabled={whatsappPrompt.saving}
+                                            className="flex-1 py-3 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-70"
+                                        >
+                                            {/* El botón se queda un instante en "Guardando..." a propósito: es el
+                                                tiempo que tarda el número en llegar a la ficha, y si abriéramos
+                                                WhatsApp antes la página se descarga y el dato se pierde. */}
+                                            {whatsappPrompt.saving ? 'Guardando...' : 'Abrir WhatsApp'}
+                                        </button>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
