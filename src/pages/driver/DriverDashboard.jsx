@@ -35,7 +35,7 @@ import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
-import { getPackagesCount, puedeAsignarloEsteConductor, ciudadDeEnvio, nombreDeParada } from '../../utils/shipmentUtils';
+import { getPackagesCount, puedeAsignarloEsteConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante } from '../../utils/shipmentUtils';
 import { mejorPuebloParaCiudad, esElMismoPueblo, normalizarPueblo } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
 import { geocodificarDireccion } from '../../utils/geocodificar';
@@ -153,6 +153,7 @@ export const telefonosDeLaParada = (stop, clientes) => {
 export const movilesDelEnvio = (stop, clientes) => {
     if (!stop) return [];
     const esRecogida = stop.type === 'Recogida';
+    const pagador = quienPagaElPorte(stop);
 
     // 'client' es el nombre suelto del albarán: solo vale como respaldo en la punta
     // que es la parada, que es de la que habla ese campo.
@@ -170,18 +171,33 @@ export const movilesDelEnvio = (stop, clientes) => {
     ];
     if (!esRecogida) lados.reverse();
 
-    const vistos = new Set();
+    const vistos = new Map();
     const opciones = [];
     lados.forEach(lado => {
         telefonosDelContacto(lado.nombre, lado.telefono, clientes)
             .filter(t => !t.esFijo)
             .forEach(({ numero }) => {
-                // El mismo número en las dos puntas (remitente y destinatario son la
-                // misma empresa) es un solo botón, el de la punta que va delante.
                 const clave = claveDeTelefono(numero);
-                if (vistos.has(clave)) return;
-                vistos.add(clave);
-                opciones.push({ numero, papel: lado.papel, nombre: lado.nombre });
+                const yaEsta = vistos.get(clave);
+                if (yaEsta) {
+                    // El mismo número en las dos puntas (remitente y destinatario son la
+                    // misma empresa) es un solo botón, el de la punta que va delante. Pero
+                    // si quien paga es la otra punta, ese botón paga igual: es el mismo
+                    // teléfono, y esconderle el precio sería esconderle SU propia factura.
+                    if (lado.papel === pagador) yaEsta.paga = true;
+                    return;
+                }
+                // 'paga' decide si a este contacto se le manda el precio del porte
+                // (ver lineasDeDineroDelJustificante): los datos del cobro son para
+                // quien lo paga, al otro se le manda el justificante sin ellos.
+                const opcion = {
+                    numero,
+                    papel: lado.papel,
+                    nombre: lado.nombre,
+                    paga: lado.papel === pagador,
+                };
+                vistos.set(clave, opcion);
+                opciones.push(opcion);
             });
     });
 
@@ -2498,7 +2514,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     // elegido" y abre el modal. `tecleado` distingue el número que el conductor
     // escribe a mano (que puede acabar en la ficha) del que sale de la lista de
     // botones, que ya estaba guardado en alguna parte y no hay que volver a guardar.
-    const handleWhatsAppShare = async (shipment, manualPhone = null, { tecleado = false } = {}) => {
+    // `paga` dice si el número elegido es el de quien paga el porte: lo trae el botón
+    // del modal, que ya lo sabe por el albarán. null = no viene de un botón (el conductor
+    // tecleó el número), y entonces se deduce de la parada más abajo.
+    const handleWhatsAppShare = async (shipment, manualPhone = null, { tecleado = false, paga = null } = {}) => {
         // Correct logic: If it's a pickup, use origin phone. If it's a delivery, use destination phone.
         const isPickup = shipment.type === 'Recogida';
         const targetName = isPickup
@@ -2641,25 +2660,13 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         const origin = shipment.originName || shipment.client;
         const dest = shipment.destinationName || shipment.client;
 
-        const hasReembolso = parseFloat(String(shipment.codAmount || '0').replace(',', '.').replace(/[^0-9.-]/g, '')) > 0;
-        // El mensaje se escribe con saltos de línea de verdad: quien lo codifica para
-        // la URL es abrirWhatsApp. Si aquí volviéramos a poner %0A a mano, se
-        // codificaría dos veces y el cliente leería el "%0A" en el chat.
-        // "a cobrar" solo mientras esté sin cobrar: si ya se ha liquidado, el
-        // justificante diría lo contrario que la línea de Estado.
-        const codText = hasReembolso
-            ? (shipment.codPaid === true
-                ? `*Reembolso cobrado:* ${shipment.codAmount} €\n`
-                : `*Reembolso a cobrar:* ${shipment.codAmount} €\n`)
-            : '';
-
         const normalize = (val) => String(val || '').toLowerCase().trim();
         const originClient = clientsMap?.get(normalizeClientName(shipment.originName || shipment.client));
         const destClient = clientsMap?.get(normalizeClientName(shipment.destinationName || shipment.client));
-        
+
         const mainBillingType = normalize(shipment.billingType || originClient?.billingType || '');
         const destBillingType = normalize(shipment.destinationBillingType || destClient?.billingType || '');
-        
+
         let isSecret = false;
         if (mainBillingType.includes('habitual') || mainBillingType.includes('diar') || mainBillingType.includes('libre') || mainBillingType.includes('contado') || mainBillingType.includes('presupuesto')) isSecret = true;
         if (destBillingType.includes('habitual') || destBillingType.includes('diar') || destBillingType.includes('libre') || destBillingType.includes('contado') || destBillingType.includes('presupuesto')) isSecret = true;
@@ -2672,49 +2679,33 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             ? (estaEntregado ? `*JUSTIFICANTE DE ENTREGA*` : `*JUSTIFICANTE*`)
             : `*JUSTIFICANTE SUMTRANS LOGISTICA*`;
 
-        // Calcular precio para el justificante
-        const parseAmt = (val) => {
-            if (!val) return 0;
-            if (typeof val === 'number') return val;
-            const str = val.toString().replace(/[^0-9,.-]+/g, '');
-            const normalized = str.includes(',') && !str.includes('.') ? str.replace(',', '.') : str;
-            const num = parseFloat(normalized);
-            return isNaN(num) ? 0 : num;
-        };
-        const priceBase = parseAmt(shipment.customAmount || shipment.amount);
-        const priceIva = +(priceBase * 0.21).toFixed(2);
-        const priceTotal = +(priceBase + priceIva).toFixed(2);
-
         // Serie HAB- = clientes al contado: pagan un precio cerrado en mano, así que
         // el justificante muestra ese importe tal cual, sin desglose de IVA.
         // Los albaranes antiguos sin prefijo caen en isSecret.
         const idUpper = String(shipment.id || '').toUpperCase();
         const isContado = idUpper.startsWith('HAB-') || (!idUpper.startsWith('SUM-') && isSecret);
 
-        // El cliente no necesita saber en qué pestaña interna anda el albarán
-        // ("Pendiente de asignar" y compañía son etiquetas nuestras): lo que le
-        // importa del justificante es si el porte queda cobrado o a deber.
-        // Ojo: porte y reembolso se liquidan por separado, así que "PAGADO" solo
-        // vale cuando no queda ninguno de los dos suelto (ver Shipment.js).
-        const porteCobrado = shipment.portePaid === true || shipment.paymentStatus === 'Paid';
-        const reembolsoPendiente = hasReembolso && shipment.codPaid !== true;
-        // 'Tarifa' es un importe por concretar, pero se cobra igual: cuenta como
-        // que hay algo pendiente aunque el precio no salga en el mensaje.
-        const hayQueCobrar = priceBase > 0 || hasReembolso || normalize(shipment.amount) === 'tarifa';
-        const estadoText = !hayQueCobrar
-            ? ''
-            : porteCobrado
-                ? (reembolsoPendiente
-                    ? `*Estado:* Porte pagado · reembolso pendiente\n`
-                    : `*Estado:* PAGADO\n`)
-                : `*Estado:* PENDIENTE DE COBRO\n`;
+        // ¿El justificante va a quien paga el porte? Si viene de un botón del modal, lo
+        // dice la propia opción; si el conductor tecleó un número suelto, se da por
+        // hecho que es el contacto de la parada que tiene delante (el remitente en una
+        // recogida, el destinatario en una entrega).
+        //
+        // Con esto se decide si el mensaje lleva precio y estado del cobro: son datos
+        // de quien paga. Al otro (un porte debido avisando al remitente, por ejemplo)
+        // se le manda el justificante sin importes ni "pendiente de cobro", que no es
+        // deuda suya y no tiene por qué ver lo que factura el de enfrente.
+        const papelDeLaParada = isPickup ? 'Remitente' : 'Destinatario';
+        const pagaQuienRecibeElMensaje = paga === null
+            ? quienPagaElPorte(shipment) === papelDeLaParada
+            : paga === true;
 
-        const fmt = (n) => n.toFixed(2).replace('.', ',');
-        const priceText = priceBase > 0
-            ? (isContado
-                ? `*Precio:* ${fmt(priceBase)} €\n`
-                : `*Precio:* ${fmt(priceBase)} € + IVA = *${fmt(priceTotal)} €*\n`)
-            : '';
+        // El mensaje se escribe con saltos de línea de verdad: quien lo codifica para
+        // la URL es abrirWhatsApp. Si aquí volviéramos a poner %0A a mano, se
+        // codificaría dos veces y el cliente leería el "%0A" en el chat.
+        const { estadoText, priceText, codText } = lineasDeDineroDelJustificante(shipment, {
+            paga: pagaQuienRecibeElMensaje,
+            isContado,
+        });
 
         const message = `${titleText}\n\n` +
             `*REF:* ${shipment.id}\n` +
@@ -4820,13 +4811,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                         {(whatsappPrompt.opciones || []).map((opcion) => (
                                             <button
                                                 key={`${opcion.papel}-${opcion.numero}`}
-                                                onClick={() => handleWhatsAppShare(whatsappPrompt.shipment, opcion.numero)}
+                                                onClick={() => handleWhatsAppShare(whatsappPrompt.shipment, opcion.numero, { paga: opcion.paga })}
                                                 className="w-full px-4 py-3 text-left text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-lg shadow-emerald-500/20 transition-all"
                                             >
                                                 {/* El papel va delante del número a propósito: el conductor
                                                     no reconoce un teléfono de memoria, pero sí sabe si se lo
                                                     quiere mandar a quien recibe o a quien lo mandó. */}
-                                                <span className="block text-[10px] font-bold uppercase tracking-wider text-white/70">{opcion.papel}</span>
+                                                <span className="block text-[10px] font-bold uppercase tracking-wider text-white/70">
+                                                    {opcion.papel}
+                                                    {/* Aviso de por qué un justificante lleva precio y el otro no: los
+                                                        importes del porte solo van a quien lo paga. */}
+                                                    {opcion.paga ? " · PAGA EL PORTE" : " · SIN IMPORTES"}
+                                                </span>
                                                 {opcion.nombre && (
                                                     <span className="block text-sm font-semibold truncate">{opcion.nombre}</span>
                                                 )}

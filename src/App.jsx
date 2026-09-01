@@ -4054,11 +4054,7 @@ function App() {
     } catch (e) {
       console.warn('[ClientAuth] No se pudo mover el acceso:', e);
       alert(
-        `⚠️ No se le ha dado el acceso a «${ficha.name}»:
-
-${e.message}
-
-` +
+        `⚠️ No se le ha dado el acceso a «${ficha.name}»:\n\n${e.message}\n\n` +
         `No se ha tocado nada: la solicitud sigue pendiente.`
       );
       return false;

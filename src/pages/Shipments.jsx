@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
-import { getPackagesCount } from '../utils/shipmentUtils';
+import { getPackagesCount, intervinoConductor } from '../utils/shipmentUtils';
 import { coincideBusqueda } from '../utils/busqueda';
 import ImportExcelShipments from '../components/clients/ImportExcelShipments';
 import BudgetLiquidationModal from '../components/shipments/BudgetLiquidationModal';
@@ -88,8 +88,11 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
             const matchesStatus = statusFilter === 'all' || statusFilter === 'cod_no_receipt' || 
                 (statusFilter === 'Pendiente' ? PENDING_STATUSES.includes(shipment.status) : shipment.status === statusFilter);
 
+            // Filtrar por conductor es "enseñame lo suyo", no solo lo que tiene asignado:
+            // el que cubre la ruta de otro entrega y cobra albaranes asignados al que
+            // faltaba, y ese trabajo salia en la lista del compañero, no en la suya.
             const matchesDriver = driverFilter === 'all' ||
-                (driverFilter === 'unassigned' ? !shipment.assignedDriverId : String(shipment.assignedDriverId) === driverFilter);
+                (driverFilter === 'unassigned' ? !shipment.assignedDriverId : intervinoConductor(shipment, driverFilter));
 
             // Special filter: COD receipts pending upload
             const matchesCodReceipt = statusFilter !== 'cod_no_receipt' || 
@@ -215,10 +218,13 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         });
 
         // Group by Driver
+        // Manda quien lo entregó de verdad sobre quien lo tenía asignado: si no, al
+        // cubrir una ruta ajena el reparto se le apuntaba al conductor que no salió.
         const byDriver = {};
         filteredShipments.forEach(s => {
-            if (s.assignedDriverId) {
-                const driver = safeDrivers.find(d => d.id === s.assignedDriverId);
+            const conductorId = s.deliveredById || s.assignedDriverId;
+            if (conductorId) {
+                const driver = safeDrivers.find(d => String(d.id) === String(conductorId));
                 const name = driver ? driver.name : 'Desconocido';
                 byDriver[name] = (byDriver[name] || 0) + 1;
             } else {

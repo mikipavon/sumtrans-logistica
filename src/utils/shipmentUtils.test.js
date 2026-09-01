@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { puedeAsignarloEsteConductor } from './shipmentUtils';
+import { puedeAsignarloEsteConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -96,5 +96,135 @@ describe('puedeAsignarloEsteConductor', () => {
         expect(puedeAsignarloEsteConductor(undefined, MIGUEL)).toBe(false);
         expect(puedeAsignarloEsteConductor(albaranPendiente(), null)).toBe(false);
         expect(puedeAsignarloEsteConductor(albaranPendiente(), undefined)).toBe(false);
+    });
+});
+
+describe('intervinoConductor', () => {
+    // El caso que lo motivó: Miguel cubre la ruta de Juan. El albarán sigue asignado
+    // a Juan, pero lo entrega y lo cobra Miguel.
+    const cubierto = {
+        id: 'SUM-4',
+        status: 'Entregado',
+        assignedDriverId: JUAN,
+        deliveredById: MIGUEL,
+        porteCollectedById: MIGUEL
+    };
+
+    it('sale en el filtro del que lo entregó, no solo en el del asignado', () => {
+        expect(intervinoConductor(cubierto, MIGUEL)).toBe(true);
+        expect(intervinoConductor(cubierto, JUAN)).toBe(true);
+        expect(intervinoConductor(cubierto, PACO)).toBe(false);
+    });
+
+    it('cuenta el reembolso cobrado y los bultos recogidos', () => {
+        expect(intervinoConductor({ codCollectedById: MIGUEL }, MIGUEL)).toBe(true);
+        expect(intervinoConductor({ pickedUpById: MIGUEL }, MIGUEL)).toBe(true);
+    });
+
+    it('no cuenta haberlo devuelto a Asignar: eso es rechazarlo, no hacerlo', () => {
+        expect(intervinoConductor({ returnedToAssignById: MIGUEL }, MIGUEL)).toBe(false);
+    });
+
+    it('un albarán sin conductores no es de nadie aunque el id venga vacío', () => {
+        const deOficina = { assignedDriverId: null, deliveredById: null, createdById: null };
+        expect(intervinoConductor(deOficina, MIGUEL)).toBe(false);
+        expect(intervinoConductor(deOficina, null)).toBe(false);
+        expect(intervinoConductor(deOficina, '')).toBe(false);
+    });
+
+    it('compara ids aunque uno venga como texto (el filtro los pasa en string)', () => {
+        expect(intervinoConductor({ assignedDriverId: 2 }, '2')).toBe(true);
+        expect(intervinoConductor({ assignedDriverId: '2' }, 2)).toBe(true);
+    });
+
+    it('sin albarán no revienta', () => {
+        expect(intervinoConductor(null, MIGUEL)).toBe(false);
+    });
+});
+
+describe('quienPagaElPorte', () => {
+    it('Debido lo paga el destinatario', () => {
+        expect(quienPagaElPorte({ porteType: 'Debido' })).toBe('Destinatario');
+        expect(quienPagaElPorte({ porteType: 'debido' })).toBe('Destinatario');
+    });
+
+    it('Pagado lo paga el remitente', () => {
+        expect(quienPagaElPorte({ porteType: 'Pagado' })).toBe('Remitente');
+    });
+
+    it('un albarán antiguo sin el campo lo paga el remitente', () => {
+        expect(quienPagaElPorte({})).toBe('Remitente');
+        expect(quienPagaElPorte(null)).toBe('Remitente');
+    });
+});
+
+describe('lineasDeDineroDelJustificante', () => {
+    // El caso de Antonio: SUM-52, porte debido de 40 €, justificante al remitente.
+    const SUM52 = { id: 'SUM-52', porteType: 'Debido', amount: '40' };
+
+    it('a quien paga se le manda el precio y el estado del cobro', () => {
+        const { estadoText, priceText } = lineasDeDineroDelJustificante(SUM52, { paga: true });
+        expect(priceText).toBe('*Precio:* 40,00 € + IVA = *48,40 €*\n');
+        expect(estadoText).toBe('*Estado:* PENDIENTE DE COBRO\n');
+    });
+
+    it('a quien NO paga no se le manda ni precio ni "pendiente de cobro"', () => {
+        const lineas = lineasDeDineroDelJustificante(SUM52, { paga: false });
+        expect(lineas).toEqual({ estadoText: '', priceText: '', codText: '' });
+    });
+
+    it('un porte ya cobrado tampoco se le cuenta al que no paga', () => {
+        const cobrado = { ...SUM52, portePaid: true };
+        expect(lineasDeDineroDelJustificante(cobrado, { paga: true }).estadoText).toBe('*Estado:* PAGADO\n');
+        expect(lineasDeDineroDelJustificante(cobrado, { paga: false }).estadoText).toBe('');
+    });
+
+    it('el reembolso va en los dos justificantes: es dinero del remitente', () => {
+        const conCod = { ...SUM52, codAmount: '150,50' };
+        expect(lineasDeDineroDelJustificante(conCod, { paga: true }).codText)
+            .toBe('*Reembolso a cobrar:* 150,50 €\n');
+        expect(lineasDeDineroDelJustificante(conCod, { paga: false }).codText)
+            .toBe('*Reembolso a cobrar:* 150,50 €\n');
+    });
+
+    it('reembolso ya cobrado se dice cobrado', () => {
+        const conCod = { ...SUM52, codAmount: '150,50', codPaid: true, portePaid: true };
+        expect(lineasDeDineroDelJustificante(conCod, { paga: true }).codText)
+            .toBe('*Reembolso cobrado:* 150,50 €\n');
+        expect(lineasDeDineroDelJustificante(conCod, { paga: true }).estadoText)
+            .toBe('*Estado:* PAGADO\n');
+    });
+
+    it('porte pagado con reembolso suelto lo dice a medias', () => {
+        const mixto = { ...SUM52, portePaid: true, codAmount: '20' };
+        expect(lineasDeDineroDelJustificante(mixto, { paga: true }).estadoText)
+            .toBe('*Estado:* Porte pagado · reembolso pendiente\n');
+    });
+
+    it('al contado (serie HAB-) el precio va sin desglose de IVA', () => {
+        const { priceText } = lineasDeDineroDelJustificante(
+            { id: 'HAB-7', amount: '25' }, { paga: true, isContado: true }
+        );
+        expect(priceText).toBe('*Precio:* 25,00 €\n');
+    });
+
+    it("'Tarifa' no tiene importe pero sí deja el cobro pendiente", () => {
+        const { estadoText, priceText } = lineasDeDineroDelJustificante(
+            { id: 'SUM-9', amount: 'Tarifa' }, { paga: true }
+        );
+        expect(priceText).toBe('');
+        expect(estadoText).toBe('*Estado:* PENDIENTE DE COBRO\n');
+    });
+
+    it('sin nada que cobrar no sale ninguna línea', () => {
+        expect(lineasDeDineroDelJustificante({ id: 'SUM-1' }, { paga: true }))
+            .toEqual({ estadoText: '', priceText: '', codText: '' });
+    });
+
+    it('el precio a mano (customAmount) manda sobre el de tarifa', () => {
+        const { priceText } = lineasDeDineroDelJustificante(
+            { id: 'SUM-3', amount: '40', customAmount: '55' }, { paga: true }
+        );
+        expect(priceText).toBe('*Precio:* 55,00 € + IVA = *66,55 €*\n');
     });
 });

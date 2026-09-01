@@ -262,7 +262,11 @@ serve(async (req: Request) => {
         role: 'client',
         linked_id: destino,
         display_name: display_name || correo,
-        ...(acceso_adicional === true ? { acceso_adicional: MARCA_ADICIONAL } : {}),
+        // Siempre escrita, también cuando NO es adicional: updateUserById
+        // fusiona los metadatos en vez de reemplazarlos, así que una marca
+        // vieja sobreviviría a la mudanza y buscarPorVinculo() dejaría de ver
+        // esta cuenta como la principal de su ficha.
+        acceso_adicional: acceso_adicional === true ? MARCA_ADICIONAL : '',
       }
 
       const cuenta = await buscarPorEmail(supabase, correo)
