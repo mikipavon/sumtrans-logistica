@@ -32,6 +32,15 @@ export const TAMANO_PAGINA = 1000;
 // preferible cortar y avisar que dejar al navegador pidiendo páginas sin fin.
 const MAX_PAGINAS = 500;
 
+// Cuántas páginas se piden A LA VEZ cuando la tabla es grande.
+//
+// Cada página es una consulta aparte, y el servidor monta sus mil filas en memoria
+// mientras la prepara. Con cuatro a la vez, y varios móviles entrando al mismo tiempo,
+// la base de datos se quedó sin RAM, empezó a tirar de SWAP y dejó de contestar (1 de
+// septiembre de 2026: media hora sin que ningún repartidor pudiera entrar). Con dos se
+// pierde poco tiempo de carga y el pico de memoria se queda en la mitad.
+const PAGINAS_A_LA_VEZ = 2;
+
 export const fetchAllRows = async (construirConsulta, { pageSize = TAMANO_PAGINA, label = '' } = {}) => {
     const filas = [];
 
@@ -48,7 +57,9 @@ export const fetchAllRows = async (construirConsulta, { pageSize = TAMANO_PAGINA
         // hay volumen, así que a partir de ahí se piden varias páginas A LA VEZ en
         // vez de esperar cada una por turnos — esto es lo que hacía lento el login
         // y las recargas cuando `shipments` o `clients` superan las 1000 filas.
-        const tamanoLote = pagina === 0 ? 1 : Math.min(4, MAX_PAGINAS - pagina);
+        // Cuántas a la vez es un equilibrio entre esa espera y la memoria que se le
+        // pide al servidor: ver PAGINAS_A_LA_VEZ.
+        const tamanoLote = pagina === 0 ? 1 : Math.min(PAGINAS_A_LA_VEZ, MAX_PAGINAS - pagina);
         const paginasLote = Array.from({ length: tamanoLote }, (_, i) => pagina + i);
         const resultados = await Promise.all(paginasLote.map(pedirPagina));
 
