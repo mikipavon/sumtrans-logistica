@@ -11,10 +11,10 @@ import CityAutocomplete from '../CityAutocomplete';
 import { supabase } from '../../lib/supabase';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 
-// `drivers` ya no se lee aquí: el nombre de quien crea la ficha lo pone App.jsx,
-// que sabe caer en la sesión guardada si la lista aún no ha cargado. Los que
-// llaman lo siguen pasando y no molesta.
-export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, allPoblaciones, prefillData, onAddClient, onUpdateClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
+// El nombre de quien crea la ficha lo pone App.jsx, que sabe caer en la sesión
+// guardada si la lista aún no ha cargado. `drivers` sí se vuelve a leer aquí, pero
+// solo para que la oficina pueda dejar la asignación programada al crear el albarán.
+export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers = [], driverNamePreference = 'both', clients, allPoblaciones, prefillData, onAddClient, onUpdateClient, tariffs, articles, defaultCodFee, familyOrder, isDriver, coverageZones = [], allShipments = [], onUpdateShipment, currentDriverId }) {
     const [formData, setFormData] = useState({
         // Remitente (Sender)
         clientName: '',
@@ -35,6 +35,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
         amount: '',
         porteType: '', // '' = sin elegir. Obligatorio: 'Pagado' o 'Debido'
         assignedDriverId: '',
+        scheduledDate: '', // Hora a la que le sale al conductor. Solo la pone la oficina.
         observations: '',
         hasCod: false,
         codAmount: '',
@@ -444,6 +445,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
                     amount: prefillData.amount || '',
                     porteType: prefillData.porteType || '',
                     assignedDriverId: prefillData.assignedDriverId || '',
+                    scheduledDate: prefillData.scheduledDate || '',
                     observations: prefillData.observations || '',
                     hasCod: prefillData.hasCod || false,
                     codAmount: prefillData.codAmount || '',
@@ -472,6 +474,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
                     amount: '',
                     porteType: '',
                     assignedDriverId: '',
+                    scheduledDate: '',
                     observations: '',
                     hasCod: false,
                     codAmount: '',
@@ -1145,7 +1148,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
             destinationPhone: formData.destinationPhone,
 
             address: fullDest,
-            status: 'Pendiente de asignar',
+            // Si la oficina ya eligió conductor en el propio formulario, el albarán nace
+            // igual que si lo hubiera asignado luego desde el listado: «En reparto» y con
+            // la hora programada. Hasta esa hora no le aparece al conductor. Al conductor
+            // que crea desde su móvil no se le toca el estado: sigue naciendo pendiente.
+            status: (!isDriver && formData.assignedDriverId) ? 'En reparto' : 'Pendiente de asignar',
+            scheduledDate: (!isDriver && formData.assignedDriverId && formData.scheduledDate) ? formData.scheduledDate : null,
             date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }),
             amount: formData.amount ? `€${formData.amount}` : 'Tarifa',
             customAmount: formData.amount ? parseFloat(formData.amount) : null,
@@ -1402,6 +1410,23 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
     };
 
     if (!isOpen) return null;
+
+    // La hora de ahora tal y como la quiere un <input type="datetime-local">: en local,
+    // no en UTC. Restar el desfase antes de cortar el ISO es lo mismo que hace el cuadro
+    // de asignar del listado; sin eso, en verano propondría dos horas menos.
+    const ahoraParaInputLocal = () => {
+        const d = new Date();
+        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+        return d.toISOString().slice(0, 16);
+    };
+
+    const nombreDeConductor = (d) => {
+        const name = d?.name || '';
+        const alias = d?.alias || '';
+        if (driverNamePreference === 'alias' && alias) return alias;
+        if (driverNamePreference === 'name') return name;
+        return alias ? `${name} (${alias})` : name;
+    };
 
     const inputClass = "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm";
     const labelClass = "block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1";
@@ -1726,6 +1751,59 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, clients, 
                                 <textarea className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none h-16" placeholder="Instrucciones adicionales..." value={formData.observations} onChange={(e) => setFormData({ ...formData, observations: e.target.value })}></textarea>
                             </div>
                         </div>
+
+                        {/* ── PROGRAMAR LA ASIGNACIÓN (solo oficina) ──
+                            Antes había que crear el albarán y volver al listado para decir a
+                            quién y para qué hora. Aquí se deja hecho de una vez: el mismo par
+                            conductor + fecha/hora del cuadro «Programar Asignación». */}
+                        {!isDriver && (
+                            <div className="pt-3 border-t border-slate-100 space-y-3" id="shipment-form-assignment">
+                                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                    <Truck size={14} className="text-orange-500" />
+                                    Programar Asignación
+                                    <span className="font-medium normal-case tracking-normal text-[10px] text-slate-400">(opcional)</span>
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className={labelClass}>Conductor</label>
+                                        <select
+                                            className={inputClass}
+                                            value={formData.assignedDriverId}
+                                            onChange={(e) => {
+                                                const driverId = e.target.value;
+                                                setFormData(prev => ({
+                                                    ...prev,
+                                                    assignedDriverId: driverId,
+                                                    // Al elegir conductor se propone «ahora», igual que al asignar
+                                                    // desde el listado; si se quita, se borra también la hora.
+                                                    scheduledDate: driverId ? (prev.scheduledDate || ahoraParaInputLocal()) : ''
+                                                }));
+                                            }}
+                                        >
+                                            <option value="">-- Sin asignar --</option>
+                                            {(drivers || []).filter(d => d.isActive !== false).map(d => (
+                                                <option key={d.id} value={d.id}>{nombreDeConductor(d)}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className={labelClass}>Fecha y Hora de Asignación</label>
+                                        <input
+                                            type="datetime-local"
+                                            className={inputClass}
+                                            value={formData.scheduledDate}
+                                            disabled={!formData.assignedDriverId}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, scheduledDate: e.target.value }))}
+                                        />
+                                        <p className="text-[10px] text-slate-400 mt-1 leading-tight">
+                                            {formData.assignedDriverId
+                                                ? 'No le aparece al conductor hasta esa hora.'
+                                                : 'Elige conductor para poder programar la hora.'}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="pt-3 border-t border-slate-100 space-y-3" id="shipment-form-articles">
                             <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">

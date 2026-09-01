@@ -809,6 +809,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                 onClose={() => setIsCreateModalOpen(false)}
                 onSave={onCreateShipment}
                 drivers={drivers}
+                driverNamePreference={driverNamePreference}
                 clients={clients}
                 allPoblaciones={allPoblaciones}
                 onAddClient={onAddClient}
@@ -884,6 +885,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                 clients={clients}
                 allPoblaciones={allPoblaciones}
                 allShipments={shipments}
+                drivers={drivers}
+                driverNamePreference={driverNamePreference}
             />
 
             {/* Import Excel Modal */}

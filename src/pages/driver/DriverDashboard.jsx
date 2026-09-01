@@ -6466,6 +6466,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 clients={clients}
                 allPoblaciones={allPoblaciones}
                 allShipments={allShipments}
+                isDriver={true}
             />
 
             <DeliveryConfirmationModal
