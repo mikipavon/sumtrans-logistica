@@ -1,4 +1,4 @@
-import { X, Clock, Calendar, Edit2, CheckCircle, Trash2, Download, FileSpreadsheet, FileText } from 'lucide-react';
+import { X, Clock, Calendar, Edit2, CheckCircle, Trash2, Download, FileSpreadsheet, FileText, AlertTriangle } from 'lucide-react';
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import * as XLSX from 'xlsx';
@@ -12,6 +12,12 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
     const [editForm, setEditForm] = useState({ clock_in: '', clock_out: '' });
     const [showToDrivers, setShowToDrivers] = useState(false);
     const [loadingToggle, setLoadingToggle] = useState(true);
+    // ─── BORRADO POR FECHA ───
+    const [showPurge, setShowPurge] = useState(false);
+    const [purgeDate, setPurgeDate] = useState('');
+    const [purgeMode, setPurgeMode] = useState('day'); // 'day' = sólo ese día | 'upto' = ese día y anteriores
+    const [purgePreview, setPurgePreview] = useState(null);
+    const [isPurging, setIsPurging] = useState(false);
 
     useEffect(() => {
         if (isOpen) {
@@ -185,6 +191,100 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
             fetchLogs();
         } catch (e) {
             console.error("Error deleting:", e);
+        }
+    };
+
+    // ─── BORRADO POR FECHA ───
+    // Devuelve el conjunto de meses ya firmados por los conductores.
+    // Devuelve null si no se ha podido comprobar: en ese caso no se borra nada.
+    const loadConfirmedKeys = async () => {
+        try {
+            const { data, error } = await supabase.from('settings').select('value').eq('key', 'timelog_confirmations').maybeSingle();
+            if (error) throw error;
+            if (!data?.value) return new Set();
+            return new Set(JSON.parse(data.value).map(c => String(c.key)));
+        } catch (e) {
+            console.error("Error leyendo las firmas mensuales:", e);
+            return null;
+        }
+    };
+
+    const logAuditBulk = async (deletedLogs) => {
+        try {
+            const { data: existing } = await supabase.from('settings').select('value').eq('key', 'time_logs_audit').maybeSingle();
+            let auditHistory = [];
+            if (existing?.value) { try { auditHistory = JSON.parse(existing.value); } catch(e) {} }
+            const now = new Date().toISOString();
+            const entries = deletedLogs.map(l => ({
+                action: 'delete',
+                bulk: true,
+                timestamp: now,
+                logId: l.id,
+                driverName: l.driver_name,
+                date: l.date,
+                original: { clock_in: l.clock_in, clock_out: l.clock_out }
+            }));
+            auditHistory = [...entries, ...auditHistory];
+            if (auditHistory.length > 2000) auditHistory = auditHistory.slice(0, 2000);
+            await supabase.from('settings').upsert({ key: 'time_logs_audit', value: JSON.stringify(auditHistory) });
+        } catch(e) {
+            console.warn('[Audit] Error guardando auditoría del borrado:', e);
+        }
+    };
+
+    const previewPurge = async () => {
+        if (!purgeDate) return;
+        setIsPurging(true);
+        setPurgePreview(null);
+        try {
+            const base = supabase.from('time_logs').select('*');
+            const query = purgeMode === 'day' ? base.eq('date', purgeDate) : base.lte('date', purgeDate);
+            const [{ data, error }, confirmedKeys] = await Promise.all([query, loadConfirmedKeys()]);
+            if (error) throw error;
+            if (confirmedKeys === null) {
+                alert("No se han podido comprobar las firmas mensuales de los conductores.\n\nPor seguridad no se borra nada. Revisa la conexión e inténtalo de nuevo.");
+                return;
+            }
+            const deletable = [];
+            const blocked = [];
+            (data || []).forEach(l => {
+                const key = `timelog_confirm_${l.driver_id}_${String(l.date).slice(0, 7)}`;
+                (confirmedKeys.has(key) ? blocked : deletable).push(l);
+            });
+            setPurgePreview({ deletable, blocked });
+        } catch (e) {
+            console.error("Error consultando los fichajes a borrar:", e);
+            alert("Error al consultar los fichajes. No se ha borrado nada.");
+        } finally {
+            setIsPurging(false);
+        }
+    };
+
+    const runPurge = async () => {
+        if (!purgePreview || purgePreview.deletable.length === 0) return;
+        const total = purgePreview.deletable.length;
+        const rango = purgeMode === 'day'
+            ? `del día ${formatDateFull(purgeDate)}`
+            : `del ${formatDateFull(purgeDate)} y de todos los días anteriores`;
+        if (!window.confirm(`⚠️ Vas a BORRAR ${total} fichaje(s) ${rango}.\n\nEsto no se puede deshacer. Si quieres una copia, cancela y exporta antes a Excel.\n\n¿Continuar?`)) return;
+        if (!window.confirm(`Última confirmación:\n\nSe borran ${total} registro(s) de forma permanente.`)) return;
+        setIsPurging(true);
+        try {
+            await logAuditBulk(purgePreview.deletable);
+            const ids = purgePreview.deletable.map(l => l.id);
+            for (let i = 0; i < ids.length; i += 100) {
+                const { error } = await supabase.from('time_logs').delete().in('id', ids.slice(i, i + 100));
+                if (error) throw error;
+            }
+            setPurgePreview(null);
+            setPurgeDate('');
+            alert(`Hecho. Se han borrado ${total} fichaje(s).`);
+        } catch (e) {
+            console.error("Error borrando fichajes:", e);
+            alert("Error al borrar. Puede que se hayan borrado sólo algunos registros: vuelve a pulsar \"Ver qué se borraría\" antes de repetir.");
+        } finally {
+            setIsPurging(false);
+            fetchLogs();
         }
     };
 
@@ -452,11 +552,93 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
                         >
                             <FileText size={15} /> PDF
                         </button>
+                        <button
+                            onClick={() => { setShowPurge(v => !v); setPurgePreview(null); }}
+                            className={`px-3 py-2 border rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${showPurge ? 'bg-red-600 text-white border-red-600 hover:bg-red-700' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                            title="Borrar fichajes por fecha"
+                        >
+                            <Trash2 size={15} /> Borrar
+                        </button>
                         <button onClick={onClose} className="p-2 hover:bg-slate-200 text-slate-500 rounded-lg transition-colors">
                             <X size={20} />
                         </button>
                     </div>
                 </div>
+
+                {/* Borrado por fecha */}
+                {showPurge && (
+                <div className="px-6 py-4 border-b border-red-100 bg-red-50/60 shrink-0">
+                    <div className="flex items-start gap-2 mb-3">
+                        <AlertTriangle size={16} className="text-red-600 mt-0.5 shrink-0" />
+                        <div>
+                            <p className="text-xs font-bold text-red-800">Borrar fichajes por fecha</p>
+                            <p className="text-[10px] text-red-600/90">No se puede deshacer. Los meses ya firmados por el conductor no se borran. Si quieres una copia, exporta antes a Excel.</p>
+                        </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <input
+                            type="date"
+                            value={purgeDate}
+                            onChange={(e) => { setPurgeDate(e.target.value); setPurgePreview(null); }}
+                            className="px-3 py-2 border border-slate-200 rounded-lg font-bold text-sm text-slate-700 focus:ring-2 focus:ring-red-500/20 outline-none"
+                        />
+                        <select
+                            value={purgeMode}
+                            onChange={(e) => { setPurgeMode(e.target.value); setPurgePreview(null); }}
+                            className="px-3 py-2 border border-slate-200 rounded-lg font-bold text-xs text-slate-700 bg-white focus:ring-2 focus:ring-red-500/20 outline-none"
+                        >
+                            <option value="day">Sólo ese día</option>
+                            <option value="upto">Ese día y todos los anteriores</option>
+                        </select>
+                        <button
+                            onClick={previewPurge}
+                            disabled={!purgeDate || isPurging}
+                            className="px-3 py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                            {isPurging ? 'Consultando...' : 'Ver qué se borraría'}
+                        </button>
+                    </div>
+
+                    {purgePreview && (
+                        <div className="mt-3 bg-white border border-red-200 rounded-lg p-3">
+                            {purgePreview.deletable.length === 0 && purgePreview.blocked.length === 0 ? (
+                                <p className="text-xs font-bold text-slate-500">No hay ningún fichaje en esa fecha.</p>
+                            ) : (
+                                <>
+                                    <p className="text-xs font-bold text-slate-700">
+                                        Se van a borrar <span className="text-red-600">{purgePreview.deletable.length}</span> fichaje(s).
+                                    </p>
+                                    {purgePreview.deletable.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 mt-2">
+                                            {Object.entries(purgePreview.deletable.reduce((acc, l) => {
+                                                const n = l.driver_name || 'Sin nombre';
+                                                acc[n] = (acc[n] || 0) + 1;
+                                                return acc;
+                                            }, {})).map(([n, c]) => (
+                                                <span key={n} className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{n}: {c}</span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {purgePreview.blocked.length > 0 && (
+                                        <p className="text-[11px] font-bold text-amber-700 mt-2">
+                                            🔒 {purgePreview.blocked.length} fichaje(s) NO se borran: su mes está firmado digitalmente por el conductor.
+                                        </p>
+                                    )}
+                                    {purgePreview.deletable.length > 0 && (
+                                        <button
+                                            onClick={runPurge}
+                                            disabled={isPurging}
+                                            className="mt-3 px-3 py-2 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+                                        >
+                                            <Trash2 size={14} /> {isPurging ? 'Borrando...' : `Borrar ${purgePreview.deletable.length} fichaje(s)`}
+                                        </button>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    )}
+                </div>
+                )}
 
                 {/* Driver visibility toggle (Hidden by default, shown in Dev Mode) */}
                 {isGhostModeUnlocked && (
