@@ -2,10 +2,10 @@ import React, { useState, useMemo } from 'react';
 import { Wallet, Filter, Search, User, Calendar, Truck, Euro, AlertTriangle, CheckCircle, ArrowRight, Pencil, X, FileText, ChevronUp, ChevronDown } from 'lucide-react';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { utils, writeFile } from 'xlsx';
-import { parseCurrency, importeSinValorar, buildShipmentModel, isPendingCollection, needsDriverAfterCollecting, cobradorDesignado } from '../utils/pendingCollections';
+import { lineasDeCobro, needsDriverAfterCollecting } from '../utils/pendingCollections';
 import { coincideBusqueda } from '../utils/busqueda';
 
-export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onReassignCollection, onUpdateShipment, driverNamePreference = 'both' }) {
+export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onReassignCollection, onReassignCollections, onUpdateShipment, driverNamePreference = 'both' }) {
     const getDriverDisplayName = (driver) => {
         if (!driver) return '';
         const name = driver.name || '';
@@ -23,6 +23,8 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
     const [searchTerm, setSearchTerm] = useState('');
     const [editingId, setEditingId] = useState(null);
     const [tempDriverId, setTempDriverId] = useState('');
+    // Repartidor elegido en la barra "Pasar todos los cobros de X a…".
+    const [bulkDriverId, setBulkDriverId] = useState('');
     const [selectedShipment, setSelectedShipment] = useState(null);
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
     // Albarán que acaba de quedar cobrado y todavía no lo lleva nadie.
@@ -65,71 +67,14 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
         setTempDriverId('');
     };
 
-    // Logic to identify pending collections - using the Shipment model
+    // Las líneas de deuda salen de lineasDeCobro, la MISMA regla que usa el
+    // repartidor en la pestaña Cobros de su móvil. Esta lista es, por
+    // construcción, la suma de las pestañas de todos los repartidores.
     const pendingItems = useMemo(() => {
         if (!Array.isArray(shipments)) return [];
-
-        return shipments.filter(s => isPendingCollection(s, clients)).map(s => {
-            const model = buildShipmentModel(s, clients);
-
-            const codAmount = parseCurrency(s.codAmount);
-            const customAmount = parseCurrency(s.customAmount);
-            const shippingAmount = customAmount || parseCurrency(s.amount);
-            const designatedDriverId = s.assignedDriverId || s.createdById;
-
-            // El albarán puede no tener precio todavía: las recogidas nacen con
-            // amount 'Por valorar' y hay portes marcados como 'Tarifa'. En ese caso
-            // se enseña el texto en la columna de importe (un €0.00 diría que no se
-            // debe nada, y lo que pasa es que aún no se sabe cuánto) y el importe
-            // que suma en el total es 0. Un customAmount válido manda sobre el texto,
-            // igual que en shippingAmount.
-            const porteSinValorar = !customAmount && importeSinValorar(s.amount);
-            const textoImporte = String(s.amount || '').trim();
-            const shippingDisplay = porteSinValorar
-                ? (textoImporte.toLowerCase() === 'tarifa' ? 'Tarifa' : textoImporte)
-                : shippingAmount;
-
-            const types = [];
-
-            // Porte del REMITENTE (cliente habitual + pagado)
-            if (model.generatesPendingDebtOnCreation() && s.paymentStatus !== 'Paid') {
-                types.push({
-                    type: 'Portes (Pagado)',
-                    amount: shippingAmount,
-                    amountDisplay: shippingDisplay,
-                    responsibleDriverId: cobradorDesignado(s, s.createdById || designatedDriverId),
-                    payerName: s.client
-                });
-            }
-
-            // Porte del DESTINATARIO (Debido + cliente habitual + entregado)
-            if (s.porteType === 'Debido'
-                && s.status === 'Entregado'
-                && !model.isInvoiceBilling(model.destinationBillingType)
-                && s.paymentStatus !== 'Paid') {
-                types.push({
-                    type: 'Portes (Debido)',
-                    amount: shippingAmount,
-                    amountDisplay: shippingDisplay,
-                    responsibleDriverId: cobradorDesignado(s, designatedDriverId),
-                    payerName: s.destinationName || 'Destinatario'
-                });
-            }
-
-            // Reembolso (COD)
-            if (s.hasCod && codAmount > 0 && !s.codPaid && s.status === 'Entregado') {
-                types.push({
-                    type: 'Reembolso',
-                    amount: codAmount,
-                    amountDisplay: codAmount,
-                    responsibleDriverId: cobradorDesignado(s, designatedDriverId),
-                    payerName: s.destinationName || 'Destinatario (Reembolso)'
-                });
-            }
-
-            return { ...s, collectionTypes: types };
-        }).filter(item => item.collectionTypes.length > 0);
-
+        return shipments
+            .map(s => ({ ...s, collectionTypes: lineasDeCobro(s, clients) }))
+            .filter(item => item.collectionTypes.length > 0);
     }, [shipments, clients]);
 
     // Apply UI Filters
@@ -196,6 +141,29 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
         }, 0);
         return sum + itemTotal;
     }, 0);
+
+    // ── Cambio de transportista en una zona ─────────────────────────────────
+    // Con el filtro puesto en un repartidor, todos los cobros que se ven pasan
+    // de golpe a otro. Es el mismo traspaso que "Pasar cobro" fila a fila: sólo
+    // cambia quién cobra, ni el estado ni el reparto. Al terminar, el filtro
+    // salta al repartidor que los recibe, para ver que han llegado.
+    const repartidorFiltrado = Array.isArray(drivers) ? drivers.find(d => String(d.id) === String(filterDriver)) : null;
+    const pasarTodosLosCobros = () => {
+        if (!bulkDriverId || filteredItems.length === 0) return;
+        const destino = Array.isArray(drivers) ? drivers.find(d => String(d.id) === String(bulkDriverId)) : null;
+        const aviso = '¿Pasar los ' + filteredItems.length + ' cobros de ' + getDriverDisplayName(repartidorFiltrado)
+            + ' a ' + getDriverDisplayName(destino) + '?\n\n'
+            + 'Sólo cambia quién los cobra. El reparto y el estado de los albaranes no se tocan.';
+        if (!window.confirm(aviso)) return;
+        const ids = filteredItems.map(item => item.id);
+        if (onReassignCollections) {
+            onReassignCollections(ids, bulkDriverId);
+        } else if (onReassignCollection) {
+            ids.forEach(id => onReassignCollection(id, bulkDriverId));
+        }
+        setFilterDriver(String(bulkDriverId));
+        setBulkDriverId('');
+    };
 
     const handleExportToExcel = () => {
         if (filteredItems.length === 0) {
@@ -388,6 +356,35 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                     </select>
                 </div>
             </div>
+
+            {/* Cambio de transportista: pasar todos los cobros del filtrado a otro */}
+            {filterDriver !== 'all' && filteredItems.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-3 flex flex-wrap items-center gap-3">
+                    <span className="text-sm text-amber-900">
+                        Pasar los <strong>{filteredItems.length}</strong> cobros de <strong>{getDriverDisplayName(repartidorFiltrado) || 'este repartidor'}</strong> a
+                    </span>
+                    <select
+                        aria-label="Repartidor que se queda todos los cobros"
+                        className="bg-white border border-amber-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 min-w-[180px]"
+                        value={bulkDriverId}
+                        onChange={(e) => setBulkDriverId(e.target.value)}
+                    >
+                        <option value="">Elige repartidor…</option>
+                        {Array.isArray(drivers) && drivers.filter(d => d.isActive !== false && String(d.id) !== String(filterDriver)).map(d => (
+                            <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
+                        ))}
+                    </select>
+                    <button
+                        onClick={pasarTodosLosCobros}
+                        disabled={!bulkDriverId}
+                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-bold bg-amber-600 text-white hover:bg-amber-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
+                        title="Traspasa todos los cobros de la lista. No cambia el reparto ni el estado de los albaranes."
+                    >
+                        <ArrowRight size={14} />
+                        Pasar todos los cobros
+                    </button>
+                </div>
+            )}
 
             {/* List */}
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">

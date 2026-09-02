@@ -227,3 +227,80 @@ describe('PendingCollections · traspasar el cobro', () => {
         expect(screen.getByRole('combobox', { name: /se queda el cobro/i })).toHaveValue('8');
     });
 });
+
+// ── Cambio de transportista en una zona: pasar todos los cobros de golpe ────
+//
+// Cuando un repartidor deja una zona, sus cobros pendientes hay que pasárselos
+// al que entra. Fila a fila con "Pasar cobro" vale para uno; para una zona
+// entera hace falta hacerlo de una vez. Igual que el traspaso de una fila,
+// esto sólo cambia quién cobra: no asigna reparto ni toca el estado.
+describe('PendingCollections · pasar todos los cobros de un repartidor a otro', () => {
+    const dosRepartidores = [
+        { id: 7, name: 'Juan Jesus', isActive: true },
+        { id: 8, name: 'Antonio', isActive: true }
+    ];
+    const deJuan1 = { ...albaran, id: 'ALB-9', porteType: 'Debido', status: 'Entregado', assignedDriverId: 7, destinationName: 'Talleres Pepe' };
+    const deJuan2 = { ...albaran, id: 'ALB-10', createdById: 7 };
+    const deAntonio = { ...albaran, id: 'ALB-11', createdById: 8 };
+
+    const pintar = (handlers = {}) => render(
+        <PendingCollections
+            shipments={[deJuan1, deJuan2, deAntonio]}
+            drivers={dosRepartidores}
+            clients={clients}
+            onAssignDriver={handlers.onAssignDriver || vi.fn()}
+            onReassignCollection={handlers.onReassignCollection || vi.fn()}
+            onReassignCollections={handlers.onReassignCollections}
+            onUpdateShipment={vi.fn().mockResolvedValue(true)}
+        />
+    );
+    const filtrarPor = (id) => fireEvent.change(screen.getByDisplayValue('Todos los Repartidores'), { target: { value: id } });
+
+    it('sin filtrar por repartidor no se ofrece', () => {
+        pintar();
+        expect(screen.queryByText('Pasar todos los cobros')).not.toBeInTheDocument();
+    });
+
+    it('con el filtro en un repartidor pasa sus cobros, y sólo los suyos, al elegido', () => {
+        const onAssignDriver = vi.fn();
+        const onReassignCollections = vi.fn();
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        pintar({ onAssignDriver, onReassignCollections });
+
+        filtrarPor('7');
+        expect(screen.getByText(/Pasar los/)).toHaveTextContent('Pasar los 2 cobros de Juan Jesus a');
+
+        fireEvent.change(screen.getByRole('combobox', { name: /todos los cobros/i }), { target: { value: '8' } });
+        fireEvent.click(screen.getByText('Pasar todos los cobros'));
+
+        expect(onReassignCollections).toHaveBeenCalledWith(['ALB-9', 'ALB-10'], '8');
+        // Lo que no puede pasar: asignar reparto pone el albarán 'En reparto'.
+        expect(onAssignDriver).not.toHaveBeenCalled();
+    });
+
+    it('si se cancela el aviso no se toca nada', () => {
+        const onReassignCollections = vi.fn();
+        vi.spyOn(window, 'confirm').mockReturnValue(false);
+        pintar({ onReassignCollections });
+
+        filtrarPor('7');
+        fireEvent.change(screen.getByRole('combobox', { name: /todos los cobros/i }), { target: { value: '8' } });
+        fireEvent.click(screen.getByText('Pasar todos los cobros'));
+
+        expect(onReassignCollections).not.toHaveBeenCalled();
+    });
+
+    it('sin el traspaso en bloque cae en el traspaso fila a fila', () => {
+        const onReassignCollection = vi.fn();
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        pintar({ onReassignCollection });
+
+        filtrarPor('7');
+        fireEvent.change(screen.getByRole('combobox', { name: /todos los cobros/i }), { target: { value: '8' } });
+        fireEvent.click(screen.getByText('Pasar todos los cobros'));
+
+        expect(onReassignCollection).toHaveBeenCalledTimes(2);
+        expect(onReassignCollection).toHaveBeenCalledWith('ALB-9', '8');
+        expect(onReassignCollection).toHaveBeenCalledWith('ALB-10', '8');
+    });
+});

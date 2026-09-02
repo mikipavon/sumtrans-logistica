@@ -36,7 +36,7 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante } from '../../utils/shipmentUtils';
-import { cobradorDesignado } from '../../utils/pendingCollections';
+import { cobrosPendientesDe } from '../../utils/pendingCollections';
 import { mejorPuebloParaCiudad, esElMismoPueblo, normalizarPueblo } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
 import { geocodificarDireccion } from '../../utils/geocodificar';
@@ -5663,102 +5663,26 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider ml-1">Pendientes Cobros y Reembolsos</h3>
                             {(() => {
-                                // Un cobro que la oficina le ha pasado a otro repartidor deja de ser
-                                // suyo aunque el albarán siga asignado a él (o lo creara él): el
-                                // traspaso entra aquí para que le aparezca al compañero, y más abajo
-                                // cobradorDesignado se encarga de que desaparezca del que lo tenía.
-                                const pendingShipments = (allShipments || []).filter(s =>
-                                    s &&
-                                    (Number(s.assignedDriverId) === Number(currentDriverId)
-                                        || Number(s.createdById) === Number(currentDriverId)
-                                        || Number(s.pendingCollectionDriverId) === Number(currentDriverId)) &&
-                                    s.status !== 'Cancelado'
-                                );
-
-                                // Build separate debt items from pending shipments
-                                const debtItems = [];
-                                pendingShipments.forEach(shipment => {
-                                    // Robust normalization for names
-                                    const normalize = (val) => String(val || '').trim().toLowerCase();
-                                    const sName = normalize(shipment.client);
-                                    const dName = normalize(shipment.destinationName);
-                                    
-                                    // Find client info for source of truth
-                                    const senderClient = clients?.find(c => normalize(c.name) === sName || normalize(c.legalName) === sName);
-                                    const destClient = clients?.find(c => normalize(c.name) === dName || normalize(c.legalName) === dName);
-
-                                    // Los "Recibo" (cierre de presupuestos, cobros manuales de oficina...) traen su
-                                    // propio billingType puesto A PROPÓSITO — normalmente 'Clientes Habituales' para
-                                    // forzar que se cobre en mano aunque el cliente real sea de Presupuesto/Facturación.
-                                    // Si aquí se sustituye por la ficha del cliente, ese Recibo deja de aparecer como
-                                    // deuda de contado y desaparece de la pestaña del conductor sin avisar a nadie.
-                                    const isOfficeReceipt = shipment.type === 'Recibo';
-
-                                    // Create model with enriched billing info
-                                    const model = new Shipment({
-                                        ...shipment,
-                                        billingType: isOfficeReceipt ? (shipment.billingType || 'Clientes Habituales') : (senderClient?.billingType || shipment.billingType || 'Clientes Habituales'),
-                                        destinationBillingType: isOfficeReceipt ? null : (destClient?.billingType || shipment.destinationBillingType || null)
-                                    });
-
-                                    // Skip fully paid (now using model logic implicitly via our filters)
-                                    if (shipment.paymentStatus === 'Paid' && shipment.status !== 'Pendiente Cobro') return;
-
-                                    const isDebido = shipment.porteType === 'Debido';
-                                    const hasCod = shipment.hasCod;
-                                    const porteVal = parseAmount(shipment.amount);
-                                    const codVal = hasCod ? parseAmount(shipment.codAmount) : 0;
-
-                                    const portePayer = isDebido 
-                                        ? (shipment.destinationName || 'Destinatario (Debido)') 
-                                        : (shipment.originName || shipment.client);
-                                    const codPayer = shipment.destinationName || 'Destinatario (Reembolso)';
-
-                                    // Determine which driver is responsible
-                                    const designatedPorteDriverId = cobradorDesignado(shipment, isDebido ? (shipment.assignedDriverId || shipment.createdById) : (shipment.createdById || shipment.assignedDriverId));
-                                    const designatedCodDriverId = cobradorDesignado(shipment, shipment.assignedDriverId || shipment.createdById);
-
-                                    // Porte card
-                                    const porteIsActuallyPending = (porteVal > 0 || String(shipment.amount).toLowerCase() === 'tarifa') && !shipment.portePaid && shipment.paymentStatus !== 'Paid';
-                                    
-                                    // Use model to decide if this porto generates debt
-                                    const isPortePayerCash = isDebido 
-                                        ? !model.isInvoiceBilling(destClient?.billingType) 
-                                        : model.isCashBilling(model.billingType);
-
-                                    if (porteIsActuallyPending && isPortePayerCash && Number(designatedPorteDriverId) === Number(currentDriverId)) {
-                                        // RULE: 
-                                        // - Portes Pagados (Origin/Sender): show always (Case 2/5)
-                                        // - Portes Debidos (Destination): ONLY if Entregado (Case 3/6)
-                                        if (!isDebido || shipment.status === 'Entregado') {
-                                            debtItems.push({
-                                                key: `${shipment.id}-porte`,
-                                                shipment,
-                                                type: 'porte',
-                                                label: isDebido ? 'Porte Debido' : 'Porte Pagado',
-                                                amount: String(shipment.amount).toLowerCase() === 'tarifa' ? 'Tarifa' : porteVal,
-                                                payerName: portePayer || (isDebido ? 'Destinatario' : 'Remitente'),
-                                                colorClass: isDebido ? 'border-l-yellow-400' : 'border-l-blue-400',
-                                                badgeClass: isDebido ? 'text-yellow-600 bg-yellow-50' : 'text-blue-600 bg-blue-50',
-                                            });
-                                        }
-                                    }
-
-                                    // Reembolso card - ONLY if Entregado
-                                    const isCodPayerCash = !model.isInvoiceBilling(destClient?.billingType);
-                                    if (hasCod && codVal > 0 && !shipment.codPaid && isCodPayerCash && Number(designatedCodDriverId) === Number(currentDriverId) && shipment.status === 'Entregado') {
-                                        debtItems.push({
-                                            key: `${shipment.id}-reembolso`,
-                                            shipment,
-                                            type: 'reembolso',
-                                            label: 'Reembolso',
-                                            amount: codVal,
-                                            payerName: codPayer || 'Destinatario',
-                                            colorClass: 'border-l-red-500',
-                                            badgeClass: 'text-red-600 bg-red-50',
-                                        });
-                                    }
-                                });
+                                // Las deudas salen de cobrosPendientesDe: la MISMA regla que usa la
+                                // oficina en Cobros Pendientes, así que lo que ve aquí el repartidor es
+                                // exactamente su parte de aquella lista. Un cobro que la oficina le ha
+                                // pasado a otro deja de ser suyo aunque el albarán siga asignado a él
+                                // (o lo creara él), y al compañero le aparece.
+                                const cardPorLinea = (linea) => {
+                                    const esPorte = linea.parte === 'porte';
+                                    const esDebido = linea.type === 'Portes (Debido)';
+                                    return {
+                                        key: linea.shipment.id + '-' + linea.parte,
+                                        shipment: linea.shipment,
+                                        type: linea.parte,
+                                        label: esPorte ? (esDebido ? 'Porte Debido' : 'Porte Pagado') : 'Reembolso',
+                                        amount: linea.amountDisplay,
+                                        payerName: linea.payerName,
+                                        colorClass: esPorte ? (esDebido ? 'border-l-yellow-400' : 'border-l-blue-400') : 'border-l-red-500',
+                                        badgeClass: esPorte ? (esDebido ? 'text-yellow-600 bg-yellow-50' : 'text-blue-600 bg-blue-50') : 'text-red-600 bg-red-50',
+                                    };
+                                };
+                                const debtItems = cobrosPendientesDe(allShipments, currentDriverId, clients).map(cardPorLinea);
 
                                 // Filter out items currently being processed (Optimistic UI)
                                 const visibleDebtItems = debtItems.filter(item => !processingIds.has(item.key));

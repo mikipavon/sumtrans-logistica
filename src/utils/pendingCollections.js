@@ -27,46 +27,110 @@ export const importeSinValorar = (value) => {
     return !Number.isFinite(parseFloat(String(value || '0').replace(/[^0-9.-]+/g, "")));
 };
 
-export const buildShipmentModel = (s, clients) => {
-    const sName = normalizeName(s.client);
-    const dName = normalizeName(s.destinationName);
+// ── Las líneas de cobro de un albarán: LA regla, la misma en todas partes ────
+//
+// Antes había dos copias de esta regla que no coincidían: la pestaña Cobros del
+// móvil del repartidor y la pantalla Cobros Pendientes de la oficina. El móvil
+// miraba primero la ficha del cliente y la oficina primero lo grabado en el
+// albarán; el móvil escondía los portes sin importe ("Por valorar") y la oficina
+// los enseñaba; el móvil descartaba un estado 'Cancelado' que no existe. Así una
+// deuda podía salirle al repartidor y no a la oficina, o al revés, y la oficina
+// no podía fiarse de que su lista fuera la suma de las pestañas de todos.
+//
+// Devuelve una línea por cada dinero que todavía hay que cobrar en mano:
+//   { parte: 'porte' | 'reembolso', type: 'Portes (Pagado)' | 'Portes (Debido)' | 'Reembolso',
+//     amount (número, 0 si es 'Tarifa'), amountDisplay (número o 'Tarifa'),
+//     responsibleDriverId, payerName }
+// Un albarán sin líneas no es un cobro pendiente.
+//
+// El tipo de cobro sale de la ficha ACTUAL del cliente y, si no hay ficha, de lo
+// grabado en el albarán. Un Recibo (cierre de presupuestos, cobros manuales de
+// oficina) es la excepción: trae su billingType puesto a propósito, normalmente
+// 'Clientes Habituales' para forzar el cobro en mano aunque el cliente real sea de
+// facturación, y la ficha no puede pisarlo.
+export const lineasDeCobro = (s, clients) => {
+    if (!s || s.status === 'Anulado') return [];
 
-    // Buscar en la lista de clientes para obtener datos frescos de facturación
-    const senderClient = clients?.find(c => normalizeName(c.name) === sName || normalizeName(c.legalName) === sName);
-    const destClient = clients?.find(c => normalizeName(c.name) === dName || normalizeName(c.legalName) === dName);
+    const esRecibo = s.type === 'Recibo';
+    const senderClient = esRecibo ? null : clients?.find(c => normalizeName(c.name) === normalizeName(s.client) || normalizeName(c.legalName) === normalizeName(s.client));
+    const destClient = esRecibo ? null : clients?.find(c => normalizeName(c.name) === normalizeName(s.destinationName) || normalizeName(c.legalName) === normalizeName(s.destinationName));
 
-    // Prioridad: dato guardado en el albarán > ficha actual del cliente
-    // (la ficha del cliente puede cambiar pero el albarán refleja el estado real al entregar)
-    return new Shipment({
+    const model = new Shipment({
         ...s,
-        billingType: s.billingType || senderClient?.billingType || 'Clientes Habituales',
-        destinationBillingType: s.destinationBillingType || destClient?.billingType || null
+        billingType: esRecibo ? (s.billingType || 'Clientes Habituales') : (senderClient?.billingType || s.billingType || 'Clientes Habituales'),
+        destinationBillingType: esRecibo ? null : (destClient?.billingType || s.destinationBillingType || null)
     });
+
+    const lineas = [];
+    const esDebido = s.porteType === 'Debido';
+    const porDefectoPorte = esDebido ? (s.assignedDriverId || s.createdById) : (s.createdById || s.assignedDriverId);
+    const porDefectoReembolso = s.assignedDriverId || s.createdById;
+
+    // Porte. Un customAmount válido manda sobre el importe del albarán (importación
+    // por Excel, liquidación de presupuestos). 'Tarifa' cuenta como deuda aunque
+    // todavía no tenga cifra; 'Por valorar' (una recogida sin precio) no: todavía
+    // no hay nada que cobrar y sólo abultaría la lista.
+    const customAmount = parseCurrency(s.customAmount);
+    const importePorte = customAmount || parseCurrency(s.amount);
+    const esTarifa = !customAmount && String(s.amount || '').trim().toLowerCase() === 'tarifa';
+    const hayPorte = importePorte > 0 || esTarifa;
+    const porteSinCobrar = !s.portePaid && s.paymentStatus !== 'Paid';
+    const pagadorEnMano = esDebido
+        ? !model.isInvoiceBilling(model.destinationBillingType)
+        : model.isCashBilling(model.billingType);
+    // Un porte pagado en origen se debe desde que nace; uno debido, sólo al entregar.
+    const tocaCobrarlo = !esDebido || s.status === 'Entregado';
+
+    if (hayPorte && porteSinCobrar && pagadorEnMano && tocaCobrarlo) {
+        lineas.push({
+            parte: 'porte',
+            type: esDebido ? 'Portes (Debido)' : 'Portes (Pagado)',
+            amount: importePorte,
+            amountDisplay: esTarifa ? 'Tarifa' : importePorte,
+            responsibleDriverId: cobradorDesignado(s, porDefectoPorte),
+            payerName: esDebido
+                ? (s.destinationName || 'Destinatario (Debido)')
+                : (s.originName || s.client || 'Remitente')
+        });
+    }
+
+    // Reembolso: siempre en mano y siempre al entregar. Cuenta mientras no esté
+    // marcado como cobrado, diga lo que diga paymentStatus: es dinero del
+    // remitente que lleva el repartidor y no puede perderse de vista.
+    const importeReembolso = parseCurrency(s.codAmount);
+    if (s.hasCod && importeReembolso > 0 && !s.codPaid && s.status === 'Entregado') {
+        lineas.push({
+            parte: 'reembolso',
+            type: 'Reembolso',
+            amount: importeReembolso,
+            amountDisplay: importeReembolso,
+            responsibleDriverId: cobradorDesignado(s, porDefectoReembolso),
+            payerName: s.destinationName || 'Destinatario (Reembolso)'
+        });
+    }
+
+    return lineas;
 };
 
-export const isPendingCollection = (s, clients) => {
-    // EXCLUDE: Pagados y entregados completamente
-    if (s.status === 'Entregado' && s.paymentStatus === 'Paid' && s.portePaid !== false && !s.hasCod) return false;
-    if (s.status === 'Anulado') return false;
+export const isPendingCollection = (s, clients) => lineasDeCobro(s, clients).length > 0;
 
-    const model = buildShipmentModel(s, clients);
-
-    // CASO 2 y 5: Remitente cliente habitual + porte PAGADO → siempre en cobros pendientes
-    const senderDebt = model.generatesPendingDebtOnCreation() && s.paymentStatus !== 'Paid';
-
-    // CASO 3 y 6: Porte DEBIDO + cliente habitual destinatario → solo si está ENTREGADO
-    // Usamos el modelo (que ya tiene el billingType correcto del albarán) en lugar de destClient directo
-    const receiverOwesPorte = s.porteType === 'Debido'
-        && s.status === 'Entregado'
-        && !model.isInvoiceBilling(model.destinationBillingType)
-        && s.paymentStatus !== 'Paid';
-
-    // Reembolso pendiente (siempre al entregarse si no se marcó como cobrado)
-    const codPending = s.hasCod && parseCurrency(s.codAmount) > 0 && !s.codPaid && s.status === 'Entregado';
-
-    // Boolean() porque codPending puede quedar en undefined si el albarán no lleva
-    // reembolso, y así la función siempre responde sí o no.
-    return Boolean(senderDebt || receiverOwesPorte || codPending);
+// Lo que le toca cobrar a un repartidor: sus líneas, con el albarán al lado.
+// Se descartan primero, sin calcular nada, los albaranes en los que no aparece
+// (el responsable de una línea siempre es el asignado, el creador o quien recibió
+// el traspaso): el móvil recalcula esto en cada pintado y mira todos los albaranes.
+export const cobrosPendientesDe = (shipments, driverId, clients) => {
+    if (driverId === null || driverId === undefined || driverId === '') return [];
+    const id = Number(driverId);
+    const suyo = (v) => v !== null && v !== undefined && v !== '' && Number(v) === id;
+    const resultado = [];
+    (shipments || []).forEach(s => {
+        if (!s) return;
+        if (!suyo(s.assignedDriverId) && !suyo(s.createdById) && !suyo(s.pendingCollectionDriverId)) return;
+        lineasDeCobro(s, clients).forEach(linea => {
+            if (suyo(linea.responsibleDriverId)) resultado.push({ shipment: s, ...linea });
+        });
+    });
+    return resultado;
 };
 
 
