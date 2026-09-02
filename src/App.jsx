@@ -35,7 +35,7 @@ const NotificationCenter = lazy(() => import('./pages/NotificationCenter'))
 import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { fetchAllRows } from './utils/fetchAllRows';
-import { conTopeDeTiempo } from './utils/topeDeTiempo';
+import { conTopeDeTiempo, errorDeServidorSiLoEs } from './utils/topeDeTiempo';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
 import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, fichaSinContrasenas } from './utils/clientAccess';
 import { planDeAcceso } from './utils/accesoFichaExistente';
@@ -1846,13 +1846,20 @@ function App() {
       );
 
       if (authError || !authData.user) {
+        // Un "no" del servidor no es un "no" a la contraseña. Si el que falla es él
+        // (5xx, la página de error de Cloudflare mientras la base de datos reinicia,
+        // o la petición que se pierde), hay que decirlo tal cual: el login antiguo
+        // pasa por las mismas tripas y acabaría igual, pero enseñando "usuario o
+        // contraseña incorrectos" y mandando a cambiar una contraseña que está bien.
+        const falloDelServidor = errorDeServidorSiLoEs(authError);
+        if (falloDelServidor) throw falloDelServidor;
         console.warn('[Login] Supabase Auth failed:', authError?.message);
         // ── FALLBACK: login legacy (para transición mientras se migran usuarios) ──
         return await handleLegacyLogin(role, username, password, authEmail);
       }
 
       // ── Obtener perfil con rol ──
-      const { data: profile } = await conTopeDeTiempo(
+      const { data: profile, error: errorPerfil, status: estadoPerfil } = await conTopeDeTiempo(
         supabase
           .from('profiles')
           .select('*')
@@ -1861,6 +1868,11 @@ function App() {
         SEGUNDOS_ESPERA_LOGIN
       );
 
+      // Sin ficha no se sabe el rol, pero el motivo importa: "no la encuentro" manda al
+      // login antiguo, "no he podido preguntarlo" es un fallo del servidor y se dice.
+      const falloAlLeerPerfil = errorDeServidorSiLoEs(errorPerfil, estadoPerfil);
+      if (falloAlLeerPerfil) throw falloAlLeerPerfil;
+
       if (!profile) {
         console.warn('[Login] No profile found for auth user, falling back to legacy');
         return await handleLegacyLogin(role, username, password, authEmail);
@@ -1868,7 +1880,7 @@ function App() {
 
       // ── Verificar que el driver está activo ──
       if (profile.role === 'driver' && profile.linked_id) {
-        const { data: driverCheck } = await conTopeDeTiempo(
+        const { data: driverCheck, error: errorConductor, status: estadoConductor } = await conTopeDeTiempo(
           supabase
             .from('drivers')
             .select('data')
@@ -1876,6 +1888,15 @@ function App() {
             .single(),
           SEGUNDOS_ESPERA_LOGIN
         );
+        // Si la ficha no se ha podido leer, NO se sabe si sigue de alta. Antes se
+        // entraba igual (la respuesta vacía se leía como "activo"); ahora se cierra
+        // la sesión y se avisa, que es lo único honesto: no dar por buena una
+        // comprobación que no se ha hecho.
+        const falloAlLeerConductor = errorDeServidorSiLoEs(errorConductor, estadoConductor);
+        if (falloAlLeerConductor) {
+          try { await conTopeDeTiempo(supabase.auth.signOut(), 5); } catch (_) {}
+          throw falloAlLeerConductor;
+        }
         if (driverCheck?.data?.isActive === false) {
           await supabase.auth.signOut();
           alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
@@ -2932,6 +2953,19 @@ function App() {
       return true; // No bloquear al conductor
     }
   }
+
+  // Pasar un cobro pendiente de un repartidor a otro (pestaña Cobros Pendientes).
+  //
+  // NO es una asignación de reparto: no toca el estado ni el repartidor del albarán.
+  // Antes esto se hacía con handleAssignDriver, que pone el estado en 'En reparto', y
+  // un albarán ya entregado se salía de Cobros Pendientes y le volvía a aparecer al
+  // repartidor entre las entregas del día en vez de pasarle la deuda al compañero.
+  const handleReassignPendingCollection = async (shipmentId, driverId) => {
+    const sinRepartidor = !driverId || driverId === '' || driverId === 'unassigned';
+    return handleUpdateShipment(shipmentId, {
+      pendingCollectionDriverId: sinRepartidor ? null : Number(driverId)
+    });
+  };
 
   // Handle manual edits to shipment details
   const handleUpdateShipment = async (idOrObject, maybeUpdates) => {
@@ -4472,7 +4506,7 @@ function App() {
                         <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} vehicles={vehicles} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
                     </div>
                 )}
-      {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onUpdateShipment={handleUpdateShipment} driverNamePreference={driverNamePreference} />}
+      {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onReassignCollection={handleReassignPendingCollection} onUpdateShipment={handleUpdateShipment} driverNamePreference={driverNamePreference} />}
       {currentView === 'shipments' && <Shipments shipments={visibleShipments} allShipments={shipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} />}
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
       {currentView === 'maintenance-history' && <MaintenanceHistory vehicles={vehicles} onUpdateVehicle={handleUpdateVehicle} onNavigateToFleet={() => setCurrentView('fleet')} />}

@@ -40,3 +40,41 @@ export const conTopeDeTiempo = (promesa, segundos) => {
         })
     ]).finally(() => clearTimeout(temporizador));
 };
+
+export const MENSAJE_DEMASIADOS_INTENTOS =
+    'Demasiados intentos seguidos. Espera un minuto y vuelve a probar: no es tu contraseña.';
+
+/**
+ * ¿Este fallo es del servidor, o es que la contraseña está mal?
+ *
+ * El tope de arriba sólo cubre al servidor que NO contesta. El 2 de septiembre pasó lo
+ * contrario: mientras la base de datos se reiniciaba, Cloudflare contestaba al instante
+ * con su página de error (521). Supabase devolvía eso como un fallo del login, la app lo
+ * daba por contraseña mala y al repartidor le salía "Usuario o contraseña incorrectos"
+ * con la contraseña bien puesta — justo el enredo que se quiso quitar el día anterior.
+ *
+ * La regla, mirando el código de respuesta:
+ *   • 429            → ha contestado, pero para decir "vas muy deprisa". No es la contraseña.
+ *   • 500 o más      → el servidor se ha caído por dentro.
+ *   • 400, 401, 406… → ha contestado y ha dicho que no. ESO sí es cosa de las credenciales.
+ *   • 0 o ninguno    → no ha llegado a haber respuesta: la petición se perdió, o lo que
+ *                      volvió no era ni JSON (la página HTML de Cloudflare cae aquí).
+ *
+ * `estadoHttp` va aparte porque las consultas a tablas dejan el código en la respuesta
+ * (`{ error, status }`) y no dentro del error; las de Auth sí lo traen dentro.
+ *
+ * Devuelve un error ya marcado como fallo de conexión (listo para lanzar), o `null` si
+ * el servidor ha hecho su trabajo y la respuesta hay que creérsela.
+ */
+export const errorDeServidorSiLoEs = (error, estadoHttp) => {
+    if (!error) return null;
+    if (error.esFalloDeConexion) return error;
+
+    const estado = Number(estadoHttp ?? error.status);
+
+    if (estado === 429) return errorDeConexion(MENSAJE_DEMASIADOS_INTENTOS);
+    if (estado >= 500) return errorDeConexion();
+    if (estado > 0) return null;
+
+    return errorDeConexion();
+};
