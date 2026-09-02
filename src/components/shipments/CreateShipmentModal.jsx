@@ -1182,7 +1182,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 return 'Clientes Habituales';
             })(),
             porteType: formData.porteType,
-            assignedDriverId: formData.assignedDriverId ? Number(formData.assignedDriverId) : null,
+            // Misma guarda que el estado de arriba, y por el mismo motivo. Al conductor
+            // que crea desde su móvil no se le auto-asigna el albarán: nace pendiente y
+            // ya decidirá en la pestaña Asignar quién lo lleva. Al convertir una recogida
+            // suya, el prefill metía aquí su id y el albarán nacía pendiente PERO con
+            // conductor, así que le salía a la vez en Reparto (que mira el conductor) y en
+            // Asignar (que mira el estado).
+            assignedDriverId: (!isDriver && formData.assignedDriverId) ? Number(formData.assignedDriverId) : null,
             observations: formData.observations,
             originCoordinates: formData.originCoordinates || capturedGpsRef.current || '',
             destinationCoordinates: formData.destinationCoordinates,

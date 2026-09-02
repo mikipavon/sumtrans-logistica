@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { puedeAsignarloEsteConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante } from './shipmentUtils';
+import { puedeAsignarloEsteConductor, estaEnElRepartoDe, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -96,6 +96,45 @@ describe('puedeAsignarloEsteConductor', () => {
         expect(puedeAsignarloEsteConductor(undefined, MIGUEL)).toBe(false);
         expect(puedeAsignarloEsteConductor(albaranPendiente(), null)).toBe(false);
         expect(puedeAsignarloEsteConductor(albaranPendiente(), undefined)).toBe(false);
+    });
+});
+
+describe('estaEnElRepartoDe', () => {
+    // El caso real: Juan Jesús convierte una recogida suya en albarán. El albarán
+    // nace «Pendiente de asignar» pero con su id de conductor arrastrado del prefill,
+    // y le aparecía como parada #1 del reparto sin que nadie se lo hubiera asignado.
+    it('un albarán pendiente no es reparto de nadie, aunque lleve conductor', () => {
+        const albaran = { id: 'SUM-139', status: 'Pendiente de asignar', assignedDriverId: JUAN };
+
+        expect(estaEnElRepartoDe(albaran, JUAN)).toBe(false);
+        // Y sigue estando donde toca: en la pestaña Asignar de quien lo creó.
+        expect(puedeAsignarloEsteConductor({ ...albaran, createdById: JUAN }, JUAN)).toBe(true);
+    });
+
+    it('asignado de verdad, sí entra en su reparto', () => {
+        const albaran = { id: 'SUM-139', status: 'En reparto', assignedDriverId: JUAN };
+
+        expect(estaEnElRepartoDe(albaran, JUAN)).toBe(true);
+        expect(estaEnElRepartoDe(albaran, MIGUEL)).toBe(false);
+    });
+
+    it('una incidencia sigue siendo suya: no se le puede borrar la parada', () => {
+        const albaran = { id: 'SUM-139', status: 'Incidencia', assignedDriverId: JUAN };
+
+        expect(estaEnElRepartoDe(albaran, JUAN)).toBe(true);
+    });
+
+    it('sin conductor no entra en el reparto de nadie', () => {
+        const albaran = { id: 'SUM-139', status: 'En reparto', assignedDriverId: null };
+
+        expect(estaEnElRepartoDe(albaran, JUAN)).toBe(false);
+        expect(estaEnElRepartoDe(albaran, null)).toBe(false);
+    });
+
+    it('compara ids aunque uno venga como texto', () => {
+        const albaran = { id: 'SUM-139', status: 'En reparto', assignedDriverId: '3' };
+
+        expect(estaEnElRepartoDe(albaran, JUAN)).toBe(true);
     });
 });
 

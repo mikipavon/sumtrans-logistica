@@ -54,6 +54,27 @@ export const puedeAsignarloEsteConductor = (shipment, driverId) => {
 };
 
 /**
+ * Si un albarán forma parte del reparto de un conductor.
+ *
+ * «Pendiente de asignar» no es el reparto de nadie, aunque al albarán le quede
+ * grabado el conductor de antes (una recogida suya que se convierte en albarán, un
+ * albarán que vuelve a Asignar al escanearle los bultos). Mirando sólo el conductor,
+ * el mismo albarán le salía a la vez en Reparto y en Asignar, y el conductor se lo
+ * encontraba como parada sin que nadie se lo hubiera dado.
+ */
+export const estaEnElRepartoDe = (shipment, driverId) => {
+    if (!shipment) return false;
+    if (shipment.status === 'Pendiente de asignar') return false;
+
+    // Sin esta guarda, Number(null) es 0 y un albarán sin conductor se colaría en el
+    // reparto de cualquiera cuyo id tampoco se supiera todavía.
+    const hay = (id) => id !== null && id !== undefined && id !== '';
+    if (!hay(shipment.assignedDriverId) || !hay(driverId)) return false;
+
+    return Number(shipment.assignedDriverId) === Number(driverId);
+};
+
+/**
  * La población donde el conductor para de verdad.
  *
  * En una recogida el sitio al que va es el ORIGEN; mirando primero el destino, las

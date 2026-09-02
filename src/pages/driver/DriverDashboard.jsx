@@ -35,7 +35,7 @@ import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
-import { getPackagesCount, puedeAsignarloEsteConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante } from '../../utils/shipmentUtils';
+import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante } from '../../utils/shipmentUtils';
 import { cobradorDesignado } from '../../utils/pendingCollections';
 import { mejorPuebloParaCiudad, esElMismoPueblo, normalizarPueblo } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
@@ -3296,7 +3296,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         const localCurrentStr = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
         const assigned = allShipments.filter(s => {
-            if (!s || Number(s.assignedDriverId) !== Number(currentDriverId)) return false;
+            if (!estaEnElRepartoDe(s, currentDriverId)) return false;
             if (s.status === 'Entregado' || s.status === 'Entrega aplazada') return false;
             if (s.type === 'Recibo') return false; // Solo mostrar en cobros pendientes
             
