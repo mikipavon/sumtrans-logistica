@@ -16,6 +16,7 @@ import Login from './pages/Login'
 //
 // Login y Layout se quedan como imports normales a propósito: son lo primero
 // que se pinta, diferirlos solo añadiría un parpadeo.
+const RecuperarContrasena = lazy(() => import('./pages/RecuperarContrasena'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Shipments = lazy(() => import('./pages/Shipments'))
 const Fleet = lazy(() => import('./pages/Fleet'))
@@ -35,7 +36,7 @@ const NotificationCenter = lazy(() => import('./pages/NotificationCenter'))
 import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { fetchAllRows } from './utils/fetchAllRows';
-import { conTopeDeTiempo } from './utils/topeDeTiempo';
+import { conTopeDeTiempo, errorDeServidorSiLoEs } from './utils/topeDeTiempo';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
 import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, fichaSinContrasenas } from './utils/clientAccess';
 import { planDeAcceso } from './utils/accesoFichaExistente';
@@ -58,6 +59,26 @@ import { uploadProof } from './utils/storage';
 
 
 
+// ── Por qué ha fallado de verdad una Edge Function ──
+//
+// supabase.functions.invoke esconde el cuerpo de las respuestas de error detrás
+// de un "Edge Function returned a non-2xx status code" que no dice nada. Lo que
+// hay dentro sí: «ese correo ya tiene cuenta y no es de este cliente», «la
+// contraseña debe tener al menos 6 caracteres»… Sin esto, el aviso que ve la
+// oficina cuando no se puede crear una cuenta de acceso no le sirve para nada, y
+// se queda sin saber por qué su cliente no entra al portal.
+//
+// Estaba escrito dentro de handleDarAccesoAFichaExistente, que era el único
+// sitio que lo desenterraba. Los dos que crean las cuentas —el del cliente y el
+// del conductor— enseñaban el mensaje hueco.
+const motivoDelFallo = async (error) => {
+  try {
+    const cuerpo = await error?.context?.json?.();
+    if (cuerpo?.error) return cuerpo.error;
+  } catch { /* la respuesta no traía JSON */ }
+  return error?.message || 'error desconocido';
+};
+
 // Lo que se ve mientras llega el trozo de la pantalla que se acaba de pedir.
 // Suele durar milisegundos (y nada a partir de la segunda vez, porque el
 // navegador ya lo tiene en caché), así que no lleva texto: un texto que
@@ -66,6 +87,49 @@ function PantallaCargando() {
   return (
     <div className="flex items-center justify-center py-24">
       <div className="w-8 h-8 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" />
+    </div>
+  );
+}
+
+// ── El cliente ha entrado, pero su ficha todavía no está ──
+//
+// Casi siempre es cuestión de un segundo: los datos se piden después de entrar.
+// Por eso lo primero es esperar, sin asustar a nadie.
+//
+// Pero si pasado un rato la ficha sigue sin aparecer, es que de verdad no se
+// encuentra —su cuenta apunta a una ficha que ya no está, o RLS no se la deja
+// ver—, y entonces hay que decirlo. Un giro eterno le haría pensar que es su
+// conexión, y quedarse callado es lo que hacía que esto acabara en la pantalla
+// roja de "la aplicación se ha parado", que para el cliente es indistinguible
+// de que el portal esté averiado.
+const SEGUNDOS_ANTES_DE_AVISAR = 8;
+
+function PortalSinFicha({ onLogout }) {
+  const [tardaDemasiado, setTardaDemasiado] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setTardaDemasiado(true), SEGUNDOS_ANTES_DE_AVISAR * 1000);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (!tardaDemasiado) return <PantallaCargando />;
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center">
+        <h1 className="text-xl font-bold text-slate-900 mb-3">No encontramos tu ficha</h1>
+        <p className="text-slate-600 text-sm leading-relaxed mb-6">
+          Has entrado correctamente, pero no hemos podido cargar los datos de tu empresa.
+          No es cosa tuya y no se ha perdido ningún envío. Avisa a la oficina y lo revisan:
+          <strong className="block mt-2">957 245 221</strong>
+        </p>
+        <button
+          onClick={onLogout}
+          className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl transition-colors"
+        >
+          Salir
+        </button>
+      </div>
     </div>
   );
 }
@@ -141,6 +205,13 @@ function App() {
   const [currentClientId, setCurrentClientId] = useState(savedSession?.clientId || null) // ID of the logged in client
   const [shipmentStatusFilter, setShipmentStatusFilter] = useState(null) // Filter passed from Dashboard KPI cards
   const [isRestoringSession, setIsRestoringSession] = useState(!savedSession) // Skip waiting if we have a local session
+  // Ha entrado por el enlace de "he olvidado mi contraseña": lo único que puede
+  // hacer ahora es elegir una nueva, aunque técnicamente ya tenga sesión.
+  const [recuperandoContrasena, setRecuperandoContrasena] = useState(false)
+  // Por qué se le ha devuelto a la pantalla de entrada. Sin esto, a quien se le
+  // cierra una sesión caducada le aparece el login de golpe y sin explicación,
+  // que se parece demasiado a una avería.
+  const [avisoDeSesion, setAvisoDeSesion] = useState('')
 
   // ── Nombre del conductor guardado en sesión para mostrarlo instantáneamente ──
   const [cachedDriverName, setCachedDriverName] = useState(savedSession?.driverName || null)
@@ -170,6 +241,22 @@ function App() {
     }
   }, [isAuthenticated, userRole, currentDriverId, currentClientId, currentView, cachedDriverName, suplantandoCliente]);
 
+  // ── ¿Ha llegado desde el enlace de "he olvidado mi contraseña"? ──
+  //
+  // Al abrir ese enlace, supabase-js canjea el token de la URL y avisa con
+  // PASSWORD_RECOVERY. En ese momento HAY sesión, así que sin esto la aplicación
+  // le abriría el portal directamente y no llegaría nunca a poder cambiarla —
+  // que es justo lo que venía a hacer.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((evento) => {
+      if (evento === 'PASSWORD_RECOVERY') {
+        setRecuperandoContrasena(true);
+        setIsRestoringSession(false);
+      }
+    });
+    return () => subscription?.unsubscribe();
+  }, []);
+
   // ── Restaurar sesión de Supabase Auth al cargar la app ──
   useEffect(() => {
     let cancelled = false;
@@ -185,8 +272,52 @@ function App() {
             if (profile.role === 'driver') setCurrentDriverId(profile.linked_id);
             if (profile.role === 'client') setCurrentClientId(profile.linked_id);
           }
+          return;
+        }
+
+        // ── La sesión fantasma ──
+        //
+        // Aquí antes no había nada. Si Supabase no tenía sesión, esta función
+        // se callaba y la aplicación se quedaba tal cual la había dejado el
+        // arranque: dentro, con el rol sacado de `sumtrans_session`, que es una
+        // nota local de esta pestaña y no una credencial.
+        //
+        // La pantalla se veía perfecta —el menú entero, las fichas se
+        // guardaban— pero por debajo no había nadie identificado, así que TODO
+        // lo que pasa por el servidor con permisos fallaba en silencio: las
+        // cuentas de acceso contestaban "No autorizado", aprobar un cliente no
+        // llegaba a activarle nada, y cualquier consulta con RLS volvía vacía.
+        // Al repartidor le habría salido el reparto en blanco; al cliente, el
+        // portal a cero. Sin una sola pantalla diciendo por qué.
+        //
+        // El manejador de SIGNED_OUT de más abajo no cubre esto: ese evento
+        // salta cuando una sesión se cae, y aquí no hay ninguna de la que
+        // caerse. La aplicación arranca creyendo que sí.
+        if (cancelled) return;
+
+        // ⚠️ "No hay sesión" y "no he podido comprobarlo" no son lo mismo, y
+        // confundirlos aquí sale caro: echaría al repartidor a la pantalla de
+        // entrada en mitad de la ruta por pasar un túnel, y sin cobertura no
+        // podría ni volver a entrar. Sin red no se toca nada: sigue trabajando
+        // y lo que haga se va a la cola de siempre. Mismo criterio que
+        // errorDeServidorSiLoEs en el acceso.
+        if (!navigator.onLine) {
+          console.warn('[Session] Sin sesión de Supabase, pero el equipo está sin red: no se cierra nada.');
+          return;
+        }
+
+        if (savedSession) {
+          console.warn('[Session] Sesión local sin sesión de Supabase detrás — se cierra.');
+          setIsAuthenticated(false);
+          setUserRole(null);
+          setCurrentDriverId(null);
+          setCurrentClientId(null);
+          setSuplantandoCliente(false);
+          setAvisoDeSesion('Tu sesión ha caducado. Vuelve a entrar, por favor.');
         }
       } catch (e) {
+        // Que la comprobación reviente NO es que no haya sesión: es que no se
+        // ha podido preguntar. Se deja todo como está.
         console.warn('[Session] Error restoring session:', e);
       } finally {
         if (!cancelled) setIsRestoringSession(false);
@@ -1782,10 +1913,34 @@ function App() {
 
   // Cuánto se espera al servidor antes de rendirse y decírselo a la persona. Ninguna
   // de las llamadas de aquí abajo se rinde por su cuenta: ver utils/topeDeTiempo.js.
-  // La búsqueda del email tiene un tope más corto porque es sólo una traducción de
-  // nombre de usuario a correo; si no llega, se sigue con lo que se haya tecleado.
+  //
+  // La búsqueda del email tenía un tope más corto (8s) por parecer un paso menor: una
+  // traducción de nombre de usuario a correo. No lo es. Sin ella, lo que se manda a
+  // Auth es el nombre de usuario pelado, que nunca va a ser un email válido, así que
+  // el login está perdido antes de empezar. El 2 de septiembre de 2026, con la base
+  // recién reiniciada, esa consulta tardaba entre 11 y 14 segundos: la oficina entraba
+  // (teclea su correo y se salta el paso) y NINGÚN repartidor podía entrar.
   const SEGUNDOS_ESPERA_LOGIN = 15;
-  const SEGUNDOS_ESPERA_BUSQUEDA_EMAIL = 8;
+  const SEGUNDOS_ESPERA_BUSQUEDA_EMAIL = 20;
+
+  // ── Pedir el enlace para elegir una contraseña nueva ──
+  //
+  // Supabase manda el correo y devuelve el mismo "ok" exista o no la cuenta, a
+  // propósito: si distinguiera, cualquiera podría averiguar desde fuera qué
+  // empresas son clientes probando direcciones. La pantalla dice "si ese correo
+  // tiene acceso, le llegará", que es verdad en los dos casos.
+  //
+  // `redirectTo` trae al cliente de vuelta a esta misma aplicación. Al abrir el
+  // enlace, supabase-js reconoce el token y dispara PASSWORD_RECOVERY, que es lo
+  // que enciende la pantalla de RecuperarContrasena (ver el useEffect de abajo).
+  const pedirCorreoDeRecuperacion = async (correo) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(correo, {
+      redirectTo: window.location.origin,
+    });
+    // Un fallo aquí es del servidor (no "ese correo no existe"), así que se
+    // lanza para que la pantalla pueda decir que se reintente.
+    if (error) throw error;
+  };
 
   const handleLogin = async (role = 'admin', username = '', password = '') => {
     // ── Construir el email para Supabase Auth ──
@@ -1806,6 +1961,11 @@ function App() {
             console.log('[Login] Driver username →', authEmail);
           }
         } catch (e) {
+          // Si el que no contesta es el servidor, aquí se acaba el intento. Siguiendo
+          // adelante se le manda a Auth el nombre de usuario tal cual, Auth lo rechaza
+          // por no ser un email, y al repartidor le sale que su contraseña está mal.
+          // Es el mismo enredo que errorDeServidorSiLoEs quitó del resto del login.
+          if (e?.esFalloDeConexion) throw e;
           console.warn('[Login] RPC email lookup failed:', e);
         }
       }
@@ -1832,6 +1992,9 @@ function App() {
             console.log('[Login] Client username →', authEmail);
           }
         } catch (e) {
+          // Igual que arriba: sin traducción, el que teclea su nombre de usuario acaba
+          // en un "usuario o contraseña incorrectos" que no es verdad.
+          if (e?.esFalloDeConexion) throw e;
           console.warn('[Login] RPC client email lookup failed:', e);
         }
       }
@@ -1846,13 +2009,20 @@ function App() {
       );
 
       if (authError || !authData.user) {
+        // Un "no" del servidor no es un "no" a la contraseña. Si el que falla es él
+        // (5xx, la página de error de Cloudflare mientras la base de datos reinicia,
+        // o la petición que se pierde), hay que decirlo tal cual: el login antiguo
+        // pasa por las mismas tripas y acabaría igual, pero enseñando "usuario o
+        // contraseña incorrectos" y mandando a cambiar una contraseña que está bien.
+        const falloDelServidor = errorDeServidorSiLoEs(authError);
+        if (falloDelServidor) throw falloDelServidor;
         console.warn('[Login] Supabase Auth failed:', authError?.message);
         // ── FALLBACK: login legacy (para transición mientras se migran usuarios) ──
         return await handleLegacyLogin(role, username, password, authEmail);
       }
 
       // ── Obtener perfil con rol ──
-      const { data: profile } = await conTopeDeTiempo(
+      const { data: profile, error: errorPerfil, status: estadoPerfil } = await conTopeDeTiempo(
         supabase
           .from('profiles')
           .select('*')
@@ -1861,6 +2031,11 @@ function App() {
         SEGUNDOS_ESPERA_LOGIN
       );
 
+      // Sin ficha no se sabe el rol, pero el motivo importa: "no la encuentro" manda al
+      // login antiguo, "no he podido preguntarlo" es un fallo del servidor y se dice.
+      const falloAlLeerPerfil = errorDeServidorSiLoEs(errorPerfil, estadoPerfil);
+      if (falloAlLeerPerfil) throw falloAlLeerPerfil;
+
       if (!profile) {
         console.warn('[Login] No profile found for auth user, falling back to legacy');
         return await handleLegacyLogin(role, username, password, authEmail);
@@ -1868,7 +2043,7 @@ function App() {
 
       // ── Verificar que el driver está activo ──
       if (profile.role === 'driver' && profile.linked_id) {
-        const { data: driverCheck } = await conTopeDeTiempo(
+        const { data: driverCheck, error: errorConductor, status: estadoConductor } = await conTopeDeTiempo(
           supabase
             .from('drivers')
             .select('data')
@@ -1876,6 +2051,15 @@ function App() {
             .single(),
           SEGUNDOS_ESPERA_LOGIN
         );
+        // Si la ficha no se ha podido leer, NO se sabe si sigue de alta. Antes se
+        // entraba igual (la respuesta vacía se leía como "activo"); ahora se cierra
+        // la sesión y se avisa, que es lo único honesto: no dar por buena una
+        // comprobación que no se ha hecho.
+        const falloAlLeerConductor = errorDeServidorSiLoEs(errorConductor, estadoConductor);
+        if (falloAlLeerConductor) {
+          try { await conTopeDeTiempo(supabase.auth.signOut(), 5); } catch (_) {}
+          throw falloAlLeerConductor;
+        }
         if (driverCheck?.data?.isActive === false) {
           await supabase.auth.signOut();
           alert('Tu cuenta de usuario ha sido desactivada. Por favor, contacta con la oficina.');
@@ -2142,10 +2326,11 @@ function App() {
         }
       });
 
-      if (res.error) {
-        console.warn('[DriverAuth]', res.error.message);
+      const fallo = res.error ? await motivoDelFallo(res.error) : res.data?.error;
+      if (fallo) {
+        console.warn('[DriverAuth]', fallo);
         alert(
-          `⚠️ El conductor se ha guardado, pero no se pudo crear su cuenta de acceso:\n\n${res.error.message}\n\n` +
+          `⚠️ El conductor se ha guardado, pero no se pudo crear su cuenta de acceso:\n\n${fallo}\n\n` +
           `Hasta que se resuelva, entrará en la app pero lo verá todo vacío.`
         );
         return false;
@@ -2215,11 +2400,15 @@ function App() {
         }
       });
 
-      if (res.error) {
-        console.warn('[ClientAuth]', res.error.message);
+      // El motivo de verdad va dentro del cuerpo de la respuesta, no en
+      // res.error.message. Y `res.data.error` cubre el caso en que la función
+      // conteste 200 con un error dentro.
+      const fallo = res.error ? await motivoDelFallo(res.error) : res.data?.error;
+      if (fallo) {
+        console.warn('[ClientAuth]', fallo);
         alert(
-          `⚠️ El cliente se ha guardado, pero no se pudo crear su cuenta de acceso:\n\n${res.error.message}\n\n` +
-          `Hasta que se resuelva, entrará en el portal pero lo verá todo vacío.`
+          `⚠️ El cliente se ha guardado, pero NO se le ha creado la cuenta de acceso:\n\n${fallo}\n\n` +
+          `Hasta que se resuelva no podrá entrar en el portal: le dirá que sus credenciales no valen.`
         );
         return false;
       }
@@ -2247,10 +2436,15 @@ function App() {
   // aparece: un correo que se borra de la lista es un acceso que hay que
   // retirar de verdad, o esa persona seguiría entrando con su contraseña de
   // siempre aunque su correo ya no esté en ninguna pantalla.
+  // Devuelve los correos a los que de verdad se les ha dejado la cuenta lista.
+  // Lo usa la ficha para poder enseñar en pantalla las credenciales recién
+  // puestas: sólo las que han funcionado, porque enseñar unas que no se han
+  // llegado a crear es mandar al cliente a una puerta cerrada.
   const sincronizarAccesosAdicionales = async (anterior, nueva, clientId) => {
     const ahora = accesosAdicionales(nueva);
     const antes = accesosAdicionales(anterior).map(a => a.email);
     const correosAhora = ahora.map(a => a.email);
+    const listos = [];
 
     // 1. Los que ya no están: se les quita el acceso, avisando antes. Borrar una
     //    cuenta no tiene vuelta atrás, y desde la ficha no se ve a quién afecta.
@@ -2296,14 +2490,17 @@ function App() {
         continue;
       }
 
-      await syncClientAuthAccount({
+      const listo = await syncClientAuthAccount({
         email,
         password,
         clientId,
         displayName: nueva.name,
         adicional: true,
       });
+      if (listo) listos.push(email);
     }
+
+    return listos;
   };
 
   const handleAddDriver = async (newDriver) => {
@@ -2731,7 +2928,9 @@ function App() {
       return { creatorName: nombre ? `Cond.${nombre} ` : 'Conductor', creatorId: currentDriverId };
     }
     if (userRole === 'client') {
-      const client = clientsRef.current.find(c => c.id === currentClientId);
+      // En texto, por lo mismo que en la vista del portal: el vínculo de la
+      // cuenta (profiles.linked_id) es TEXT y clients.id es numérico.
+      const client = clientsRef.current.find(c => String(c.id) === String(currentClientId));
       return {
         creatorName: client ? `ClienteWeb: ${client.name}` : 'Portal Cliente',
         creatorId: currentClientId,
@@ -2932,6 +3131,19 @@ function App() {
       return true; // No bloquear al conductor
     }
   }
+
+  // Pasar un cobro pendiente de un repartidor a otro (pestaña Cobros Pendientes).
+  //
+  // NO es una asignación de reparto: no toca el estado ni el repartidor del albarán.
+  // Antes esto se hacía con handleAssignDriver, que pone el estado en 'En reparto', y
+  // un albarán ya entregado se salía de Cobros Pendientes y le volvía a aparecer al
+  // repartidor entre las entregas del día en vez de pasarle la deuda al compañero.
+  const handleReassignPendingCollection = async (shipmentId, driverId) => {
+    const sinRepartidor = !driverId || driverId === '' || driverId === 'unassigned';
+    return handleUpdateShipment(shipmentId, {
+      pendingCollectionDriverId: sinRepartidor ? null : Number(driverId)
+    });
+  };
 
   // Handle manual edits to shipment details
   const handleUpdateShipment = async (idOrObject, maybeUpdates) => {
@@ -3458,13 +3670,20 @@ function App() {
       // Igual que en el alta: sólo cuando se toca la contraseña. Este handler se
       // usa mucho como efecto silencioso (GPS, logo del portal…) y esos guardados
       // no traen contraseña, así que no disparan nada.
+      // Los correos cuya cuenta ha quedado lista en este guardado. Se devuelven
+      // para que la ficha pueda enseñar las credenciales una sola vez, en el
+      // momento: no se guardan en ningún sitio, así que si no se dicen ahora, la
+      // contraseña se pierde y hay que ponerle otra.
+      const accesosCreados = [];
+
       if (updatedData && updatedData.password) {
-        await syncClientAuthAccount({
+        const listo = await syncClientAuthAccount({
           email: emailDeAcceso(updated),
           password: updatedData.password,
           clientId,
           displayName: updated.name,
         });
+        if (listo) accesosCreados.push(emailDeAcceso(updated));
       } else if (updatedData && correoDeAccesoCambiado(c, updated)) {
         // Cambiar el correo de acceso mueve la cuenta de Auth, y para eso hay
         // que volver a pasar por create-auth-user, que exige contraseña. Sin
@@ -3483,8 +3702,10 @@ function App() {
       // guardados no traen la lista: si se mirara igualmente, un albarán
       // entregado podría acabar retirándole el acceso al dueño de la empresa.
       if (updatedData && !opciones.accesosYaCreados && Object.prototype.hasOwnProperty.call(updatedData, 'accessEmailsExtra')) {
-        await sincronizarAccesosAdicionales(c, updated, clientId);
+        accesosCreados.push(...await sincronizarAccesosAdicionales(c, updated, clientId));
       }
+
+      return { ok: true, accesosCreados };
     } catch (e) {
       console.warn(`[Queue] Error actualizando cliente ${clientId}, encolando para reintento:`, e);
       await enqueueClientOp();
@@ -3641,22 +3862,27 @@ function App() {
 
         // Ficha guardada con contraseña = alguien le está dando acceso al portal,
         // así que necesita cuenta de Auth o entrará y lo verá todo vacío.
+        // Igual que al editar: se apunta a quién le ha quedado la cuenta lista,
+        // para poder enseñar las credenciales una sola vez al terminar.
+        const accesosCreados = [];
+
         if (clientWithMeta.password) {
-          await syncClientAuthAccount({
+          const listo = await syncClientAuthAccount({
             email: emailDeAcceso(clientWithMeta),
             password: clientWithMeta.password,
             clientId: clientWithMeta.id,
             displayName: clientWithMeta.name,
           });
+          if (listo) accesosCreados.push(emailDeAcceso(clientWithMeta));
         }
 
         // Y las cuentas de las demás personas de la empresa. En un alta no hay
         // nada anterior que retirar, así que sólo se crean.
         if (traeAccesosAdicionales) {
-          await sincronizarAccesosAdicionales({}, clientWithMeta, clientWithMeta.id);
+          accesosCreados.push(...await sincronizarAccesosAdicionales({}, clientWithMeta, clientWithMeta.id));
         }
 
-        return { ok: true, cliente: guardada };
+        return { ok: true, cliente: guardada, accesosCreados };
       } catch (e) {
         // Se avisa aquí dentro y no se relanza: el que espera turno detrás sólo
         // necesita saber que ya puede volver a mirar, no si a éste le fue bien.
@@ -4063,17 +4289,6 @@ function App() {
       return false;
     }
 
-    // supabase.functions.invoke esconde el cuerpo de las respuestas de error
-    // detrás de un "non-2xx status code" que no dice nada. Lo que hay dentro sí:
-    // es el aviso de que ese correo ya es de otro.
-    const motivoDelFallo = async (error) => {
-      try {
-        const cuerpo = await error?.context?.json?.();
-        if (cuerpo?.error) return cuerpo.error;
-      } catch { /* la respuesta no traía JSON */ }
-      return error?.message || 'error desconocido';
-    };
-
     try {
       const res = await supabase.functions.invoke('create-auth-user', {
         body: {
@@ -4350,10 +4565,35 @@ function App() {
     );
   }
 
-  if (!isAuthenticated) {
-    return <Login onLogin={handleLogin} />
-    // return <div className="p-10 text-2xl font-bold text-center">LOGIN PLACEHOLDER - Si ves esto, Login.jsx es el problema</div>
+  // Va ANTES que todo lo demás, incluida la comprobación de sesión: quien llega
+  // por el enlace de recuperación ya tiene sesión, así que si esto fuera después
+  // se le abriría el portal y no llegaría a cambiar la contraseña.
+  if (recuperandoContrasena) {
+    return (
+      <Suspense fallback={<PantallaCargando />}>
+        <RecuperarContrasena
+          onListo={async () => {
+            // Fuera la sesión de recuperación: que entre con la nueva, como
+            // hará a partir de ahora desde su móvil o desde el ordenador.
+            try { await supabase.auth.signOut(); } catch { /* daba igual */ }
+            setRecuperandoContrasena(false);
+            setIsAuthenticated(false);
+            setUserRole(null);
+          }}
+        />
+      </Suspense>
+    );
+  }
 
+  if (!isAuthenticated) {
+    return (
+      <Login
+        onLogin={handleLogin}
+        onRecuperarContrasena={pedirCorreoDeRecuperacion}
+        aviso={avisoDeSesion}
+        onAvisoVisto={() => setAvisoDeSesion('')}
+      />
+    )
   }
 
   const handleImpersonate = (driverId) => {
@@ -4384,10 +4624,30 @@ function App() {
 
   // Client View
   if (userRole === 'client') {
+    // ── Emparejar la ficha con la cuenta que acaba de entrar ──
+    //
+    // Comparando en texto a propósito, y no con `===` a secas. `clients.id` es
+    // numérico en la base de datos, pero el vínculo de la cuenta vive en
+    // `profiles.linked_id`, que es TEXT (por eso las políticas RLS lo comparan
+    // con `id::text`, ver supabase/04_restrictive_rls_policies.sql). Un número
+    // nunca es igual a una cadena en JavaScript, así que `find` no encontraba
+    // nada, el portal recibía `client` a medio hacer y la primera línea que
+    // tocaba `client.name` tumbaba la aplicación entera con la pantalla roja.
+    const fichaDelCliente = clients.find(c => String(c.id) === String(currentClientId));
+
+    // Aun emparejando bien, hay un momento en que la ficha todavía no está: los
+    // datos se piden DESPUÉS de entrar, así que en el primer pintado `clients`
+    // está vacío. Ahí no hay nada que enseñar todavía, pero tampoco hay ninguna
+    // avería: se espera. Y si pasado un rato sigue sin aparecer, se dice — que
+    // es lo único honesto cuando de verdad no se encuentra su ficha.
+    if (!fichaDelCliente) {
+      return <PortalSinFicha onLogout={suplantandoCliente ? volverAAdministracion : handleLogout} />;
+    }
+
     return (
       <Suspense fallback={<PantallaCargando />}>
         <ClientDashboard
-          client={clients.find(c => c.id === currentClientId)}
+          client={fichaDelCliente}
           modoAdmin={suplantandoCliente}
           onLogout={suplantandoCliente ? volverAAdministracion : handleLogout}
           allShipments={shipments}
@@ -4472,7 +4732,7 @@ function App() {
                         <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} vehicles={vehicles} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
                     </div>
                 )}
-      {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onUpdateShipment={handleUpdateShipment} driverNamePreference={driverNamePreference} />}
+      {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onReassignCollection={handleReassignPendingCollection} onUpdateShipment={handleUpdateShipment} driverNamePreference={driverNamePreference} />}
       {currentView === 'shipments' && <Shipments shipments={visibleShipments} allShipments={shipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} />}
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
       {currentView === 'maintenance-history' && <MaintenanceHistory vehicles={vehicles} onUpdateVehicle={handleUpdateVehicle} onNavigateToFleet={() => setCurrentView('fleet')} />}

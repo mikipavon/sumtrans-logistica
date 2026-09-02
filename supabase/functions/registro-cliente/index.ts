@@ -155,7 +155,68 @@ function emailAvisoAdmin(
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  // Las dos últimas las añade supabase-js solo en cada
+  // `supabase.functions.invoke()`, y si no están aquí el navegador corta la
+  // petición en el preflight sin llegar a mandarla. Hoy a esta función la llama
+  // el formulario de la web con un fetch a pelo, pero la lista se deja completa
+  // para que no vuelva a pasar lo de create-auth-user. Ver el CORS de aquélla.
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-client-info, apikey',
+}
+
+// ── Qué contraseña se le admite a quien se registra ──
+//
+// Antes esto no se miraba: si la contraseña no valía, la SOLICITUD se creaba
+// igual y sólo se dejaba un aviso en el registro del servidor. El cliente veía
+// "solicitud recibida", la oficina la aprobaba, y no había ninguna cuenta detrás
+// — así que al entrar le decían que sus credenciales no valían. Sin nada, en
+// ningún sitio, que explicara por qué.
+//
+// Las reglas se comprueban aquí, en el servidor, y no sólo en el formulario de
+// la web: el formulario se puede saltar, y esta función es pública.
+//
+// Estas mismas reglas están escritas para la aplicación en
+// src/utils/reglasContrasena.js. Si se cambian aquí, hay que cambiarlas allí:
+// una función de Deno no puede importar del código de la app.
+const MINIMO_CARACTERES = 8
+
+function loQueLeFaltaALaContrasena(password: string): string | null {
+  const p = String(password || '')
+
+  if (p.length < MINIMO_CARACTERES) {
+    return `La contraseña debe tener al menos ${MINIMO_CARACTERES} caracteres.`
+  }
+  if (!/[a-zA-ZáéíóúÁÉÍÓÚñÑ]/.test(p)) {
+    return 'La contraseña debe llevar alguna letra.'
+  }
+  if (!/[0-9]/.test(p)) {
+    return 'La contraseña debe llevar algún número.'
+  }
+  // Todo el mismo carácter, o dígitos corridos: son las primeras que se prueban.
+  if (/^(.)\1+$/.test(p)) {
+    return 'La contraseña no puede ser el mismo carácter repetido.'
+  }
+  if (/^[0-9]+$/.test(p)) {
+    return 'La contraseña no puede ser sólo números: añade alguna letra.'
+  }
+
+  return null
+}
+
+// Traduce al castellano lo que contesta Supabase Auth, que responde en inglés y
+// con mensajes que no le dicen nada a quien está rellenando un formulario.
+function explicarFalloDeAuth(mensaje: string): string {
+  const m = String(mensaje || '').toLowerCase()
+
+  if (m.includes('weak') || m.includes('pwned') || m.includes('easy to guess')) {
+    return 'Esa contraseña es demasiado conocida: aparece en listas de contraseñas filtradas en internet. Elige otra distinta, que no sea una palabra suelta ni una serie de números.'
+  }
+  if (m.includes('at least') || m.includes('length')) {
+    return `La contraseña es demasiado corta: necesita al menos ${MINIMO_CARACTERES} caracteres.`
+  }
+  if (m.includes('email') && m.includes('valid')) {
+    return 'Ese correo no parece válido. Revísalo.'
+  }
+  return 'No hemos podido crear tu acceso con esa contraseña. Prueba con otra distinta.'
 }
 
 serve(async (req: Request) => {
@@ -201,6 +262,18 @@ serve(async (req: Request) => {
 
     if (!email || !password || !nombreComercial) {
       return new Response(JSON.stringify({ error: 'Faltan datos obligatorios' }), {
+        status: 400,
+        headers: { ...CORS, 'Content-Type': 'application/json' },
+      })
+    }
+
+    // ── La contraseña, antes de crear absolutamente nada ──
+    // `campo` va en la respuesta para que el formulario de la web pueda marcar
+    // en rojo la casilla correcta en vez de soltar el error suelto arriba.
+    const faltaAlgo = loQueLeFaltaALaContrasena(password)
+    if (faltaAlgo) {
+      console.warn(`[registro-cliente] Contraseña rechazada para ${email}: ${faltaAlgo}`)
+      return new Response(JSON.stringify({ error: faltaAlgo, campo: 'password' }), {
         status: 400,
         headers: { ...CORS, 'Content-Type': 'application/json' },
       })
@@ -253,7 +326,10 @@ serve(async (req: Request) => {
       email: email,
       contactPerson: personaContacto,
       username: email,
-      password: password,
+      // Aquí NO va la contraseña. Estaba, en claro, y era una vuelta atrás de
+      // supabase/16_contrasenas_con_huella.sql por la puerta de atrás: la ficha
+      // de cada cliente registrado por la web llevaba su contraseña legible
+      // dentro. Va sólo a Supabase Auth, unas líneas más arriba.
       type: 'Remitente',
       billingType: 'Clientes Habituales',
       tariffType: 'General',
@@ -287,31 +363,74 @@ serve(async (req: Request) => {
       })
     }
 
-    // ── Crear cuenta Supabase Auth SIN confirmar (no puede entrar aún) ──
-    // Si el email ya tiene cuenta, createUser falla con "already registered" y
-    // se ignora a propósito: así un registro web nunca puede pisar la
-    // contraseña de una cuenta que ya existe.
-    try {
-      if (password.length >= 6 && inserted?.id) {
-        const { error: authError } = await supabase.auth.admin.createUser({
-          email: email,
-          password: password,
-          email_confirm: false, // No confirmar hasta que el admin apruebe
-          user_metadata: {
-            role: 'client',
-            linked_id: String(inserted.id),
-            display_name: nombreComercial,
-          },
-        })
-        if (authError && !authError.message?.includes('already')) {
-          console.warn('[registro-cliente] Error creando Auth user:', authError.message)
-        } else {
-          console.log(`[registro-cliente] Auth user (sin confirmar) para ${email}`)
-        }
+    // ── Crear la cuenta de Supabase Auth, todavía sin confirmar ──
+    //
+    // Sin confirmar a propósito: nadie entra hasta que la oficina apruebe, y de
+    // eso se encarga confirmar-acceso. Pero la cuenta tiene que quedar creada
+    // AHORA, porque si no existe no hay nada que confirmar después y el cliente
+    // se queda fuera para siempre.
+    //
+    // Antes, un fallo aquí sólo dejaba un aviso en el registro del servidor y la
+    // solicitud seguía adelante: el cliente recibía su "solicitud recibida", la
+    // oficina la aprobaba, y al entrar le decían que sus credenciales no valían.
+    // Sin nada, en ninguna pantalla, que dijera por qué.
+    //
+    // Ahora un fallo tumba el registro entero y borra la solicitud recién
+    // creada. Que la empresa lo vuelva a intentar sabiendo qué pasa es mucho
+    // mejor que dejarla esperando un acceso que no va a funcionar nunca.
+    const deshacerSolicitud = async () => {
+      const { error } = await supabase.from('clients').delete().eq('id', inserted.id)
+      if (error) {
+        // Queda una solicitud pendiente sin cuenta detrás. No es grave —la
+        // oficina la ve y puede borrarla— pero tiene que constar.
+        console.error('[registro-cliente] No se pudo deshacer la solicitud:', error.message)
       }
-    } catch (authErr) {
-      console.warn('[registro-cliente] Auth creation error:', authErr)
     }
+
+    const { error: authError } = await supabase.auth.admin.createUser({
+      email: email,
+      password: password,
+      email_confirm: false, // No confirmar hasta que el admin apruebe
+      user_metadata: {
+        role: 'client',
+        linked_id: String(inserted.id),
+        display_name: nombreComercial,
+      },
+    })
+
+    if (authError) {
+      const yaTeniaCuenta = String(authError.message || '').toLowerCase().includes('already')
+      await deshacerSolicitud()
+
+      if (yaTeniaCuenta) {
+        // La contraseña de una cuenta que ya existe NO se toca desde aquí: este
+        // endpoint es público, y hacerlo sería la forma de robarle el acceso a
+        // cualquiera con sólo saber su correo.
+        //
+        // Decirle que ya tiene cuenta permite averiguar desde fuera qué correos
+        // están dados de alta. Se asume: quien se registra necesita saber por
+        // qué no puede, y el correo de una empresa no es ningún secreto.
+        console.warn(`[registro-cliente] ${email} ya tiene cuenta — no se crea nada`)
+        return new Response(JSON.stringify({
+          error: 'Ese correo ya tiene acceso a la aplicación. Entra con tu contraseña de siempre y, si no la recuerdas, usa "He olvidado mi contraseña" en la pantalla de entrada.',
+          campo: 'email',
+        }), {
+          status: 409,
+          headers: { ...CORS, 'Content-Type': 'application/json' },
+        })
+      }
+
+      console.warn(`[registro-cliente] Auth rechazó el alta de ${email}: ${authError.message}`)
+      return new Response(JSON.stringify({
+        error: explicarFalloDeAuth(authError.message),
+        campo: 'password',
+      }), {
+        status: 400,
+        headers: { ...CORS, 'Content-Type': 'application/json' },
+      })
+    }
+
+    console.log(`[registro-cliente] Auth user (sin confirmar) para ${email}`)
 
     // Emails: aviso de espera al cliente + aviso a Miguel
     await Promise.all([

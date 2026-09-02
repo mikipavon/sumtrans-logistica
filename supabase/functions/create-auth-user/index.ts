@@ -37,10 +37,24 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 
+// ── Las cabeceras que el navegador va a pedir permiso para mandar ──
+//
+// `x-client-info` y `apikey` NO son opcionales: supabase-js las añade él solo a
+// toda llamada hecha con `supabase.functions.invoke()`. Si no están en esta
+// lista, el navegador ni siquiera llega a enviar la petición —la corta en el
+// preflight— y lo que le llega a la aplicación es un "Failed to send a request
+// to the Edge Function" que parece un problema de red y no lo es.
+//
+// Esta función se llama SIEMPRE con invoke(), y es la que crea las cuentas de
+// acceso de clientes y conductores. Con la lista corta, ninguna se llegaba a
+// crear: la ficha se guardaba, el aviso hablaba de un fallo de envío, y la
+// persona se quedaba sin poder entrar sin que nada dijera por qué.
+// (confirmar-acceso se salvaba de milagro porque se llama con un fetch a pelo
+// que sólo manda estas dos de siempre.)
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-client-info, apikey',
 }
 
 const ROLES_VALIDOS = ['admin', 'driver', 'client']

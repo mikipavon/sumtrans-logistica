@@ -80,3 +80,27 @@ export const needsDriverAfterCollecting = (before, after, clients) => {
     return after.status !== 'Entregado' && after.status !== 'Anulado';
 };
 
+
+// ── A quién le toca cobrar este albarán ─────────────────────────────────────
+// Por defecto el cobro lo lleva quien salió con el albarán (o quien lo creó, en
+// los portes pagados en origen). Cuando la oficina lo pasa a mano de un
+// repartidor a otro desde Cobros Pendientes, ese traspaso manda sobre la regla y
+// se guarda en pendingCollectionDriverId.
+//
+// El traspaso toca SÓLO el cobro: ni el reparto ni el estado del albarán. Antes
+// se reasignaba con la misma función que asigna un reparto, que pone el estado en
+// 'En reparto', y un albarán ya entregado se salía de Cobros Pendientes y le
+// reaparecía al repartidor en la lista de entregas del día.
+export const cobradorDesignado = (shipment, porDefecto) => {
+    const traspaso = shipment?.pendingCollectionDriverId;
+    if (traspaso === null || traspaso === undefined || traspaso === '') return porDefecto;
+    return traspaso;
+};
+
+// ¿Le toca a este repartidor el cobro de este albarán, se lo hayan traspasado o no?
+export const esSuCobro = (shipment, driverId, porDefecto) => {
+    const responsable = cobradorDesignado(shipment, porDefecto);
+    if (responsable === null || responsable === undefined || responsable === '') return false;
+    if (driverId === null || driverId === undefined || driverId === '') return false;
+    return Number(responsable) === Number(driverId);
+};

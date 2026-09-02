@@ -1,7 +1,8 @@
-import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Mail, Image as ImageIcon, Upload, Trash2, Percent, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Mail, Image as ImageIcon, Upload, Trash2, Percent, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { uploadProof } from '../../utils/storage';
 import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
+import { generarContrasena } from '../../utils/contrasenaSugerida';
 import { getAgencies } from '../../utils/agencyOwnership';
 import { esRegistroWeb } from '../../utils/altaClientes';
 import { calcularComisionReembolso, COMISION_FIJA, COMISION_PORCENTAJE } from '../../utils/comisionReembolso';
@@ -140,6 +141,19 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
     // Por qué no se ha podido guardar la ficha. Se enseña dentro del formulario,
     // que sigue abierto con los datos puestos, en vez de cerrarlo sin más.
     const [saveError, setSaveError] = useState('');
+    // ── Las credenciales que se acaban de crear, para poder dictárselas ──
+    //
+    // Éste es el ÚNICO momento en que se pueden ver. La contraseña no se guarda
+    // en la ficha (supabase/16_contrasenas_con_huella.sql) y Supabase Auth sólo
+    // conserva una huella cifrada, así que en cuanto se cierre esta pantalla no
+    // hay forma de recuperarla: habría que ponerle otra. Por eso el formulario
+    // no se cierra solo cuando hay credenciales nuevas.
+    //
+    // Vive aparte de formData a propósito: al guardar, el listado pone
+    // `editingClient` a null y eso reinicia formData. Si se leyeran de ahí,
+    // llegarían vacías justo cuando hacen falta.
+    const [credencialesNuevas, setCredencialesNuevas] = useState(null);
+    const [copiado, setCopiado] = useState(false);
     const [sortConfig, setSortConfig] = useState({ key: 'category', direction: 'asc' });
     const [searchArticle, setSearchArticle] = useState('');
 
@@ -177,6 +191,10 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
     useEffect(() => {
         if (isOpen) {
             setActiveTab('general');
+            // Que no quede colgada la pantalla de credenciales del guardado
+            // anterior: al abrir una ficha, siempre se empieza por el formulario.
+            setCredencialesNuevas(null);
+            setCopiado(false);
             if (initialData) {
                 setFormData({ ...defaultForm, ...initialData });
             } else {
@@ -186,6 +204,92 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
     }, [isOpen, initialData]);
 
     if (!isOpen) return null;
+
+    // ── Las credenciales recién creadas, para dictarlas o pegarlas ──
+    //
+    // Se enseña en lugar del formulario y sin botón de cerrar en la esquina: hay
+    // que pasar por aquí a propósito. En cuanto se cierre, la contraseña no está
+    // en ningún sitio del que sacarla.
+    if (credencialesNuevas) {
+        const textoParaEnviar = credencialesNuevas
+            .map(c => `Acceso al portal de SUM Transportes\nUsuario: ${c.email}\nContraseña: ${c.password}\nEntra en la pestaña "Cliente".`)
+            .join('\n\n');
+
+        const copiar = async () => {
+            try {
+                await navigator.clipboard.writeText(textoParaEnviar);
+                setCopiado(true);
+                setTimeout(() => setCopiado(false), 2500);
+            } catch {
+                // Sin permiso de portapapeles no se pierde nada: la contraseña
+                // sigue en pantalla y se puede seleccionar a mano.
+                setCopiado(false);
+            }
+        };
+
+        const cerrar = () => {
+            setCredencialesNuevas(null);
+            setCopiado(false);
+            onClose();
+        };
+
+        return (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+                    <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
+                        <div className="p-2 bg-emerald-50 rounded-lg">
+                            <ShieldCheck className="text-emerald-600" size={22} />
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-slate-900">Acceso creado</h3>
+                            <p className="text-xs text-slate-500">Apúntalo o cópialo ahora.</p>
+                        </div>
+                    </div>
+
+                    <div className="p-6 space-y-4">
+                        <div className="flex gap-2 items-start bg-amber-50 border border-amber-200 rounded-xl p-3">
+                            <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={16} />
+                            <p className="text-xs text-amber-800 leading-relaxed">
+                                <strong>Ésta es la única vez que se ve.</strong> La contraseña no se guarda
+                                en la ficha ni se puede consultar después: si se pierde, hay que volver aquí
+                                y escribir una nueva.
+                            </p>
+                        </div>
+
+                        {credencialesNuevas.map((c, i) => (
+                            <div key={i} className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Usuario</p>
+                                    <p className="text-sm font-mono text-slate-800 break-all select-all">{c.email}</p>
+                                </div>
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Contraseña</p>
+                                    <p className="text-base font-mono font-bold text-slate-900 break-all select-all">{c.password}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2 px-6 py-4 bg-slate-50 border-t border-slate-100">
+                        <button
+                            type="button"
+                            onClick={copiar}
+                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-sm font-bold rounded-xl transition-colors"
+                        >
+                            {copiado ? 'Copiado ✓' : 'Copiar para enviar'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={cerrar}
+                            className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition-colors"
+                        >
+                            Ya lo tengo
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     const set = (key, val) => setFormData(prev => ({ ...prev, [key]: val }));
 
@@ -308,12 +412,35 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
             // pasaba cuando el nombre ya existía en otra ficha o en una sede:
             // el alta se descartaba en silencio y el formulario se cerraba
             // como si hubiera ido bien.
+            // Se apuntan ANTES de guardar: `onSave` acaba reiniciando formData
+            // (el listado deja de estar editando esta ficha), y para entonces
+            // las contraseñas tecleadas ya no estarían aquí.
+            const tecleadas = [
+                ...(formData.password
+                    ? [{ email: (formData.accessEmail || formData.email || '').trim(), password: formData.password }]
+                    : []),
+                ...(formData.accessEmailsExtra || [])
+                    .filter(f => f?.email && f?.password)
+                    .map(f => ({ email: f.email.trim(), password: f.password })),
+            ];
+
             const resultado = await onSave(initialData ? { ...formData, agencyLogoUrl: finalLogoUrl, id: initialData.id } : { ...formData, agencyLogoUrl: finalLogoUrl });
 
             if (resultado && resultado.ok === false) {
                 setSaveError(explicarFalloDeAlta(resultado));
                 setActiveTab('general');
                 return;
+            }
+
+            // Sólo las que han quedado listas de verdad. Enseñar una credencial
+            // cuya cuenta no se ha llegado a crear es mandar al cliente a una
+            // puerta cerrada, que es justo lo que costó tanto descubrir.
+            const listos = (resultado?.accesosCreados || []).map(e => String(e).toLowerCase());
+            const paraEnsenar = tecleadas.filter(c => listos.includes(c.email.toLowerCase()));
+
+            if (paraEnsenar.length > 0) {
+                setCredencialesNuevas(paraEnsenar);
+                return; // No se cierra: si se cierra, la contraseña se pierde.
             }
 
             onClose();
@@ -1348,15 +1475,25 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                         </Field>
 
                                         <Field label="Contraseña de Acceso">
-                                            <div className="relative">
-                                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                                                <input 
-                                                    type="text" 
-                                                    className={`${inputCls} pl-10`} 
-                                                    placeholder="Contraseña segura"
-                                                    value={formData.password || ''} 
-                                                    onChange={e => set('password', e.target.value)} 
-                                                />
+                                            <div className="flex gap-2">
+                                                <div className="relative flex-1">
+                                                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                                    <input
+                                                        type="text"
+                                                        className={`${inputCls} pl-10`}
+                                                        placeholder="Contraseña segura"
+                                                        value={formData.password || ''}
+                                                        onChange={e => set('password', e.target.value)}
+                                                    />
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => set('password', generarContrasena(formData.name))}
+                                                    title="Inventar una contraseña segura que se pueda dictar por teléfono"
+                                                    className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg transition-colors"
+                                                >
+                                                    <RefreshCw size={14} /> Generar
+                                                </button>
                                             </div>
                                         </Field>
                                     </div>
@@ -1407,15 +1544,25 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                                     </div>
                                                     <div className="flex-1">
                                                         <label className={labelCls}>Contraseña</label>
-                                                        <div className="relative">
-                                                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                                                            <input
-                                                                type="text"
-                                                                className={`${inputCls} pl-10`}
-                                                                placeholder={fila.email ? 'Escríbela para cambiarla' : 'Mínimo 6 caracteres'}
-                                                                value={fila.password || ''}
-                                                                onChange={e => set('accessEmailsExtra', (formData.accessEmailsExtra || []).map((f, j) => j === i ? { ...f, password: e.target.value } : f))}
-                                                            />
+                                                        <div className="flex gap-2">
+                                                            <div className="relative flex-1">
+                                                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                                                <input
+                                                                    type="text"
+                                                                    className={`${inputCls} pl-10`}
+                                                                    placeholder={fila.email ? 'Escríbela para cambiarla' : 'Mínimo 6 caracteres'}
+                                                                    value={fila.password || ''}
+                                                                    onChange={e => set('accessEmailsExtra', (formData.accessEmailsExtra || []).map((f, j) => j === i ? { ...f, password: e.target.value } : f))}
+                                                                />
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => set('accessEmailsExtra', (formData.accessEmailsExtra || []).map((f, j) => j === i ? { ...f, password: generarContrasena(formData.name) } : f))}
+                                                                title="Inventar una contraseña segura que se pueda dictar por teléfono"
+                                                                className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-lg transition-colors"
+                                                            >
+                                                                <RefreshCw size={14} /> Generar
+                                                            </button>
                                                         </div>
                                                     </div>
                                                     <button

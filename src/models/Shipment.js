@@ -76,6 +76,9 @@ export default class Shipment {
     // no es quien lo cobro.
     this.porteCollectedById = data.porteCollectedById || null;
     this.codCollectedById = data.codCollectedById || null;
+    // Traspaso manual del cobro pendiente de un repartidor a otro (Cobros Pendientes).
+    // Manda sobre createdById y assignedDriverId a la hora de decir de quién es la deuda.
+    this.pendingCollectionDriverId = data.pendingCollectionDriverId ?? null;
 
     // Conductor que hizo la entrega. No tiene por que ser el asignado: el dia que uno
     // cubre la ruta de otro, el albaran salia a nombre del que faltaba.

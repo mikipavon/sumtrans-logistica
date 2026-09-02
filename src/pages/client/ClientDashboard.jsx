@@ -52,12 +52,19 @@ export default function ClientDashboard({
     // Envíos de este cliente, sin filtrar por fechas. Se saca aparte porque la
     // agenda de destinatarios se construye con TODOS sus envíos: no tiene sentido
     // que las sugerencias se encojan porque haya un filtro puesto en la pantalla.
+    // `client?` a propósito: quien decide qué ficha es va en App.jsx, y allí ya
+    // se espera a que llegue antes de pintar esto. Pero este useMemo corre en el
+    // primer render pase lo que pase, y leer `.name` sobre una ficha que aún no
+    // está tumbaba la aplicación entera con la pantalla roja de "la aplicación
+    // se ha parado" — que el cliente no distingue de un portal averiado.
+    // Sin ficha no hay envíos suyos que enseñar, que es la respuesta correcta.
     const misEnvios = useMemo(() => {
+        if (!client) return [];
         const clientNameLower = (client.name || '').toLowerCase();
         return (allShipments || []).filter(s =>
             (s.client && s.client.toLowerCase() === clientNameLower) ||
             (s.originName && s.originName.toLowerCase() === clientNameLower) ||
-            (s.clientId === client.id)
+            (String(s.clientId) === String(client.id))
         );
     }, [allShipments, client]);
 

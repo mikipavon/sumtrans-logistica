@@ -6,7 +6,7 @@
 // ya no está pendiente— y con ella la única forma de asignar el reparto desde
 // aquí. El albarán seguía en Envíos, pero de esta pantalla se esfumaba.
 
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import PendingCollections from './PendingCollections';
 
@@ -149,5 +149,81 @@ describe('PendingCollections · buscador', () => {
         pintar();
         expect(screen.getByText('ALB-2')).toBeInTheDocument();
         expect(screen.getByText('ALB-3')).toBeInTheDocument();
+    });
+});
+
+// ── Pasar un cobro pendiente de un repartidor a otro ────────────────────────
+//
+// Lo que pasaba: cambiar el repartidor de una fila llamaba a la misma función que
+// asigna un reparto, que pone el albarán 'En reparto'. Un albarán ya ENTREGADO se
+// caía de Cobros Pendientes (los portes debidos y los reembolsos sólo cuentan si
+// está entregado) y le reaparecía al compañero entre las entregas del día. La
+// deuda no se traspasaba: se resucitaba el reparto.
+describe('PendingCollections · traspasar el cobro', () => {
+    const dosRepartidores = [
+        { id: 7, name: 'Juan Jesus', isActive: true },
+        { id: 8, name: 'Antonio', isActive: true }
+    ];
+
+    // Porte debido y entregado: la deuda es del repartidor asignado.
+    const entregado = {
+        id: 'ALB-9',
+        date: '2026-08-19',
+        client: 'Talleres Pepe',
+        destinationName: 'Ferretería Sur',
+        porteType: 'Debido',
+        billingType: 'Clientes Habituales',
+        paymentStatus: 'Pending',
+        status: 'Entregado',
+        assignedDriverId: 7,
+        amount: '15.00'
+    };
+
+    const pintar = (albaranes, handlers = {}) => render(
+        <PendingCollections
+            shipments={albaranes}
+            drivers={dosRepartidores}
+            clients={clients}
+            onAssignDriver={handlers.onAssignDriver || vi.fn()}
+            onReassignCollection={handlers.onReassignCollection || vi.fn()}
+            onUpdateShipment={vi.fn().mockResolvedValue(true)}
+        />
+    );
+
+    it('guarda el traspaso sin tocar el reparto', () => {
+        const onAssignDriver = vi.fn();
+        const onReassignCollection = vi.fn();
+        pintar([entregado], { onAssignDriver, onReassignCollection });
+
+        fireEvent.click(screen.getByText('Pasar cobro'));
+        fireEvent.change(screen.getByRole('combobox', { name: /se queda el cobro/i }), { target: { value: '8' } });
+        fireEvent.click(screen.getByTitle('Guardar'));
+
+        expect(onReassignCollection).toHaveBeenCalledWith('ALB-9', '8');
+        // Lo que rompía: asignar el reparto pone el albarán 'En reparto'.
+        expect(onAssignDriver).not.toHaveBeenCalled();
+    });
+
+    it('el cobro traspasado sale a nombre del nuevo repartidor', () => {
+        pintar([{ ...entregado, pendingCollectionDriverId: 8 }]);
+
+        // Dentro de la tabla: los dos nombres salen también en el filtro de arriba.
+        const fila = within(screen.getByRole('table'));
+        expect(fila.getByText('Antonio')).toBeInTheDocument();
+        expect(fila.queryByText('Juan Jesus')).not.toBeInTheDocument();
+    });
+
+    it('el albarán sigue en cobros pendientes y sigue entregado', () => {
+        pintar([{ ...entregado, pendingCollectionDriverId: 8 }]);
+
+        expect(screen.getByText('ALB-9')).toBeInTheDocument();
+        expect(screen.getByText('Cobrado (Conductor)')).toBeInTheDocument();
+    });
+
+    it('al abrir el desplegable viene marcado quien lleva el cobro ahora', () => {
+        pintar([{ ...entregado, pendingCollectionDriverId: 8 }]);
+
+        fireEvent.click(screen.getByText('Pasar cobro'));
+        expect(screen.getByRole('combobox', { name: /se queda el cobro/i })).toHaveValue('8');
     });
 });
