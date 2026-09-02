@@ -36,6 +36,7 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { getPackagesCount, puedeAsignarloEsteConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante } from '../../utils/shipmentUtils';
+import { cobradorDesignado } from '../../utils/pendingCollections';
 import { mejorPuebloParaCiudad, esElMismoPueblo, normalizarPueblo } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
 import { geocodificarDireccion } from '../../utils/geocodificar';
@@ -5662,9 +5663,15 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                             <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider ml-1">Pendientes Cobros y Reembolsos</h3>
                             {(() => {
+                                // Un cobro que la oficina le ha pasado a otro repartidor deja de ser
+                                // suyo aunque el albarán siga asignado a él (o lo creara él): el
+                                // traspaso entra aquí para que le aparezca al compañero, y más abajo
+                                // cobradorDesignado se encarga de que desaparezca del que lo tenía.
                                 const pendingShipments = (allShipments || []).filter(s =>
                                     s &&
-                                    (Number(s.assignedDriverId) === Number(currentDriverId) || Number(s.createdById) === Number(currentDriverId)) &&
+                                    (Number(s.assignedDriverId) === Number(currentDriverId)
+                                        || Number(s.createdById) === Number(currentDriverId)
+                                        || Number(s.pendingCollectionDriverId) === Number(currentDriverId)) &&
                                     s.status !== 'Cancelado'
                                 );
 
@@ -5708,8 +5715,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                     const codPayer = shipment.destinationName || 'Destinatario (Reembolso)';
 
                                     // Determine which driver is responsible
-                                    const designatedPorteDriverId = isDebido ? (shipment.assignedDriverId || shipment.createdById) : (shipment.createdById || shipment.assignedDriverId);
-                                    const designatedCodDriverId = shipment.assignedDriverId || shipment.createdById;
+                                    const designatedPorteDriverId = cobradorDesignado(shipment, isDebido ? (shipment.assignedDriverId || shipment.createdById) : (shipment.createdById || shipment.assignedDriverId));
+                                    const designatedCodDriverId = cobradorDesignado(shipment, shipment.assignedDriverId || shipment.createdById);
 
                                     // Porte card
                                     const porteIsActuallyPending = (porteVal > 0 || String(shipment.amount).toLowerCase() === 'tarifa') && !shipment.portePaid && shipment.paymentStatus !== 'Paid';

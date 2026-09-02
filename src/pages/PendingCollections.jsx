@@ -2,10 +2,10 @@ import React, { useState, useMemo } from 'react';
 import { Wallet, Filter, Search, User, Calendar, Truck, Euro, AlertTriangle, CheckCircle, ArrowRight, Pencil, X, FileText, ChevronUp, ChevronDown } from 'lucide-react';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { utils, writeFile } from 'xlsx';
-import { parseCurrency, importeSinValorar, buildShipmentModel, isPendingCollection, needsDriverAfterCollecting } from '../utils/pendingCollections';
+import { parseCurrency, importeSinValorar, buildShipmentModel, isPendingCollection, needsDriverAfterCollecting, cobradorDesignado } from '../utils/pendingCollections';
 import { coincideBusqueda } from '../utils/busqueda';
 
-export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onUpdateShipment, driverNamePreference = 'both' }) {
+export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onReassignCollection, onUpdateShipment, driverNamePreference = 'both' }) {
     const getDriverDisplayName = (driver) => {
         if (!driver) return '';
         const name = driver.name || '';
@@ -14,6 +14,10 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
         if (driverNamePreference === 'name') return name;
         return alias ? `${name} (${alias})` : name;
     };
+    // Quién lleva ahora mismo el cobro de esta fila. Las líneas de deuda ya tienen
+    // aplicado el traspaso manual, así que basta con mirar la primera.
+    const cobroActual = (item) => item?.collectionTypes?.[0]?.responsibleDriverId ?? '';
+
     const [filterType, setFilterType] = useState('all'); // 'all', 'shipping_fee', 'reimbursement'
     const [filterDriver, setFilterDriver] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
@@ -50,9 +54,12 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
         setTempDriverId('');
     };
 
+    // Traspasar el cobro, no el reparto. Se guarda a quién le toca cobrarlo y se
+    // deja en paz el estado del albarán: uno ya entregado tiene que seguir aquí,
+    // en los cobros pendientes del compañero, no volver a su lista de entregas.
     const saveDriver = (itemId) => {
-        if (onAssignDriver) {
-            onAssignDriver(itemId, tempDriverId);
+        if (onReassignCollection) {
+            onReassignCollection(itemId, tempDriverId);
         }
         setEditingId(null);
         setTempDriverId('');
@@ -90,7 +97,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                     type: 'Portes (Pagado)',
                     amount: shippingAmount,
                     amountDisplay: shippingDisplay,
-                    responsibleDriverId: s.createdById || designatedDriverId,
+                    responsibleDriverId: cobradorDesignado(s, s.createdById || designatedDriverId),
                     payerName: s.client
                 });
             }
@@ -104,7 +111,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                     type: 'Portes (Debido)',
                     amount: shippingAmount,
                     amountDisplay: shippingDisplay,
-                    responsibleDriverId: designatedDriverId,
+                    responsibleDriverId: cobradorDesignado(s, designatedDriverId),
                     payerName: s.destinationName || 'Destinatario'
                 });
             }
@@ -115,7 +122,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                     type: 'Reembolso',
                     amount: codAmount,
                     amountDisplay: codAmount,
-                    responsibleDriverId: designatedDriverId,
+                    responsibleDriverId: cobradorDesignado(s, designatedDriverId),
                     payerName: s.destinationName || 'Destinatario (Reembolso)'
                 });
             }
@@ -504,13 +511,14 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                                             {editingId === item.id ? (
                                                 <div className="flex items-center gap-2">
                                                     <select
+                                                        aria-label="Repartidor que se queda el cobro"
                                                         className="bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[140px]"
                                                         value={tempDriverId}
                                                         onChange={(e) => setTempDriverId(e.target.value)}
                                                         autoFocus
                                                     >
                                                         <option value="">Sin Asignar</option>
-                                                        {Array.isArray(drivers) && drivers.filter(d => d.isActive !== false || d.id === item.assignedDriverId).map(d => (
+                                                        {Array.isArray(drivers) && drivers.filter(d => d.isActive !== false || String(d.id) === String(cobroActual(item))).map(d => (
                                                             <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
                                                         ))}
                                                     </select>
@@ -555,12 +563,12 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                                                     })}
                                                     <div className="mt-1 flex justify-start">
                                                         <button
-                                                            onClick={(e) => { e.stopPropagation(); startEditing(item.id, item.assignedDriverId); }}
+                                                            onClick={(e) => { e.stopPropagation(); startEditing(item.id, cobroActual(item)); }}
                                                             className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-indigo-600 font-medium transition-colors"
-                                                            title="Cambiar repartidor del reparto"
+                                                            title="Pasar este cobro a otro repartidor (no cambia el reparto ni el estado del albarán)"
                                                         >
                                                             <Pencil size={10} />
-                                                            Editar
+                                                            Pasar cobro
                                                         </button>
                                                     </div>
                                                 </div>
