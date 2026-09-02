@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Truck, ArrowRight, Shield, User, Eye, EyeOff } from 'lucide-react';
 import { avisarAlPadre, esOrigenPadrePermitido, estamosEmbebidos } from '../utils/ventanaPadre';
 
-export default function Login({ onLogin, onRecuperarContrasena }) {
+export default function Login({ onLogin, onRecuperarContrasena, aviso = '', onAvisoVisto }) {
     const emailRef = useRef(null);
     const passwordRef = useRef(null);
     const [showPassword, setShowPassword] = useState(false);
@@ -136,6 +136,8 @@ export default function Login({ onLogin, onRecuperarContrasena }) {
 
     const handleLogin = async () => {
         setError('');
+        // Ya ha leído por qué estaba aquí; a partir de ahora sobra.
+        onAvisoVisto?.();
         setIsShaking(false);
         setIsLoading(true);
 
@@ -321,6 +323,14 @@ export default function Login({ onLogin, onRecuperarContrasena }) {
                     </div>
 
                     <div className={`space-y-5 ${isShaking ? 'animate-shake' : ''}`}>
+                        {/* Por qué está aquí otra vez. Va en ámbar y no en rojo:
+                            no ha hecho nada mal, sólo se le ha caducado la sesión. */}
+                        {aviso && (
+                            <div className="bg-amber-50 text-amber-800 p-4 rounded-xl text-sm text-center font-bold border border-amber-100">
+                                {aviso}
+                            </div>
+                        )}
+
                         {error && (
                             <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm text-center font-bold border border-red-100">
                                 {error}

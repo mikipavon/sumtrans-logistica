@@ -208,6 +208,10 @@ function App() {
   // Ha entrado por el enlace de "he olvidado mi contraseña": lo único que puede
   // hacer ahora es elegir una nueva, aunque técnicamente ya tenga sesión.
   const [recuperandoContrasena, setRecuperandoContrasena] = useState(false)
+  // Por qué se le ha devuelto a la pantalla de entrada. Sin esto, a quien se le
+  // cierra una sesión caducada le aparece el login de golpe y sin explicación,
+  // que se parece demasiado a una avería.
+  const [avisoDeSesion, setAvisoDeSesion] = useState('')
 
   // ── Nombre del conductor guardado en sesión para mostrarlo instantáneamente ──
   const [cachedDriverName, setCachedDriverName] = useState(savedSession?.driverName || null)
@@ -268,8 +272,52 @@ function App() {
             if (profile.role === 'driver') setCurrentDriverId(profile.linked_id);
             if (profile.role === 'client') setCurrentClientId(profile.linked_id);
           }
+          return;
+        }
+
+        // ── La sesión fantasma ──
+        //
+        // Aquí antes no había nada. Si Supabase no tenía sesión, esta función
+        // se callaba y la aplicación se quedaba tal cual la había dejado el
+        // arranque: dentro, con el rol sacado de `sumtrans_session`, que es una
+        // nota local de esta pestaña y no una credencial.
+        //
+        // La pantalla se veía perfecta —el menú entero, las fichas se
+        // guardaban— pero por debajo no había nadie identificado, así que TODO
+        // lo que pasa por el servidor con permisos fallaba en silencio: las
+        // cuentas de acceso contestaban "No autorizado", aprobar un cliente no
+        // llegaba a activarle nada, y cualquier consulta con RLS volvía vacía.
+        // Al repartidor le habría salido el reparto en blanco; al cliente, el
+        // portal a cero. Sin una sola pantalla diciendo por qué.
+        //
+        // El manejador de SIGNED_OUT de más abajo no cubre esto: ese evento
+        // salta cuando una sesión se cae, y aquí no hay ninguna de la que
+        // caerse. La aplicación arranca creyendo que sí.
+        if (cancelled) return;
+
+        // ⚠️ "No hay sesión" y "no he podido comprobarlo" no son lo mismo, y
+        // confundirlos aquí sale caro: echaría al repartidor a la pantalla de
+        // entrada en mitad de la ruta por pasar un túnel, y sin cobertura no
+        // podría ni volver a entrar. Sin red no se toca nada: sigue trabajando
+        // y lo que haga se va a la cola de siempre. Mismo criterio que
+        // errorDeServidorSiLoEs en el acceso.
+        if (!navigator.onLine) {
+          console.warn('[Session] Sin sesión de Supabase, pero el equipo está sin red: no se cierra nada.');
+          return;
+        }
+
+        if (savedSession) {
+          console.warn('[Session] Sesión local sin sesión de Supabase detrás — se cierra.');
+          setIsAuthenticated(false);
+          setUserRole(null);
+          setCurrentDriverId(null);
+          setCurrentClientId(null);
+          setSuplantandoCliente(false);
+          setAvisoDeSesion('Tu sesión ha caducado. Vuelve a entrar, por favor.');
         }
       } catch (e) {
+        // Que la comprobación reviente NO es que no haya sesión: es que no se
+        // ha podido preguntar. Se deja todo como está.
         console.warn('[Session] Error restoring session:', e);
       } finally {
         if (!cancelled) setIsRestoringSession(false);
@@ -4538,7 +4586,14 @@ function App() {
   }
 
   if (!isAuthenticated) {
-    return <Login onLogin={handleLogin} onRecuperarContrasena={pedirCorreoDeRecuperacion} />
+    return (
+      <Login
+        onLogin={handleLogin}
+        onRecuperarContrasena={pedirCorreoDeRecuperacion}
+        aviso={avisoDeSesion}
+        onAvisoVisto={() => setAvisoDeSesion('')}
+      />
+    )
   }
 
   const handleImpersonate = (driverId) => {
