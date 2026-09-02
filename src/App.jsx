@@ -1782,10 +1782,15 @@ function App() {
 
   // Cuánto se espera al servidor antes de rendirse y decírselo a la persona. Ninguna
   // de las llamadas de aquí abajo se rinde por su cuenta: ver utils/topeDeTiempo.js.
-  // La búsqueda del email tiene un tope más corto porque es sólo una traducción de
-  // nombre de usuario a correo; si no llega, se sigue con lo que se haya tecleado.
+  //
+  // La búsqueda del email tenía un tope más corto (8s) por parecer un paso menor: una
+  // traducción de nombre de usuario a correo. No lo es. Sin ella, lo que se manda a
+  // Auth es el nombre de usuario pelado, que nunca va a ser un email válido, así que
+  // el login está perdido antes de empezar. El 2 de septiembre de 2026, con la base
+  // recién reiniciada, esa consulta tardaba entre 11 y 14 segundos: la oficina entraba
+  // (teclea su correo y se salta el paso) y NINGÚN repartidor podía entrar.
   const SEGUNDOS_ESPERA_LOGIN = 15;
-  const SEGUNDOS_ESPERA_BUSQUEDA_EMAIL = 8;
+  const SEGUNDOS_ESPERA_BUSQUEDA_EMAIL = 20;
 
   const handleLogin = async (role = 'admin', username = '', password = '') => {
     // ── Construir el email para Supabase Auth ──
@@ -1806,6 +1811,11 @@ function App() {
             console.log('[Login] Driver username →', authEmail);
           }
         } catch (e) {
+          // Si el que no contesta es el servidor, aquí se acaba el intento. Siguiendo
+          // adelante se le manda a Auth el nombre de usuario tal cual, Auth lo rechaza
+          // por no ser un email, y al repartidor le sale que su contraseña está mal.
+          // Es el mismo enredo que errorDeServidorSiLoEs quitó del resto del login.
+          if (e?.esFalloDeConexion) throw e;
           console.warn('[Login] RPC email lookup failed:', e);
         }
       }
@@ -1832,6 +1842,9 @@ function App() {
             console.log('[Login] Client username →', authEmail);
           }
         } catch (e) {
+          // Igual que arriba: sin traducción, el que teclea su nombre de usuario acaba
+          // en un "usuario o contraseña incorrectos" que no es verdad.
+          if (e?.esFalloDeConexion) throw e;
           console.warn('[Login] RPC client email lookup failed:', e);
         }
       }
