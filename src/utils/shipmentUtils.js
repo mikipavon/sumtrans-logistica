@@ -176,6 +176,76 @@ export const quienPagaElPorte = (shipment) =>
         ? 'Destinatario'
         : 'Remitente';
 
+const normalizarNombre = (valor) => String(valor || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().trim().replace(/\s+/g, ' ');
+
+/**
+ * Todos los nombres con los que la ficha de un cliente puede venir escrita en un
+ * albarán: el comercial, el fiscal y el de cada una de sus sedes.
+ *
+ * El remitente y el destinatario los teclea la oficina a mano, así que el mismo
+ * cliente aparece unas veces como «TRANSPORTES LOPEZ», otras como «Transportes
+ * López, S.L.» y otras con el nombre de una de sus sedes. Comparando en crudo se
+ * le quedaban fuera sus propios envíos por una tilde o una mayúscula.
+ */
+export const nombresDelCliente = (cliente) => {
+    if (!cliente) return [];
+    const nombres = [cliente.name, cliente.legalName];
+    if (Array.isArray(cliente.branches)) {
+        for (const sede of cliente.branches) nombres.push(sede?.name);
+    }
+    return [...new Set(nombres.map(normalizarNombre).filter(Boolean))];
+};
+
+/**
+ * Qué pinta este cliente en este albarán: 'Remitente', 'Destinatario' o null si
+ * no es ni una cosa ni la otra.
+ *
+ * En el portal sale TODO envío en el que el cliente aparezca en cualquiera de los
+ * dos lados, lo pague él o lo pague el otro: un porte debido que él manda es suyo
+ * igual, y una expedición que le llega también le importa. Quién paga decide qué
+ * importes se le enseñan (ver `clientePagaElPorte`), nunca si el albarán le sale.
+ *
+ * Cuando es las dos cosas a la vez (se manda algo a otra sede suya) se queda con
+ * el papel del que paga, para que el precio no se le esconda siendo suyo.
+ */
+export const papelDelClienteEnElEnvio = (shipment, cliente) => {
+    if (!shipment || !cliente) return null;
+
+    const nombres = nombresDelCliente(cliente);
+    const esSuyoElNombre = (valor) => {
+        const n = normalizarNombre(valor);
+        return Boolean(n) && nombres.includes(n);
+    };
+    // Sin esta guarda, un albarán de oficina (que nace sin `clientId`) daría
+    // positivo con cualquier ficha cuyo id tampoco se supiera.
+    const esSuyoElId = (id) => id !== null && id !== undefined && String(id) !== '' &&
+                               String(id) === String(cliente.id);
+
+    const esRemitente = esSuyoElId(shipment.clientId) ||
+                        esSuyoElNombre(shipment.client) ||
+                        esSuyoElNombre(shipment.originName);
+    const esDestinatario = esSuyoElId(shipment.destinatarioId) ||
+                           esSuyoElNombre(shipment.destinationName);
+
+    if (esRemitente && esDestinatario) return quienPagaElPorte(shipment);
+    if (esRemitente) return 'Remitente';
+    if (esDestinatario) return 'Destinatario';
+    return null;
+};
+
+/** Si este albarán tiene que salir en el portal de este cliente. */
+export const envioEsDelCliente = (shipment, cliente) =>
+    papelDelClienteEnElEnvio(shipment, cliente) !== null;
+
+/**
+ * Si a este cliente se le puede enseñar el precio del porte de este albarán: el
+ * precio es sólo del que paga; al otro se le enseña el envío sin importes.
+ */
+export const clientePagaElPorte = (shipment, cliente) =>
+    papelDelClienteEnElEnvio(shipment, cliente) === quienPagaElPorte(shipment);
+
 const importeDelAlbaran = (val) => {
     if (!val) return 0;
     if (typeof val === 'number') return val;

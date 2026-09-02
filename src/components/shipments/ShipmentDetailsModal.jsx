@@ -13,7 +13,7 @@ import { getPackagesCount } from '../../utils/shipmentUtils';
 
 import { Trash2, Plus } from 'lucide-react';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
-export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, driverNamePreference = 'both', zoom = 1 }) {
+export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1 }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -1746,7 +1746,10 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                 onClick={async () => {
                                     setIsGeneratingPDF(true);
                                     try {
-                                        await generateDeliveryPDF(shipment);
+                                        // `clientePortal` sólo llega desde el portal del
+                                        // cliente: el justificante sale sin el precio del
+                                        // porte cuando no es él quien lo paga.
+                                        await generateDeliveryPDF(shipment, clientePortal);
                                     } catch (err) {
                                         console.error("PDF Generate Error:", err);
                                         alert("Error al generar el PDF: " + err.message);
