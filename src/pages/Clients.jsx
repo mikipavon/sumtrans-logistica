@@ -134,16 +134,20 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
     const handleSave = async (clientData) => {
         if (clientData.id) {
             // Update existing
-            await onUpdateClient(clientData.id, clientData);
+            // `accesosCreados` va de vuelta al formulario: son los correos a los
+            // que se les acaba de dejar la cuenta lista, y con ellos enseña las
+            // credenciales antes de cerrarse. La contraseña no se guarda en
+            // ninguna parte, así que ése es el único momento en que se puede ver.
+            const resultado = await onUpdateClient(clientData.id, clientData);
             setEditingClient(null);
-            return { ok: true };
+            return { ok: true, accesosCreados: resultado?.accesosCreados || [] };
         }
 
         // Create new
         const resultado = await onAddClient(clientData, { manual: true });
         if (resultado && resultado.ok === false) return resultado;
         setEditingClient(null); // Clear editing state
-        return { ok: true };
+        return { ok: true, accesosCreados: resultado?.accesosCreados || [] };
     };
 
     const handleModalClose = () => {

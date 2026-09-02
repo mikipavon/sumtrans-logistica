@@ -16,6 +16,7 @@ import Login from './pages/Login'
 //
 // Login y Layout se quedan como imports normales a propósito: son lo primero
 // que se pinta, diferirlos solo añadiría un parpadeo.
+const RecuperarContrasena = lazy(() => import('./pages/RecuperarContrasena'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Shipments = lazy(() => import('./pages/Shipments'))
 const Fleet = lazy(() => import('./pages/Fleet'))
@@ -58,6 +59,26 @@ import { uploadProof } from './utils/storage';
 
 
 
+// ── Por qué ha fallado de verdad una Edge Function ──
+//
+// supabase.functions.invoke esconde el cuerpo de las respuestas de error detrás
+// de un "Edge Function returned a non-2xx status code" que no dice nada. Lo que
+// hay dentro sí: «ese correo ya tiene cuenta y no es de este cliente», «la
+// contraseña debe tener al menos 6 caracteres»… Sin esto, el aviso que ve la
+// oficina cuando no se puede crear una cuenta de acceso no le sirve para nada, y
+// se queda sin saber por qué su cliente no entra al portal.
+//
+// Estaba escrito dentro de handleDarAccesoAFichaExistente, que era el único
+// sitio que lo desenterraba. Los dos que crean las cuentas —el del cliente y el
+// del conductor— enseñaban el mensaje hueco.
+const motivoDelFallo = async (error) => {
+  try {
+    const cuerpo = await error?.context?.json?.();
+    if (cuerpo?.error) return cuerpo.error;
+  } catch { /* la respuesta no traía JSON */ }
+  return error?.message || 'error desconocido';
+};
+
 // Lo que se ve mientras llega el trozo de la pantalla que se acaba de pedir.
 // Suele durar milisegundos (y nada a partir de la segunda vez, porque el
 // navegador ya lo tiene en caché), así que no lleva texto: un texto que
@@ -66,6 +87,49 @@ function PantallaCargando() {
   return (
     <div className="flex items-center justify-center py-24">
       <div className="w-8 h-8 border-2 border-slate-200 border-t-blue-600 rounded-full animate-spin" />
+    </div>
+  );
+}
+
+// ── El cliente ha entrado, pero su ficha todavía no está ──
+//
+// Casi siempre es cuestión de un segundo: los datos se piden después de entrar.
+// Por eso lo primero es esperar, sin asustar a nadie.
+//
+// Pero si pasado un rato la ficha sigue sin aparecer, es que de verdad no se
+// encuentra —su cuenta apunta a una ficha que ya no está, o RLS no se la deja
+// ver—, y entonces hay que decirlo. Un giro eterno le haría pensar que es su
+// conexión, y quedarse callado es lo que hacía que esto acabara en la pantalla
+// roja de "la aplicación se ha parado", que para el cliente es indistinguible
+// de que el portal esté averiado.
+const SEGUNDOS_ANTES_DE_AVISAR = 8;
+
+function PortalSinFicha({ onLogout }) {
+  const [tardaDemasiado, setTardaDemasiado] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setTardaDemasiado(true), SEGUNDOS_ANTES_DE_AVISAR * 1000);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (!tardaDemasiado) return <PantallaCargando />;
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center">
+        <h1 className="text-xl font-bold text-slate-900 mb-3">No encontramos tu ficha</h1>
+        <p className="text-slate-600 text-sm leading-relaxed mb-6">
+          Has entrado correctamente, pero no hemos podido cargar los datos de tu empresa.
+          No es cosa tuya y no se ha perdido ningún envío. Avisa a la oficina y lo revisan:
+          <strong className="block mt-2">957 245 221</strong>
+        </p>
+        <button
+          onClick={onLogout}
+          className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl transition-colors"
+        >
+          Salir
+        </button>
+      </div>
     </div>
   );
 }
@@ -141,6 +205,9 @@ function App() {
   const [currentClientId, setCurrentClientId] = useState(savedSession?.clientId || null) // ID of the logged in client
   const [shipmentStatusFilter, setShipmentStatusFilter] = useState(null) // Filter passed from Dashboard KPI cards
   const [isRestoringSession, setIsRestoringSession] = useState(!savedSession) // Skip waiting if we have a local session
+  // Ha entrado por el enlace de "he olvidado mi contraseña": lo único que puede
+  // hacer ahora es elegir una nueva, aunque técnicamente ya tenga sesión.
+  const [recuperandoContrasena, setRecuperandoContrasena] = useState(false)
 
   // ── Nombre del conductor guardado en sesión para mostrarlo instantáneamente ──
   const [cachedDriverName, setCachedDriverName] = useState(savedSession?.driverName || null)
@@ -169,6 +236,22 @@ function App() {
       sessionStorage.removeItem('sumtrans_session');
     }
   }, [isAuthenticated, userRole, currentDriverId, currentClientId, currentView, cachedDriverName, suplantandoCliente]);
+
+  // ── ¿Ha llegado desde el enlace de "he olvidado mi contraseña"? ──
+  //
+  // Al abrir ese enlace, supabase-js canjea el token de la URL y avisa con
+  // PASSWORD_RECOVERY. En ese momento HAY sesión, así que sin esto la aplicación
+  // le abriría el portal directamente y no llegaría nunca a poder cambiarla —
+  // que es justo lo que venía a hacer.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((evento) => {
+      if (evento === 'PASSWORD_RECOVERY') {
+        setRecuperandoContrasena(true);
+        setIsRestoringSession(false);
+      }
+    });
+    return () => subscription?.unsubscribe();
+  }, []);
 
   // ── Restaurar sesión de Supabase Auth al cargar la app ──
   useEffect(() => {
@@ -1792,6 +1875,25 @@ function App() {
   const SEGUNDOS_ESPERA_LOGIN = 15;
   const SEGUNDOS_ESPERA_BUSQUEDA_EMAIL = 20;
 
+  // ── Pedir el enlace para elegir una contraseña nueva ──
+  //
+  // Supabase manda el correo y devuelve el mismo "ok" exista o no la cuenta, a
+  // propósito: si distinguiera, cualquiera podría averiguar desde fuera qué
+  // empresas son clientes probando direcciones. La pantalla dice "si ese correo
+  // tiene acceso, le llegará", que es verdad en los dos casos.
+  //
+  // `redirectTo` trae al cliente de vuelta a esta misma aplicación. Al abrir el
+  // enlace, supabase-js reconoce el token y dispara PASSWORD_RECOVERY, que es lo
+  // que enciende la pantalla de RecuperarContrasena (ver el useEffect de abajo).
+  const pedirCorreoDeRecuperacion = async (correo) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(correo, {
+      redirectTo: window.location.origin,
+    });
+    // Un fallo aquí es del servidor (no "ese correo no existe"), así que se
+    // lanza para que la pantalla pueda decir que se reintente.
+    if (error) throw error;
+  };
+
   const handleLogin = async (role = 'admin', username = '', password = '') => {
     // ── Construir el email para Supabase Auth ──
     // Vive fuera del try para que el respaldo del catch también sepa con qué
@@ -2176,10 +2278,11 @@ function App() {
         }
       });
 
-      if (res.error) {
-        console.warn('[DriverAuth]', res.error.message);
+      const fallo = res.error ? await motivoDelFallo(res.error) : res.data?.error;
+      if (fallo) {
+        console.warn('[DriverAuth]', fallo);
         alert(
-          `⚠️ El conductor se ha guardado, pero no se pudo crear su cuenta de acceso:\n\n${res.error.message}\n\n` +
+          `⚠️ El conductor se ha guardado, pero no se pudo crear su cuenta de acceso:\n\n${fallo}\n\n` +
           `Hasta que se resuelva, entrará en la app pero lo verá todo vacío.`
         );
         return false;
@@ -2249,11 +2352,15 @@ function App() {
         }
       });
 
-      if (res.error) {
-        console.warn('[ClientAuth]', res.error.message);
+      // El motivo de verdad va dentro del cuerpo de la respuesta, no en
+      // res.error.message. Y `res.data.error` cubre el caso en que la función
+      // conteste 200 con un error dentro.
+      const fallo = res.error ? await motivoDelFallo(res.error) : res.data?.error;
+      if (fallo) {
+        console.warn('[ClientAuth]', fallo);
         alert(
-          `⚠️ El cliente se ha guardado, pero no se pudo crear su cuenta de acceso:\n\n${res.error.message}\n\n` +
-          `Hasta que se resuelva, entrará en el portal pero lo verá todo vacío.`
+          `⚠️ El cliente se ha guardado, pero NO se le ha creado la cuenta de acceso:\n\n${fallo}\n\n` +
+          `Hasta que se resuelva no podrá entrar en el portal: le dirá que sus credenciales no valen.`
         );
         return false;
       }
@@ -2281,10 +2388,15 @@ function App() {
   // aparece: un correo que se borra de la lista es un acceso que hay que
   // retirar de verdad, o esa persona seguiría entrando con su contraseña de
   // siempre aunque su correo ya no esté en ninguna pantalla.
+  // Devuelve los correos a los que de verdad se les ha dejado la cuenta lista.
+  // Lo usa la ficha para poder enseñar en pantalla las credenciales recién
+  // puestas: sólo las que han funcionado, porque enseñar unas que no se han
+  // llegado a crear es mandar al cliente a una puerta cerrada.
   const sincronizarAccesosAdicionales = async (anterior, nueva, clientId) => {
     const ahora = accesosAdicionales(nueva);
     const antes = accesosAdicionales(anterior).map(a => a.email);
     const correosAhora = ahora.map(a => a.email);
+    const listos = [];
 
     // 1. Los que ya no están: se les quita el acceso, avisando antes. Borrar una
     //    cuenta no tiene vuelta atrás, y desde la ficha no se ve a quién afecta.
@@ -2330,14 +2442,17 @@ function App() {
         continue;
       }
 
-      await syncClientAuthAccount({
+      const listo = await syncClientAuthAccount({
         email,
         password,
         clientId,
         displayName: nueva.name,
         adicional: true,
       });
+      if (listo) listos.push(email);
     }
+
+    return listos;
   };
 
   const handleAddDriver = async (newDriver) => {
@@ -2765,7 +2880,9 @@ function App() {
       return { creatorName: nombre ? `Cond.${nombre} ` : 'Conductor', creatorId: currentDriverId };
     }
     if (userRole === 'client') {
-      const client = clientsRef.current.find(c => c.id === currentClientId);
+      // En texto, por lo mismo que en la vista del portal: el vínculo de la
+      // cuenta (profiles.linked_id) es TEXT y clients.id es numérico.
+      const client = clientsRef.current.find(c => String(c.id) === String(currentClientId));
       return {
         creatorName: client ? `ClienteWeb: ${client.name}` : 'Portal Cliente',
         creatorId: currentClientId,
@@ -3505,13 +3622,20 @@ function App() {
       // Igual que en el alta: sólo cuando se toca la contraseña. Este handler se
       // usa mucho como efecto silencioso (GPS, logo del portal…) y esos guardados
       // no traen contraseña, así que no disparan nada.
+      // Los correos cuya cuenta ha quedado lista en este guardado. Se devuelven
+      // para que la ficha pueda enseñar las credenciales una sola vez, en el
+      // momento: no se guardan en ningún sitio, así que si no se dicen ahora, la
+      // contraseña se pierde y hay que ponerle otra.
+      const accesosCreados = [];
+
       if (updatedData && updatedData.password) {
-        await syncClientAuthAccount({
+        const listo = await syncClientAuthAccount({
           email: emailDeAcceso(updated),
           password: updatedData.password,
           clientId,
           displayName: updated.name,
         });
+        if (listo) accesosCreados.push(emailDeAcceso(updated));
       } else if (updatedData && correoDeAccesoCambiado(c, updated)) {
         // Cambiar el correo de acceso mueve la cuenta de Auth, y para eso hay
         // que volver a pasar por create-auth-user, que exige contraseña. Sin
@@ -3530,8 +3654,10 @@ function App() {
       // guardados no traen la lista: si se mirara igualmente, un albarán
       // entregado podría acabar retirándole el acceso al dueño de la empresa.
       if (updatedData && !opciones.accesosYaCreados && Object.prototype.hasOwnProperty.call(updatedData, 'accessEmailsExtra')) {
-        await sincronizarAccesosAdicionales(c, updated, clientId);
+        accesosCreados.push(...await sincronizarAccesosAdicionales(c, updated, clientId));
       }
+
+      return { ok: true, accesosCreados };
     } catch (e) {
       console.warn(`[Queue] Error actualizando cliente ${clientId}, encolando para reintento:`, e);
       await enqueueClientOp();
@@ -3688,22 +3814,27 @@ function App() {
 
         // Ficha guardada con contraseña = alguien le está dando acceso al portal,
         // así que necesita cuenta de Auth o entrará y lo verá todo vacío.
+        // Igual que al editar: se apunta a quién le ha quedado la cuenta lista,
+        // para poder enseñar las credenciales una sola vez al terminar.
+        const accesosCreados = [];
+
         if (clientWithMeta.password) {
-          await syncClientAuthAccount({
+          const listo = await syncClientAuthAccount({
             email: emailDeAcceso(clientWithMeta),
             password: clientWithMeta.password,
             clientId: clientWithMeta.id,
             displayName: clientWithMeta.name,
           });
+          if (listo) accesosCreados.push(emailDeAcceso(clientWithMeta));
         }
 
         // Y las cuentas de las demás personas de la empresa. En un alta no hay
         // nada anterior que retirar, así que sólo se crean.
         if (traeAccesosAdicionales) {
-          await sincronizarAccesosAdicionales({}, clientWithMeta, clientWithMeta.id);
+          accesosCreados.push(...await sincronizarAccesosAdicionales({}, clientWithMeta, clientWithMeta.id));
         }
 
-        return { ok: true, cliente: guardada };
+        return { ok: true, cliente: guardada, accesosCreados };
       } catch (e) {
         // Se avisa aquí dentro y no se relanza: el que espera turno detrás sólo
         // necesita saber que ya puede volver a mirar, no si a éste le fue bien.
@@ -4110,17 +4241,6 @@ function App() {
       return false;
     }
 
-    // supabase.functions.invoke esconde el cuerpo de las respuestas de error
-    // detrás de un "non-2xx status code" que no dice nada. Lo que hay dentro sí:
-    // es el aviso de que ese correo ya es de otro.
-    const motivoDelFallo = async (error) => {
-      try {
-        const cuerpo = await error?.context?.json?.();
-        if (cuerpo?.error) return cuerpo.error;
-      } catch { /* la respuesta no traía JSON */ }
-      return error?.message || 'error desconocido';
-    };
-
     try {
       const res = await supabase.functions.invoke('create-auth-user', {
         body: {
@@ -4397,10 +4517,28 @@ function App() {
     );
   }
 
-  if (!isAuthenticated) {
-    return <Login onLogin={handleLogin} />
-    // return <div className="p-10 text-2xl font-bold text-center">LOGIN PLACEHOLDER - Si ves esto, Login.jsx es el problema</div>
+  // Va ANTES que todo lo demás, incluida la comprobación de sesión: quien llega
+  // por el enlace de recuperación ya tiene sesión, así que si esto fuera después
+  // se le abriría el portal y no llegaría a cambiar la contraseña.
+  if (recuperandoContrasena) {
+    return (
+      <Suspense fallback={<PantallaCargando />}>
+        <RecuperarContrasena
+          onListo={async () => {
+            // Fuera la sesión de recuperación: que entre con la nueva, como
+            // hará a partir de ahora desde su móvil o desde el ordenador.
+            try { await supabase.auth.signOut(); } catch { /* daba igual */ }
+            setRecuperandoContrasena(false);
+            setIsAuthenticated(false);
+            setUserRole(null);
+          }}
+        />
+      </Suspense>
+    );
+  }
 
+  if (!isAuthenticated) {
+    return <Login onLogin={handleLogin} onRecuperarContrasena={pedirCorreoDeRecuperacion} />
   }
 
   const handleImpersonate = (driverId) => {
@@ -4431,10 +4569,30 @@ function App() {
 
   // Client View
   if (userRole === 'client') {
+    // ── Emparejar la ficha con la cuenta que acaba de entrar ──
+    //
+    // Comparando en texto a propósito, y no con `===` a secas. `clients.id` es
+    // numérico en la base de datos, pero el vínculo de la cuenta vive en
+    // `profiles.linked_id`, que es TEXT (por eso las políticas RLS lo comparan
+    // con `id::text`, ver supabase/04_restrictive_rls_policies.sql). Un número
+    // nunca es igual a una cadena en JavaScript, así que `find` no encontraba
+    // nada, el portal recibía `client` a medio hacer y la primera línea que
+    // tocaba `client.name` tumbaba la aplicación entera con la pantalla roja.
+    const fichaDelCliente = clients.find(c => String(c.id) === String(currentClientId));
+
+    // Aun emparejando bien, hay un momento en que la ficha todavía no está: los
+    // datos se piden DESPUÉS de entrar, así que en el primer pintado `clients`
+    // está vacío. Ahí no hay nada que enseñar todavía, pero tampoco hay ninguna
+    // avería: se espera. Y si pasado un rato sigue sin aparecer, se dice — que
+    // es lo único honesto cuando de verdad no se encuentra su ficha.
+    if (!fichaDelCliente) {
+      return <PortalSinFicha onLogout={suplantandoCliente ? volverAAdministracion : handleLogout} />;
+    }
+
     return (
       <Suspense fallback={<PantallaCargando />}>
         <ClientDashboard
-          client={clients.find(c => c.id === currentClientId)}
+          client={fichaDelCliente}
           modoAdmin={suplantandoCliente}
           onLogout={suplantandoCliente ? volverAAdministracion : handleLogout}
           allShipments={shipments}

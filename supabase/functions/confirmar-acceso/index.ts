@@ -3,7 +3,14 @@
 // Llamada desde la app cuando el admin aprueba un cliente nuevo.
 // Envía el email de confirmación de acceso al cliente y
 // confirma su cuenta Supabase Auth.
-// v3.0 — con Supabase Auth confirmation
+//
+// Confirmar la cuenta NO es un detalle del envío del correo: es lo único que
+// deja entrar al cliente, porque registro-cliente la crea sin confirmar. Si no
+// se consigue, el aviso no sale y se le dice a la oficina — antes se mandaba
+// igual y el cliente se encontraba un «Credenciales inválidas» que no era
+// verdad. Ver el bloque "Confirmar cuenta Supabase Auth del cliente".
+//
+// v3.1 — la búsqueda de la cuenta pagina, y ya no falla en silencio
 // ============================================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -15,12 +22,48 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '
 const FROM_EMAIL = 'noreply@sumtransportes.com'
 const APP_URL = 'https://sumtrans-logistica.vercel.app'
 
+// ── Buscar la cuenta de Auth de un correo ──
+//
+// Paginando, que es como hay que recorrer listUsers(): llamada sin argumentos
+// devuelve SÓLO las 50 primeras cuentas. Con la casa llena de repartidores y
+// clientes, el que no cayera en esa primera página no se encontraba, así que su
+// cuenta no se confirmaba y no podía entrar al portal — pero se le mandaba
+// igualmente el correo diciéndole que ya estaba activa. Al intentarlo, Auth
+// contestaba "Email not confirmed" y en la pantalla de entrada eso sale como
+// «Credenciales inválidas», o sea, culpando a una contraseña que estaba bien.
+//
+// Mismo recorrido que buscarPorEmail() en create-auth-user. La diferencia es
+// que aquí un fallo del servidor se lanza en vez de devolver null: "no he
+// podido preguntarlo" no es "no existe", y confundirlos es lo que dejó a este
+// cliente fuera sin que nadie se enterara.
+async function buscarPorEmail(
+  supabase: ReturnType<typeof createClient>,
+  email: string,
+): Promise<{ id: string; email?: string } | null> {
+  for (let page = 1; page <= 50; page++) {
+    const { data: listado, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 })
+    if (error) throw new Error(error.message)
+    if (!listado?.users?.length) return null
+
+    const encontrada = listado.users.find((u: { email?: string }) => u.email === email)
+    if (encontrada) return encontrada as { id: string; email?: string }
+
+    if (listado.users.length < 1000) return null
+  }
+  return null
+}
+
 serve(async (req: Request) => {
   // CORS
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    // x-client-info y apikey van aquí aunque hoy esta función se llame con un
+    // fetch a pelo que no las manda: el día que alguien la pase a
+    // supabase.functions.invoke(), invoke las añade solo y sin ellas el
+    // navegador cortaría la petición en el preflight. Es lo que le pasaba a
+    // create-auth-user. Ver el comentario de su CORS.
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-client-info, apikey',
   }
 
   if (req.method === 'OPTIONS') {
@@ -137,6 +180,10 @@ serve(async (req: Request) => {
       email = pedido
     }
 
+    // Casi siempre vacía, y tiene que ser así: desde
+    // supabase/16_contrasenas_con_huella.sql la ficha ya no guarda contraseñas,
+    // van sólo a Auth. Sólo trae algo en las fichas escritas antes de aquello,
+    // y por eso más abajo no se cuenta con ella para nada más que ese resto.
     const password = clientData.password || ''
 
     if (!email) {
@@ -147,38 +194,79 @@ serve(async (req: Request) => {
     }
 
     // ── Confirmar cuenta Supabase Auth del cliente ──
+    //
+    // Esto es lo que de verdad le abre la puerta. registro-cliente crea la
+    // cuenta con `email_confirm: false` a propósito, para que nadie entre antes
+    // de que la oficina apruebe; mientras siga sin confirmar, Auth rechaza el
+    // login con "Email not confirmed" y eso llega a la pantalla de entrada como
+    // «Credenciales inválidas» — el cliente da por hecho que su contraseña está
+    // mal y se pone a cambiarla.
+    //
+    // Por eso NADA de esto puede fallar en silencio, que es lo que hacía antes:
+    // si la cuenta no queda confirmada no se manda el correo de bienvenida y se
+    // le dice a la oficina. Mandarlo igual es decirle «ya puedes entrar» a
+    // alguien a quien la puerta le va a seguir cerrada.
+    let cuenta: { id: string; email?: string } | null = null
     try {
-      // Buscar el usuario auth por email
-      const { data: authUsers } = await supabase.auth.admin.listUsers()
-      const authUser = authUsers?.users?.find((u: any) => u.email === email)
-      if (authUser) {
-        // Confirmar el email (activa la cuenta)
-        await supabase.auth.admin.updateUserById(authUser.id, {
-          email_confirm: true,
-        })
-        console.log(`[confirmar-acceso] Cuenta Auth confirmada para ${email}`)
-      } else {
-        // Si no existe la cuenta auth, crearla
-        if (password && password.length >= 6) {
-          const { error: createErr } = await supabase.auth.admin.createUser({
-            email: email,
-            password: password,
-            email_confirm: true,
-            user_metadata: {
-              role: 'client',
-              linked_id: String(clientId),
-              display_name: nombre,
-            },
-          })
-          if (createErr) {
-            console.warn('[confirmar-acceso] Error creando Auth user:', createErr.message)
-          } else {
-            console.log(`[confirmar-acceso] Cuenta Auth creada y confirmada para ${email}`)
-          }
-        }
-      }
+      cuenta = await buscarPorEmail(supabase, email)
     } catch (authErr) {
-      console.warn('[confirmar-acceso] Error gestionando Auth:', authErr)
+      console.error('[confirmar-acceso] No se ha podido consultar Auth:', authErr)
+      return new Response(JSON.stringify({
+        error: 'No se ha podido comprobar la cuenta de acceso del cliente. No se le ha enviado nada: vuelve a intentarlo en un momento.',
+      }), {
+        status: 502,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    if (cuenta) {
+      const { error: confirmErr } = await supabase.auth.admin.updateUserById(cuenta.id, {
+        email_confirm: true,
+      })
+      if (confirmErr) {
+        console.error('[confirmar-acceso] No se ha podido confirmar la cuenta:', confirmErr.message)
+        return new Response(JSON.stringify({
+          error: `No se ha podido activar la cuenta de ${email}: ${confirmErr.message}. No se le ha enviado el aviso.`,
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+      console.log(`[confirmar-acceso] Cuenta Auth confirmada para ${email}`)
+    } else if (password && password.length >= 6) {
+      // Fichas anteriores a supabase/16_contrasenas_con_huella.sql, que todavía
+      // llevan la contraseña escrita dentro. Desde esa fase la ficha ya no la
+      // guarda, así que este camino sólo cubre lo que quedó escrito antes.
+      const { error: createErr } = await supabase.auth.admin.createUser({
+        email: email,
+        password: password,
+        email_confirm: true,
+        user_metadata: {
+          role: 'client',
+          linked_id: String(clientId),
+          display_name: nombre,
+        },
+      })
+      if (createErr) {
+        console.error('[confirmar-acceso] Error creando Auth user:', createErr.message)
+        return new Response(JSON.stringify({
+          error: `No se ha podido crear la cuenta de ${email}: ${createErr.message}. No se le ha enviado el aviso.`,
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+      console.log(`[confirmar-acceso] Cuenta Auth creada y confirmada para ${email}`)
+    } else {
+      // Ni cuenta que confirmar ni contraseña con la que crearla. Antes esto no
+      // hacía nada —ni un aviso— y el correo salía igual.
+      console.warn(`[confirmar-acceso] ${email} no tiene cuenta de acceso — no se le manda nada`)
+      return new Response(JSON.stringify({
+        error: `${email} no tiene cuenta de acceso todavía, así que no se le ha avisado. Abre su ficha, pestaña Acceso, escríbele una contraseña de 6 caracteres o más y guarda: eso le crea la cuenta.`,
+      }), {
+        status: 409,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
     }
 
     // Enviar email de confirmación de acceso

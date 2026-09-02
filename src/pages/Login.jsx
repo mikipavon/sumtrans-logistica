@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Truck, ArrowRight, Shield, User, Eye, EyeOff } from 'lucide-react';
 import { avisarAlPadre, esOrigenPadrePermitido, estamosEmbebidos } from '../utils/ventanaPadre';
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, onRecuperarContrasena }) {
     const emailRef = useRef(null);
     const passwordRef = useRef(null);
     const [showPassword, setShowPassword] = useState(false);
@@ -10,6 +10,8 @@ export default function Login({ onLogin }) {
     const [error, setError] = useState('');
     const [isShaking, setIsShaking] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    // Aviso verde de "te hemos mandado el enlace", separado del error rojo.
+    const [avisoRecuperacion, setAvisoRecuperacion] = useState('');
     const [rememberMe, setRememberMe] = useState(false);
     
     const initializedRef = useRef(false);
@@ -179,6 +181,41 @@ export default function Login({ onLogin }) {
         setTimeout(() => setIsShaking(false), 500);
     };
 
+    // ── "He olvidado mi contraseña" ──
+    //
+    // Antes esto no existía y el cliente sólo podía llamar a la oficina, que
+    // tampoco podía recordársela: no se guarda en ningún sitio. Lo único posible
+    // era ponerle otra y dictársela.
+    //
+    // La respuesta es la misma exista o no ese correo, a propósito: si dijera
+    // "ese correo no está registrado", cualquiera podría averiguar desde fuera
+    // qué empresas son clientes probando direcciones.
+    const pedirEnlaceDeRecuperacion = async () => {
+        setError('');
+        setAvisoRecuperacion('');
+
+        const correo = emailRef.current?.value?.trim() || '';
+        if (!correo || !correo.includes('@')) {
+            setError('Escribe arriba tu correo y vuelve a pulsar "He olvidado mi contraseña".');
+            triggerShake();
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            await onRecuperarContrasena(correo);
+            setAvisoRecuperacion(
+                `Si ${correo} tiene acceso al portal, le llegará un correo con un enlace para elegir una contraseña nueva. Revisa también la carpeta de correo no deseado.`
+            );
+        } catch (e) {
+            console.warn('[Recuperar] No se ha podido pedir el enlace:', e);
+            setError('No se ha podido enviar el correo. Inténtalo de nuevo en un momento.');
+            triggerShake();
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleTabChange = (tab) => {
         setActiveTab(tab);
         try { localStorage.setItem('lastLoginTab', tab); } catch (_) {}
@@ -326,17 +363,36 @@ export default function Login({ onLogin }) {
                             </div>
                         </div>
 
-                        <div className="flex items-center">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
                             <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 font-medium">
-                                <input 
-                                    type="checkbox" 
+                                <input
+                                    type="checkbox"
                                     checked={rememberMe}
                                     onChange={(e) => setRememberMe(e.target.checked)}
                                     className={`w-4 h-4 rounded border-slate-300 ${config.activeColor} focus:ring-${config.activeColor.split('-')[1]}-500`}
                                 />
                                 Recordar mi usuario
                             </label>
+
+                            {/* Sólo para clientes: son los que entran con su correo.
+                                El repartidor entra con nombre de usuario, y a un
+                                nombre de usuario no se le puede mandar un correo. */}
+                            {activeTab === 'client' && (
+                                <button
+                                    type="button"
+                                    onClick={pedirEnlaceDeRecuperacion}
+                                    className="text-sm text-emerald-600 hover:text-emerald-700 font-medium underline underline-offset-2"
+                                >
+                                    He olvidado mi contraseña
+                                </button>
+                            )}
                         </div>
+
+                        {avisoRecuperacion && (
+                            <div className="bg-emerald-50 text-emerald-800 p-4 rounded-xl text-sm border border-emerald-100">
+                                {avisoRecuperacion}
+                            </div>
+                        )}
 
                         <button
                             type="button"
