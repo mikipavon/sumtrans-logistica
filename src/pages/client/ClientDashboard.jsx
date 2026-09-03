@@ -173,6 +173,17 @@ export default function ClientDashboard({
     const activeCount = clientShipments.filter(s => s.status !== 'Entregado').length;
     const deliveredCount = clientShipments.filter(s => s.status === 'Entregado').length;
 
+    // Filtro por tarjeta (Total / En tránsito / Entregados). Se aplica DESPUÉS de
+    // contar: las cifras de las tres tarjetas siguen siendo las del rango de
+    // fechas y la búsqueda, para que al pinchar "Entregados" el total no se
+    // convierta en el número de entregados.
+    const [filtroTarjeta, setFiltroTarjeta] = useState('todos'); // 'todos' | 'transito' | 'entregados'
+    const enviosVisibles = useMemo(() => {
+        if (filtroTarjeta === 'transito') return clientShipments.filter(s => s.status !== 'Entregado');
+        if (filtroTarjeta === 'entregados') return clientShipments.filter(s => s.status === 'Entregado');
+        return clientShipments;
+    }, [clientShipments, filtroTarjeta]);
+
     // --- Create Shipment Form State ---
     const [newOrigin, setNewOrigin] = useState(client.address || '');
     const [newOriginZip, setNewOriginZip] = useState(client.zip || '');
@@ -610,29 +621,33 @@ export default function ClientDashboard({
             </header>
 
             <main className="max-w-6xl mx-auto px-4 py-8">
-                {/* Stats */}
+                {/* Stats: pinchar en una tarjeta filtra el listado; pincharla otra vez (o "Total") lo quita */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
-                        <div className="p-4 bg-blue-50 text-blue-600 rounded-xl"><Package size={24}/></div>
-                        <div>
-                            <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Total Envíos</p>
-                            <p className="text-3xl font-bold text-slate-800">{clientShipments.length}</p>
-                        </div>
-                    </div>
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
-                        <div className="p-4 bg-orange-50 text-orange-600 rounded-xl"><Truck size={24}/></div>
-                        <div>
-                            <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">En Tránsito</p>
-                            <p className="text-3xl font-bold text-slate-800">{activeCount}</p>
-                        </div>
-                    </div>
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
-                        <div className="p-4 bg-emerald-50 text-emerald-600 rounded-xl"><CheckCircle size={24}/></div>
-                        <div>
-                            <p className="text-sm font-bold text-slate-500 uppercase tracking-wider">Entregados</p>
-                            <p className="text-3xl font-bold text-slate-800">{deliveredCount}</p>
-                        </div>
-                    </div>
+                    {[
+                        { clave: 'todos', etiqueta: 'Total Envíos', valor: clientShipments.length, icono: <Package size={24}/>, colorIcono: 'bg-blue-50 text-blue-600', activa: 'border-blue-400 ring-2 ring-blue-100', texto: 'text-blue-700' },
+                        { clave: 'transito', etiqueta: 'En Tránsito', valor: activeCount, icono: <Truck size={24}/>, colorIcono: 'bg-orange-50 text-orange-600', activa: 'border-orange-400 ring-2 ring-orange-100', texto: 'text-orange-700' },
+                        { clave: 'entregados', etiqueta: 'Entregados', valor: deliveredCount, icono: <CheckCircle size={24}/>, colorIcono: 'bg-emerald-50 text-emerald-600', activa: 'border-emerald-400 ring-2 ring-emerald-100', texto: 'text-emerald-700' },
+                    ].map(({ clave, etiqueta, valor, icono, colorIcono, activa, texto }) => {
+                        const esLaActiva = filtroTarjeta === clave && clave !== 'todos';
+                        return (
+                            <button
+                                key={clave}
+                                type="button"
+                                onClick={() => setFiltroTarjeta(filtroTarjeta === clave ? 'todos' : clave)}
+                                aria-pressed={esLaActiva}
+                                title={clave === 'todos' ? 'Ver todos los envíos' : `Ver sólo los envíos ${clave === 'transito' ? 'en tránsito' : 'entregados'}`}
+                                className={`bg-white p-6 rounded-2xl shadow-sm border flex items-center gap-4 text-left w-full transition-all hover:shadow-md ${
+                                    esLaActiva ? activa : 'border-slate-100 hover:border-slate-200'
+                                }`}
+                            >
+                                <div className={`p-4 rounded-xl ${colorIcono}`}>{icono}</div>
+                                <div>
+                                    <p className={`text-sm font-bold uppercase tracking-wider ${esLaActiva ? texto : 'text-slate-500'}`}>{etiqueta}</p>
+                                    <p className="text-3xl font-bold text-slate-800">{valor}</p>
+                                </div>
+                            </button>
+                        );
+                    })}
                 </div>
 
                 {/* Tabs */}
@@ -728,49 +743,53 @@ export default function ClientDashboard({
 
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                             <div className="overflow-x-auto">
-                                <table className="w-full text-left text-sm whitespace-nowrap">
-                                <thead className="bg-slate-50 text-slate-600 font-medium select-none">
+                                <table className="w-full text-left text-sm">
+                                <thead className="bg-slate-50 text-slate-600 font-medium select-none whitespace-nowrap">
                                     <tr>
-                                        <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('id')}>
+                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('id')}>
                                             ID Envío {sortConfig.key === 'id' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
-                                        <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('date')}>
+                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('date')}>
                                             Fecha {sortConfig.key === 'date' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
                                         <th className="px-4 py-4 text-slate-500">
                                             🔖 Referencia
                                         </th>
-                                        <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destinationName')}>
+                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destinationName')}>
                                             Remitente / Destinatario {sortConfig.key === 'destinationName' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
-                                        <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destination')}>
+                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destination')}>
                                             Destino {sortConfig.key === 'destination' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
-                                        <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('status')}>
+                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('status')}>
                                             Estado {sortConfig.key === 'status' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
-                                        <th className="px-6 py-4 text-right">Acciones</th>
+                                        <th className="px-4 py-4 text-right sticky right-0 bg-slate-50">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {clientShipments.length === 0 ? (
+                                    {enviosVisibles.length === 0 ? (
                                         <tr>
                                             <td colSpan="7" className="px-6 py-8 text-center text-slate-500">
-                                                No tienes historial de envíos.
+                                                {filtroTarjeta === 'transito'
+                                                    ? 'No hay envíos en tránsito con estos filtros.'
+                                                    : filtroTarjeta === 'entregados'
+                                                    ? 'No hay envíos entregados con estos filtros.'
+                                                    : 'No tienes historial de envíos.'}
                                             </td>
                                         </tr>
                                     ) : (
-                                        clientShipments.map(s => (
-                                            <tr key={s.id} className="border-t border-slate-100 hover:bg-slate-50">
-                                                <td className="px-6 py-4 font-bold text-slate-800">{s.id}</td>
-                                                <td className="px-6 py-4 text-slate-600">{new Date(s.createdAt || s.date).toLocaleDateString('es-ES')}</td>
+                                        enviosVisibles.map(s => (
+                                            <tr key={s.id} className="group border-t border-slate-100 hover:bg-slate-50">
+                                                <td className="px-4 py-4 font-bold text-slate-800 whitespace-nowrap">{s.id}</td>
+                                                <td className="px-4 py-4 text-slate-600 whitespace-nowrap">{new Date(s.createdAt || s.date).toLocaleDateString('es-ES')}</td>
                                                 <td className="px-4 py-4">
                                                     {s.clientReference
-                                                        ? <span className="font-mono text-xs bg-violet-50 text-violet-700 border border-violet-200 px-2 py-1 rounded-lg">{s.clientReference}</span>
+                                                        ? <span className="font-mono text-xs bg-violet-50 text-violet-700 border border-violet-200 px-2 py-1 rounded-lg whitespace-nowrap">{s.clientReference}</span>
                                                         : <span className="text-slate-300 text-xs">—</span>
                                                     }
                                                 </td>
-                                                <td className="px-6 py-4 font-medium text-slate-700">
+                                                <td className="px-4 py-4 font-medium text-slate-700">
                                                     <div className="flex items-center gap-2">
                                                         {esRecibido(s, client) && (
                                                             <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0"
@@ -781,15 +800,15 @@ export default function ClientDashboard({
                                                         <span>{laOtraParte(s, client)}</span>
                                                     </div>
                                                 </td>
-                                                <td className="px-6 py-4 text-slate-500">{s.destinationCity || s.destination || '-'}</td>
-                                                <td className="px-6 py-4">
+                                                <td className="px-4 py-4 text-slate-500">{s.destinationCity || s.destination || '-'}</td>
+                                                <td className="px-4 py-4">
                                                     <div className="flex flex-wrap items-center gap-2">
-                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getStatusColor(s.status)}`}>
+                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${getStatusColor(s.status)}`}>
                                                             {s.status}
                                                         </span>
                                                         {s.hasCod && parseFloat(s.codAmount || 0) > 0 && (
                                                             <span
-                                                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border ${
+                                                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${
                                                                     s.codPaid
                                                                         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                                                         : 'bg-amber-50 text-amber-800 border-amber-200'
@@ -803,14 +822,14 @@ export default function ClientDashboard({
                                                         {s.incidentStatus === 'active' && (
                                                             <button 
                                                                 onClick={() => setSelectedShipment(s)}
-                                                                className="px-2 py-0.5 rounded text-[10px] font-black bg-red-600 text-white animate-pulse shadow-sm hover:bg-red-700 transition-colors"
+                                                                className="px-2 py-0.5 rounded text-[10px] font-black whitespace-nowrap bg-red-600 text-white animate-pulse shadow-sm hover:bg-red-700 transition-colors"
                                                                 title="Pincha para ver el motivo de la incidencia"
                                                             >
                                                                 INCIDENCIA
                                                             </button>
                                                         )}
                                                         {Array.isArray(s.scannedPackages) && s.scannedPackages.length > 0 && (
-                                                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold border shadow-sm ${
+                                                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold border shadow-sm whitespace-nowrap ${
                                                                 s.scannedPackages.length >= getPackagesCount(s)
                                                                     ? 'bg-green-100 text-green-700 border-green-200'
                                                                     : 'bg-orange-100 text-orange-700 border-orange-200'
@@ -821,7 +840,7 @@ export default function ClientDashboard({
                                                     </div>
                                                 </td>
 
-                                                <td className="px-6 py-4 text-right">
+                                                <td className="px-4 py-4 text-right sticky right-0 bg-white group-hover:bg-slate-50">
                                                     <div className="flex justify-end gap-2">
                                                         {s.status === 'Pendiente de asignar' && !esRecibido(s, client) && (
                                                             <button 

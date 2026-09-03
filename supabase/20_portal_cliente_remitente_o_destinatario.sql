@@ -99,6 +99,11 @@ $$;
 -- así Postgres las resuelve UNA vez por consulta en vez de una por albarán.
 -- Con la tabla de envíos entera de por medio, eso es la diferencia entre que
 -- el portal cargue y que se quede pensando.
+--
+-- Los nombres van con `ANY (SELECT unnest(...))` y no con `ANY ((SELECT ...))`:
+-- con un SELECT dentro, ANY espera FILAS, no un array, y la primera forma daba
+-- "operator does not exist: text = text[]" (03/09/2026). Como la subconsulta no
+-- depende del albarán, Postgres la resuelve una sola vez igualmente.
 -- ────────────────────────────────────────────────────────────
 DROP POLICY IF EXISTS "client_select_own_shipments" ON public.shipments;
 
@@ -113,13 +118,13 @@ CREATE POLICY "client_select_own_shipments"
 
       -- Por nombre: los que teclea la oficina. Remitente…
       OR public.nombre_normalizado(data->>'client')
-           = ANY ((SELECT public.nombres_del_cliente_conectado()))
+           = ANY (SELECT unnest(public.nombres_del_cliente_conectado()))
       OR public.nombre_normalizado(data->>'originName')
-           = ANY ((SELECT public.nombres_del_cliente_conectado()))
+           = ANY (SELECT unnest(public.nombres_del_cliente_conectado()))
 
       -- …y destinatario, que es lo que faltaba.
       OR public.nombre_normalizado(data->>'destinationName')
-           = ANY ((SELECT public.nombres_del_cliente_conectado()))
+           = ANY (SELECT unnest(public.nombres_del_cliente_conectado()))
     )
   );
 
