@@ -6,6 +6,7 @@ import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { getPackagesCount, intervinoConductor } from '../utils/shipmentUtils';
 import { coincideBusqueda } from '../utils/busqueda';
+import { SIN_FILTRO, BAREMO_1, BAREMO_2, coincideCliente, filtroPoblacion, opcionesDeClientes, opcionesDePoblaciones } from '../utils/filtrosEnvios';
 import ImportExcelShipments from '../components/clients/ImportExcelShipments';
 import BudgetLiquidationModal from '../components/shipments/BudgetLiquidationModal';
 import CodReceiptUploadModal from '../components/shipments/CodReceiptUploadModal';
@@ -45,10 +46,18 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState(initialStatusFilter || 'all');
     const [driverFilter, setDriverFilter] = useState('all');
+    const [clientFilter, setClientFilter] = useState(SIN_FILTRO);
+    const [poblacionFilter, setPoblacionFilter] = useState(SIN_FILTRO);
     const [selectedIds, setSelectedIds] = useState([]);
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
+
+    // Las opciones de cliente y población salen de lo que hay en el listado, no de
+    // la ficha de clientes: así no se ofrece a nadie sin envíos y sí sale el
+    // destinatario suelto que no tiene ficha.
+    const clientOptions = useMemo(() => opcionesDeClientes(shipments), [shipments]);
+    const poblacionOptions = useMemo(() => opcionesDePoblaciones(shipments), [shipments]);
 
     // Apply initial filter from Dashboard navigation
     useEffect(() => {
@@ -80,6 +89,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     // Filter Logic
     const filteredShipments = useMemo(() => {
         const safeShipments = Array.isArray(shipments) ? shipments : [];
+        // Un pueblo concreto o todo un baremo; la regla de baremos es la del precio del alta.
+        const pasaPoblacion = filtroPoblacion(poblacionFilter, { tariffs, coverageZones });
         let result = safeShipments.filter(shipment => {
             // Busca en remitente y destinatario a la vez, sin depender de quién paga
             const matchesSearch = coincideBusqueda(shipment, searchTerm);
@@ -117,7 +128,10 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                 }
             }
 
-            return matchesSearch && matchesStatus && matchesDriver && matchesCodReceipt && matchesDate;
+            const matchesClient = coincideCliente(shipment, clientFilter);
+            const matchesPoblacion = pasaPoblacion(shipment);
+
+            return matchesSearch && matchesStatus && matchesDriver && matchesClient && matchesPoblacion && matchesCodReceipt && matchesDate;
         });
 
         // Apply Sorting
@@ -183,7 +197,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         }
 
         return result;
-    }, [shipments, searchTerm, statusFilter, driverFilter, sortConfig, dateFrom, dateTo]);
+    }, [shipments, searchTerm, statusFilter, driverFilter, clientFilter, poblacionFilter, tariffs, coverageZones, sortConfig, dateFrom, dateTo]);
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -266,7 +280,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
                 {/* Filters Row */}
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex flex-col gap-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {/* Seis filtros: en portátil van en dos filas de cuatro; en pantalla grande en una sola, con las fechas a doble ancho */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7 gap-3">
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                             <input
@@ -305,8 +320,42 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             ))}
                         </select>
 
-                        <div className="flex items-center gap-1.5">
-                            <div className="relative flex-1">
+                        <select
+                            className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium cursor-pointer text-sm transition-all ${
+                                clientFilter !== SIN_FILTRO ? 'border-blue-400 text-blue-700 bg-blue-50' : 'bg-slate-50 border-slate-200 text-slate-600'
+                            }`}
+                            value={clientFilter}
+                            onChange={(e) => setClientFilter(e.target.value)}
+                            title="Cliente (quien paga, recibe o remite)"
+                        >
+                            <option value={SIN_FILTRO}>Todos los Clientes</option>
+                            {clientOptions.map(c => (
+                                <option key={c} value={c}>{c}</option>
+                            ))}
+                        </select>
+
+                        <select
+                            className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium cursor-pointer text-sm transition-all ${
+                                poblacionFilter !== SIN_FILTRO ? 'border-blue-400 text-blue-700 bg-blue-50' : 'bg-slate-50 border-slate-200 text-slate-600'
+                            }`}
+                            value={poblacionFilter}
+                            onChange={(e) => setPoblacionFilter(e.target.value)}
+                            title="Población de entrega (o de recogida), o todas las de un baremo"
+                        >
+                            <option value={SIN_FILTRO}>Todas las Poblaciones</option>
+                            <optgroup label="Por baremo">
+                                <option value={BAREMO_1}>Todo el Baremo 1</option>
+                                <option value={BAREMO_2}>Todo el Baremo 2</option>
+                            </optgroup>
+                            <optgroup label="Por población">
+                                {poblacionOptions.map(p => (
+                                    <option key={p} value={p}>{p}</option>
+                                ))}
+                            </optgroup>
+                        </select>
+
+                        <div className="flex items-center gap-1.5 2xl:col-span-2">
+                            <div className="relative flex-1 min-w-0">
                                 <input
                                     type="date"
                                     value={dateFrom}
@@ -318,7 +367,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                 />
                             </div>
                             <span className="text-slate-400 text-xs font-bold shrink-0">→</span>
-                            <div className="relative flex-1">
+                            <div className="relative flex-1 min-w-0">
                                 <input
                                     type="date"
                                     value={dateTo}
@@ -886,6 +935,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                 clients={clients}
                 allPoblaciones={allPoblaciones}
                 allShipments={shipments}
+                coverageZones={coverageZones}
                 drivers={drivers}
                 driverNamePreference={driverNamePreference}
             />

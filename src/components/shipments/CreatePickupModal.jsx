@@ -1,7 +1,9 @@
 import { X, Building2, Package, FileText, MapPin, Loader2, Mic, MicOff, Truck } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
+import CityAutocomplete from '../CityAutocomplete';
 
-export default function CreatePickupModal({ isOpen, onClose, onSave, clients, allPoblaciones, allShipments, drivers = [], driverNamePreference = 'both', isDriver }) {
+export default function CreatePickupModal({ isOpen, onClose, onSave, clients, allPoblaciones, allShipments, drivers = [], driverNamePreference = 'both', isDriver, coverageZones = [] }) {
     const [formData, setFormData] = useState({
         clientName: '',
         originAddress: '',
@@ -107,6 +109,24 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
             .replace(/\b(s\.?l\.?u?|s\.?a\.?|sociedad limitada|sociedad anonima)\b/g, "") // Ignorar S.L. S.A.
             .replace(/\s+/g, " ")
             .trim();
+    };
+
+    // Mismo criterio que en el alta de albaranes (CreateShipmentModal): al elegir
+    // la población se busca su código postal primero en el listado de Baremos
+    // (coverageZones) y, si no está, en la lista fija; y al teclear un CP se
+    // rellena la población. Sin esto el CP se quedaba vacío al elegir del desplegable.
+    const normalizeCity = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
+    const handleCityChange = (city) => {
+        const zoneMatch = (coverageZones || []).find(z => z.zip && normalizeCity(z.name) === normalizeCity(city));
+        const baremoMatch = zoneMatch ? null : ALL_BAREMO_PUEBLOS.find(p => p.zip && normalizeCity(p.name) === normalizeCity(city));
+        const matchedZip = (zoneMatch && zoneMatch.zip) || (baremoMatch && baremoMatch.zip) || null;
+        setFormData(prev => ({ ...prev, originCity: city, ...(matchedZip ? { originZip: matchedZip } : {}) }));
+    };
+
+    const handleZipChange = (zip) => {
+        const match = zip.length >= 4 ? ALL_BAREMO_PUEBLOS.find(p => p.zip === zip) : null;
+        setFormData(prev => ({ ...prev, originZip: zip, ...(match ? { originCity: match.name } : {}) }));
     };
 
     const updateSuggestions = (value) => {
@@ -368,13 +388,14 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className={labelClass}>Población</label>
-                                    <input
-                                        type="text"
+                                    <CityAutocomplete
                                         className={inputClass}
                                         value={formData.originCity}
-                                        onChange={(e) => setFormData({ ...formData, originCity: e.target.value })}
-                                        list="poblaciones-list"
+                                        poblaciones={allPoblaciones || []}
+                                        placeholder="Población"
                                         required
+                                        onChange={(e) => handleCityChange(e.target.value)}
+                                        onSelect={(val) => handleCityChange(val)}
                                     />
                                 </div>
                                 <div>
@@ -383,7 +404,7 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                                         type="text"
                                         className={inputClass}
                                         value={formData.originZip}
-                                        onChange={(e) => setFormData({ ...formData, originZip: e.target.value })}
+                                        onChange={(e) => handleZipChange(e.target.value)}
                                     />
                                 </div>
                             </div>
@@ -482,12 +503,6 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                     </form>
                 </div>
             </div>
-
-            <datalist id="poblaciones-list">
-                {(allPoblaciones || []).map((poblacion, idx) => (
-                    <option key={`${idx}-${poblacion}`} value={poblacion} />
-                ))}
-            </datalist>
         </div>
     );
 }

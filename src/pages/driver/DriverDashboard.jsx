@@ -1742,7 +1742,7 @@ const DriverTimeLogAlerts = ({ currentDriverId }) => {
     );
 };
 
-function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both', isTestMode = false, cachedDriverName = null }) {
+function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both', isTestMode = false, cachedDriverName = null, modoAdmin = false }) {
     console.log('DriverDashboard Render', { currentDriverId, drivers: drivers?.length, shipments: allShipments?.length, clients: clients?.length });
 
     const getDriverDisplayName = (driver) => {
@@ -4624,6 +4624,13 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     }
 
     const handleLogoutWithSafety = () => {
+        // Administración volviendo a su panel: no se cierra nada, la aplicación
+        // sigue abierta y la cola pendiente se sincroniza igual. El aviso de abajo
+        // es para el repartidor que va a cerrar sesión de verdad.
+        if (modoAdmin) {
+            onLogout();
+            return;
+        }
         const queueLen = getQueueLength();
         if (queueLen > 0) {
             alert(`⚠️ ¡ATENCIÓN! Tienes ${queueLen} operación${queueLen > 1 ? 'es' : ''} pendiente${queueLen > 1 ? 's' : ''} de sincronizar por falta de cobertura. \n\nPor favor, busca red antes de salir para que los datos lleguen a la oficina y no se pierdan los registros de cobro.`);
@@ -4999,6 +5006,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     <span className="text-sm font-bold">Conexión restaurada — sincronizando datos ✓</span>
                 </div>
             )}
+            {/* Administración mirando el panel de un conductor. Misma banda que en el
+                portal del cliente y por el mismo motivo: aquí dentro se guarda con
+                permisos de ADMIN. No va pegada (sticky) a propósito: la cabecera de
+                abajo ya lo está y el cartel de aprendizaje de rutas se coloca midiendo
+                su altura; el botón de volver vive en la propia cabecera. */}
+            {modoAdmin && (
+                <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 px-4 py-2 bg-violet-600 text-white text-sm font-medium">
+                    <span className="font-bold">Vista de administración</span>
+                    <span className="opacity-90">— estás dentro del panel de {drivers?.find(d => Number(d.id) === Number(currentDriverId))?.name || cachedDriverName || 'este conductor'}.</span>
+                    <span className="opacity-75 text-xs">Lo que hagas aquí se guarda con permisos de administración, no con los del conductor.</span>
+                </div>
+            )}
             {/* Header */}
             <header id="driver-header" className={`bg-slate-900 text-white p-4 sticky z-50 shadow-md transition-all duration-300 ${(!isOnline || justReconnected) ? 'top-10' : 'top-0'}`}>
                 <div className="flex justify-between items-center mb-4">
@@ -5060,9 +5079,19 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             </button>
                         </div>
 
-                        <button onClick={handleLogoutWithSafety} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">
-                            <LogOut size={20} />
-                        </button>
+                        {modoAdmin ? (
+                            <button
+                                onClick={handleLogoutWithSafety}
+                                title="Volver a administración"
+                                className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-500 transition-colors whitespace-nowrap"
+                            >
+                                <LogOut size={18} /> Volver a administración
+                            </button>
+                        ) : (
+                            <button onClick={handleLogoutWithSafety} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">
+                                <LogOut size={20} />
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -6477,6 +6506,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 clients={clients}
                 allPoblaciones={allPoblaciones}
                 allShipments={allShipments}
+                coverageZones={coverageZones}
                 isDriver={true}
             />
 

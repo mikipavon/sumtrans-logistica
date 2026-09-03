@@ -1,7 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { normalizarPoblacion, baremoDelPunto, baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos } from './precioArticulo';
+import { normalizarPoblacion, pueblosQueCasan, baremoDelPunto, baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos } from './precioArticulo';
 
 const BLT_5 = { id: 'blt5', name: 'BLT_5', price: '18.00', priceB2: '21.50' };
+
+describe('pueblosQueCasan', () => {
+    it('devuelve las filas del pueblo por nombre y, si ninguna casa, por C.P.; nunca las que no tienen baremo válido', () => {
+        const lista = [{ name: 'Antequera', zip: '29200' }, { name: 'Antequera', zip: '29200', baremo: 2 }, { name: 'Otro', zip: '29200', baremo: '1' }];
+        expect(pueblosQueCasan('antequera', '29200', lista)).toEqual([lista[1]]);
+        expect(pueblosQueCasan('', '29200', lista)).toEqual([lista[1], lista[2]]);
+        expect(pueblosQueCasan('Nadie', '', lista)).toEqual([]);
+        expect(pueblosQueCasan('Aguilar', '', [{ name: 'Aguilar de la Frontera', zip: '14900', baremo: 1 }])).toHaveLength(1);
+    });
+});
 
 describe('normalizarPoblacion', () => {
     it('quita acentos, apellidos del pueblo y signos', () => {
@@ -34,6 +44,35 @@ describe('baremoDelPunto', () => {
     it('la lista personalizada de Ajustes gana al listado maestro', () => {
         const coverageZones = [{ name: 'Casariche', zip: '41580', baremo: 1 }];
         expect(baremoDelPunto('Casariche', '41580', { coverageZones }).baremo).toBe(1);
+    });
+
+    it('Antequera (3/9/2026): una fila repetida sin baremo válido o en Baremo 1 no tapa a la de Baremo 2', () => {
+        // Fila vieja sin baremo (no se ve en Ajustes) antes de la buena
+        const sinBaremo = [{ id: 1, name: 'Antequera', zip: '29200' }, { id: 2, name: 'Antequera', zip: '29200', baremo: 2 }];
+        expect(baremoDelPunto('Antequera', '29200', { coverageZones: sinBaremo }).baremo).toBe(2);
+        // El mismo pueblo en las dos columnas: gana Baremo 2
+        const repetida = [{ id: 1, name: 'ANTEQUERA', zip: '', baremo: 1 }, { id: 2, name: 'Antequera', zip: '29200', baremo: 2 }];
+        expect(baremoDelPunto('Antequera', '29200', { coverageZones: repetida }).baremo).toBe(2);
+        expect(baremoDelPunto('Antequera', '', { coverageZones: repetida }).baremo).toBe(2);
+        // Sólo hay filas con el baremo mal guardado: se ignoran y decide el listado maestro
+        const malGuardada = [{ name: 'Antequera', zip: '29200', baremo: 'B2' }];
+        expect(baremoDelPunto('Antequera', '29200', { coverageZones: malGuardada })).toMatchObject({ baremo: 2, source: 'Listado Maestro (Sistema): Antequera 29200' });
+    });
+
+    it('el nombre manda sobre el C.P.: Jauja (B2) comparte el 14911 con Llanos de Don Juan y Navas del Selpillar (B1)', () => {
+        expect(baremoDelPunto('Jauja', '14911').baremo).toBe(2);
+        expect(baremoDelPunto('Llanos de Don Juan', '14911').baremo).toBe(1);
+        // Sólo con el C.P. no se sabe cuál de los tres es: en la duda gana Baremo 2
+        expect(baremoDelPunto('', '14911').baremo).toBe(2);
+        // Otra fila de Ajustes en Baremo 1 con el C.P. de Antequera no la convierte en B1
+        const otraConSuCp = [{ name: 'Pueblo Raro', zip: '29200', baremo: 1 }, { name: 'Antequera', zip: '29200', baremo: 2 }];
+        expect(baremoDelPunto('Antequera', '29200', { coverageZones: otraConSuCp }).baremo).toBe(2);
+        expect(baremoDelPunto('Pueblo Raro', '29200', { coverageZones: otraConSuCp }).baremo).toBe(1);
+    });
+
+    it('la etiqueta dice qué fila decidió, para poder encontrarla en Ajustes', () => {
+        const coverageZones = [{ name: 'Antequera', zip: '29200', baremo: 2 }];
+        expect(baremoDelPunto('Antequera', '29200', { coverageZones }).source).toBe('Lista Personalizada (Ajustes): Antequera 29200');
     });
 
     it('una tarifa por zona con baremo explícito manda; sin baremo sólo aporta la zona', () => {
