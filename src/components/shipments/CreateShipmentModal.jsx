@@ -19,6 +19,10 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     const [formData, setFormData] = useState({
         // Remitente (Sender)
         clientName: '',
+        // Intrapoblación: un cliente pide una recogida en casa de otro y la paga él.
+        // Vacío = paga el propio remitente (lo normal).
+        payerName: '',
+        _payerParentClientId: null,
         originAddress: '',
         originZip: '',
         originCity: '',
@@ -54,6 +58,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     const [savedDestClient, setSavedDestClient] = useState(false);
     const [listeningField, setListeningField] = useState(null);
     const [keepOrigin, setKeepOrigin] = useState(false); // 'sender', 'destination', 'observations'
+    const [pagaOtroCliente, setPagaOtroCliente] = useState(false); // casilla "Paga otro cliente" (intrapoblación)
     const [selectedDebtIds, setSelectedDebtIds] = useState([]); // Deudas seleccionadas para cobrar
     const [showSuccessFeedback, setShowSuccessFeedback] = useState(false);
 
@@ -313,14 +318,23 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         return client;
     };
 
+    // Quién paga cuando el porte es Pagado: normalmente el remitente, pero en un
+    // servicio intrapoblación (un cliente pide recoger en casa de un tercero y se
+    // lo lleva a su cliente) paga el que lo encarga, no el que entrega la mercancía.
+    // Todo lo que dependa del pagador (serie HAB/SUM, tipo de cobro, tarifa especial,
+    // kilos, comisión del reembolso) mira aquí y no a clientName.
+    const hayOtroPagador = String(formData.payerName || '').trim().length > 0;
+    const nombrePagadorRemitente = hayOtroPagador ? formData.payerName.trim() : formData.clientName;
+    const parentPagadorRemitente = hayOtroPagador ? (formData._payerParentClientId || null) : formData._parentClientId;
+
     const shouldHidePrices = useMemo(() => {
         if (!isDriver) return false;
-        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : formData.clientName;
-        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
+        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : nombrePagadorRemitente;
+        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : parentPagadorRemitente;
         const payingClient = resolveBillingClient(payingClientName, parentId);
         const bType = String(payingClient?.billingType || '').toLowerCase();
         return bType.includes('factur') || bType.includes('presupuesto');
-    }, [isDriver, formData.porteType, formData.clientName, formData.destinationName, formData._parentClientId, formData._destParentClientId, clients]);
+    }, [isDriver, formData.porteType, formData.clientName, formData.payerName, formData._payerParentClientId, formData.destinationName, formData._parentClientId, formData._destParentClientId, clients]);
 
     const [priceOverride, setPriceOverride] = useState(null); // null = no override, string = manual price
 
@@ -329,8 +343,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     //   - Pagado → el remitente paga → comprobar remitente
     //   - Debido → el destinatario paga → comprobar destinatario
     const weightClientData = useMemo(() => {
-        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : formData.clientName;
-        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
+        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : nombrePagadorRemitente;
+        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : parentPagadorRemitente;
         const client = resolveBillingClient(payingClientName, parentId);
         console.log('[WeightTariff] porteType:', formData.porteType, '| Paying client:', payingClientName, '| Resolved:', client?.name, '| tariffType:', client?.tariffType);
         const isByKilos = client && client.tariffType === 'Por Kilos';
@@ -338,12 +352,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
             return { client, tariff: client.weightTariff || [] };
         }
         return null;
-    }, [formData.porteType, formData.clientName, formData.destinationName, formData._parentClientId, formData._destParentClientId, clients]);
+    }, [formData.porteType, formData.clientName, formData.payerName, formData._payerParentClientId, formData.destinationName, formData._parentClientId, formData._destParentClientId, clients]);
 
     // Resolve delivery rules from the billing client
     const clientRules = useMemo(() => {
-        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : formData.clientName;
-        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
+        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : nombrePagadorRemitente;
+        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : parentPagadorRemitente;
         const client = resolveBillingClient(payingClientName, parentId);
         if (!client) return { requireWeight: false, requireName: true, requireDNI: false, requirePhoto: false, requireSignature: false };
         return {
@@ -353,7 +367,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
             requirePhoto: !!client.requirePhoto,
             requireSignature: client.requireSignature !== false,
         };
-    }, [formData.porteType, formData.clientName, formData.destinationName, formData._parentClientId, formData._destParentClientId, clients]);
+    }, [formData.porteType, formData.clientName, formData.payerName, formData._payerParentClientId, formData.destinationName, formData._parentClientId, formData._destParentClientId, clients]);
 
     // Calculate price from weight bracket
     const calculateWeightPrice = (kg, tariff, clientData) => {
@@ -430,6 +444,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 // Pre-fill from Pickup (Recogida), Return or other source
                 setFormData({
                     clientName: prefillData.clientName || prefillData.client || '',
+                    payerName: prefillData.payerName || '',
+                    _payerParentClientId: prefillData._payerParentClientId || null,
                     originAddress: prefillData.originAddress || '',
                     originZip: prefillData.originZip || '',
                     originCity: prefillData.originCity || '',
@@ -457,10 +473,14 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                     needsSignatureReturn: prefillData.needsSignatureReturn || false
                 });
                 setMerchandisePhoto(prefillData.merchandisePhoto || null);
+                setPagaOtroCliente(!!prefillData.payerName);
             } else {
                 // Reset clean
+                setPagaOtroCliente(false);
                 setFormData({
                     clientName: '',
+                    payerName: '',
+                    _payerParentClientId: null,
                     originAddress: '',
                     originZip: '',
                     originCity: '',
@@ -631,6 +651,27 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         if (keepOrigin && multipleChainStartedRef.current) setKeepOrigin(false);
     };
 
+    // Cliente que paga en intrapoblación. Se busca su ficha (o la de su sede) para
+    // que resolveBillingClient encuentre al padre y aplique su tarifa y tipo de cobro.
+    const handlePayerNameChange = (value) => {
+        const norm = normalizeForSearch(value);
+        let parentId = null;
+        if (norm) {
+            for (const c of (clients || [])) {
+                if (normalizeForSearch(c.name) === norm || normalizeForSearch(c.legalName) === norm) { parentId = c.id; break; }
+                if (Array.isArray(c.branches) && c.branches.some(b => normalizeForSearch(b.name) === norm)) { parentId = c.id; break; }
+            }
+        }
+        // Si hay otro pagador es porque paga él: un Porte Debido (paga el
+        // destinatario) lo ignoraría, así que pasa solo a Pagado.
+        setFormData(prev => ({
+            ...prev,
+            payerName: value,
+            _payerParentClientId: parentId,
+            porteType: (String(value || '').trim() && prev.porteType === 'Debido') ? 'Pagado' : prev.porteType,
+        }));
+    };
+
     const handleDestinationNameChange = (e) => {
         const value = e.target.value;
         setFormData(prev => ({ ...prev, destinationName: value, selectedDestBillingType: null }));
@@ -767,8 +808,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
 
         const { baremo, tariffId } = getEffectiveBaremo();
 
-        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : formData.clientName;
-        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
+        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : nombrePagadorRemitente;
+        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : parentPagadorRemitente;
         const client = resolveBillingClient(payingClientName, parentId);
 
         // Solo el que PAGA determina si va por kilos. La cuenta del precio es la de
@@ -779,7 +820,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
             setSelectedArticles(articulos);
             setFormData(prev => ({ ...prev, amount: calcularImporteTotal(articulos) }));
         }
-    }, [formData.porteType, formData.clientName, formData.destinationName, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip, tariffs, coverageZones, selectedArticles]);
+    }, [formData.porteType, formData.clientName, formData.payerName, formData._payerParentClientId, formData.destinationName, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip, tariffs, coverageZones, selectedArticles]);
 
     const addArticle = (id, quantity) => {
         if (!id || quantity <= 0) return;
@@ -789,8 +830,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
 
         const { baremo, tariffId } = getEffectiveBaremo();
 
-        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : formData.clientName;
-        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
+        const payingClientName = formData.porteType === 'Debido' ? formData.destinationName : nombrePagadorRemitente;
+        const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : parentPagadorRemitente;
         const client = resolveBillingClient(payingClientName, parentId);
 
         // Solo el que PAGA determina si va por kilos. La cuenta del precio es la de
@@ -938,7 +979,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 billingType = formData.selectedDestBillingType || lookupBilling(formData.destinationName);
             } else {
                 // Paga el REMITENTE (Pagado)
-                billingType = formData.selectedClientBillingType || lookupBilling(formData.clientName);
+                billingType = hayOtroPagador ? lookupBilling(nombrePagadorRemitente) : (formData.selectedClientBillingType || lookupBilling(formData.clientName));
             }
             const t = normalize(billingType);
             return t.includes('habitual') || t.includes('diar') || t.includes('libre') || t.includes('contado') || t.includes('presupuesto');
@@ -981,9 +1022,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
 
         const shipmentData = {
             id: shipmentId,
-            client: formData.clientName,
+            // `client` es quien PAGA (cobros, cajas, serie, portal); `originName` es
+            // quien entrega la mercancía. Coinciden salvo en intrapoblación.
+            client: nombrePagadorRemitente,
+            originName: formData.clientName,
             branchId: formData.branchId || null,
-            _parentClientId: formData._parentClientId || null,
+            _parentClientId: parentPagadorRemitente || null,
             origin: fullOrigin,
             originAddress: formData.originAddress,
             originZip: formData.originZip,
@@ -1008,9 +1052,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
             amount: formData.amount ? `€${formData.amount}` : 'Tarifa',
             customAmount: formData.amount ? parseFloat(formData.amount) : null,
             billingType: (function() {
-                if (formData.selectedClientBillingType) return formData.selectedClientBillingType;
+                if (!hayOtroPagador && formData.selectedClientBillingType) return formData.selectedClientBillingType;
                 const normalize = (val) => String(val || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/\s+/g, " ");
-                const sName = normalize(formData.clientName);
+                const sName = normalize(nombrePagadorRemitente);
                 // Buscar primero en clientes principales
                 const client = clients?.find(c => normalize(c.name) === sName || normalize(c.legalName) === sName);
                 // Sin tipo de cobro conocido (p. ej. cliente aun pendiente de validar) →
@@ -1177,12 +1221,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
             let targetBranch = null;
             
             for (const c of clients) {
-                if (normalize(c.name) === normalize(finalData.client) || normalize(c.legalName) === normalize(finalData.client)) {
+                if (normalize(c.name) === normalize(finalData.originName || finalData.client) || normalize(c.legalName) === normalize(finalData.originName || finalData.client)) {
                     targetClient = c;
                     break;
                 }
                 if (c.branches && Array.isArray(c.branches)) {
-                    const b = c.branches.find(br => normalize(br.name) === normalize(finalData.client));
+                    const b = c.branches.find(br => normalize(br.name) === normalize(finalData.originName || finalData.client));
                     if (b) {
                         targetClient = c;
                         targetBranch = b;
@@ -1195,12 +1239,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 if (targetBranch) {
                     if (!(targetBranch.coordinates && String(targetBranch.coordinates).trim().length > 0)) {
                         onUpdateClient(targetClient.id, { coordinates: gps }, targetBranch.id);
-                        console.log(`[AutoCoords] Remitente Sede "${finalData.client}" → ${gps}`);
+                        console.log(`[AutoCoords] Remitente Sede "${finalData.originName || finalData.client}" → ${gps}`);
                     }
                 } else {
                     if (!(targetClient.coordinates && String(targetClient.coordinates).trim().length > 0)) {
                         onUpdateClient(targetClient.id, { coordinates: gps });
-                        console.log(`[AutoCoords] Remitente "${finalData.client}" → ${gps}`);
+                        console.log(`[AutoCoords] Remitente "${finalData.originName || finalData.client}" → ${gps}`);
                     }
                 }
             }
@@ -1390,6 +1434,42 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                                 </div>
                                             )}
                                         </div>
+                                        {/* Intrapoblación: quien encarga la recogida paga, pero no es quien entrega */}
+                                        <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer text-[10px] font-bold text-slate-500 select-none">
+                                            <input
+                                                type="checkbox"
+                                                checked={pagaOtroCliente || hayOtroPagador}
+                                                onChange={(e) => {
+                                                    setPagaOtroCliente(e.target.checked);
+                                                    if (!e.target.checked) setFormData(prev => ({ ...prev, payerName: '', _payerParentClientId: null }));
+                                                }}
+                                                className="w-3 h-3 rounded-sm border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                                            />
+                                            <span className="uppercase">Paga otro cliente (intrapoblación)</span>
+                                        </label>
+                                        {(pagaOtroCliente || hayOtroPagador) && (
+                                            <div className="mt-1.5 p-2 rounded-lg bg-amber-50 border border-amber-200">
+                                                <label className={labelClass}>Cliente que paga el porte</label>
+                                                <input
+                                                    type="text"
+                                                    list="payer-clients-list"
+                                                    placeholder="Buscar cliente que paga..."
+                                                    className={inputClass}
+                                                    value={formData.payerName || ''}
+                                                    onChange={(e) => handlePayerNameChange(e.target.value)}
+                                                    required
+                                                />
+                                                <datalist id="payer-clients-list">
+                                                    {(clients || []).filter(c => !c.status || c.status === 'approved').map(c => (
+                                                        <option key={`payer-${c.id}`} value={c.name} />
+                                                    ))}
+                                                    {(clients || []).flatMap(c => c.branches || []).map(b => (
+                                                        <option key={`payer-branch-${b.id}`} value={b.name} />
+                                                    ))}
+                                                </datalist>
+                                                <p className="text-[9px] text-amber-700 mt-1">El remitente de arriba entrega la mercancía; el porte, la serie y la tarifa van a nombre de este cliente.</p>
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="grid grid-cols-3 gap-3">
                                         <div className="col-span-2">
@@ -1474,7 +1554,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                                                 // Misma regla que en el alta automática: si paga la agencia, es suyo.
                                                                 ownerAgencyId: resolveOwnerAgencyId({
                                                                     porteType: formData.porteType,
-                                                                    client: formData.clientName,
+                                                                    client: nombrePagadorRemitente,
                                                                     destinationName: formData.destinationName,
                                                                 }, clients),
                                                             });
@@ -1691,7 +1771,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                         <option value="">Seleccionar artículo...</option>
                                         {(() => {
                                             let availableArticles = [...(articles || [])];
-                                            const client = resolveBillingClient(formData.clientName, formData._parentClientId);
+                                            const client = resolveBillingClient(nombrePagadorRemitente, parentPagadorRemitente);
                                             const destClient = resolveBillingClient(formData.destinationName, formData._destParentClientId);
                                             // BLT_1 a BLT_10. Es lo que ve un cliente que no tiene lista
                                             // propia de artículos en su ficha (36 de 503). A los otros 467
@@ -1814,7 +1894,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                     <Euro className="absolute left-3 top-1/2 -translate-y-1/2 text-red-400" size={16} />
                                     <input type="number" step="0.01" placeholder="REEMBOLSO 0.00" className={inputClass + " pl-9 border-red-200 focus:border-red-500 focus:ring-red-500/20"} value={formData.codAmount} onChange={(e) => {
                                         const val = e.target.value; const amount = parseFloat(val) || 0;
-                                        let fee = 0; if (amount > 0) { const client = resolveBillingClient(formData.clientName, formData._parentClientId); fee = calcularComisionReembolso(client, amount, defaultCodFee); }
+                                        let fee = 0; if (amount > 0) { const client = resolveBillingClient(nombrePagadorRemitente, parentPagadorRemitente); fee = calcularComisionReembolso(client, amount, defaultCodFee); }
                                         const prevCommission = parseFloat(formData.codCommission) || 0;
                                         const currentTotal = parseFloat(formData.amount) || 0;
                                         const basePorte = selectedArticles.length > 0 ? selectedArticles.reduce((sum, item) => sum + item.totalPrice, 0) : Math.max(0, currentTotal - prevCommission);
@@ -1969,7 +2049,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 const senderClean = (s.client || '').trim().toLowerCase();
                 const originClean = (s.originName || '').trim().toLowerCase();
                 if (hasPendingPorte) {
-                    const payerClean = s.porteType === 'Debido' ? (destClean || senderClean) : (originClean || senderClean);
+                    const payerClean = s.porteType === 'Debido' ? (destClean || senderClean) : (senderClean || originClean);
                     if (payerClean === clientName) return true;
                 }
                 if (hasPendingCod) {

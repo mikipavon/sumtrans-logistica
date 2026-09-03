@@ -541,8 +541,41 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                             Datos del Cliente / Pagador
                         </h3>
                         <div className="grid grid-cols-2 gap-4">
-                            {renderField("Cliente", formData.client, "client", null, "text", true)}
-                            {/* Previously 'clientName' was used, corrected to 'formData.client' */}
+                            <div className="space-y-1 col-span-full">
+                                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">Cliente</span>
+                                {isEditing && !isReadOnly ? (
+                                    <>
+                                        <input
+                                            type="text"
+                                            list="edit-clients-list"
+                                            value={formData.client || ''}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                // Intrapoblación: cambiar quién paga no mueve remitente ni destinatario.
+                                                // Los albaranes de oficina nacían sin originName (el modelo lo copiaba
+                                                // del pagador), así que se fija con el pagador anterior antes de tocarlo.
+                                                // Con Porte Debido paga el destinatario y este campo no manda. Si la
+                                                // oficina cambia el pagador es porque quiere que pague ÉL, así que el
+                                                // porte pasa solo a Pagado (pasó con HAB-7: se puso el pagador de
+                                                // presupuesto y el repartidor lo seguía teniendo para cobrar).
+                                                setFormData(prev => ({
+                                                    ...prev,
+                                                    originName: prev.originName || prev.senderName || prev.client || '',
+                                                    client: val,
+                                                    billingType: lookupBillingType(val),
+                                                    porteType: prev.porteType === 'Debido' ? 'Pagado' : prev.porteType,
+                                                }));
+                                            }}
+                                            className="w-full text-sm border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                        />
+                                        <p className="text-[10px] text-gray-400">Quien paga el porte. Cambiarlo no toca el remitente ni el destinatario, y si el porte era Debido pasa a Pagado.</p>
+                                    </>
+                                ) : (
+                                    <p className="text-gray-800 font-medium text-sm break-words whitespace-pre-wrap">
+                                        {formData.client || <span className="text-gray-300 italic">No especificado</span>}
+                                    </p>
+                                )}
+                            </div>
                         </div>
                     </div>
 
@@ -562,8 +595,16 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                                 value={formData.originName || formData.senderName || ''}
                                                 onChange={(e) => {
                                                     const val = e.target.value;
+                                                    // Si el pagador era el propio remitente, cambiar el remitente
+                                                    // cambia también quién paga (y su tipo de cobro). Si pagaba otro
+                                                    // cliente (intrapoblación), el pagador se queda como está.
+                                                    const norm = (s) => String(s || '').trim().toLowerCase();
+                                                    const pagadorEraRemitente = !formData.client || norm(formData.client) === norm(formData.originName || formData.senderName || formData.client);
                                                     handleChange("originName", val);
-                                                    handleChange("billingType", lookupBillingType(val));
+                                                    if (pagadorEraRemitente) {
+                                                        handleChange("client", val);
+                                                        handleChange("billingType", lookupBillingType(val));
+                                                    }
 
                                                     const match = (clients || []).find(c => (c.name || '').toLowerCase() === val.toLowerCase());
                                                     if (match) {
@@ -863,7 +904,10 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     </div>
                                 </div>
                                 
-                                {weightClientData && (
+                                {/* Se enseña también cuando el albarán ya trae kilos (p. ej. los puso el
+                                    cliente en su portal) aunque no facture por peso: la oficina tiene que
+                                    poder verlos y corregirlos. */}
+                                {(weightClientData || parseFloat(weightKg) > 0) && (
                                     <div className="w-28 mt-2 border-t border-slate-100 pt-2">
                                         <label className="text-[10px] uppercase font-bold text-indigo-500 mb-1 block">⚖️ Kilos</label>
                                         <input

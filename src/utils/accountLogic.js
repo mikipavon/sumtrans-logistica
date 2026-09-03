@@ -334,7 +334,7 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
             // cobrar. Si la oficina corrige después el destinatario (o el
             // remitente), la Cuenta debe enseñar el nombre actual del albarán.
             const pagadorActual = ship
-                ? (ship.porteType === 'Debido' ? ship.destinationName : (ship.originName || ship.client))
+                ? (ship.porteType === 'Debido' ? ship.destinationName : (ship.client || ship.originName))
                 : null;
             return {
                 id: c.shipmentId || c.id,
