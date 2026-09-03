@@ -598,7 +598,7 @@ export const ShipmentCardUI = React.memo(({
                             {/* BULTOS / ARTÍCULOS — una píldora por unidad, inline con wrap */}
                             {(() => {
                                 const arts = stop.articles || [];
-                                const pkgText = (stop.packages || '').trim();
+                                const pkgText = String(stop.packages ?? '').trim();
                                 const hasArts = arts.length > 0;
                                 if (!hasArts && !pkgText) return null;
 
