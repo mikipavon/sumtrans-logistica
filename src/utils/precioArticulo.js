@@ -38,6 +38,31 @@ const importe = (valor) => {
     return Number.isFinite(n) ? n : null;
 };
 
+const baremoValido = (p) => p && [1, 2].includes(Number(p.baremo));
+
+/**
+ * Filas de una lista de pueblos (Ajustes o listado maestro) que casan con un
+ * punto del envío.
+ *
+ * Manda el nombre exacto: sólo si ningún nombre casa se mira el C.P. Varios
+ * pueblos comparten C.P. (Jauja, Baremo 2, lleva el 14911 igual que Llanos de
+ * Don Juan y Navas del Selpillar, Baremo 1), y buscando "nombre o C.P." de una
+ * vez salía el primero de la lista, no el pueblo escrito.
+ *
+ * Las filas sin baremo válido (ni 1 ni 2) se ignoran. En Ajustes no salen en
+ * ninguna columna, así que nadie las ve ni las puede borrar, y hasta el
+ * 3/9/2026 valían como Baremo 1: una fila vieja de Antequera sin baremo tapaba
+ * a la de Antequera B2 y el alta ponía el envío a Baremo 1.
+ */
+export function pueblosQueCasan(city, zip, lista) {
+    const normCity = normalizarPoblacion(city);
+    const cleanZip = String(zip || '').trim();
+    const validas = (lista || []).filter(baremoValido);
+    const porNombre = normCity ? validas.filter(p => normalizarPoblacion(p.name) === normCity) : [];
+    if (porNombre.length) return porNombre;
+    return cleanZip ? validas.filter(p => String(p.zip || '').trim() === cleanZip) : [];
+}
+
 /**
  * Baremo (1 ó 2) de un punto del envío.
  *
@@ -49,6 +74,11 @@ const importe = (valor) => {
  *   3. Listado maestro de pueblos (data/baremos.js).
  *   4. Sin coincidencia: C.P. de Córdoba (14xxx) es Baremo 1; cualquier otro
  *      pueblo es Baremo 2. Sin pueblo ni C.P. → Baremo 1.
+ *
+ * En las listas (2 y 3) casan las filas de `pueblosQueCasan`. Si hay varias y
+ * no se ponen de acuerdo (el mismo pueblo repetido en las dos columnas de
+ * Ajustes) gana Baremo 2, que es lo mismo que hace "AUTO-CORREGIR BAREMOS".
+ * La etiqueta (`source`) dice qué fila decidió, para poder encontrarla.
  */
 export function baremoDelPunto(city, zip, { tariffs = null, coverageZones = [] } = {}) {
     const cleanCity = String(city || '').trim().toLowerCase();
@@ -74,18 +104,16 @@ export function baremoDelPunto(city, zip, { tariffs = null, coverageZones = [] }
     }
 
     if (!tariffId || baremo === 1) {
-        const enLista = (lista) => (lista || []).find(p =>
-            (normCity && normalizarPoblacion(p.name) === normCity) ||
-            (cleanZip && String(p.zip || '').trim() === cleanZip)
-        );
-        const personalizada = enLista(coverageZones);
-        const maestra = enLista(ALL_BAREMO_PUEBLOS);
+        const decide = (filas) => filas.find(p => Number(p.baremo) === 2) || filas[0] || null;
+        const etiqueta = (p) => `${p.name || ''} ${p.zip || ''}`.trim();
+        const personalizada = decide(pueblosQueCasan(cleanCity, cleanZip, coverageZones));
+        const maestra = decide(pueblosQueCasan(cleanCity, cleanZip, ALL_BAREMO_PUEBLOS));
         if (personalizada) {
-            baremo = Number(personalizada.baremo || 1);
-            source = 'Lista Personalizada (Ajustes)';
+            baremo = Number(personalizada.baremo);
+            source = `Lista Personalizada (Ajustes): ${etiqueta(personalizada)}`;
         } else if (maestra) {
             baremo = Number(maestra.baremo);
-            source = 'Listado Maestro (Sistema)';
+            source = `Listado Maestro (Sistema): ${etiqueta(maestra)}`;
         } else if (cleanZip.startsWith('14')) {
             baremo = 1;
             source = 'C.P. Córdoba (14xxx)';

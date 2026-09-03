@@ -148,11 +148,20 @@ export default function Articles({
 
         // 1. Check Coverage Zones
         for (const zone of coverageZones) {
-            const isB1 = Number(zone.baremo) === 1;
+            const baremoActual = Number(zone.baremo);
+            const sinBaremo = baremoActual !== 1 && baremoActual !== 2;
             const normName = (zone.name || '').toLowerCase().trim();
             const shouldBeB2 = baseB2.find(p => p.normName === normName || p.zip === String(zone.zip));
 
-            if (isB1 && shouldBeB2) {
+            if (sinBaremo) {
+                // Una fila sin baremo válido no sale en ninguna columna de esta
+                // pantalla, así que nadie puede verla ni borrarla, y el cálculo
+                // del precio la ignora. Se le pone el baremo que le toca para que
+                // aparezca: B2 si el listado maestro lo dice, si no por el C.P.
+                const nuevo = shouldBeB2 ? 2 : (String(zone.zip || '').startsWith('14') ? 1 : 2);
+                const confirmed = await onUpdateCoverageZone(zone.id, { ...zone, baremo: nuevo });
+                if (confirmed) count++;
+            } else if (baremoActual === 1 && shouldBeB2) {
                 const confirmed = await onUpdateCoverageZone(zone.id, { ...zone, baremo: 2 });
                 if (confirmed) count++;
             }

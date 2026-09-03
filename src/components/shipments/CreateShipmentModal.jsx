@@ -2,7 +2,7 @@ import { X, Truck, Package, Euro, Map as MapIcon, Building2, FileText, UserPlus,
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Shipment from '../../models/Shipment';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
-import { baremoDelPunto, baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos } from '../../utils/precioArticulo';
+import { baremoDelPunto, baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, pueblosQueCasan } from '../../utils/precioArticulo';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import CameraCaptureModal from '../CameraCaptureModal';
@@ -604,29 +604,17 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         }
     };
 
-    const normalize = (s) => String(s || '').normalize("NFD").replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-
     const handleCityChange = (city, prefix) => {
         const cityKey = prefix === 'origin' ? 'originCity' : 'destinationCity';
         const zipKey = prefix === 'origin' ? 'originZip' : 'destinationZip';
 
         setFormData(prev => ({ ...prev, [cityKey]: city }));
 
-        let matchedZip = null;
-        
-        // 1. Check coverageZones first
-        const zoneMatch = (coverageZones || []).find(z => normalize(z.name) === normalize(city));
-        if (zoneMatch && zoneMatch.zip) {
-            matchedZip = zoneMatch.zip;
-        }
-
-        // 2. Fallback to ALL_BAREMO_PUEBLOS if no zip found
-        if (!matchedZip) {
-            const baremoMatch = ALL_BAREMO_PUEBLOS.find(p => normalize(p.name) === normalize(city));
-            if (baremoMatch && baremoMatch.zip) {
-                matchedZip = baremoMatch.zip;
-            }
-        }
+        // El C.P. se rellena con las mismas reglas que deciden el baremo
+        // (utils/precioArticulo.js): nombre exacto y sólo filas con baremo válido.
+        // Primero la lista de Ajustes, si no el listado maestro.
+        const conCp = (lista) => pueblosQueCasan(city, '', lista).find(p => p.zip);
+        const matchedZip = (conCp(coverageZones) || conCp(ALL_BAREMO_PUEBLOS) || {}).zip || null;
 
         if (matchedZip) {
             setFormData(prev => ({ ...prev, [zipKey]: matchedZip }));
