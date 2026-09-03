@@ -205,11 +205,12 @@ export const movilesDelEnvio = (stop, clientes) => {
     return opciones;
 };
 
+/** El pueblo (o su C.P.) está en las tablas de Baremo 1 o 2. */
 const isCityInBaremo = (city, zip) => {
     if (!city && !zip) return false;
     const normCity = normalizeClientName(city);
     const cleanZip = String(zip || '').trim();
-    
+
     return (ALL_BAREMO_PUEBLOS || []).some(p => {
         const normPName = normalizeClientName(p.name);
         const matchName = normCity && normPName === normCity;
@@ -5473,7 +5474,26 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                         // Si el nombre no casa con ninguna ruta (una errata desde el móvil,
                                                         // "CORODBA"), el código postal dice de qué pueblo se trata.
                                                         const puebloDelEnvio = puebloDeRutaParaEnvio(cityText, zipText, todosLosPueblos, ALL_BAREMO_PUEBLOS);
-                                                        if (!puebloDelEnvio) return null;
+
+                                                        // Un pueblo que no está en ningún baremo no tiene ruta que lo
+                                                        // lleve, así que junto a las sugerencias se ofrece mandarlo a
+                                                        // Administración con un toque. El desplegable de al lado sigue
+                                                        // permitiendo asignarlo a cualquier conductor.
+                                                        const botonAdmin = !isCityInBaremo(cityText, zipText) ? (
+                                                            <button
+                                                                key="admin"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    onAssignShipment(shipment.id, 'admin');
+                                                                }}
+                                                                className="px-1.5 py-1 text-[9px] font-bold rounded-lg border flex items-center gap-0.5 transition-all active:scale-95 shadow-sm bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200 hover:shadow"
+                                                                title="Enviar a Administración"
+                                                            >
+                                                                <span className="text-[10px]">🏢</span> Administración
+                                                            </button>
+                                                        ) : null;
+
+                                                        if (!puebloDelEnvio) return botonAdmin;
 
                                                         const sugs = [];
                                                         activeR.forEach(r => {
@@ -5499,9 +5519,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                         // que usa el optimizador del móvil (ver utils/turnos.js).
                                                         const turnoQueToca = turnoQueSeAsignaAhora();
 
-                                                        return sugs.map((sug, i) => {
+                                                        const botones = sugs.map((sug, i) => {
                                                             const shouldBlink = sug.turno === turnoQueToca;
-                                                            
+
                                                             return (
                                                                 <button
                                                                     key={`${sug.driverId}-${sug.turno}-${i}`}
@@ -5520,6 +5540,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                             </button>
                                                             );
                                                         });
+                                                        return botonAdmin ? [...botones, botonAdmin] : botones;
                                                     })()}
                                                 </div>
                                                 <div className="flex items-center gap-1.5 shrink-0">
@@ -5533,21 +5554,18 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                         value=""
                                                     >
                                                         <option value="">Asignar a...</option>
-                                                        {!isCityInBaremo(shipment.type === 'Recogida' ? shipment.originCity : shipment.destinationCity, shipment.type === 'Recogida' ? shipment.originZip : shipment.destinationZip) ? (
-                                                            <>
-                                                                <option value="admin">Administración</option>
-                                                                {drivers && drivers.filter(d => d && String(d.name || '').toLowerCase().includes('pavon') && d.isActive !== false).map(d => (
-                                                                    <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
-                                                                ))}
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                <option value={currentDriverId}>A Mí</option>
-                                                                {drivers && drivers.filter(d => d && d.id !== currentDriverId && d.isActive !== false).map(d => (
-                                                                    <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
-                                                                ))}
-                                                            </>
-                                                        )}
+                                                        {/* Cualquier envío se puede asignar a uno mismo o a cualquier
+                                                            conductor activo (antes, fuera de baremo solo se ofrecían los
+                                                            apellidados Pavón). Administración solo se ofrece cuando el
+                                                            pueblo o el C.P. no está en Baremo 1 ni 2. */}
+                                                        <option value={currentDriverId}>A Mí</option>
+                                                        {!isCityInBaremo(
+                                                            shipment.type === 'Recogida' ? shipment.originCity : shipment.destinationCity,
+                                                            shipment.type === 'Recogida' ? shipment.originZip : shipment.destinationZip
+                                                        ) && <option value="admin">Administración</option>}
+                                                        {drivers && drivers.filter(d => d && d.id !== currentDriverId && d.isActive !== false).map(d => (
+                                                            <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
+                                                        ))}
                                                     </select>
                                                 </div>
                                             </div>
