@@ -37,7 +37,7 @@ import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
-import { mejorPuebloParaCiudad, esElMismoPueblo, normalizarPueblo } from '../../utils/townMatch';
+import { esElMismoPueblo, normalizarPueblo, puebloDeRutaParaEnvio } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
 import { geocodificarDireccion } from '../../utils/geocodificar';
 import { adaptarConocimiento, registrarEntrega, contarPueblosMemorizados } from '../../utils/aprendizajeRuta';
@@ -5456,8 +5456,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                             <div className="flex items-center justify-between pt-2 border-t border-slate-50 gap-2">
                                                 <div className="flex flex-wrap gap-1 items-center flex-1">
                                                     {(() => {
-                                                        const cityText = shipment.type === 'Recogida' ? (shipment.originCity || '') : (shipment.destinationCity || '');
-                                                        if (!cityText) return null;
+                                                        const esRecogida = shipment.type === 'Recogida';
+                                                        const cityText = esRecogida ? (shipment.originCity || '') : (shipment.destinationCity || '');
+                                                        const zipText = esRecogida ? (shipment.originZip || '') : (shipment.destinationZip || '');
+                                                        if (!cityText && !zipText) return null;
                                                         const activeR = routes && routes.length > 0 ? routes : [];
 
                                                         // Primero decidimos a qué pueblo de las rutas corresponde el envío, y solo
@@ -5468,7 +5470,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                             ...(r.poblacionesManana || []),
                                                             ...(r.poblacionesTarde || [])
                                                         ]);
-                                                        const puebloDelEnvio = mejorPuebloParaCiudad(cityText, todosLosPueblos);
+                                                        // Si el nombre no casa con ninguna ruta (una errata desde el móvil,
+                                                        // "CORODBA"), el código postal dice de qué pueblo se trata.
+                                                        const puebloDelEnvio = puebloDeRutaParaEnvio(cityText, zipText, todosLosPueblos, ALL_BAREMO_PUEBLOS);
                                                         if (!puebloDelEnvio) return null;
 
                                                         const sugs = [];

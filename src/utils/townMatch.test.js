@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizarPueblo, mejorPuebloParaCiudad, esElMismoPueblo } from './townMatch';
+import { normalizarPueblo, mejorPuebloParaCiudad, esElMismoPueblo, puebloDeRutaParaEnvio } from './townMatch';
 
 // Pueblos reales de las rutas de SUM (los que se pisan entre sí)
 const PUEBLOS_DE_RUTA = [
@@ -104,5 +104,35 @@ describe('reproducción del fallo con las rutas reales', () => {
 
     it('Córdoba capital los sigue proponiendo a todos', () => {
         expect(sugeridosPara('Córdoba')).toEqual(['JAVITO', 'PACO', 'JUAN JESÚS', 'KISKO']);
+    });
+});
+
+describe('puebloDeRutaParaEnvio: el CP rescata la errata del móvil', () => {
+    const RUTA = ['Córdoba', 'Montilla', 'Montalbán de Córdoba'];
+    const BAREMO = [
+        { name: 'Córdoba', zip: '14013' },
+        { name: 'Montalbán de Córdoba', zip: '14548' },
+        { name: 'Lucena', zip: '14900' },
+    ];
+
+    it('HAB-86: "CORODBA" con CP 14013 va a la ruta de Córdoba', () => {
+        expect(puebloDeRutaParaEnvio('CORODBA', '14013', RUTA, BAREMO)).toBe('Córdoba');
+    });
+
+    it('si el nombre casa, manda el nombre aunque el CP diga otra cosa', () => {
+        expect(puebloDeRutaParaEnvio('Montilla', '14013', RUTA, BAREMO)).toBe('Montilla');
+    });
+
+    it('sin nombre, sólo con CP, también encuentra la ruta', () => {
+        expect(puebloDeRutaParaEnvio('', '14548', RUTA, BAREMO)).toBe('Montalbán de Córdoba');
+    });
+
+    it('CP de un pueblo que no está en ninguna ruta no propone nada', () => {
+        expect(puebloDeRutaParaEnvio('LUCNEA', '14900', RUTA, BAREMO)).toBeNull();
+    });
+
+    it('CP desconocido y nombre mal escrito no proponen nada', () => {
+        expect(puebloDeRutaParaEnvio('CORODBA', '99999', RUTA, BAREMO)).toBeNull();
+        expect(puebloDeRutaParaEnvio('CORODBA', '', RUTA, BAREMO)).toBeNull();
     });
 });
