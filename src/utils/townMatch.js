@@ -62,3 +62,20 @@ export const esElMismoPueblo = (a, b) => {
     const na = normalizarPueblo(a);
     return !!na && na === normalizarPueblo(b);
 };
+
+/**
+ * El pueblo de las rutas al que va un envío. Primero por el nombre de la
+ * población; si no casa con ninguna ruta, por el nombre que la tabla de baremos
+ * da a ese código postal. Así una errata tecleada desde el móvil ("CORODBA",
+ * 14013) sigue encontrando la ruta de Córdoba en vez de quedarse sin propuesta.
+ *
+ * Devuelve el pueblo tal y como está escrito en la ruta, o null.
+ */
+export const puebloDeRutaParaEnvio = (ciudad, cp, pueblosDeRuta = [], tablaBaremo = []) => {
+    const porNombre = mejorPuebloParaCiudad(ciudad, pueblosDeRuta);
+    if (porNombre) return porNombre;
+    const cpLimpio = String(cp || '').trim();
+    if (!cpLimpio) return null;
+    const delBaremo = tablaBaremo.find(p => String(p?.zip || '').trim() === cpLimpio);
+    return delBaremo ? mejorPuebloParaCiudad(delBaremo.name, pueblosDeRuta) : null;
+};

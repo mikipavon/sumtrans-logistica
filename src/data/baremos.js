@@ -12,6 +12,8 @@ export const BAREMO_1_PUEBLOS = [
     { name: "Córdoba", zip: "14010", baremo: 1 },
     { name: "Córdoba", zip: "14011", baremo: 1 },
     { name: "Córdoba", zip: "14012", baremo: 1 },
+    { name: "Córdoba", zip: "14013", baremo: 1 },
+    { name: "Córdoba", zip: "14014", baremo: 1 },
     { name: "Aguilar de la Frontera", zip: "14900", baremo: 1 },
     { name: "Almedinilla", zip: "14812", baremo: 1 },
     { name: "Baena", zip: "14850", baremo: 1 },
