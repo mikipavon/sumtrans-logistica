@@ -270,6 +270,7 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
                     clients={clients}
                     articles={articles}
                     tariffs={tariffs}
+                    coverageZones={coverageZones}
                     familyOrder={familyOrder}
                 />
             )}

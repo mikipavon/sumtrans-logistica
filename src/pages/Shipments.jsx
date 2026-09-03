@@ -800,6 +800,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                 clients={clients}
                 articles={articles}
                 tariffs={tariffs}
+                coverageZones={coverageZones}
                 familyOrder={[]}
                 driverNamePreference={driverNamePreference}
             />

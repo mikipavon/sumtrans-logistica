@@ -4852,6 +4852,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 articles={articles}
                 clients={clients}
                 tariffs={tariffs}
+                coverageZones={coverageZones}
                 familyOrder={familyOrder}
                 hidePrices={(() => {
                     if (!selectedShipment) return false;

@@ -2,6 +2,7 @@ import { X, Truck, Package, Euro, Map as MapIcon, Building2, FileText, UserPlus,
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Shipment from '../../models/Shipment';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
+import { baremoDelPunto, baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos } from '../../utils/precioArticulo';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import CameraCaptureModal from '../CameraCaptureModal';
@@ -767,111 +768,10 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         );
     };
 
-    // Helper to normalize strings for comparison (remove accents, lowercase, remove suffixes)
-    const normalizeText = (text) => {
-        if (!text) return '';
-        return String(text)
-            .trim()
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "") // Remove accents
-            .replace(/\s+de\s+cordoba$/, "")
-            .replace(/\s+de\s+la\s+frontera$/, "")
-            .replace(/\s+de\s+los\s+caballeros$/, "")
-            .replace(/[^a-z0-9\s]/g, "") // Remove special chars
-            .replace(/\s+/g, " "); // Normalize spaces
-    };
-
-    // Helper to determine the baremo (1 or 2) for a single point
-    const getPointBaremo = (city, zip) => {
-        let matchedTariffId = null;
-        let baremo = 1;
-        let source = "General";
-
-        const cleanCity = String(city || '').trim().toLowerCase();
-        const cleanZip = String(zip || '').trim();
-
-        if (!cleanCity && !cleanZip) {
-            console.log("📍 [Baremo] Origen/Destino vacío -> B1 (Por defecto)");
-            return { baremo: 1, tariffId: null }; 
-        }
-
-        if (tariffs) {
-            const normCity = normalizeText(cleanCity);
-            const cityMatch = tariffs.find(t =>
-                t.match && normCity &&
-                normalizeText(t.match) === normCity
-            );
-            const zipMatch = tariffs.find(t =>
-                t.zipPrefix && cleanZip &&
-                cleanZip.startsWith(t.zipPrefix.trim())
-            );
-            const foundTariff = cityMatch || zipMatch;
-            if (foundTariff) {
-                matchedTariffId = foundTariff.id;
-                // Si la tarifa tiene baremo explícito (2 o 1), lo usamos. 
-                // Si no tiene (es 0 o null), NO defaulteamos a 1 todavía, 
-                // permitimos que siga buscando en la lista maestra.
-                if (foundTariff.baremo) {
-                    baremo = Number(foundTariff.baremo);
-                    source = "Tarifa Especial";
-                }
-            }
-        }
-
-        if (!matchedTariffId || baremo === 1) {
-            const normCity = normalizeText(cleanCity);
-            
-            // 1. Check Personalized/DB Coverage Zones
-            const dynamicMatch = (coverageZones || []).find(p => 
-                (normCity && normalizeText(p.name) === normCity) || 
-                (cleanZip && String(p.zip || '').trim() === cleanZip)
-            );
-            
-            // 2. Check Master List (baremos.js) - This ensures Antequera is B2 even if not in DB
-            const masterMatch = (ALL_BAREMO_PUEBLOS || []).find(p => 
-                (normCity && normalizeText(p.name) === normCity) || 
-                (cleanZip && String(p.zip || '').trim() === cleanZip)
-            );
-
-            if (dynamicMatch) {
-                baremo = Number(dynamicMatch.baremo || 1);
-                source = "Lista Personalizada (Ajustes)";
-            } else if (masterMatch) {
-                baremo = Number(masterMatch.baremo);
-                source = "Listado Maestro (Sistema)";
-            } else {
-                if (cleanZip.startsWith('14')) {
-                    baremo = 1;
-                    source = "C.P. Córdoba (14xxx)";
-                } else if (cleanCity || cleanZip) {
-                    baremo = 2;
-                    source = "Fuera de Córdoba (B2)";
-                } else {
-                    baremo = 1;
-                    source = "Local (Córdoba)";
-                }
-            }
-        }
-        return { baremo, tariffId: matchedTariffId, source };
-    };
-
-    // Global helper to determine the effective baremo for the whole shipment
-    const getEffectiveBaremo = () => {
-        const originInfo = getPointBaremo(formData.originCity, formData.originZip);
-        const destInfo = getPointBaremo(formData.destinationCity, formData.destinationZip);
-
-        // If EITHER point is Baremo 2, the whole shipment is Baremo 2
-        const baremo = (Number(originInfo.baremo) === 2 || Number(destInfo.baremo) === 2) ? 2 : 1;
-        
-        // Final source for UI display
-        let source = originInfo.baremo === 2 ? originInfo.source : destInfo.source;
-        if (originInfo.baremo === 2 && destInfo.baremo === 2) source = `${originInfo.source} + ${destInfo.source}`;
-
-        // We use destination tariff ID for potential zone-specific price overrides 
-        // as usually those are defined per destination.
-        return { baremo, tariffId: destInfo.tariffId, source };
-    };
+    // Baremo de un punto y del envío entero. La cuenta vive en utils/precioArticulo.js,
+    // compartida con la ficha del albarán: editar tiene que dar el mismo precio que dar de alta.
+    const getPointBaremo = (city, zip) => baremoDelPunto(city, zip, { tariffs, coverageZones });
+    const getEffectiveBaremo = () => baremoDelEnvio(formData, { tariffs, coverageZones });
 
     // Update existing articles prices when origin or destination changes
     useEffect(() => {
@@ -883,40 +783,15 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
         const client = resolveBillingClient(payingClientName, parentId);
 
-        const updatedArticles = selectedArticles.map(item => {
-            let unitPrice = parseFloat(item.price || 0); // Base (B1)
-
-            // Solo el que PAGA determina si va por kilos
-            if (weightClientData) {
-                unitPrice = 0;
-            } else if (baremo === 2 && client?.customRatesB2 && client.customRatesB2[item.id] !== undefined && client.customRatesB2[item.id] !== '') {
-                unitPrice = parseFloat(client.customRatesB2[item.id]);
-            } else if (baremo === 1 && client?.customRates && client.customRates[item.id] !== undefined && client.customRates[item.id] !== '') {
-                unitPrice = parseFloat(client.customRates[item.id]);
-            } else if (client?.customRates && client.customRates[item.id] !== undefined && client.customRates[item.id] !== '') {
-                // Autocompletado si hay general pero no B2
-                unitPrice = parseFloat(client.customRates[item.id]);
-            } else if (item.zonePrices && tariffId && item.zonePrices[tariffId]) {
-                unitPrice = parseFloat(item.zonePrices[tariffId]);
-            } else if (baremo === 2 && (item.priceB2 !== undefined && item.priceB2 !== null && item.priceB2 !== '')) {
-                unitPrice = parseFloat(item.priceB2);
-            }
-
-            return {
-                ...item,
-                unitPrice,
-                totalPrice: unitPrice * item.quantity
-            };
-        });
-
-        // Only update if something changed
-        const hasChanged = JSON.stringify(updatedArticles) !== JSON.stringify(selectedArticles);
-        if (hasChanged) {
-            console.log("💰 [Precios] Actualizando precios de artículos por cambio de zona:", updatedArticles);
-            setSelectedArticles(updatedArticles);
-            setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedArticles) }));
+        // Solo el que PAGA determina si va por kilos. La cuenta del precio es la de
+        // utils/precioArticulo.js, la misma que usa la ficha del albarán al editar.
+        const { articulos, cambiaron } = repreciarArticulos(selectedArticles, { baremo, tariffId, cliente: client, porKilos: !!weightClientData });
+        if (cambiaron) {
+            console.log("💰 [Precios] Actualizando precios de artículos por cambio de zona:", articulos);
+            setSelectedArticles(articulos);
+            setFormData(prev => ({ ...prev, amount: calcularImporteTotal(articulos) }));
         }
-    }, [formData.porteType, formData.clientName, formData.destinationName, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip, tariffs, selectedArticles]);
+    }, [formData.porteType, formData.clientName, formData.destinationName, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip, tariffs, coverageZones, selectedArticles]);
 
     const addArticle = (id, quantity) => {
         if (!id || quantity <= 0) return;
@@ -930,22 +805,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         const parentId = formData.porteType === 'Debido' ? formData._destParentClientId : formData._parentClientId;
         const client = resolveBillingClient(payingClientName, parentId);
 
-        let unitPrice = parseFloat(article.price);
-
-        // ── Solo el que PAGA determina si va por kilos ──
-        if (weightClientData) {
-            unitPrice = 0;
-        } else if (baremo === 2 && client?.customRatesB2 && client.customRatesB2[article.id] !== undefined && client.customRatesB2[article.id] !== '') {
-            unitPrice = parseFloat(client.customRatesB2[article.id]);
-        } else if (baremo === 1 && client?.customRates && client.customRates[article.id] !== undefined && client.customRates[article.id] !== '') {
-            unitPrice = parseFloat(client.customRates[article.id]);
-        } else if (client?.customRates && client.customRates[article.id] !== undefined && client.customRates[article.id] !== '') {
-            unitPrice = parseFloat(client.customRates[article.id]);
-        } else if (article.zonePrices && tariffId && article.zonePrices[tariffId]) {
-            unitPrice = parseFloat(article.zonePrices[tariffId]);
-        } else if (baremo === 2 && (article.priceB2 !== undefined && article.priceB2 !== null && article.priceB2 !== '')) {
-            unitPrice = parseFloat(article.priceB2);
-        }
+        // Solo el que PAGA determina si va por kilos. La cuenta del precio es la de
+        // utils/precioArticulo.js, la misma que usa la ficha del albarán al editar.
+        const unitPrice = precioUnitarioArticulo(article, { baremo, tariffId, cliente: client, porKilos: !!weightClientData });
 
         const newItem = {
             ...article,

@@ -1244,6 +1244,7 @@ export default function ClientDashboard({
                     articles={articles}
                     clients={allClients}
                     tariffs={tariffs}
+                    coverageZones={coverageZones}
                     isClientView={true}
                     clientePortal={client}
                 />
