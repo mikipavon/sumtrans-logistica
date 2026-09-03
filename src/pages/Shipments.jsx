@@ -935,6 +935,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                 clients={clients}
                 allPoblaciones={allPoblaciones}
                 allShipments={shipments}
+                coverageZones={coverageZones}
                 drivers={drivers}
                 driverNamePreference={driverNamePreference}
             />

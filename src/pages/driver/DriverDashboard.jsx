@@ -6477,6 +6477,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 clients={clients}
                 allPoblaciones={allPoblaciones}
                 allShipments={allShipments}
+                coverageZones={coverageZones}
                 isDriver={true}
             />
 
