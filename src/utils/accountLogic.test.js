@@ -267,7 +267,7 @@ describe('Cobros cuyo envío no está en la lista cargada', () => {
     });
 
     it('no marca los cobros cuyo envío sí está cargado', () => {
-        const envio = { id: 'S1', porteType: 'Debido', status: 'Pendiente', assignedDriverId: driverId, amount: '25.00' };
+        const envio = { id: 'S1', porteType: 'Debido', status: 'Pendiente', portePaid: true, assignedDriverId: driverId, amount: '25.00' };
         const cobros = [{ id: 'COL-1', type: 'Porte', amount: '25.00', shipmentId: 'S1', date: hoy }];
         const result = calculateDailyAccount({
             allShipments: [envio], driverId, clients: [], collectedCollections: cobros
@@ -350,5 +350,66 @@ describe('cobros de un conductor que cubre la ruta de otro', () => {
         })];
         expect(cuentaDe(envios, SUPLENTE).collectedReembolsos).toBe(50);
         expect(cuentaDe(envios, HABITUAL).collectedReembolsos).toBe(0);
+    });
+});
+
+describe('la oficina deshace un cobro marcado por error', () => {
+    const driverId = 1;
+    const hoy = new Date().toISOString();
+
+    // Un compañero pulsa "Marcar Cobrado" sin querer. La oficina edita el albarán
+    // y lo pone en Pendiente de Cobro: portePaid vuelve a false. La entrada que
+    // apuntó el móvil en la lista de cobros del día no se borra sola, y la Cuenta
+    // seguía sumándola aunque el albarán dijera que no se había cobrado.
+    it('el porte desaparece de la Cuenta cuando el albarán vuelve a Pendiente de Cobro', () => {
+        const albaran = { id: 'HAB-71', porteType: 'Pagado', portePaid: false, paymentStatus: 'Pending', createdById: driverId, amount: '30.00' };
+        const cobros = [{ id: 'COL-1', type: 'Porte', amount: '30.00', shipmentId: 'HAB-71', date: hoy, client: 'Antiguo' }];
+        const result = calculateDailyAccount({
+            allShipments: [albaran], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.collectedPorte).toBe(0);
+        expect(result.allPorteDetail).toHaveLength(0);
+        expect(result.dailyTotal).toBe(0);
+    });
+
+    it('lo mismo con un reembolso desmarcado', () => {
+        const albaran = { id: 'HAB-72', status: 'Entregado', hasCod: true, codAmount: '50.00', codPaid: false, assignedDriverId: driverId };
+        const cobros = [{ id: 'COL-2', type: 'Reembolso', amount: '50.00', shipmentId: 'HAB-72', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [albaran], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.collectedReembolsos).toBe(0);
+        expect(result.allReimbursementsDetail).toHaveLength(0);
+    });
+
+    it('si el albarán sigue cobrado, la entrada cuenta como siempre', () => {
+        const albaran = { id: 'HAB-73', porteType: 'Pagado', portePaid: true, createdById: driverId, amount: '30.00', paidAt: hoy };
+        const cobros = [{ id: 'COL-3', type: 'Porte', amount: '30.00', shipmentId: 'HAB-73', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [albaran], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.collectedPorte).toBe(30);
+        expect(result.allPorteDetail).toHaveLength(1);
+    });
+
+    // Si el albarán corregido no está cargado no se puede saber, y el dinero no
+    // puede desaparecer de la caja sin constancia.
+    it('sin el albarán cargado, la entrada se mantiene', () => {
+        const cobros = [{ id: 'COL-4', type: 'Porte', amount: '30.00', shipmentId: 'NO-CARGADO', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.collectedPorte).toBe(30);
+    });
+
+    // La entrada guarda el pagador tal como estaba al cobrar; si la oficina
+    // corrige el destinatario después, la Cuenta enseña el nombre nuevo.
+    it('la Cuenta enseña el destinatario actual del albarán, no el que había al cobrar', () => {
+        const albaran = { id: 'HAB-74', porteType: 'Debido', status: 'Entregado', portePaid: true, assignedDriverId: driverId, amount: '12.00', destinationName: 'Nombre Corregido' };
+        const cobros = [{ id: 'COL-5', type: 'Porte', amount: '12.00', shipmentId: 'HAB-74', date: hoy, client: 'Nombre Equivocado' }];
+        const result = calculateDailyAccount({
+            allShipments: [albaran], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.allPorteDetail[0].client).toBe('Nombre Corregido');
     });
 });

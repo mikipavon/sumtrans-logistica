@@ -200,9 +200,27 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     const existingShipmentIds = new Set((allShipments || []).map(s => s.id));
     const isShipmentMissing = (c) => Boolean(c.shipmentId) && !existingShipmentIds.has(c.shipmentId);
 
+    // La oficina ha deshecho el cobro. Un compañero pulsa "Marcar Cobrado" por
+    // error; la oficina edita el albarán y lo vuelve a poner en Pendiente de
+    // Cobro. Eso corrige el albarán (portePaid / codPaid a false) pero la entrada
+    // que el móvil apuntó en la lista de cobros del día seguía aquí, así que la
+    // Cuenta seguía sumando un dinero que el albarán decía que no se había cobrado,
+    // y encima el mismo porte volvía a salir en Cobros como pendiente. El albarán
+    // manda: si está cargado y dice que esa parte NO está cobrada, la entrada no
+    // cuenta. Si el albarán no está cargado no se puede saber, y el cobro cuenta
+    // igual (ver arriba).
+    const cobroDeshecho = (c) => {
+        if (!c.shipmentId) return false;
+        const ship = (allShipments || []).find(s => s.id === c.shipmentId);
+        if (!ship) return false;
+        if (c.type === 'Reembolso') return !ship.codPaid;
+        return !ship.portePaid;
+    };
+
     const manualPorteCollections = (collectedCollections || [])
         .filter(c => {
             if (isDeletedShipment(c)) return false;
+            if (cobroDeshecho(c)) return false;
             const matchType = (c.type === 'Porte' || c.type === 'Efectivo');
             const matchDate = isToday(c.date, targetDate);
             if (matchType && (c.date === todayStr || matchDate)) return true;
@@ -245,6 +263,7 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     const collectedReembolsosRaw = (collectedCollections || [])
         .filter(c => c.type === 'Reembolso' && isToday(c.date, targetDate))
         .filter(c => !isDeletedShipment(c))
+        .filter(c => !cobroDeshecho(c))
         .filter((c, index, self) => 
             !c.shipmentId || index === self.findIndex(t => t.shipmentId === c.shipmentId && t.type === c.type)
         );
@@ -311,11 +330,17 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
             const collectedAmt = parseAmount(c.amount);
             const shipAmt = ship ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : null;
             const amountToUse = collectedAmt > 0 ? c.amount : ((shipAmt !== null && parseAmount(shipAmt) > 0) ? shipAmt : c.amount);
+            // El nombre del pagador se guardó en la entrada tal como estaba al
+            // cobrar. Si la oficina corrige después el destinatario (o el
+            // remitente), la Cuenta debe enseñar el nombre actual del albarán.
+            const pagadorActual = ship
+                ? (ship.porteType === 'Debido' ? ship.destinationName : (ship.originName || ship.client))
+                : null;
             return {
                 id: c.shipmentId || c.id,
                 key: `man-${c.id}`,
                 date: c.date || (ship ? getShipmentDate(ship) : todayStr),
-                client: c.client,
+                client: pagadorActual || c.client,
                 sender: c.sender || (ship ? (ship.originName || ship.client) : 'Remitente'),
                 receiver: (ship ? ship.destinationName : (c.client === 'Destinatario' ? c.client : 'Destinatario')) || 'Destinatario',
                 payer: (ship && ship.porteType === 'Pagado') ? 'sender' : 'receiver',
