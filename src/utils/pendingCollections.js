@@ -90,7 +90,7 @@ export const lineasDeCobro = (s, clients) => {
             responsibleDriverId: cobradorDesignado(s, porDefectoPorte),
             payerName: esDebido
                 ? (s.destinationName || 'Destinatario (Debido)')
-                : (s.originName || s.client || 'Remitente')
+                : (s.client || s.originName || 'Remitente')
         });
     }
 

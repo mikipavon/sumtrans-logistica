@@ -4296,7 +4296,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 const isSimplifiedInvoicePorte = isPorte && extraFlags?.hasSimplifiedInvoice && sid === id;
 
                 const payerName = isPorte 
-                    ? (ship.porteType === 'Debido' ? (ship.destinationName || 'Destinatario') : (ship.originName || ship.client || 'Remitente'))
+                    ? (ship.porteType === 'Debido' ? (ship.destinationName || 'Destinatario') : (ship.client || ship.originName || 'Remitente'))
                     : (ship.destinationName || 'Destinatario');
 
                 if (!isSimplifiedInvoicePorte) {
