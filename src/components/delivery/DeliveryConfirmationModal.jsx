@@ -897,7 +897,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                             va "1 bulto" no dice qué se entrega, que es justo para lo que sirve. */}
                         {(() => {
                             const arts = shipment.articles || [];
-                            const pkgText = shipment.packages || '';
+                            const pkgText = String(shipment.packages ?? '').trim();
                             const hasArts = arts.length > 0;
                             const totalBultos = hasArts
                                 ? arts.reduce((s, a) => s + (parseInt(a.quantity) || 1), 0)
@@ -963,7 +963,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                     lo tiene en la línea naranja de arriba. */}
                                 {requiresPhoto1 && (() => {
                                     const arts = shipment.articles || [];
-                                    const pkgText = shipment.packages || '';
+                                    const pkgText = String(shipment.packages ?? '').trim();
                                     const totalBultos = arts.length > 0
                                         ? arts.reduce((s, a) => s + (parseInt(a.quantity) || 1), 0)
                                         : null;
