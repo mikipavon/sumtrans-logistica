@@ -37,3 +37,24 @@ describe('createDeliveryNotesDoc', () => {
     expect(await createDeliveryNotesDoc(null)).toBeNull();
   });
 });
+
+// El justificante que se baja el cliente desde su portal no lleva el precio del
+// porte, lo pague él o lo pague el otro: es un justificante de entrega, no una
+// factura. La oficina y el repartidor (sin ficha) lo siguen viendo.
+describe('el importe del porte en el justificante', () => {
+  const textoDel = (doc) => doc.output();
+  const envioPagado = { ...envio(1), client: 'Cliente Test', amount: 5.4, porteType: 'Pagado' };
+  const ficha = { id: 1, name: 'Cliente Test' };
+
+  it('sin ficha (oficina, repartidor) sale el importe', async () => {
+    const doc = await createDeliveryNotesDoc([envioPagado]);
+    expect(textoDel(doc)).toContain('5.40');
+  });
+
+  it('con ficha de cliente no sale el importe aunque sea él quien paga', async () => {
+    const doc = await createDeliveryNotesDoc([envioPagado], ficha);
+    const texto = textoDel(doc);
+    expect(texto).not.toContain('5.40');
+    expect(texto).toContain('Porte: Pagado');
+  });
+});

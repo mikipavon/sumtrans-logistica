@@ -3145,6 +3145,15 @@ function App() {
     });
   };
 
+  // Cambio de transportista en una zona: todos los cobros de uno pasan a otro
+  // de una vez. Mismo campo y misma regla que el traspaso de una fila: sólo
+  // quién cobra, ni el estado ni el reparto.
+  const handleReassignPendingCollections = async (shipmentIds, driverId) => {
+    const sinRepartidor = !driverId || driverId === '' || driverId === 'unassigned';
+    const pendingCollectionDriverId = sinRepartidor ? null : Number(driverId);
+    return handleUpdateMultipleShipments((shipmentIds || []).map(id => ({ id, updates: { pendingCollectionDriverId } })));
+  };
+
   // Handle manual edits to shipment details
   const handleUpdateShipment = async (idOrObject, maybeUpdates) => {
     let id, updates;
@@ -4732,7 +4741,7 @@ function App() {
                         <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} vehicles={vehicles} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
                     </div>
                 )}
-      {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onReassignCollection={handleReassignPendingCollection} onUpdateShipment={handleUpdateShipment} driverNamePreference={driverNamePreference} />}
+      {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onReassignCollection={handleReassignPendingCollection} onReassignCollections={handleReassignPendingCollections} onUpdateShipment={handleUpdateShipment} driverNamePreference={driverNamePreference} />}
       {currentView === 'shipments' && <Shipments shipments={visibleShipments} allShipments={shipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} />}
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
       {currentView === 'maintenance-history' && <MaintenanceHistory vehicles={vehicles} onUpdateVehicle={handleUpdateVehicle} onNavigateToFleet={() => setCurrentView('fleet')} />}

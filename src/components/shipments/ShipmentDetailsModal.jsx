@@ -13,7 +13,8 @@ import { getPackagesCount } from '../../utils/shipmentUtils';
 
 import { Trash2, Plus } from 'lucide-react';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
-export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, driverNamePreference = 'both', zoom = 1 }) {
+import { baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos } from '../../utils/precioArticulo';
+export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1 }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -99,6 +100,10 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         ) || null;
     };
 
+    // Baremo del envío con lo que hay ahora mismo en la ficha: la misma cuenta que
+    // usa el alta (utils/precioArticulo.js), para que editar dé el mismo precio.
+    const baremoActual = () => baremoDelEnvio(formData, { tariffs, coverageZones });
+
     // Misma cuenta única que en CreateShipmentModal, y por el mismo motivo: aquí
     // el importe se rehacía en tres sitios más (añadir artículo, quitarlo y el
     // recálculo al cambiar quién paga) y ninguno sumaba el porte por peso, así
@@ -118,28 +123,21 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         const article = (articles || []).find(a => a.id.toString() === idToUse.toString());
         if (!article) return;
 
-        let price = parseFloat(article.price || 0);
+        // Mismo cálculo que el alta (utils/precioArticulo.js): baremo del pueblo,
+        // tarifa especial del que paga, precio por zona y precio B2 del artículo.
+        // Antes aquí sólo se miraba el precio base y la tarifa especial, y un
+        // artículo a un pueblo de Baremo 2 se añadía al precio de Baremo 1.
+        // Para clientes "Por Kilos" el precio viene del peso, NO del artículo.
+        const { baremo, tariffId } = baremoActual();
+        const pt = formData.porteType || 'Pagado';
+        const payingClientName = pt === 'Pagado' ? formData.client : formData.destinationName;
+        const client = findBillingClient(payingClientName);
+        const price = precioUnitarioArticulo(article, { baremo, tariffId, cliente: client, porKilos: !!weightClientData });
 
-        // ── Para clientes "Por Kilos": el precio viene del peso, NO del artículo ──
-        if (weightClientData) {
-            price = 0;
-        } else {
-            // Check if paying client has custom rates for this article
-            const pt = formData.porteType || 'Pagado';
-            const payingClientName = pt === 'Pagado' ? formData.client : formData.destinationName;
-            const client = findBillingClient(payingClientName);
-
-            if (client?.customRates && client.customRates[article.id] !== undefined && client.customRates[article.id] !== '') {
-                price = parseFloat(client.customRates[article.id]);
-            }
-            // Eliminada la lógica antigua de tariffs[dest][familyCode] porque los precios base 
-            // ahora se manejan con article.price y customRates.
-        }
-        
         const newItem = {
             ...article,
             quantity: Number(tempQuantity),
-            pricePerUnit: price,
+            unitPrice: price,
             totalPrice: price * Number(tempQuantity),
             uniqueId: Date.now().toString()
         };
@@ -158,33 +156,44 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedList) }));
     };
 
-    // Si el admin corrige quién paga (Pagado ↔ Debido), los artículos ya añadidos
-    // se quedan con el precio calculado para el pagador ANTERIOR (p.ej. una tarifa
-    // especial pactada con el remitente) aunque el nuevo pagador no tenga ese acuerdo.
-    // Se recalculan aquí para que caigan a la tarifa general del nuevo pagador.
+    // Si el admin corrige quién paga (Pagado ↔ Debido) o cambia el pueblo de origen
+    // o destino, los artículos ya añadidos se quedan con el precio calculado para
+    // el pagador y el baremo ANTERIORES. Se recalculan aquí con la misma cuenta del
+    // alta (baremo, tarifa especial del que paga, precio por zona y precio B2).
+    //
+    // Sólo salta cuando cambia algo de eso DURANTE la edición. Antes saltaba también
+    // al pulsar Editar y, como no conocía los baremos, abrir un albarán a un pueblo
+    // de Baremo 2 lo abarataba al precio de Baremo 1 y "Guardar Cambios" pisaba el
+    // importe bueno aunque no se hubiera tocado nada.
+    const clavePrecioAnterior = useRef(null);
     useEffect(() => {
-        if (!isEditing || selectedArticles.length === 0) return;
+        if (!isEditing) {
+            clavePrecioAnterior.current = null;
+            return;
+        }
+        const clave = JSON.stringify([
+            formData.porteType || 'Pagado', formData.client, formData.destinationName,
+            formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip
+        ]);
+        if (clavePrecioAnterior.current === null) {
+            // Entrar a editar no toca el precio guardado.
+            clavePrecioAnterior.current = clave;
+            return;
+        }
+        if (clave === clavePrecioAnterior.current) return;
+        clavePrecioAnterior.current = clave;
+        if (selectedArticles.length === 0) return;
 
         const pt = formData.porteType || 'Pagado';
         const payingClientName = pt === 'Pagado' ? formData.client : formData.destinationName;
         const client = findBillingClient(payingClientName);
-
-        const updatedArticles = selectedArticles.map(item => {
-            let price = parseFloat(item.price || 0); // Tarifa general del artículo
-            if (weightClientData) {
-                price = 0;
-            } else if (client?.customRates && client.customRates[item.id] !== undefined && client.customRates[item.id] !== '') {
-                price = parseFloat(client.customRates[item.id]);
-            }
-            return { ...item, pricePerUnit: price, totalPrice: price * item.quantity };
-        });
-
-        const hasChanged = JSON.stringify(updatedArticles) !== JSON.stringify(selectedArticles);
-        if (hasChanged) {
-            setSelectedArticles(updatedArticles);
-            setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedArticles) }));
+        const { baremo, tariffId } = baremoActual();
+        const { articulos, cambiaron } = repreciarArticulos(selectedArticles, { baremo, tariffId, cliente: client, porKilos: !!weightClientData });
+        if (cambiaron) {
+            setSelectedArticles(articulos);
+            setFormData(prev => ({ ...prev, amount: calcularImporteTotal(articulos) }));
         }
-    }, [formData.porteType, formData.client, formData.destinationName, clients, weightClientData, selectedArticles, isEditing]);
+    }, [isEditing, formData.porteType, formData.client, formData.destinationName, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip]);
 
     useEffect(() => {
         if (shipment) {
@@ -1746,7 +1755,10 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                 onClick={async () => {
                                     setIsGeneratingPDF(true);
                                     try {
-                                        await generateDeliveryPDF(shipment);
+                                        // `clientePortal` sólo llega desde el portal del
+                                        // cliente: el justificante sale sin el precio del
+                                        // porte cuando no es él quien lo paga.
+                                        await generateDeliveryPDF(shipment, clientePortal);
                                     } catch (err) {
                                         console.error("PDF Generate Error:", err);
                                         alert("Error al generar el PDF: " + err.message);

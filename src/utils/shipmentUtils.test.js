@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { puedeAsignarloEsteConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante } from './shipmentUtils';
+import { puedeAsignarloEsteConductor, estaEnElRepartoDe, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -96,6 +96,45 @@ describe('puedeAsignarloEsteConductor', () => {
         expect(puedeAsignarloEsteConductor(undefined, MIGUEL)).toBe(false);
         expect(puedeAsignarloEsteConductor(albaranPendiente(), null)).toBe(false);
         expect(puedeAsignarloEsteConductor(albaranPendiente(), undefined)).toBe(false);
+    });
+});
+
+describe('estaEnElRepartoDe', () => {
+    // El caso real: Juan Jesús convierte una recogida suya en albarán. El albarán
+    // nace «Pendiente de asignar» pero con su id de conductor arrastrado del prefill,
+    // y le aparecía como parada #1 del reparto sin que nadie se lo hubiera asignado.
+    it('un albarán pendiente no es reparto de nadie, aunque lleve conductor', () => {
+        const albaran = { id: 'SUM-139', status: 'Pendiente de asignar', assignedDriverId: JUAN };
+
+        expect(estaEnElRepartoDe(albaran, JUAN)).toBe(false);
+        // Y sigue estando donde toca: en la pestaña Asignar de quien lo creó.
+        expect(puedeAsignarloEsteConductor({ ...albaran, createdById: JUAN }, JUAN)).toBe(true);
+    });
+
+    it('asignado de verdad, sí entra en su reparto', () => {
+        const albaran = { id: 'SUM-139', status: 'En reparto', assignedDriverId: JUAN };
+
+        expect(estaEnElRepartoDe(albaran, JUAN)).toBe(true);
+        expect(estaEnElRepartoDe(albaran, MIGUEL)).toBe(false);
+    });
+
+    it('una incidencia sigue siendo suya: no se le puede borrar la parada', () => {
+        const albaran = { id: 'SUM-139', status: 'Incidencia', assignedDriverId: JUAN };
+
+        expect(estaEnElRepartoDe(albaran, JUAN)).toBe(true);
+    });
+
+    it('sin conductor no entra en el reparto de nadie', () => {
+        const albaran = { id: 'SUM-139', status: 'En reparto', assignedDriverId: null };
+
+        expect(estaEnElRepartoDe(albaran, JUAN)).toBe(false);
+        expect(estaEnElRepartoDe(albaran, null)).toBe(false);
+    });
+
+    it('compara ids aunque uno venga como texto', () => {
+        const albaran = { id: 'SUM-139', status: 'En reparto', assignedDriverId: '3' };
+
+        expect(estaEnElRepartoDe(albaran, JUAN)).toBe(true);
     });
 });
 
@@ -226,5 +265,110 @@ describe('lineasDeDineroDelJustificante', () => {
             { id: 'SUM-3', amount: '40', customAmount: '55' }, { paga: true }
         );
         expect(priceText).toBe('*Precio:* 55,00 € + IVA = *66,55 €*\n');
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Qué envíos son de un cliente a efectos de su portal
+// ─────────────────────────────────────────────────────────────────────────────
+const ESMEBRA = {
+    id: 42,
+    name: 'ESMEBRA',
+    legalName: 'Esmebra Construcciones, S.L.',
+    branches: [{ name: 'ESMEBRA Almacén Lucena' }]
+};
+
+describe('papelDelClienteEnElEnvio', () => {
+    it('un porte debido que manda él sigue siendo suyo: paga el otro, pero lo ve', () => {
+        const envio = { client: 'ESMEBRA', destinationName: 'FERRETERIA PEPE', porteType: 'Debido' };
+        expect(papelDelClienteEnElEnvio(envio, ESMEBRA)).toBe('Remitente');
+        expect(envioEsDelCliente(envio, ESMEBRA)).toBe(true);
+    });
+
+    it('lo que le mandan a él también es suyo, aunque el remitente sea otro', () => {
+        const envio = { client: 'FERRETERIA PEPE', destinationName: 'ESMEBRA', porteType: 'Pagado' };
+        expect(papelDelClienteEnElEnvio(envio, ESMEBRA)).toBe('Destinatario');
+        expect(envioEsDelCliente(envio, ESMEBRA)).toBe(true);
+    });
+
+    it('no importa cómo lo tecleara la oficina: tildes, mayúsculas y espacios de más', () => {
+        expect(papelDelClienteEnElEnvio({ destinationName: '  esmebra   construcciones, s.l. ' }, ESMEBRA)).toBe('Destinatario');
+        expect(papelDelClienteEnElEnvio({ originName: 'Esmebra ALMACÉN Lucena' }, ESMEBRA)).toBe('Remitente');
+    });
+
+    it('un albarán de oficina viene sin clientId y se reconoce por el nombre', () => {
+        expect(papelDelClienteEnElEnvio({ client: 'ESMEBRA' }, ESMEBRA)).toBe('Remitente');
+    });
+
+    it('un albarán del portal se reconoce por el id aunque el nombre haya cambiado', () => {
+        expect(papelDelClienteEnElEnvio({ clientId: 42, client: 'Nombre viejo' }, ESMEBRA)).toBe('Remitente');
+        expect(papelDelClienteEnElEnvio({ clientId: '42' }, ESMEBRA)).toBe('Remitente');
+    });
+
+    it('sin id ni nombre que coincida, no es suyo', () => {
+        expect(papelDelClienteEnElEnvio({ client: 'OTRO', destinationName: 'OTRO MAS' }, ESMEBRA)).toBeNull();
+        expect(envioEsDelCliente({ client: 'OTRO' }, ESMEBRA)).toBe(false);
+    });
+
+    it('un albarán sin nombres no es de nadie, ni siquiera de una ficha sin nombre', () => {
+        const fichaVacia = { id: 7, name: '' };
+        expect(papelDelClienteEnElEnvio({ client: '', destinationName: '' }, fichaVacia)).toBeNull();
+        expect(papelDelClienteEnElEnvio({}, fichaVacia)).toBeNull();
+        // Number(null) === 0, y clientId ausente no puede casar con nada
+        expect(papelDelClienteEnElEnvio({ clientId: null }, { id: null, name: '' })).toBeNull();
+    });
+
+    it('si se manda algo a una sede suya, se queda con el papel del que paga', () => {
+        const aSuSede = { client: 'ESMEBRA', destinationName: 'ESMEBRA Almacén Lucena' };
+        expect(papelDelClienteEnElEnvio({ ...aSuSede, porteType: 'Pagado' }, ESMEBRA)).toBe('Remitente');
+        expect(papelDelClienteEnElEnvio({ ...aSuSede, porteType: 'Debido' }, ESMEBRA)).toBe('Destinatario');
+    });
+
+    it('sin envío o sin ficha no rompe: simplemente no es suyo', () => {
+        expect(papelDelClienteEnElEnvio(null, ESMEBRA)).toBeNull();
+        expect(papelDelClienteEnElEnvio({ client: 'ESMEBRA' }, null)).toBeNull();
+    });
+});
+
+describe('clientePagaElPorte · qué importes se le enseñan', () => {
+    it('remitente con porte pagado: paga él, ve el precio', () => {
+        expect(clientePagaElPorte({ client: 'ESMEBRA', porteType: 'Pagado' }, ESMEBRA)).toBe(true);
+    });
+
+    it('remitente con porte debido: paga el destinatario, no ve el precio', () => {
+        expect(clientePagaElPorte({ client: 'ESMEBRA', destinationName: 'OTRO', porteType: 'Debido' }, ESMEBRA)).toBe(false);
+    });
+
+    it('destinatario con porte debido: paga él, ve el precio', () => {
+        expect(clientePagaElPorte({ client: 'OTRO', destinationName: 'ESMEBRA', porteType: 'Debido' }, ESMEBRA)).toBe(true);
+    });
+
+    it('destinatario con porte pagado: paga el remitente, no ve el precio', () => {
+        expect(clientePagaElPorte({ client: 'OTRO', destinationName: 'ESMEBRA', porteType: 'Pagado' }, ESMEBRA)).toBe(false);
+    });
+
+    it('un albarán antiguo sin tipo de porte lo paga el remitente', () => {
+        expect(clientePagaElPorte({ client: 'ESMEBRA' }, ESMEBRA)).toBe(true);
+        expect(clientePagaElPorte({ client: 'OTRO', destinationName: 'ESMEBRA' }, ESMEBRA)).toBe(false);
+    });
+
+    it('un envío que no es suyo nunca le enseña el precio', () => {
+        expect(clientePagaElPorte({ client: 'OTRO', porteType: 'Pagado' }, ESMEBRA)).toBe(false);
+    });
+});
+
+describe('nombresDelCliente', () => {
+    it('reúne el comercial, el fiscal y las sedes, normalizados y sin repetidos', () => {
+        expect(nombresDelCliente(ESMEBRA)).toEqual([
+            'esmebra',
+            'esmebra construcciones, s.l.',
+            'esmebra almacen lucena'
+        ]);
+        expect(nombresDelCliente({ name: 'A', legalName: 'a', branches: [{ name: ' A ' }, null] })).toEqual(['a']);
+    });
+
+    it('sin ficha o sin nombres, lista vacía', () => {
+        expect(nombresDelCliente(null)).toEqual([]);
+        expect(nombresDelCliente({ id: 1 })).toEqual([]);
     });
 });

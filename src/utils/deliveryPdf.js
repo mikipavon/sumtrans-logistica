@@ -45,8 +45,13 @@ const getBannerBase64 = async () => {
 /**
  * Pinta el Justificante de Entrega (POD) de un envío en la página actual del documento.
  * Diseño corporativo SUM.
+ *
+ * `cliente` es la ficha de quien se descarga el justificante, y sólo la manda el
+ * portal del cliente: al cliente el justificante le sale sin el importe del porte,
+ * lo pague él o lo pague el otro. Es un justificante de entrega, no una factura.
+ * Sin ficha (oficina, conductor) sale todo.
  */
-const renderDeliveryPage = async (doc, shipment) => {
+const renderDeliveryPage = async (doc, shipment, cliente = null) => {
   const pW = doc.internal.pageSize.getWidth();
   const pH = doc.internal.pageSize.getHeight();
   const M  = 14;
@@ -133,10 +138,14 @@ const renderDeliveryPage = async (doc, shipment) => {
   doc.setTextColor(...DGRAY);
   doc.text('Bultos: ' + totalBultosPDF, M, infoY + 14);
 
+  const puedeVerElPorte = !cliente;
+
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...NAVY);
   doc.text(
-    'Porte (' + (shipment.porteType || 'Pagado') + '): ' + parseFloat(porteValue || 0).toFixed(2) + ' \u20ac',
+    puedeVerElPorte
+      ? 'Porte (' + (shipment.porteType || 'Pagado') + '): ' + parseFloat(porteValue || 0).toFixed(2) + ' \u20ac'
+      : 'Porte: ' + (shipment.porteType || 'Pagado'),
     M + 30, infoY + 14
   );
 
@@ -304,15 +313,15 @@ const renderDeliveryPage = async (doc, shipment) => {
   );
 };
 
-const createDeliveryPDFDoc = async (shipment) => {
+const createDeliveryPDFDoc = async (shipment, cliente = null) => {
   if (!shipment) return null;
   const doc = new jsPDF();
-  await renderDeliveryPage(doc, shipment);
+  await renderDeliveryPage(doc, shipment, cliente);
   return doc;
 };
 
-export const generateDeliveryPDF = async (shipment) => {
-  const doc = await createDeliveryPDFDoc(shipment);
+export const generateDeliveryPDF = async (shipment, cliente = null) => {
+  const doc = await createDeliveryPDFDoc(shipment, cliente);
   if (!doc) return;
   const fileName = ('POD_' + shipment.id + '_' + (shipment.destinationName || 'Envio') + '.pdf').replace(/\s+/g, '_');
   doc.save(fileName);
@@ -322,14 +331,14 @@ export const generateDeliveryPDF = async (shipment) => {
  * Monta un único documento con un albarán por página (uno por envío).
  * Devuelve null si no hay envíos.
  */
-export const createDeliveryNotesDoc = async (shipments) => {
+export const createDeliveryNotesDoc = async (shipments, cliente = null) => {
   const list = (shipments || []).filter(Boolean);
   if (list.length === 0) return null;
 
   const doc = new jsPDF();
   for (let i = 0; i < list.length; i++) {
     if (i > 0) doc.addPage();
-    await renderDeliveryPage(doc, list[i]);
+    await renderDeliveryPage(doc, list[i], cliente);
   }
   return doc;
 };
@@ -338,8 +347,8 @@ export const createDeliveryNotesDoc = async (shipments) => {
  * Descarga en un solo PDF los albaranes de todos los envíos indicados.
  * Devuelve cuántos albaranes se han incluido.
  */
-export const generateDeliveryNotesPDF = async (shipments, fileName) => {
-  const doc = await createDeliveryNotesDoc(shipments);
+export const generateDeliveryNotesPDF = async (shipments, fileName, cliente = null) => {
+  const doc = await createDeliveryNotesDoc(shipments, cliente);
   if (!doc) return 0;
   doc.save((fileName || 'Albaranes').replace(/\s+/g, '_') + '.pdf');
   return doc.internal.getNumberOfPages();

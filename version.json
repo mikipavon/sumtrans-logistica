@@ -1,4 +1,4 @@
 {
   "_comentario": "Numero de version que ve el repartidor en el Portal del Empleado. Se sube con 'npm run subir-version' antes de commitear un cambio que se vaya a desplegar. Vive aqui, en el repositorio, porque el servidor de despliegue clona la historia recortada y alli no se puede contar los commits.",
-  "numero": 190
+  "numero": 191
 }

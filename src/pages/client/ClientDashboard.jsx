@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { LogOut, Package, Plus, MapPin, Truck, CheckCircle, Clock, FileText, Download, FileDown, Loader2, Printer, Settings as SettingsIcon, Upload, Trash2, Tag } from 'lucide-react';
+import { LogOut, Package, Plus, MapPin, Truck, CheckCircle, Clock, FileText, Download, FileDown, Loader2, Printer, Settings as SettingsIcon, Upload, Trash2, Tag, Search } from 'lucide-react';
+import { coincideEnCampos, CAMPOS_BUSCABLES_ENVIO } from '../../utils/busqueda';
 import ShipmentDetailsModal from '../../components/shipments/ShipmentDetailsModal';
 import { printShipmentTicket } from '../../utils/printShipment';
 import { generateDeliveryPDF, generateDeliveryNotesPDF } from '../../utils/deliveryPdf';
@@ -7,12 +8,23 @@ import LabelPrintModal from '../../components/clients/LabelPrintModal';
 
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { construirAgendaDestinatarios, filtrarAgendaDestinatarios } from '../../utils/agendaDestinatarios';
-import { getPackagesCount } from '../../utils/shipmentUtils';
+import { getPackagesCount, envioEsDelCliente, papelDelClienteEnElEnvio } from '../../utils/shipmentUtils';
 import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { avisarAlPadre, estamosEmbebidos } from '../../utils/ventanaPadre';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
+
+// Un envío que le llega al cliente en vez de salir de él. En la lista se marca,
+// porque si no el cliente ve su propio nombre en la columna de destinatario y no
+// entiende qué hace ahí ese albarán.
+const esRecibido = (s, client) => papelDelClienteEnElEnvio(s, client) === 'Destinatario';
+
+// El de enfrente: en lo que manda, el destinatario; en lo que recibe, quien se lo
+// manda. Es el dato que le sirve para reconocer el envío de un vistazo.
+const laOtraParte = (s, client) => esRecibido(s, client)
+    ? (s.originName || s.client || 'Remitente')
+    : (s.destinationName || 'Destinatario');
 
 export default function ClientDashboard({
     client,
@@ -45,6 +57,9 @@ export default function ClientDashboard({
     // Filtros de fecha
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
+    // Buscador por texto: nombre de la otra parte, destino, referencia del
+    // cliente o número de albarán.
+    const [busqueda, setBusqueda] = useState('');
     
     // Estado de ordenación
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
@@ -52,6 +67,11 @@ export default function ClientDashboard({
     // Envíos de este cliente, sin filtrar por fechas. Se saca aparte porque la
     // agenda de destinatarios se construye con TODOS sus envíos: no tiene sentido
     // que las sugerencias se encojan porque haya un filtro puesto en la pantalla.
+    //
+    // Es suyo TODO envío en el que aparezca, como remitente o como destinatario, y
+    // dé igual quién pague el porte: antes sólo se miraba el lado del remitente, y
+    // lo que le llegaba a él no salía por ninguna parte.
+    //
     // `client?` a propósito: quien decide qué ficha es va en App.jsx, y allí ya
     // se espera a que llegue antes de pintar esto. Pero este useMemo corre en el
     // primer render pase lo que pase, y leer `.name` sobre una ficha que aún no
@@ -60,13 +80,16 @@ export default function ClientDashboard({
     // Sin ficha no hay envíos suyos que enseñar, que es la respuesta correcta.
     const misEnvios = useMemo(() => {
         if (!client) return [];
-        const clientNameLower = (client.name || '').toLowerCase();
-        return (allShipments || []).filter(s =>
-            (s.client && s.client.toLowerCase() === clientNameLower) ||
-            (s.originName && s.originName.toLowerCase() === clientNameLower) ||
-            (String(s.clientId) === String(client.id))
-        );
+        return (allShipments || []).filter(s => envioEsDelCliente(s, client));
     }, [allShipments, client]);
+
+    // Sólo los que MANDA él. La agenda de destinatarios sale de aquí: en lo que
+    // recibe, el destinatario es él mismo, y sugerírselo como destino al crear un
+    // envío no ayuda a nadie.
+    const enviosQueEnvia = useMemo(
+        () => misEnvios.filter(s => papelDelClienteEnElEnvio(s, client) === 'Remitente'),
+        [misEnvios, client]
+    );
 
     // Lo mismo, ya filtrado por el rango de fechas y ordenado: es lo que se pinta.
     const clientShipments = useMemo(() => {
@@ -81,6 +104,14 @@ export default function ClientDashboard({
             to.setHours(23, 59, 59, 999);
             filtered = filtered.filter(s => new Date(s.createdAt || s.date) <= to);
         }
+        // Mismo buscador sin tildes que el de la oficina, más la referencia del
+        // cliente, que en el portal es lo que él conoce de cada envío.
+        if (busqueda.trim()) {
+            filtered = filtered.filter(s => coincideEnCampos(
+                [...CAMPOS_BUSCABLES_ENVIO.map((campo) => s?.[campo]), s?.clientReference],
+                busqueda
+            ));
+        }
 
         // Copia antes de ordenar: sin filtro de fechas `filtered` ES `misEnvios`,
         // y sort() ordena en el sitio (estaríamos tocando el resultado del memo).
@@ -91,7 +122,7 @@ export default function ClientDashboard({
                     return match ? parseInt(match[0], 10) : s.id;
                 }
                 if (key === 'date') return new Date(s.createdAt || s.date).getTime();
-                if (key === 'destinationName') return (s.destinationName || '').toLowerCase();
+                if (key === 'destinationName') return laOtraParte(s, client).toLowerCase();
                 if (key === 'destination') return (s.destinationCity || s.destination || '').toLowerCase();
                 if (key === 'status') return (s.status || '').toLowerCase();
                 return '';
@@ -104,7 +135,7 @@ export default function ClientDashboard({
             if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
             return 0;
         });
-    }, [misEnvios, dateFrom, dateTo, sortConfig]);
+    }, [misEnvios, client, dateFrom, dateTo, busqueda, sortConfig]);
 
     // Albaranes descargables del rango de fechas filtrado (los entregados ya tienen POD)
     const albaranesDelFiltro = useMemo(
@@ -121,7 +152,8 @@ export default function ClientDashboard({
             const tramo = [dateFrom, dateTo].filter(Boolean).join('_a_') || 'todos';
             await generateDeliveryNotesPDF(
                 albaranesDelFiltro,
-                'Albaranes_' + (client.name || 'Cliente') + '_' + tramo
+                'Albaranes_' + (client.name || 'Cliente') + '_' + tramo,
+                client
             );
         } catch (err) {
             alert('Error al descargar los albaranes: ' + err.message);
@@ -215,11 +247,11 @@ export default function ClientDashboard({
         });
     }, [articles]);
 
-    // Agenda de destinatarios: sale de los envíos del propio cliente, no de la
-    // tabla `clients`. Antes se intentaba filtrar `allClients` y salía siempre
+    // Agenda de destinatarios: sale de los envíos que MANDA el propio cliente, no
+    // de la tabla `clients`. Antes se intentaba filtrar `allClients` y salía siempre
     // vacía — un cliente sólo recibe su propia ficha (RLS, fase 04). Ver
     // agendaDestinatarios.js.
-    const agenda = useMemo(() => construirAgendaDestinatarios(misEnvios), [misEnvios]);
+    const agenda = useMemo(() => construirAgendaDestinatarios(enviosQueEnvia), [enviosQueEnvia]);
 
     const filteredContacts = useMemo(
         () => filtrarAgendaDestinatarios(agenda, newDestinationName),
@@ -636,6 +668,17 @@ export default function ClientDashboard({
                     <div className="space-y-4">
                         {/* Filtros */}
                         <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-wrap items-center gap-4">
+                            <div className="relative flex-1 min-w-[220px]">
+                                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    type="text"
+                                    aria-label="Buscar envíos"
+                                    placeholder="Buscar por nombre, destino, referencia o albarán..."
+                                    value={busqueda}
+                                    onChange={(e) => setBusqueda(e.target.value)}
+                                    className="w-full pl-9 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
                             <div className="flex items-center gap-2">
                                 <Clock size={16} className="text-slate-400" />
                                 <span className="text-sm font-bold text-slate-600">Filtrar por Fecha:</span>
@@ -655,9 +698,9 @@ export default function ClientDashboard({
                                     className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                             </div>
-                            {(dateFrom || dateTo) && (
+                            {(dateFrom || dateTo || busqueda) && (
                                 <button
-                                    onClick={() => { setDateFrom(''); setDateTo(''); }}
+                                    onClick={() => { setDateFrom(''); setDateTo(''); setBusqueda(''); }}
                                     className="text-sm font-medium text-red-500 hover:text-red-700 hover:underline"
                                 >
                                     Limpiar filtros
@@ -698,7 +741,7 @@ export default function ClientDashboard({
                                             🔖 Referencia
                                         </th>
                                         <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destinationName')}>
-                                            Destinatario {sortConfig.key === 'destinationName' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
+                                            Remitente / Destinatario {sortConfig.key === 'destinationName' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
                                         <th className="px-6 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destination')}>
                                             Destino {sortConfig.key === 'destination' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
@@ -727,7 +770,17 @@ export default function ClientDashboard({
                                                         : <span className="text-slate-300 text-xs">—</span>
                                                     }
                                                 </td>
-                                                <td className="px-6 py-4 font-medium text-slate-700">{s.destinationName || 'Destinatario'}</td>
+                                                <td className="px-6 py-4 font-medium text-slate-700">
+                                                    <div className="flex items-center gap-2">
+                                                        {esRecibido(s, client) && (
+                                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0"
+                                                                  title="Envío que te llega a ti: aquí tú eres el destinatario">
+                                                                RECIBIDO
+                                                            </span>
+                                                        )}
+                                                        <span>{laOtraParte(s, client)}</span>
+                                                    </div>
+                                                </td>
                                                 <td className="px-6 py-4 text-slate-500">{s.destinationCity || s.destination || '-'}</td>
                                                 <td className="px-6 py-4">
                                                     <div className="flex flex-wrap items-center gap-2">
@@ -770,7 +823,7 @@ export default function ClientDashboard({
 
                                                 <td className="px-6 py-4 text-right">
                                                     <div className="flex justify-end gap-2">
-                                                        {s.status === 'Pendiente de asignar' && (
+                                                        {s.status === 'Pendiente de asignar' && !esRecibido(s, client) && (
                                                             <button 
                                                                 onClick={() => {
                                                                     if (window.confirm('¿Estás seguro de que deseas borrar este envío?')) {
@@ -1191,7 +1244,9 @@ export default function ClientDashboard({
                     articles={articles}
                     clients={allClients}
                     tariffs={tariffs}
+                    coverageZones={coverageZones}
                     isClientView={true}
+                    clientePortal={client}
                 />
             )}
 

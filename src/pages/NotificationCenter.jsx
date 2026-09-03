@@ -1,14 +1,16 @@
 import React, { useState, useMemo } from 'react';
-import { Bell, Package, CheckCircle, FileText, AlertTriangle, ChevronRight, ExternalLink } from 'lucide-react';
+import { Bell, Package, CheckCircle, FileText, AlertTriangle, ChevronRight, ExternalLink, Search, X } from 'lucide-react';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { getIrregularReasons } from '../utils/shipmentUtils';
+import { coincideBusqueda, coincideEnCampos } from '../utils/busqueda';
 
 export default function NotificationCenter({ shipments, drivers, clients, onUpdateShipment, articles, tariffs, defaultCodFee, familyOrder, coverageZones }) {
     const [selectedShipment, setSelectedShipment] = useState(null);
     const [selectedIds, setSelectedIds] = useState(new Set());
+    const [searchTerm, setSearchTerm] = useState('');
 
     // Filter shipments that have irregular reasons and are not dismissed
-    const notifications = useMemo(() => {
+    const allNotifications = useMemo(() => {
         return shipments
             .map(shipment => ({
                 shipment,
@@ -17,6 +19,17 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
             .filter(item => item.reasons.length > 0)
             .sort((a, b) => new Date(b.shipment.createdAt || 0) - new Date(a.shipment.createdAt || 0));
     }, [shipments]);
+
+    // El buscador mira los mismos campos que el de envíos (referencia, remitente,
+    // destinatario, ruta, NIF, teléfono) y además el motivo de la alerta y las
+    // observaciones, que es lo que se ve en esta pantalla.
+    const notifications = useMemo(() => {
+        if (!searchTerm.trim()) return allNotifications;
+        return allNotifications.filter(({ shipment, reasons }) =>
+            coincideBusqueda(shipment, searchTerm) ||
+            coincideEnCampos([...reasons, shipment.observations], searchTerm)
+        );
+    }, [allNotifications, searchTerm]);
 
     const handleDismiss = async (e, shipmentId) => {
         e.stopPropagation();
@@ -41,12 +54,17 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
         }
     };
 
+    // "Seleccionar todos" actúa solo sobre lo que se ve tras el buscador.
+    const visibleIds = notifications.map(n => n.shipment.id);
+    const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
+
     const toggleSelectAll = () => {
-        if (selectedIds.size === notifications.length) {
-            setSelectedIds(new Set());
-        } else {
-            setSelectedIds(new Set(notifications.map(n => n.shipment.id)));
-        }
+        setSelectedIds(prev => {
+            const newSet = new Set(prev);
+            if (allVisibleSelected) visibleIds.forEach(id => newSet.delete(id));
+            else visibleIds.forEach(id => newSet.add(id));
+            return newSet;
+        });
     };
 
     const toggleSelect = (e, id) => {
@@ -73,10 +91,41 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
                     </div>
                 </div>
                 <div className="bg-amber-50 px-4 py-2 rounded-lg border border-amber-200">
-                    <span className="text-amber-800 font-bold text-lg">{notifications.length}</span>
+                    <span className="text-amber-800 font-bold text-lg">{allNotifications.length}</span>
                     <span className="text-amber-600 text-sm ml-2 font-medium">Pendientes de Revisión</span>
                 </div>
             </div>
+
+            {/* Buscador */}
+            {allNotifications.length > 0 && (
+                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+                    <div className="relative w-full">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                        <input
+                            type="text"
+                            placeholder="Buscar por referencia, remitente, destinatario, motivo..."
+                            className="w-full pl-10 pr-10 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                        {searchTerm && (
+                            <button
+                                type="button"
+                                onClick={() => setSearchTerm('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                title="Limpiar búsqueda"
+                            >
+                                <X size={18} />
+                            </button>
+                        )}
+                    </div>
+                    {searchTerm.trim() && (
+                        <p className="mt-2 text-xs text-slate-500 font-medium">
+                            {notifications.length} de {allNotifications.length} notificaciones coinciden con la búsqueda
+                        </p>
+                    )}
+                </div>
+            )}
 
             {/* Bulk Actions */}
             {notifications.length > 0 && (
@@ -85,7 +134,7 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
                         <input 
                             type="checkbox" 
                             className="w-5 h-5 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
-                            checked={selectedIds.size === notifications.length && notifications.length > 0}
+                            checked={allVisibleSelected}
                             onChange={toggleSelectAll}
                         />
                         <span className="text-sm font-bold text-slate-700">Seleccionar Todos</span>
@@ -103,7 +152,15 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
             )}
 
             {/* List */}
-            {notifications.length === 0 ? (
+            {notifications.length === 0 && allNotifications.length > 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-sm">
+                    <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <Search size={40} className="text-slate-400" />
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-700 mb-2">Sin resultados</h3>
+                    <p className="text-slate-500">Ninguna notificación coincide con "{searchTerm.trim()}".</p>
+                </div>
+            ) : notifications.length === 0 ? (
                 <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-sm">
                     <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4">
                         <CheckCircle size={40} className="text-emerald-500" />
@@ -213,6 +270,7 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
                     clients={clients}
                     articles={articles}
                     tariffs={tariffs}
+                    coverageZones={coverageZones}
                     familyOrder={familyOrder}
                 />
             )}
