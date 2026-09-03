@@ -221,6 +221,10 @@ function App() {
   // Se guarda en la sesión local para que al recargar la pestaña siga habiendo
   // forma de volver atrás en vez de quedarse encerrado en el portal.
   const [suplantandoCliente, setSuplantandoCliente] = useState(savedSession?.suplantandoCliente || false)
+  // ── ¿Y el panel de un conductor? ── Mismo mecanismo que con el cliente: sin
+  // esta bandera, la oficina entraba con "Entrar" y la única salida era cerrar
+  // sesión y volver a teclear usuario y contraseña.
+  const [suplantandoConductor, setSuplantandoConductor] = useState(savedSession?.suplantandoConductor || false)
 
   // ── Persistir sesión local cada vez que cambie el estado de login ──
   useEffect(() => {
@@ -233,13 +237,14 @@ function App() {
           view: currentView,
           driverName: cachedDriverName,
           suplantandoCliente,
+          suplantandoConductor,
           savedAt: Date.now()
         }));
       } catch {}
     } else {
       sessionStorage.removeItem('sumtrans_session');
     }
-  }, [isAuthenticated, userRole, currentDriverId, currentClientId, currentView, cachedDriverName, suplantandoCliente]);
+  }, [isAuthenticated, userRole, currentDriverId, currentClientId, currentView, cachedDriverName, suplantandoCliente, suplantandoConductor]);
 
   // ── ¿Ha llegado desde el enlace de "he olvidado mi contraseña"? ──
   //
@@ -313,6 +318,7 @@ function App() {
           setCurrentDriverId(null);
           setCurrentClientId(null);
           setSuplantandoCliente(false);
+          setSuplantandoConductor(false);
           setAvisoDeSesion('Tu sesión ha caducado. Vuelve a entrar, por favor.');
         }
       } catch (e) {
@@ -2227,6 +2233,11 @@ function App() {
     setUserRole(null)
     setCurrentDriverId(null)
     setCurrentClientId(null)
+    // Si la oficina cierra sesión estando dentro de un portal ajeno, la bandera
+    // no puede sobrevivir: si luego entrara un cliente o un conductor de verdad
+    // en esta misma pestaña, vería la banda morada sin ser administración.
+    setSuplantandoCliente(false)
+    setSuplantandoConductor(false)
     setCurrentView('dashboard')
   }
 
@@ -4605,10 +4616,17 @@ function App() {
     )
   }
 
+  // ── Entrar en el panel de un conductor desde administración ──
+  // Igual que con el cliente (más abajo): no es un inicio de sesión, la sesión de
+  // Supabase sigue siendo la del admin. La bandera es lo que hace que el panel
+  // enseñe la banda morada y que el botón de salir sea "Volver a administración"
+  // en vez de cerrar la sesión.
   const handleImpersonate = (driverId) => {
     setIsAuthenticated(true)
     setUserRole('driver')
     setCurrentDriverId(driverId)
+    setCurrentClientId(null)
+    setSuplantandoConductor(true)
   }
 
   // ── Entrar en el portal de un cliente desde administración ──
@@ -4624,11 +4642,18 @@ function App() {
     setSuplantandoCliente(true)
   }
 
+  // ── Volver a administración desde el portal de un cliente o el panel de un conductor ──
+  // Tampoco es un cierre de sesión: la sesión de Supabase nunca dejó de ser la
+  // del admin, así que basta con volver a pintar la administración. Se vuelve a
+  // la lista de la que se salió (Clientes o Conductores).
   const volverAAdministracion = () => {
+    const vistaDeVuelta = suplantandoConductor ? 'drivers' : 'clients'
     setSuplantandoCliente(false)
+    setSuplantandoConductor(false)
     setCurrentClientId(null)
+    setCurrentDriverId(null)
     setUserRole('admin')
-    setCurrentView('clients')
+    setCurrentView(vistaDeVuelta)
   }
 
   // Client View
@@ -4680,7 +4705,8 @@ function App() {
     return (
       <Suspense fallback={<PantallaCargando />}>
         <DriverDashboard
-          onLogout={handleLogout}
+          modoAdmin={suplantandoConductor}
+          onLogout={suplantandoConductor ? volverAAdministracion : handleLogout}
           allShipments={shipments}
           currentDriverId={currentDriverId}
           routes={routes}
