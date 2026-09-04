@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { puedeAsignarloEsteConductor, estaEnElRepartoDe, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente } from './shipmentUtils';
+import { puedeAsignarloEsteConductor, estaEnElRepartoDe, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, importeParaMostrar } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -370,5 +370,20 @@ describe('nombresDelCliente', () => {
     it('sin ficha o sin nombres, lista vacía', () => {
         expect(nombresDelCliente(null)).toEqual([]);
         expect(nombresDelCliente({ id: 1 })).toEqual([]);
+    });
+});
+
+describe('importeParaMostrar · la columna Valor con un solo formato', () => {
+    it('lo que se teclea al editar ("6") sale como al crear ("€6.00")', () => {
+        expect(importeParaMostrar('6')).toBe('€6.00');
+        expect(importeParaMostrar(6)).toBe('€6.00');
+        expect(importeParaMostrar('€3.00')).toBe('€3.00');
+        expect(importeParaMostrar('12,5')).toBe('€12.50');
+    });
+
+    it('lo que no es un importe se deja tal cual', () => {
+        expect(importeParaMostrar('Tarifa')).toBe('Tarifa');
+        expect(importeParaMostrar('')).toBe('');
+        expect(importeParaMostrar(null)).toBe('');
     });
 });

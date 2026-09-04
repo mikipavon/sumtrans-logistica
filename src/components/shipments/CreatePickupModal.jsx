@@ -1,7 +1,11 @@
 import { X, Building2, Package, FileText, MapPin, Loader2, Mic, MicOff, Truck } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import CityAutocomplete from '../CityAutocomplete';
+import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
+
+// Serie de las recogidas. REC- desde 2026-08-20; las anteriores conservan su PU-.
+const SERIE_RECOGIDAS = 'REC';
 
 export default function CreatePickupModal({ isOpen, onClose, onSave, clients, allPoblaciones, allShipments, drivers = [], driverNamePreference = 'both', isDriver, coverageZones = [] }) {
     const [formData, setFormData] = useState({
@@ -18,6 +22,16 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
     });
 
     const [gettingGps, setGettingGps] = useState(false);
+
+    // ── Guardado ──
+    // `guardando` bloquea el botón mientras se reserva el número y se guarda.
+    // `avisoGuardado` es el motivo por el que la recogida NO se ha guardado; el
+    // modal se queda abierto para que se vea y no se pierda lo tecleado.
+    // `numeroReservadoRef` guarda el número que ya dio el servidor: si el guardado
+    // falla y se vuelve a pulsar, se reutiliza en vez de gastar otro.
+    const [guardando, setGuardando] = useState(false);
+    const [avisoGuardado, setAvisoGuardado] = useState(null); // { tipo: 'error' | 'cola', texto }
+    const numeroReservadoRef = useRef(null);
 
     const [filteredClients, setFilteredClients] = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
@@ -78,6 +92,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 scheduledDate: ''
             });
             setShowSuggestions(false);
+            setAvisoGuardado(null);
+            setGuardando(false);
+            numeroReservadoRef.current = null;
         } else {
             // Try auto-capture on open if supported
             captureGps();
@@ -209,54 +226,96 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
         setShowSuggestions(false);
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
+        if (guardando) return;
+        setGuardando(true);
+        setAvisoGuardado(null);
 
         // For Pickups, origin is the relevant address
         const fullOrigin = `${formData.originAddress}, ${formData.originZip} ${formData.originCity}`.trim();
 
-        const maxId = (allShipments || []).reduce((max, s) => {
-            const num = parseInt(String(s.id || '').replace(/\D/g, ''), 10);
-            return (!isNaN(num) && num < 100000 && num > max) ? num : max;
-        }, 0);
+        try {
+            // El número lo reserva el servidor (reservar_numeros_albaran), que ve
+            // TODAS las recogidas y atiende de una en una. Antes se calculaba con la
+            // lista de este navegador: la oficina con el Modo Fantasma echado no
+            // veía las recogidas de clientes Habituales, y dos pantallas a la vez
+            // sacaban el mismo número; el guardado por upsert pisaba la otra
+            // recogida sin avisar. Sin conexión se numera en local, como siempre.
+            if (!numeroReservadoRef.current) {
+                const { primero } = await reservarNumerosAlbaran(SERIE_RECOGIDAS, 1, { enviosLocales: allShipments });
+                numeroReservadoRef.current = primero;
+            }
 
-        const newPickup = {
-            // REC- desde 2026-08-20; las recogidas anteriores conservan su PU-.
-            // El número no depende del prefijo: maxId sale de quitar las letras a
-            // TODOS los albaranes, así que recogidas y envíos comparten contador.
-            id: `REC-${maxId + 1}`,
-            type: 'Recogida', // Essential tag
-            client: formData.clientName,
-            branchId: formData.branchId || null,
-            _parentClientId: formData._parentClientId || null,
+            const newPickup = {
+                id: `${SERIE_RECOGIDAS}-${numeroReservadoRef.current}`,
+                type: 'Recogida', // Essential tag
+                client: formData.clientName,
+                branchId: formData.branchId || null,
+                _parentClientId: formData._parentClientId || null,
 
-            // Pickup Location (Origin)
-            origin: fullOrigin,
-            originAddress: formData.originAddress,
-            originZip: formData.originZip,
-            originCity: formData.originCity,
-            originCoordinates: formData.originCoordinates,
+                // Pickup Location (Origin)
+                origin: fullOrigin,
+                originAddress: formData.originAddress,
+                originZip: formData.originZip,
+                originCity: formData.originCity,
+                originCoordinates: formData.originCoordinates,
 
-            // Destination is generic for Pickups until processed
-            destination: 'Almacén Central',
+                // Destination is generic for Pickups until processed
+                destination: 'Almacén Central',
 
-            address: fullOrigin, // Main display address for functionality
-            // Si la oficina ya eligió conductor aquí mismo, la recogida nace igual que
-            // si la hubiera asignado luego desde el listado: «En reparto» y con la hora
-            // programada. Hasta esa hora no le aparece al conductor.
-            status: (!isDriver && formData.assignedDriverId) ? 'En reparto' : 'Pendiente de asignar',
-            assignedDriverId: (!isDriver && formData.assignedDriverId) ? Number(formData.assignedDriverId) : null,
-            scheduledDate: (!isDriver && formData.assignedDriverId && formData.scheduledDate) ? formData.scheduledDate : null,
-            date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }),
-            amount: 'Por valorar',
-            observations: formData.observations,
+                address: fullOrigin, // Main display address for functionality
+                // Si la oficina ya eligió conductor aquí mismo, la recogida nace igual que
+                // si la hubiera asignado luego desde el listado: «En reparto» y con la hora
+                // programada. Hasta esa hora no le aparece al conductor.
+                status: (!isDriver && formData.assignedDriverId) ? 'En reparto' : 'Pendiente de asignar',
+                assignedDriverId: (!isDriver && formData.assignedDriverId) ? Number(formData.assignedDriverId) : null,
+                scheduledDate: (!isDriver && formData.assignedDriverId && formData.scheduledDate) ? formData.scheduledDate : null,
+                date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }),
+                amount: 'Por valorar',
+                observations: formData.observations,
 
-            // Will be handled by parent to assign to creator or pool
-            isPickup: true
-        };
+                // Will be handled by parent to assign to creator or pool
+                isPickup: true
+            };
 
-        onSave(newPickup);
-        onClose();
+            // Se espera la respuesta: si el guardado dice que no, el modal se queda
+            // abierto con el motivo. Antes se cerraba sin esperar y una recogida
+            // que no llegaba a la base de datos parecía guardada (04/09/2026,
+            // recogida de Agrícola Castillero que no existía en ninguna parte).
+            const resultado = await onSave(newPickup);
+
+            if (resultado === false) {
+                setAvisoGuardado({
+                    tipo: 'error',
+                    texto: `La recogida ${newPickup.id} NO se ha guardado: el servidor ha devuelto un error. Los datos siguen aquí; vuelve a pulsar "Crear Recogida" o avisa a administración.`
+                });
+                return;
+            }
+
+            // Guardado en la cola offline de este navegador: todavía no está en la
+            // base de datos. Al repartidor se le deja seguir (es su forma normal de
+            // trabajar sin cobertura); a la oficina se le dice, porque desde un
+            // ordenador con conexión eso significa que algo va mal.
+            if (resultado === 'encolado' && !isDriver) {
+                setAvisoGuardado({
+                    tipo: 'cola',
+                    texto: `La recogida ${newPickup.id} se ha quedado pendiente de sincronizar en este navegador y todavía NO está en la base de datos. Se subirá sola cuando vuelva la conexión con el servidor; si cierras el navegador antes, se pierde.`
+                });
+                return;
+            }
+
+            numeroReservadoRef.current = null;
+            onClose();
+        } catch (err) {
+            console.error('[CreatePickupModal] No se pudo guardar la recogida:', err);
+            setAvisoGuardado({
+                tipo: 'error',
+                texto: `La recogida NO se ha guardado (${err?.message || 'error inesperado'}). Los datos siguen aquí; vuelve a intentarlo.`
+            });
+        } finally {
+            setGuardando(false);
+        }
     };
 
     if (!isOpen) return null;
@@ -484,21 +543,36 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                             </div>
                         )}
 
+                        {avisoGuardado && (
+                            <div
+                                role="alert"
+                                className={`p-3 rounded-lg border text-xs font-semibold ${avisoGuardado.tipo === 'error'
+                                    ? 'bg-red-50 border-red-200 text-red-700'
+                                    : 'bg-amber-50 border-amber-200 text-amber-800'}`}
+                            >
+                                {avisoGuardado.texto}
+                            </div>
+                        )}
+
                         <div className="flex gap-3 pt-2">
                             <button
                                 type="button"
                                 onClick={onClose}
                                 className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors text-sm"
                             >
-                                Cancelar
+                                {avisoGuardado?.tipo === 'cola' ? 'Cerrar' : 'Cancelar'}
                             </button>
-                            <button
-                                type="submit"
-                                className="flex-[2] bg-amber-600 text-white font-bold py-3 rounded-xl hover:bg-amber-700 transition-colors shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 text-sm"
-                            >
-                                <Package size={18} />
-                                Crear Recogida
-                            </button>
+                            {/* En cola ya no hay nada que reintentar: volver a pulsar duplicaría la recogida en pantalla. */}
+                            {avisoGuardado?.tipo !== 'cola' && (
+                                <button
+                                    type="submit"
+                                    disabled={guardando}
+                                    className="flex-[2] bg-amber-600 text-white font-bold py-3 rounded-xl hover:bg-amber-700 transition-colors shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 text-sm disabled:opacity-60 disabled:cursor-wait"
+                                >
+                                    {guardando ? <Loader2 size={18} className="animate-spin" /> : <Package size={18} />}
+                                    {guardando ? 'Guardando...' : (avisoGuardado ? 'Volver a intentar' : 'Crear Recogida')}
+                                </button>
+                            )}
                         </div>
                     </form>
                 </div>
