@@ -1178,6 +1178,11 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                         updates.codPaid = true;
                         updates.codCollectedById = currentDriverId;
                     }
+                    // Hora del cobro: la Cuenta del repartidor se fija en paidAt para
+                    // saber en qué día cae el dinero.
+                    if (updates.portePaid !== debtShipment.portePaid || updates.codPaid !== debtShipment.codPaid) {
+                        updates.paidAt = new Date().toISOString();
+                    }
                     try {
                         await onUpdateShipment(debtId, updates);
                     } catch (err) {

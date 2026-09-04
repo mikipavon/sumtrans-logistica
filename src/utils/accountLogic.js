@@ -177,7 +177,10 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         }
 
         if (!isMyResponsibility) return false;
-        if (!isToday(s.paidAt, targetDate) && !isToday(s.updatedAt, targetDate)) return false;
+        // Día del cobro o, si falta, día de la entrega. Nunca updatedAt: un
+        // retoque de la oficina al albarán hoy hacía reaparecer en la Cuenta de
+        // hoy un porte Debido cobrado ayer (mismo fallo que los reembolsos).
+        if (!isToday(s.paidAt, targetDate) && !isToday(s.deliveredAt, targetDate)) return false;
         // Para Porte Debido, el que paga es el DESTINATARIO, por tanto miramos si el destino es contado
         return isCashClient(s.destinationName || s.client, clients, s.destinationBillingType);
     });
@@ -271,9 +274,14 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     console.log("📊 [AccountLogic] Filtered manual Porte:", manualPorteCollections.length);
     console.log("📊 [AccountLogic] Filtered manual Reembolso:", collectedReembolsosRaw.length);
 
+    // Un reembolso entra en la caja del día en que se COBRÓ (paidAt) o, si el
+    // albarán no guardó esa hora, del día en que se ENTREGÓ (deliveredAt). Nunca
+    // por updatedAt: cualquier retoque de la oficina al albarán (corregir un
+    // nombre, un bulto) pone updatedAt a hoy, y así un reembolso cobrado ayer se
+    // volvía a colar en la Cuenta de hoy del repartidor.
     const derivedReembolsos = (allShipments || []).filter(s => {
         if (!s || !s.codAmount || parseAmount(s.codAmount) <= 0 || s.status !== 'Entregado' || !s.codPaid) return false;
-        if (!isToday(s.paidAt || s.updatedAt || s.date, targetDate)) return false;
+        if (!isToday(s.paidAt || s.deliveredAt, targetDate)) return false;
 
         let isMyResponsibility = false;
         if (s.codCollectedById) {
