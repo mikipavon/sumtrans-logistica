@@ -806,19 +806,26 @@ export default function ClientDashboard({
                                                         <span className={`px-3 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${getStatusColor(s.status)}`}>
                                                             {s.status}
                                                         </span>
-                                                        {s.hasCod && parseFloat(s.codAmount || 0) > 0 && (
-                                                            <span
-                                                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${
-                                                                    s.codPaid
-                                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                                                        : 'bg-amber-50 text-amber-800 border-amber-200'
-                                                                }`}
-                                                                title={s.codPaid ? 'Reembolso cobrado' : 'Reembolso pendiente de cobro al destinatario'}
-                                                            >
-                                                                💰 {parseFloat(s.codAmount).toFixed(2)} €
-                                                                {!s.codPaid && <span className="text-[9px] font-black ml-0.5">PDTE</span>}
-                                                            </span>
-                                                        )}
+                                                        {s.hasCod && parseFloat(s.codAmount || 0) > 0 && (() => {
+                                                            // Verde sólo cuando la oficina ha escaneado el justificante firmado:
+                                                            // ese papel es la prueba de que el dinero ya se le entregó al cliente.
+                                                            // Que el repartidor lo haya cobrado al destinatario no es lo mismo.
+                                                            const pagadoAlCliente = !!s.codReceiptPhoto;
+                                                            const estado = pagadoAlCliente
+                                                                ? { clase: 'bg-emerald-50 text-emerald-700 border-emerald-200', etiqueta: 'REEMBOLSO PAGADO', titulo: 'Reembolso ya entregado a tu empresa (justificante firmado)' }
+                                                                : s.codPaid
+                                                                    ? { clase: 'bg-sky-50 text-sky-800 border-sky-200', etiqueta: 'COBRADO', titulo: 'Reembolso cobrado al destinatario, pendiente de entregártelo' }
+                                                                    : { clase: 'bg-amber-50 text-amber-800 border-amber-200', etiqueta: 'PDTE', titulo: 'Reembolso pendiente de cobro al destinatario' };
+                                                            return (
+                                                                <span
+                                                                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${estado.clase}`}
+                                                                    title={estado.titulo}
+                                                                >
+                                                                    💰 {parseFloat(s.codAmount).toFixed(2)} €
+                                                                    <span className="text-[9px] font-black ml-0.5">{estado.etiqueta}</span>
+                                                                </span>
+                                                            );
+                                                        })()}
                                                         {s.incidentStatus === 'active' && (
                                                             <button 
                                                                 onClick={() => setSelectedShipment(s)}

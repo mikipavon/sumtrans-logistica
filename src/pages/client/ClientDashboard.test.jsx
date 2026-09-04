@@ -139,3 +139,40 @@ describe('ClientDashboard · buscador', () => {
         expect(screen.getByText('SUM-101')).toBeTruthy();
     });
 });
+
+// ── El reembolso sólo sale verde cuando el dinero ya está en manos del cliente ──
+//
+// Antes se ponía verde en cuanto el repartidor cobraba al destinatario, y el
+// cliente veía "Entregado" + verde sin saber si a él ya le habían pagado. La
+// prueba de pago es el justificante firmado que escanea la oficina.
+describe('ClientDashboard · etiqueta del reembolso', () => {
+    const conReembolso = (extra) => ({
+        id: 'SUM-200', client: 'ESMEBRA', originName: 'ESMEBRA', destinationName: 'FERRETERIA PEPE',
+        porteType: 'Pagado', status: 'Entregado', createdAt: '2026-09-03T10:00:00.000Z',
+        hasCod: true, codAmount: 80, ...extra,
+    });
+    const pintarCon = (envio) => render(
+        <ClientDashboard client={ESMEBRA} onLogout={() => {}} allShipments={[envio]} drivers={[]}
+            allClients={[ESMEBRA]} articles={[]} tariffs={[]} coverageZones={[]}
+            onCreateShipment={vi.fn()} onUpdateClient={vi.fn()} onDeleteShipment={vi.fn()} />
+    );
+
+    it('sin cobrar al destinatario: PDTE en ámbar', () => {
+        pintarCon(conReembolso({ codPaid: false }));
+        const marca = screen.getByText('PDTE');
+        expect(marca.closest('span[title]').className).toContain('amber');
+    });
+
+    it('cobrado pero sin justificante escaneado: COBRADO, y NO verde', () => {
+        pintarCon(conReembolso({ codPaid: true }));
+        const marca = screen.getByText('COBRADO');
+        expect(marca.closest('span[title]').className).not.toContain('emerald');
+        expect(screen.queryByText('REEMBOLSO PAGADO')).toBeNull();
+    });
+
+    it('con el justificante escaneado: REEMBOLSO PAGADO en verde', () => {
+        pintarCon(conReembolso({ codPaid: true, codReceiptPhoto: 'https://x/justificante.jpg' }));
+        const marca = screen.getByText('REEMBOLSO PAGADO');
+        expect(marca.closest('span[title]').className).toContain('emerald');
+    });
+});
