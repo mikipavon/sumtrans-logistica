@@ -934,7 +934,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                 onSave={onCreateShipment}
                 clients={clients}
                 allPoblaciones={allPoblaciones}
-                allShipments={shipments}
+                allShipments={allShipments || shipments}
                 coverageZones={coverageZones}
                 drivers={drivers}
                 driverNamePreference={driverNamePreference}

@@ -3009,6 +3009,12 @@ function App() {
       console.log('🛡️ [Modo Pruebas] Envío bloqueado — solo actualización local.');
       const localShipment = { ...shipmentWithMeta, id: shipmentWithMeta.id };
       if (originalPickupId) {
+  // Lo que devuelve handleAddShipment cuando el envío NO ha llegado a la base de
+  // datos sino a la cola offline de este navegador. Es verdadero (los que sólo
+  // preguntan "¿ha ido bien?" siguen igual), pero quien lo quiera distinguir
+  // puede: el modal de recogida de la oficina lo enseña en vez de cerrarse.
+  const ENCOLADO = 'encolado';
+
         setShipments(prev => [localShipment, ...prev.filter(s => s.id !== originalPickupId)]);
       } else {
         setShipments(prev => [localShipment, ...prev]);
@@ -3040,7 +3046,7 @@ function App() {
     if (!navigator.onLine) {
       console.warn('[handleAddShipment] Sin conexión — encolando envío para sincronizar al recuperar cobertura');
       await enqueueCreateOp();
-      return true;
+      return ENCOLADO;
     }
 
     try {
@@ -3071,7 +3077,7 @@ function App() {
         if (isRetryable) {
           console.warn('[handleAddShipment] Error de red/RLS — encolando envío para reintento automático', error);
           await enqueueCreateOp();
-          return true; // No bloquear al conductor
+          return ENCOLADO; // No bloquear al conductor
         }
         alert(`Error Supabase: ${error.message} (${error.code})`)
         return false
@@ -3139,7 +3145,7 @@ function App() {
       // Error de red (fetch falla, no solo un error de Supabase) — encolar en vez de perder el envío
       console.warn('[handleAddShipment] Error de red al guardar envío — encolando para reintento:', error);
       await enqueueCreateOp();
-      return true; // No bloquear al conductor
+      return ENCOLADO; // No bloquear al conductor
     }
   }
 
