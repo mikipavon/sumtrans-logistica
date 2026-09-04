@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
-import { getPackagesCount, intervinoConductor } from '../utils/shipmentUtils';
+import { getPackagesCount, intervinoConductor, importeParaMostrar } from '../utils/shipmentUtils';
 import { coincideBusqueda } from '../utils/busqueda';
 import { SIN_FILTRO, BAREMO_1, BAREMO_2, coincideCliente, filtroPoblacion, opcionesDeClientes, opcionesDePoblaciones } from '../utils/filtrosEnvios';
 import ImportExcelShipments from '../components/clients/ImportExcelShipments';
@@ -665,7 +665,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                         </td>
                                         <td className="px-4 py-3 text-right min-w-[110px]">
                                             <div className="flex flex-col items-end gap-1">
-                                                <span className="text-sm font-bold text-slate-700 whitespace-nowrap">{shipment.amount}</span>
+                                                <span className="text-sm font-bold text-slate-700 whitespace-nowrap">{importeParaMostrar(shipment.amount)}</span>
                                                 {shipment.hasCod && parseFloat(shipment.codAmount || 0) > 0 && (
                                                     <span
                                                         className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap leading-none ${

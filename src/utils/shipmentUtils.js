@@ -326,3 +326,19 @@ export const lineasDeDineroDelJustificante = (shipment, { paga = true, isContado
 
     return { estadoText, priceText, codText };
 };
+
+/**
+ * El precio del porte tal y como se enseña en la lista de envíos: siempre `€0.00`.
+ *
+ * Al crear el albarán `amount` se guarda como "€3.00", pero al editarlo desde la
+ * ficha se guarda tal cual se teclea ("6"), y la columna Valor mezclaba los dos
+ * formatos. Para facturar no importa (el export a Factusol y la Cuenta limpian
+ * el símbolo antes de sumar), pero a la vista despistaba. Lo que no es un número
+ * ("Tarifa", vacío) se enseña tal cual.
+ */
+export const importeParaMostrar = (amount) => {
+    if (amount === null || amount === undefined || amount === '') return '';
+    const str = String(amount).trim();
+    if (!/\d/.test(str)) return str;
+    return `€${importeDelAlbaran(str).toFixed(2)}`;
+};
