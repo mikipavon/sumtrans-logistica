@@ -413,3 +413,88 @@ describe('la oficina deshace un cobro marcado por error', () => {
         expect(result.allPorteDetail[0].client).toBe('Nombre Corregido');
     });
 });
+
+// ── Reembolsos de ayer que la oficina retoca hoy ──────────────────────────────
+// La Cuenta de Kisko de hoy enseñaba dos reembolsos cobrados ayer: la oficina
+// había tocado esos albaranes hoy (updatedAt de hoy) y el reembolso se fechaba
+// por updatedAt cuando faltaba paidAt.
+
+describe('reembolsos cobrados otro día no entran en la Cuenta de hoy', () => {
+    const driverId = 1;
+    const hoy = new Date().toISOString();
+    const ayer = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString(); })();
+
+    const reembolso = (extra = {}) => ({
+        id: 'HAB-19', porteType: 'Pagado', status: 'Entregado', hasCod: true, codAmount: '132.80', codPaid: true,
+        assignedDriverId: driverId, client: 'Remitente', destinationName: 'José Ángel', ...extra,
+    });
+
+    const cuenta = (envio) => calculateDailyAccount({
+        allShipments: [envio], driverId, clients: [], collectedCollections: []
+    });
+
+    it('cobrado ayer y retocado hoy por la oficina: no sale', () => {
+        const result = cuenta(reembolso({ paidAt: ayer, updatedAt: hoy }));
+        expect(result.collectedReembolsos).toBe(0);
+        expect(result.allReimbursementsDetail).toHaveLength(0);
+    });
+
+    it('entregado ayer sin hora de cobro y retocado hoy: no sale', () => {
+        const result = cuenta(reembolso({ deliveredAt: ayer, updatedAt: hoy }));
+        expect(result.collectedReembolsos).toBe(0);
+    });
+
+    it('albarán antiguo sin hora de cobro ni de entrega, retocado hoy: no sale', () => {
+        const result = cuenta(reembolso({ updatedAt: hoy, date: ayer }));
+        expect(result.collectedReembolsos).toBe(0);
+    });
+
+    it('cobrado hoy: sale', () => {
+        const result = cuenta(reembolso({ paidAt: hoy, updatedAt: hoy }));
+        expect(result.collectedReembolsos).toBe(132.8);
+    });
+
+    it('entregado hoy sin hora de cobro guardada: sale', () => {
+        const result = cuenta(reembolso({ deliveredAt: hoy, updatedAt: hoy }));
+        expect(result.collectedReembolsos).toBe(132.8);
+    });
+});
+
+// ── Portes Debido de ayer que la oficina retoca hoy ──────────────────────────
+// Mismo fallo que los reembolsos: el porte Debido se fechaba por updatedAt.
+
+describe('portes Debido cobrados otro día no entran en la Cuenta de hoy', () => {
+    const driverId = 1;
+    const hoy = new Date().toISOString();
+    const ayer = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString(); })();
+
+    const porte = (extra = {}) => ({
+        id: 'HAB-60', porteType: 'Debido', status: 'Entregado', portePaid: true, amount: '7.00',
+        assignedDriverId: driverId, client: 'Remitente', destinationName: 'Diego Rey', ...extra,
+    });
+
+    const cuenta = (envio) => calculateDailyAccount({
+        allShipments: [envio], driverId, clients: [], collectedCollections: []
+    });
+
+    it('cobrado ayer y retocado hoy por la oficina: no sale', () => {
+        const result = cuenta(porte({ paidAt: ayer, deliveredAt: ayer, updatedAt: hoy }));
+        expect(result.collectedPorte).toBe(0);
+        expect(result.allPorteDetail).toHaveLength(0);
+    });
+
+    it('entregado ayer sin hora de cobro y retocado hoy: no sale', () => {
+        const result = cuenta(porte({ deliveredAt: ayer, updatedAt: hoy }));
+        expect(result.collectedPorte).toBe(0);
+    });
+
+    it('cobrado hoy: sale', () => {
+        const result = cuenta(porte({ paidAt: hoy, updatedAt: hoy }));
+        expect(result.collectedPorte).toBe(7);
+    });
+
+    it('entregado hoy sin hora de cobro guardada: sale', () => {
+        const result = cuenta(porte({ deliveredAt: hoy, updatedAt: hoy }));
+        expect(result.collectedPorte).toBe(7);
+    });
+});

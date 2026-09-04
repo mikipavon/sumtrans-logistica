@@ -4521,6 +4521,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 if (shipData.codPaid && !original?.codPaid) {
                     flags.codPaid = true;
                     flags.codCollectedById = currentDriverId;
+                    // Hora del cobro: la Cuenta se fija en paidAt para saber en qué
+                    // día cae el reembolso, no en updatedAt.
+                    flags.paidAt = flags.updatedAt;
                     // Si el conductor cambió el importe del reembolso, persistir en la BD
                     if (shipData.codAmount !== undefined && shipData.codAmount !== original?.codAmount) {
                         flags.codAmount = shipData.codAmount;
