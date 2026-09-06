@@ -37,6 +37,14 @@ window.onunhandledrejection = (event) => {
   displayError(`Promesa fallida: ${event.reason}`);
 };
 
+// En producción Vite pre-carga los ficheros que necesita cada pantalla. Si uno no
+// baja (justo después de un despliegue el trozo antiguo ya no existe), en vez de
+// dejar caer el error se recarga la página y el navegador coge la versión nueva.
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault();
+  window.location.reload();
+});
+
 // Se engancha DESPUÉS de los de arriba para no sustituirlos: la pantalla roja se
 // sigue viendo igual, y además queda constancia del error en la nube.
 engancharErroresGlobales();
