@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react'
 import { Download, Upload, Trash2, Database, Shield, Clock, Folder, CheckCircle, AlertCircle, Save, Settings, X, RotateCcw, User } from 'lucide-react'
 import DailySummaryModal from './components/DailySummaryModal';
 import { ALL_BAREMO_PUEBLOS } from './data/baremos';
@@ -6,6 +6,8 @@ import Layout from './components/layout/Layout'
 import GhostPasswordModal from './components/layout/GhostPasswordModal'
 import { hashGhostPassword, verifyGhostPassword } from './utils/ghostPassword'
 import Login from './pages/Login'
+
+import { cargarPantalla } from './utils/cargarPantalla'
 
 // ── Carga diferida de las pantallas ───────────────────────────────────────────
 // Antes esto eran imports normales, y eso metía TODA la aplicación en un solo
@@ -16,22 +18,26 @@ import Login from './pages/Login'
 //
 // Login y Layout se quedan como imports normales a propósito: son lo primero
 // que se pinta, diferirlos solo añadiría un parpadeo.
-const RecuperarContrasena = lazy(() => import('./pages/RecuperarContrasena'))
-const Dashboard = lazy(() => import('./pages/Dashboard'))
-const Shipments = lazy(() => import('./pages/Shipments'))
-const Fleet = lazy(() => import('./pages/Fleet'))
-const Drivers = lazy(() => import('./pages/Drivers'))
-const DriverDashboard = lazy(() => import('./pages/driver/DriverDashboard'))
-const Clients = lazy(() => import('./pages/Clients'))
-const Articles = lazy(() => import('./pages/Articles'))
-const Tracking = lazy(() => import('./pages/Tracking'))
-const FuelManagement = lazy(() => import('./pages/FuelManagement'))
-const MaintenanceHistory = lazy(() => import('./pages/MaintenanceHistory'))
-const ClientDashboard = lazy(() => import('./pages/client/ClientDashboard'))
-const Incidents = lazy(() => import('./pages/Incidents'))
-const ClientValidation = lazy(() => import('./pages/ClientValidation'))
-const PendingCollections = lazy(() => import('./pages/PendingCollections'))
-const NotificationCenter = lazy(() => import('./pages/NotificationCenter'))
+//
+// `cargarPantalla` es `lazy` con reintento: si el trozo no baja (servidor
+// reiniciado, OneDrive sincronizando, despliegue nuevo) lo vuelve a pedir y, si
+// hace falta, recarga la página una vez en vez de ir a la pantalla roja.
+const RecuperarContrasena = cargarPantalla(() => import('./pages/RecuperarContrasena'))
+const Dashboard = cargarPantalla(() => import('./pages/Dashboard'))
+const Shipments = cargarPantalla(() => import('./pages/Shipments'))
+const Fleet = cargarPantalla(() => import('./pages/Fleet'))
+const Drivers = cargarPantalla(() => import('./pages/Drivers'))
+const DriverDashboard = cargarPantalla(() => import('./pages/driver/DriverDashboard'))
+const Clients = cargarPantalla(() => import('./pages/Clients'))
+const Articles = cargarPantalla(() => import('./pages/Articles'))
+const Tracking = cargarPantalla(() => import('./pages/Tracking'))
+const FuelManagement = cargarPantalla(() => import('./pages/FuelManagement'))
+const MaintenanceHistory = cargarPantalla(() => import('./pages/MaintenanceHistory'))
+const ClientDashboard = cargarPantalla(() => import('./pages/client/ClientDashboard'))
+const Incidents = cargarPantalla(() => import('./pages/Incidents'))
+const ClientValidation = cargarPantalla(() => import('./pages/ClientValidation'))
+const PendingCollections = cargarPantalla(() => import('./pages/PendingCollections'))
+const NotificationCenter = cargarPantalla(() => import('./pages/NotificationCenter'))
 
 import Shipment from './models/Shipment';
 import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
@@ -43,6 +49,7 @@ import { planDeAcceso } from './utils/accesoFichaExistente';
 import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNombreCliente } from './utils/altaClientes';
 import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre } from './utils/ventanaPadre';
+import { CLAVE_HORARIO_REPARTO, HORARIO_REPARTO_POR_DEFECTO, normalizarHorarioReparto } from './utils/turnos';
 import { getIrregularReasons } from './utils/shipmentUtils';
 import {
   fusionarConocimiento,
@@ -401,6 +408,11 @@ function App() {
 
   // GPS Interval for driver tracking (in minutes) — fuente de verdad: Supabase settings
   const [gpsIntervalMinutes, setGpsIntervalMinutes] = useState(15)
+
+  // Programador de turnos del reparto: desde qué hora manda el orden de la mañana y
+  // desde cuál el de la tarde al pulsar Optimizar (ver utils/turnos.js). Se edita en
+  // el Gestor de Rutas — fuente de verdad: Supabase settings (clave `horarioReparto`)
+  const [horarioReparto, setHorarioReparto] = useState({ ...HORARIO_REPARTO_POR_DEFECTO })
 
   // Driver Alerts (configurable notifications for drivers) — fuente de verdad: Supabase settings
   const [driverAlerts, setDriverAlerts] = useState([
@@ -1266,6 +1278,9 @@ function App() {
           try { setGpsIntervalMinutes(parseInt(gpsValue) || 15) } catch(e) { console.error('Error parsing gpsInterval:', e) }
         }
 
+        // Si no hay fila, o está rota, normalizar devuelve lo de fábrica.
+        setHorarioReparto(normalizarHorarioReparto(getSetting(CLAVE_HORARIO_REPARTO)));
+
         const alertsValue = getSetting('driverAlerts');
         if (alertsValue) {
           try { setDriverAlerts(JSON.parse(alertsValue)) } catch(e) { console.error('Error parsing driverAlerts:', e) }
@@ -1440,6 +1455,11 @@ function App() {
         }
         if (payload.new && payload.new.key === 'driverAlerts') {
           try { setDriverAlerts(JSON.parse(payload.new.value)); } catch(e) {}
+        }
+        // El programador de turnos llega a los móviles en cuanto la oficina lo guarda:
+        // así el siguiente Optimizar ya usa las horas nuevas sin reabrir la app.
+        if (payload.new && payload.new.key === CLAVE_HORARIO_REPARTO) {
+          setHorarioReparto(normalizarHorarioReparto(payload.new.value));
         }
       })
       .subscribe((estado) => {
@@ -2627,6 +2647,17 @@ function App() {
     } catch(e) { console.error('Error saving routes:', e); alert('Error al guardar rutas'); }
   }
 
+  // Programador de turnos (Gestor de Rutas). Se guarda ya normalizado: lo que hay en
+  // la nube es siempre un horario válido, no lo que se tecleó.
+  const handleUpdateHorarioReparto = async (nuevoHorario) => {
+    const limpio = normalizarHorarioReparto(nuevoHorario);
+    try {
+      const { error } = await supabase.from('settings').upsert({ key: CLAVE_HORARIO_REPARTO, value: JSON.stringify(limpio) });
+      if (error) throw error;
+      setHorarioReparto(limpio);
+    } catch(e) { console.error('Error saving horarioReparto:', e); alert('Error al guardar el programador de turnos'); }
+  }
+
   // opciones.driverId  → guardado desde el móvil de un repartidor: escribe SOLO su
   //                      fila. Nadie más la toca, así que no hay carrera que perder.
   // opciones.fusionar = false para órdenes deliberadas del administrador (borrar o
@@ -2984,6 +3015,12 @@ function App() {
     fichaDeRemitente(shipmentData, shipmentData.createdBy, shipmentData.createdById, !!shipmentData.isTest)
   );
 
+  // Lo que devuelve handleAddShipment cuando el envío NO ha llegado a la base de
+  // datos sino a la cola offline de este navegador. Es verdadero (los que sólo
+  // preguntan "¿ha ido bien?" siguen igual), pero quien lo quiera distinguir
+  // puede: el modal de recogida de la oficina lo enseña en vez de cerrarse.
+  const ENCOLADO = 'encolado';
+
   const handleAddShipment = async (newShipment, originalPickupId = null) => {
     // Determine creator
     const { creatorName, creatorId } = quienEstaCreando();
@@ -3009,12 +3046,6 @@ function App() {
       console.log('🛡️ [Modo Pruebas] Envío bloqueado — solo actualización local.');
       const localShipment = { ...shipmentWithMeta, id: shipmentWithMeta.id };
       if (originalPickupId) {
-  // Lo que devuelve handleAddShipment cuando el envío NO ha llegado a la base de
-  // datos sino a la cola offline de este navegador. Es verdadero (los que sólo
-  // preguntan "¿ha ido bien?" siguen igual), pero quien lo quiera distinguir
-  // puede: el modal de recogida de la oficina lo enseña en vez de cerrarse.
-  const ENCOLADO = 'encolado';
-
         setShipments(prev => [localShipment, ...prev.filter(s => s.id !== originalPickupId)]);
       } else {
         setShipments(prev => [localShipment, ...prev]);
@@ -4449,6 +4480,7 @@ function App() {
         coverageZones,
         gpsIntervalMinutes,
         driverAlerts,
+        horarioReparto,
         backupInfo: { timestamp: now.toISOString(), type: isAuto ? 'auto' : 'manual' }
       };
 
@@ -4466,7 +4498,7 @@ function App() {
       setTimeout(() => setBackupStatus('idle'), 3000);
       if (!isAuto) alert('Error al guardar la copia: ' + err.message);
     }
-  }, [backupDirHandle, drivers, shipments, clients, articles, tariffs, vehicles, fuelLogs, defaultCodFee, familyOrder, routes, routeKnowledge, coverageZones, gpsIntervalMinutes, driverAlerts]);
+  }, [backupDirHandle, drivers, shipments, clients, articles, tariffs, vehicles, fuelLogs, defaultCodFee, familyOrder, routes, routeKnowledge, coverageZones, gpsIntervalMinutes, driverAlerts, horarioReparto]);
 
   // Temporizador de Auto-guardado (Intervalos)
   useEffect(() => {
@@ -4547,6 +4579,7 @@ function App() {
       if (data.coverageZones)    upsertPromises.push(supabase.from('settings').upsert({ key: 'coverageZones',        value: JSON.stringify(data.coverageZones) }));
       if (data.gpsIntervalMinutes !== undefined) upsertPromises.push(supabase.from('settings').upsert({ key: 'gpsIntervalMinutes', value: String(data.gpsIntervalMinutes) }));
       if (data.driverAlerts)     upsertPromises.push(supabase.from('settings').upsert({ key: 'driverAlerts',         value: JSON.stringify(data.driverAlerts) }));
+      if (data.horarioReparto)   upsertPromises.push(supabase.from('settings').upsert({ key: CLAVE_HORARIO_REPARTO,  value: JSON.stringify(normalizarHorarioReparto(data.horarioReparto)) }));
       if (restoreOptions.fuelLogs && data.fuelLogs) {
         upsertPromises.push(supabase.from('fuel_logs').upsert(data.fuelLogs.map(f => ({ id: f.id, data: f }))));
       }
@@ -4732,6 +4765,7 @@ function App() {
           familyOrder={familyOrder}
           coverageZones={coverageZones}
           defaultCodFee={defaultCodFee}
+          horarioReparto={horarioReparto}
           gpsIntervalMinutes={gpsIntervalMinutes}
           driverAlerts={driverAlerts}
           alertAcknowledgements={alertAcknowledgements}
@@ -4778,7 +4812,7 @@ function App() {
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
       {currentView === 'maintenance-history' && <MaintenanceHistory vehicles={vehicles} onUpdateVehicle={handleUpdateVehicle} onNavigateToFleet={() => setCurrentView('fleet')} />}
       {currentView === 'fuel' && <FuelManagement fuelLogs={fuelLogs} onAddFuelLog={handleAddFuelLog} drivers={drivers} shipments={visibleShipments} />}
-      {currentView === 'drivers' && <Drivers routes={routes} onUpdateRoutes={handleUpdateRoutes} routeKnowledge={routeKnowledge} onUpdateRouteKnowledge={handleUpdateRouteKnowledge} drivers={drivers} shipments={visibleShipments} clients={visibleClients} onAddDriver={handleAddDriver} onUpdateDriver={handleUpdateDriver} onDeleteDriver={handleDeleteDriver} onImpersonate={handleImpersonate} onNavigate={setCurrentView} articles={articles} defaultCodFee={defaultCodFee} isGhostModeUnlocked={isGhostModeUnlocked} driverOrder={driverOrder} onUpdateDriverOrder={handleUpdateDriverOrder} gpsIntervalMinutes={gpsIntervalMinutes} setGpsIntervalMinutes={setGpsIntervalMinutes} driverAlerts={driverAlerts} setDriverAlerts={setDriverAlerts} driverNamePreference={driverNamePreference} onUpdateDriverNamePreference={handleUpdateDriverNamePreference} />}
+      {currentView === 'drivers' && <Drivers routes={routes} onUpdateRoutes={handleUpdateRoutes} horarioReparto={horarioReparto} onUpdateHorarioReparto={handleUpdateHorarioReparto} routeKnowledge={routeKnowledge} onUpdateRouteKnowledge={handleUpdateRouteKnowledge} drivers={drivers} shipments={visibleShipments} clients={visibleClients} onAddDriver={handleAddDriver} onUpdateDriver={handleUpdateDriver} onDeleteDriver={handleDeleteDriver} onImpersonate={handleImpersonate} onNavigate={setCurrentView} articles={articles} defaultCodFee={defaultCodFee} isGhostModeUnlocked={isGhostModeUnlocked} driverOrder={driverOrder} onUpdateDriverOrder={handleUpdateDriverOrder} gpsIntervalMinutes={gpsIntervalMinutes} setGpsIntervalMinutes={setGpsIntervalMinutes} driverAlerts={driverAlerts} setDriverAlerts={setDriverAlerts} driverNamePreference={driverNamePreference} onUpdateDriverNamePreference={handleUpdateDriverNamePreference} />}
       {currentView === 'tracking' && <Tracking drivers={drivers} shipments={shipments} onRequestGps={handleRequestDriverGps} />}
 
       {currentView === 'clients' && <Clients clients={visibleClients} allClients={clients} shipments={shipments} allPoblaciones={allPoblaciones} articles={articles} onUpdateClient={handleUpdateClient} onAddClient={handleAddClient} onImportClients={handleImportClients} onDeleteClient={handleDeleteClient} onAssignOwnerAgency={handleAssignOwnerAgency} onDeleteAgencyDatabase={handleDeleteAgencyDatabase} onImpersonateClient={handleImpersonateClient} tariffs={tariffs} isGhostModeUnlocked={isGhostModeUnlocked} />}
