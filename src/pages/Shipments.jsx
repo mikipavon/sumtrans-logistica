@@ -4,10 +4,12 @@ import { useState, useMemo, useEffect } from 'react';
 import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
-import { getPackagesCount, intervinoConductor, importeParaMostrar } from '../utils/shipmentUtils';
+import { getPackagesCount, intervinoConductor, importeParaMostrar, poblacionYCalle } from '../utils/shipmentUtils';
 import { coincideBusqueda } from '../utils/busqueda';
-import { SIN_FILTRO, BAREMO_1, BAREMO_2, coincideCliente, filtroPoblacion, opcionesDeClientes, opcionesDePoblaciones } from '../utils/filtrosEnvios';
+import { SIN_FILTRO, BAREMO_1, BAREMO_2, TIPOS_DE_CLIENTE, coincideCliente, filtroPoblacion, filtroTipoDeCliente, opcionesDeClientes, opcionesDePoblaciones } from '../utils/filtrosEnvios';
+import FiltroClienteBuscable from '../components/shipments/FiltroClienteBuscable';
 import ImportExcelShipments from '../components/clients/ImportExcelShipments';
+import ImportarAlbaranesAgencia from '../components/shipments/ImportarAlbaranesAgencia';
 import BudgetLiquidationModal from '../components/shipments/BudgetLiquidationModal';
 import CodReceiptUploadModal from '../components/shipments/CodReceiptUploadModal';
 import { Upload } from 'lucide-react';
@@ -30,6 +32,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
     const [isCodReceiptModalOpen, setIsCodReceiptModalOpen] = useState(false);
     const [importClientId, setImportClientId] = useState('');
+    const [importMode, setImportMode] = useState('excel'); // 'excel' | 'fotos' (albaranes de agencia leídos por OCR)
     const [importClientSearch, setImportClientSearch] = useState('');
     const [viewMode, setViewMode] = useState('list'); // 'list' or 'stats'
     const [assignmentModal, setAssignmentModal] = useState({ isOpen: false, shipmentId: null, driverId: '', scheduledDate: '' });
@@ -48,6 +51,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     const [driverFilter, setDriverFilter] = useState('all');
     const [clientFilter, setClientFilter] = useState(SIN_FILTRO);
     const [poblacionFilter, setPoblacionFilter] = useState(SIN_FILTRO);
+    const [tipoClienteFilter, setTipoClienteFilter] = useState(SIN_FILTRO);
     const [selectedIds, setSelectedIds] = useState([]);
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
     const [dateFrom, setDateFrom] = useState('');
@@ -91,6 +95,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         const safeShipments = Array.isArray(shipments) ? shipments : [];
         // Un pueblo concreto o todo un baremo; la regla de baremos es la del precio del alta.
         const pasaPoblacion = filtroPoblacion(poblacionFilter, { tariffs, coverageZones });
+        // Facturación / Habitual / Presupuesto de quien paga, con la misma regla que el Excel.
+        const pasaTipoCliente = filtroTipoDeCliente(tipoClienteFilter, clients);
         let result = safeShipments.filter(shipment => {
             // Busca en remitente y destinatario a la vez, sin depender de quién paga
             const matchesSearch = coincideBusqueda(shipment, searchTerm);
@@ -130,8 +136,9 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
             const matchesClient = coincideCliente(shipment, clientFilter);
             const matchesPoblacion = pasaPoblacion(shipment);
+            const matchesTipoCliente = pasaTipoCliente(shipment);
 
-            return matchesSearch && matchesStatus && matchesDriver && matchesClient && matchesPoblacion && matchesCodReceipt && matchesDate;
+            return matchesSearch && matchesStatus && matchesDriver && matchesClient && matchesPoblacion && matchesTipoCliente && matchesCodReceipt && matchesDate;
         });
 
         // Apply Sorting
@@ -197,7 +204,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         }
 
         return result;
-    }, [shipments, searchTerm, statusFilter, driverFilter, clientFilter, poblacionFilter, tariffs, coverageZones, sortConfig, dateFrom, dateTo]);
+    }, [shipments, searchTerm, statusFilter, driverFilter, clientFilter, poblacionFilter, tipoClienteFilter, clients, tariffs, coverageZones, sortConfig, dateFrom, dateTo]);
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -280,8 +287,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
                 {/* Filters Row */}
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex flex-col gap-3">
-                    {/* Seis filtros: en portátil van en dos filas de cuatro; en pantalla grande en una sola, con las fechas a doble ancho */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7 gap-3">
+                    {/* Siete filtros: en portátil van en dos filas de cuatro; en pantalla grande en una sola, con las fechas a doble ancho */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8 gap-3">
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                             <input
@@ -320,17 +327,24 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             ))}
                         </select>
 
+                        <FiltroClienteBuscable
+                            value={clientFilter}
+                            onChange={setClientFilter}
+                            opciones={clientOptions}
+                            title="Cliente (quien paga, recibe o remite). Escribe para buscar."
+                        />
+
                         <select
                             className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium cursor-pointer text-sm transition-all ${
-                                clientFilter !== SIN_FILTRO ? 'border-blue-400 text-blue-700 bg-blue-50' : 'bg-slate-50 border-slate-200 text-slate-600'
+                                tipoClienteFilter !== SIN_FILTRO ? 'border-blue-400 text-blue-700 bg-blue-50' : 'bg-slate-50 border-slate-200 text-slate-600'
                             }`}
-                            value={clientFilter}
-                            onChange={(e) => setClientFilter(e.target.value)}
-                            title="Cliente (quien paga, recibe o remite)"
+                            value={tipoClienteFilter}
+                            onChange={(e) => setTipoClienteFilter(e.target.value)}
+                            title="Tipo de cliente de quien paga el porte, según su ficha"
                         >
-                            <option value={SIN_FILTRO}>Todos los Clientes</option>
-                            {clientOptions.map(c => (
-                                <option key={c} value={c}>{c}</option>
+                            <option value={SIN_FILTRO}>Todos los Tipos</option>
+                            {TIPOS_DE_CLIENTE.map(t => (
+                                <option key={t} value={t}>{t}</option>
                             ))}
                         </select>
 
@@ -468,7 +482,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                         <table className="w-full">
                             <thead className="bg-slate-50 border-b border-slate-100">
                                 <tr>
-                                    <th className="px-4 py-4 text-center">
+                                    <th className="px-4 py-4 text-center w-px">
                                         <input
                                             type="checkbox"
                                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
@@ -482,44 +496,44 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             }}
                                         />
                                     </th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors" onClick={() => requestSort('id')}>
-                                        <div className="flex items-center gap-1">
+                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors w-px whitespace-nowrap" onClick={() => requestSort('id')}>
+                                        <div className="flex items-center gap-1 whitespace-nowrap">
                                             ID Envío
                                             <SortIcon column="id" />
                                         </div>
                                     </th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors" onClick={() => requestSort('client')}>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors w-[30%]" onClick={() => requestSort('client')}>
                                         <div className="flex items-center gap-1">
                                             Clientes
                                             <SortIcon column="client" />
                                         </div>
                                     </th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors" onClick={() => requestSort('destinationCity')}>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors w-[40%]" onClick={() => requestSort('destinationCity')}>
                                         <div className="flex items-center gap-1">
                                             Ruta
                                             <SortIcon column="destinationCity" />
                                         </div>
                                     </th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors" onClick={() => requestSort('date')}>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors whitespace-nowrap" onClick={() => requestSort('date')}>
                                         <div className="flex items-center gap-1">
                                             Fecha
                                             <SortIcon column="date" />
                                         </div>
                                     </th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors" onClick={() => requestSort('status')}>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors whitespace-nowrap" onClick={() => requestSort('status')}>
                                         <div className="flex items-center gap-1">
                                             Estado
                                             <SortIcon column="status" />
                                         </div>
                                     </th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Conductor</th>
-                                    <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors" onClick={() => requestSort('amount')}>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider min-w-[200px]">Conductor</th>
+                                    <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors whitespace-nowrap" onClick={() => requestSort('amount')}>
                                         <div className="flex items-center justify-end gap-1">
                                             Valor
                                             <SortIcon column="amount" />
                                         </div>
                                     </th>
-                                    <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Acciones</th>
+                                    <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider w-px whitespace-nowrap">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -536,7 +550,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             setIsDetailsModalOpen(true);
                                         }}
                                     >
-                                        <td className="px-4 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                                        <td className="px-4 py-4 text-center w-px" onClick={(e) => e.stopPropagation()}>
                                             <input
                                                 type="checkbox"
                                                 className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
@@ -570,7 +584,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 min-w-[150px] max-w-[220px]">
+                                        <td className="px-4 py-3 w-[30%] max-w-0 min-w-[170px]">
                                             {shipment.porteType === 'Debido' ? (
                                                 <div className="flex flex-col">
                                                     <span className="text-slate-500 font-medium block text-[11px] flex items-center gap-1 mb-0.5">
@@ -591,17 +605,25 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 </div>
                                             )}
                                         </td>
-                                        <td className="px-4 py-3 min-w-[150px] max-w-[220px]">
+                                        <td className="px-4 py-3 w-[40%] max-w-0 min-w-[220px]">
+                                            {(() => {
+                                                const origen = poblacionYCalle(shipment.origin, shipment.originCity);
+                                                const destino = poblacionYCalle(shipment.destination, shipment.destinationCity);
+                                                return (
                                             <div className="flex flex-col gap-1">
-                                                <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                                                    <div className="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
-                                                    <span className="truncate max-w-[150px]" title={shipment.origin}>{shipment.origin}</span>
+                                                <div className="flex items-center gap-1.5 text-xs text-slate-500 min-w-0" title={shipment.origin}>
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0"></div>
+                                                    <span className="font-semibold text-slate-600 shrink-0">{origen.ciudad}</span>
+                                                    {origen.calle && <span className="truncate text-slate-400">· {origen.calle}</span>}
                                                 </div>
-                                                <div className="flex items-center gap-1.5 text-xs text-slate-900 font-medium">
-                                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-                                                    <span className="truncate max-w-[150px]" title={shipment.destination}>{shipment.destination}</span>
+                                                <div className="flex items-center gap-1.5 text-xs text-slate-900 min-w-0" title={shipment.destination}>
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"></div>
+                                                    <span className="font-bold text-sm shrink-0">{destino.ciudad}</span>
+                                                    {destino.calle && <span className="truncate text-slate-500">· {destino.calle}</span>}
                                                 </div>
                                             </div>
+                                                );
+                                            })()}
                                         </td>
                                         <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-500">
                                             <div className="flex items-center gap-2">
@@ -609,7 +631,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 {shipment.date}
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 min-w-[160px]">
+                                        <td className="px-4 py-3 whitespace-nowrap">
                                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border
                                                 ${isProgrammed ? 'bg-indigo-50 text-indigo-700 border-indigo-100' :
                                                 shipment.status === 'En reparto' ? 'bg-blue-50 text-blue-700 border-blue-100' :
@@ -632,7 +654,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 {isProgrammed ? `Prog: ${programmedStr}` : shipment.status}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3 min-w-[160px] max-w-[220px]">
+                                        <td className="px-4 py-3 min-w-[200px]">
                                             <div className="flex items-center gap-2 min-w-0">
                                                 <User size={14} className="text-slate-400 shrink-0" />
                                                 <select
@@ -663,7 +685,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 </select>
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 text-right min-w-[110px]">
+                                        <td className="px-4 py-3 text-right whitespace-nowrap">
                                             <div className="flex flex-col items-end gap-1">
                                                 <span className="text-sm font-bold text-slate-700 whitespace-nowrap">{importeParaMostrar(shipment.amount)}</span>
                                                 {shipment.hasCod && parseFloat(shipment.codAmount || 0) > 0 && (
@@ -943,18 +965,22 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
             {/* Import Excel Modal */}
             {isImportModalOpen && (
                 <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center sm:p-4">
-                    <div className="bg-white sm:rounded-2xl w-full max-w-2xl modal-mobile-full overflow-y-auto shadow-xl animate-in zoom-in-95 duration-200">
-                        <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center sticky top-0 z-10">
+                    <div className={`bg-white sm:rounded-2xl w-full ${importMode === 'fotos' ? 'max-w-5xl' : 'max-w-2xl'} modal-mobile-full overflow-y-auto shadow-xl animate-in zoom-in-95 duration-200`}>
+                        <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center sticky top-0 z-10 gap-3">
                             <h3 className="font-bold text-slate-800 flex items-center gap-2">
                                 <Plus size={16} className="text-indigo-500" />
-                                Importar Envíos desde Excel
+                                Importar envíos
                             </h3>
+                            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+                                <button onClick={() => setImportMode('excel')} className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${importMode === 'excel' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Excel</button>
+                                <button onClick={() => setImportMode('fotos')} className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${importMode === 'fotos' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Fotos de agencia</button>
+                            </div>
                             <button onClick={() => { setIsImportModalOpen(false); setImportClientId(''); }} className="text-slate-400 hover:text-slate-600">
                                 <X size={20} />
                             </button>
                         </div>
                         <div className="p-4 border-b border-slate-100 bg-indigo-50">
-                            <label className="text-xs font-bold text-indigo-700 mb-2 block">¿Para qué cliente es este Excel?</label>
+                            <label className="text-xs font-bold text-indigo-700 mb-2 block">{importMode === 'fotos' ? '¿Qué agencia paga estos portes?' : '¿Para qué cliente es este Excel?'}</label>
                             <div className="flex flex-col gap-2">
                                 <input
                                     type="text"
@@ -1004,7 +1030,18 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                 </div>
                             )}
                         </div>
-                        {importClientId ? (
+                        {importClientId && importMode === 'fotos' ? (
+                            <ImportarAlbaranesAgencia
+                                isAdmin={true}
+                                client={(clients || []).find(c => String(c.id) === String(importClientId))}
+                                onCreateShipment={onCreateShipment}
+                                allShipments={shipments}
+                                articles={articles}
+                                tariffs={tariffs}
+                                coverageZones={coverageZones}
+                                onClose={() => { setIsImportModalOpen(false); setImportClientId(''); }}
+                            />
+                        ) : importClientId ? (
                             <ImportExcelShipments
                                 isAdmin={true}
                                 selectedClientOverride={(clients || []).find(c => String(c.id) === String(importClientId))}
@@ -1018,7 +1055,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             />
                         ) : (
                             <div className="p-12 text-center text-slate-400 text-sm">
-                                Selecciona un cliente arriba para continuar con la importación.
+                                {importMode === 'fotos' ? 'Elige arriba la agencia que paga los portes para empezar a leer los albaranes.' : 'Selecciona un cliente arriba para continuar con la importación.'}
                             </div>
                         )}
                     </div>

@@ -6,6 +6,9 @@ import {
     opcionesDeClientes,
     opcionesDePoblaciones,
     SIN_FILTRO,
+    coincideTipoDeCliente,
+    filtroTipoDeCliente,
+    tipoDeClienteDelEnvio,
     BAREMO_1,
     BAREMO_2
 } from './filtrosEnvios';
@@ -166,5 +169,60 @@ describe('filtro por baremo (conjunto de poblaciones)', () => {
         expect(lista.filter(filtroPoblacion(BAREMO_2)).map((e) => e.id)).toEqual(['SUM-200', 'REC-300', 'SUM-200']);
         expect(lista.filter(filtroPoblacion(BAREMO_1)).map((e) => e.id)).toEqual(['SUM-201']);
         expect(lista.filter(filtroPoblacion(SIN_FILTRO))).toHaveLength(5);
+    });
+});
+
+describe('filtro por tipo de cliente (Facturación / Habitual / Presupuesto)', () => {
+    const clientes = [
+        { id: 1, name: 'INDUSTRIAL LEKUE S.L.', legalName: 'Industrial Lekue Sociedad Limitada', billingType: 'Facturación', clientNumber: '100' },
+        { id: 2, name: 'PECOMARK S.A.', billingType: 'Presupuesto', branches: [{ name: 'PECOMARK LUCENA' }] },
+        { id: 3, name: 'AGROCOR BAENA', billingType: 'Clientes Habituales' },
+        { id: 4, name: 'LEKUE SUCURSAL', billingType: 'Clientes Habituales', clientNumber: '100-A' },
+        { id: 5, name: 'TALLER ESPEJO', tipoFacturacion: 'Facturación mensual' }
+    ];
+    const pagado = (client, extra = {}) => ({ id: 'X', porteType: 'Pagado', client, destinationName: 'Alguien', ...extra });
+
+    it('sin tipo elegido pasan todos', () => {
+        expect(coincideTipoDeCliente(pagado('AGROCOR BAENA'), SIN_FILTRO, clientes)).toBe(true);
+        expect(coincideTipoDeCliente(pagado('AGROCOR BAENA'), '', clientes)).toBe(true);
+    });
+
+    it('mira la ficha de quien paga: el remitente en porte pagado', () => {
+        expect(tipoDeClienteDelEnvio(pagado('INDUSTRIAL LEKUE S.L.'), clientes)).toBe('Facturación');
+        expect(coincideTipoDeCliente(pagado('INDUSTRIAL LEKUE S.L.'), 'Facturación', clientes)).toBe(true);
+        expect(coincideTipoDeCliente(pagado('INDUSTRIAL LEKUE S.L.'), 'Clientes Habituales', clientes)).toBe(false);
+    });
+
+    it('en porte debido paga el destinatario, no el remitente', () => {
+        const debido = { id: 'D', porteType: 'Debido', client: 'INDUSTRIAL LEKUE S.L.', destinationName: 'AGROCOR BAENA' };
+        expect(tipoDeClienteDelEnvio(debido, clientes)).toBe('Clientes Habituales');
+    });
+
+    it('encuentra la ficha por razón social o por sucursal, sin tildes ni mayúsculas', () => {
+        expect(tipoDeClienteDelEnvio(pagado('industrial lekue sociedad limitada'), clientes)).toBe('Facturación');
+        expect(tipoDeClienteDelEnvio(pagado('Pecomark Lucena'), clientes)).toBe('Presupuesto');
+    });
+
+    it('una sucursal numerada "100-A" hereda el tipo de la matriz "100"', () => {
+        expect(tipoDeClienteDelEnvio(pagado('LEKUE SUCURSAL'), clientes)).toBe('Facturación');
+    });
+
+    it('acepta el campo antiguo tipoFacturacion y "Facturación mensual" cuenta como Facturación', () => {
+        expect(tipoDeClienteDelEnvio(pagado('TALLER ESPEJO'), clientes)).toBe('Facturación');
+    });
+
+    it('sin ficha vale el tipo del albarán, y sin nada es Habitual', () => {
+        expect(tipoDeClienteDelEnvio(pagado('DESCONOCIDO', { billingType: 'Presupuesto' }), clientes)).toBe('Presupuesto');
+        expect(tipoDeClienteDelEnvio(pagado('DESCONOCIDO'), clientes)).toBe('Clientes Habituales');
+        expect(tipoDeClienteDelEnvio(pagado('DESCONOCIDO'), [])).toBe('Clientes Habituales');
+    });
+
+    it('la ficha manda sobre lo que traiga el albarán', () => {
+        expect(tipoDeClienteDelEnvio(pagado('AGROCOR BAENA', { billingType: 'Facturación' }), clientes)).toBe('Clientes Habituales');
+    });
+
+    it('la criba de un listado da lo mismo que comprobar uno a uno', () => {
+        const envios = [pagado('INDUSTRIAL LEKUE S.L.'), pagado('AGROCOR BAENA'), pagado('PECOMARK S.A.')];
+        expect(envios.filter(filtroTipoDeCliente('Presupuesto', clientes)).map((e) => e.client)).toEqual(['PECOMARK S.A.']);
     });
 });

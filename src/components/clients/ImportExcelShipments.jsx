@@ -1,9 +1,9 @@
 import { useState, useMemo, useCallback } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, ArrowRight, ArrowLeft, Trash2, Download, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
+import { buscarArticuloBadi as findBadiArticle, baremoDelPunto, precioUnitarioParaCliente, prefijoSerieDelCliente } from '../../utils/importacionEnvios';
 
 // ─── Diccionario de sinónimos para mapeo inteligente ───
 const FIELD_SYNONYMS = {
@@ -49,26 +49,6 @@ function autoMapColumns(headers) {
     }
     return mapping;
 }
-
-function findBadiArticle(articles, numPackages) {
-    const num = parseInt(numPackages) || 1;
-    const badiArticles = (articles || []).filter(a => a.category === 'BADI');
-    // Try to find exact match by extracting number from name (BLT_1, BLT_2, etc.)
-    const exact = badiArticles.find(a => {
-        const parsed = parseInt(String(a.name).replace(/\D/g, ''));
-        return parsed === num;
-    });
-    if (exact) return exact;
-    // Fallback: find the closest one that's >= num, or the largest available
-    const sorted = badiArticles.map(a => ({ ...a, _num: parseInt(String(a.name).replace(/\D/g, '')) || 0 })).sort((a, b) => a._num - b._num);
-    const closest = sorted.find(a => a._num >= num);
-    return closest || sorted[sorted.length - 1] || null;
-}
-
-const normalizeText = (text) => {
-    if (!text) return '';
-    return String(text).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
-};
 
 export default function ImportExcelShipments({ client, onCreateShipment, allShipments, articles, tariffs, coverageZones, allClients, onClose, isAdmin, selectedClientOverride }) {
     const [step, setStep] = useState(1); // 1=upload, 2=mapping, 3=preview, 4=done
@@ -141,34 +121,14 @@ export default function ImportExcelShipments({ client, onCreateShipment, allShip
     const validRows = mappedRows.filter(r => r._errors.length === 0);
     const errorRows = mappedRows.filter(r => r._errors.length > 0);
 
-    const getPointBaremo = (city, zip) => {
-        let baremo = 1;
-        const cleanCity = String(city || '').trim().toLowerCase();
-        const cleanZip = String(zip || '').trim();
-        if (!cleanCity && !cleanZip) return 1;
-        const normCity = normalizeText(cleanCity);
-        if (tariffs) {
-            const found = tariffs.find(t => (t.match && normalizeText(t.match) === normCity) || (t.zipPrefix && cleanZip && cleanZip.startsWith(t.zipPrefix.trim())));
-            if (found?.baremo) return Number(found.baremo);
-        }
-        const dynMatch = (coverageZones || []).find(p => (normCity && normalizeText(p.name) === normCity) || (cleanZip && String(p.zip || '').trim() === cleanZip));
-        if (dynMatch) return Number(dynMatch.baremo || 1);
-        const masterMatch = (ALL_BAREMO_PUEBLOS || []).find(p => (normCity && normalizeText(p.name) === normCity) || (cleanZip && String(p.zip || '').trim() === cleanZip));
-        if (masterMatch) return Number(masterMatch.baremo);
-        if (cleanZip && !cleanZip.startsWith('14')) return 2;
-        return baremo;
-    };
+    const getPointBaremo = (city, zip) => baremoDelPunto(city, zip, { tariffs, coverageZones });
 
     const handleImport = async () => {
         if (validRows.length === 0) return;
         setImporting(true);
 
         // Determinar prefijo de serie según tipo de cliente
-        const clientBt = String(effectiveClient.billingType || '').toLowerCase();
-        const isHabClient = clientBt.includes('habitual') || clientBt.includes('diar') ||
-                            clientBt.includes('libre') || clientBt.includes('contado') ||
-                            clientBt.includes('presupuesto');
-        const prefix = isHabClient ? 'HAB' : 'SUM';
+        const prefix = prefijoSerieDelCliente(effectiveClient);
 
         // Se reserva de una vez el tramo entero de números en el servidor: contar
         // aquí no vale porque el cliente sólo ve sus propios envíos (RLS, fase 04)
@@ -192,18 +152,7 @@ export default function ImportExcelShipments({ client, onCreateShipment, allShip
                 const destBaremo = getPointBaremo(row.destinationCity, row.destinationZip);
                 const baremo = (originBaremo === 2 || destBaremo === 2) ? 2 : 1;
 
-                let unitPrice = article ? parseFloat(article.price || 0) : 0;
-                if (article && effectiveClient) {
-                    if (baremo === 2 && effectiveClient.customRatesB2?.[article.id] !== undefined && effectiveClient.customRatesB2[article.id] !== '') {
-                        unitPrice = parseFloat(effectiveClient.customRatesB2[article.id]);
-                    } else if (baremo === 1 && effectiveClient.customRates?.[article.id] !== undefined && effectiveClient.customRates[article.id] !== '') {
-                        unitPrice = parseFloat(effectiveClient.customRates[article.id]);
-                    } else if (effectiveClient.customRates?.[article.id] !== undefined && effectiveClient.customRates[article.id] !== '') {
-                        unitPrice = parseFloat(effectiveClient.customRates[article.id]);
-                    } else if (baremo === 2 && article.priceB2 !== undefined && article.priceB2 !== null && article.priceB2 !== '') {
-                        unitPrice = parseFloat(article.priceB2);
-                    }
-                }
+                const unitPrice = precioUnitarioParaCliente(article, effectiveClient, baremo);
 
                 const codAmt = parseFloat(row.codAmount) || 0;
                 const codFee = calcularComisionReembolso(effectiveClient, codAmt);
