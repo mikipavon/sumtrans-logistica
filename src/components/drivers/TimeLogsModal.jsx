@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import * as XLSX from 'xlsx';
 
-export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) {
+export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked, drivers = [] }) {
     const [logs, setLogs] = useState([]);
     const [absences, setAbsences] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -17,6 +17,7 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
     const [showPurge, setShowPurge] = useState(false);
     const [purgeDate, setPurgeDate] = useState('');
     const [purgeMode, setPurgeMode] = useState('day'); // 'day' = sólo ese día | 'upto' = ese día y anteriores
+    const [purgeDriverId, setPurgeDriverId] = useState('all'); // 'all' = todos los conductores | id de uno
     const [purgePreview, setPurgePreview] = useState(null);
     const [isPurging, setIsPurging] = useState(false);
     // ─── NORMAS DE FICHAJE (días laborables, automático, geocerca) ───
@@ -246,13 +247,24 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
         }
     };
 
+    // Conductores para el desplegable: los de la ficha y, por si alguno se borró,
+    // los que aparezcan en los fichajes del mes con otro id.
+    const conductoresPurge = (() => {
+        const vistos = new Map();
+        (drivers || []).forEach(d => vistos.set(String(d.id), d.name || `Conductor ${d.id}`));
+        logs.forEach(l => { if (l.driver_id != null && !vistos.has(String(l.driver_id))) vistos.set(String(l.driver_id), l.driver_name || `Conductor ${l.driver_id}`); });
+        return [...vistos.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+    })();
+    const nombreConductorPurge = (id) => conductoresPurge.find(c => c.id === String(id))?.name || `Conductor ${id}`;
+
     const previewPurge = async () => {
         if (!purgeDate) return;
         setIsPurging(true);
         setPurgePreview(null);
         try {
             const base = supabase.from('time_logs').select('*');
-            const query = purgeMode === 'day' ? base.eq('date', purgeDate) : base.lte('date', purgeDate);
+            let query = purgeMode === 'day' ? base.eq('date', purgeDate) : base.lte('date', purgeDate);
+            if (purgeDriverId !== 'all') query = query.eq('driver_id', purgeDriverId);
             const [{ data, error }, confirmedKeys] = await Promise.all([query, loadConfirmedKeys()]);
             if (error) throw error;
             if (confirmedKeys === null) {
@@ -277,9 +289,10 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
     const runPurge = async () => {
         if (!purgePreview || purgePreview.deletable.length === 0) return;
         const total = purgePreview.deletable.length;
-        const rango = purgeMode === 'day'
+        const quien = purgeDriverId === 'all' ? '' : ` de ${nombreConductorPurge(purgeDriverId)}`;
+        const rango = (purgeMode === 'day'
             ? `del día ${formatDateFull(purgeDate)}`
-            : `del ${formatDateFull(purgeDate)} y de todos los días anteriores`;
+            : `del ${formatDateFull(purgeDate)} y de todos los días anteriores`) + quien;
         if (!window.confirm(`⚠️ Vas a BORRAR ${total} fichaje(s) ${rango}.\n\nEsto no se puede deshacer. Si quieres una copia, cancela y exporta antes a Excel.\n\n¿Continuar?`)) return;
         if (!window.confirm(`Última confirmación:\n\nSe borran ${total} registro(s) de forma permanente.`)) return;
         setIsPurging(true);
@@ -653,6 +666,17 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
                         >
                             <option value="day">Sólo ese día</option>
                             <option value="upto">Ese día y todos los anteriores</option>
+                        </select>
+                        <select
+                            value={purgeDriverId}
+                            onChange={(e) => { setPurgeDriverId(e.target.value); setPurgePreview(null); }}
+                            className="px-3 py-2 border border-slate-200 rounded-lg font-bold text-xs text-slate-700 bg-white focus:ring-2 focus:ring-red-500/20 outline-none"
+                            title="Borrar solo los fichajes de un conductor"
+                        >
+                            <option value="all">Todos los conductores</option>
+                            {conductoresPurge.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
                         </select>
                         <button
                             onClick={previewPurge}

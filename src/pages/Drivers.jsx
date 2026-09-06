@@ -415,6 +415,7 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                 isOpen={isTimeLogsModalOpen}
                 onClose={() => setIsTimeLogsModalOpen(false)}
                 isGhostModeUnlocked={isGhostModeUnlocked}
+                drivers={drivers}
             />
 
             <AbsenceManagerModal
