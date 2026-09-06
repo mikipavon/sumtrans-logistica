@@ -101,9 +101,27 @@ export const nombreDeParada = (shipment) => {
         : (shipment.destinationName || shipment.client || '');
 };
 
+/**
+ * Si el albarán lo creó el propio cliente desde su portal (formulario o Excel).
+ * El creador se guarda como "ClienteWeb: <nombre>" (o "Portal Cliente" cuando
+ * no se encontró la ficha) — ver quienEstaCreando en App.jsx.
+ */
+export const vieneDelPortal = (shipment) => {
+    const creador = String(shipment?.createdBy || '');
+    return creador.startsWith('ClienteWeb:') || creador === 'Portal Cliente';
+};
+
 export const getIrregularReasons = (shipment) => {
     if (!shipment || shipment.notificationDismissed) return [];
     const reasons = [];
+
+    // 0-bis. El cliente ha puesto kilos en su portal. Sólo los del portal: los
+    // albaranes que teclea la oficina para clientes que facturan por kilos
+    // llevan peso siempre y no son ninguna novedad.
+    const kilos = parseFloat(shipment.weightKg);
+    if (vieneDelPortal(shipment) && !isNaN(kilos) && kilos > 0) {
+        reasons.push(`Indica peso: ${kilos} kg`);
+    }
 
     // 0. Asignado a Administración
     if (shipment.status === 'Administración') {
@@ -196,6 +214,44 @@ export const nombresDelCliente = (cliente) => {
         for (const sede of cliente.branches) nombres.push(sede?.name);
     }
     return [...new Set(nombres.map(normalizarNombre).filter(Boolean))];
+};
+
+const mismoId = (a, b) => a !== null && a !== undefined && String(a) !== '' &&
+                          b !== null && b !== undefined && String(a) === String(b);
+
+/**
+ * NUESTRA ficha del destinatario de este envío, si la base de datos lo ha
+ * emparejado (fase 21: `destinatarioId` y, si es una sede, `destinatarioSedeId`).
+ *
+ * Devuelve { client, branch } —branch a null si es la ficha madre— o null si el
+ * envío no tiene enlace o la ficha no está cargada. No busca por nombre a
+ * propósito: para eso ya está el emparejamiento del servidor, que ve todas las
+ * fichas y aplica una sola regla para todo el mundo.
+ */
+export const fichaDelDestinatario = (shipment, clients = []) => {
+    if (!shipment) return null;
+    const client = (clients || []).find(c => c && mismoId(shipment.destinatarioId, c.id));
+    if (!client) return null;
+    const branch = Array.isArray(client.branches) && shipment.destinatarioSedeId !== null && shipment.destinatarioSedeId !== undefined
+        ? client.branches.find(b => b && mismoId(b.id, shipment.destinatarioSedeId)) || null
+        : null;
+    return { client, branch };
+};
+
+/**
+ * El nombre del destinatario tal y como lo tiene que ver EL REPARTIDOR.
+ *
+ * El envío guarda el texto que tecleó quien lo creó, y en el portal el cliente
+ * ve eso. Pero la oficina pone en el nombre comercial de la ficha sus propias
+ * señas ("la del polígono, preguntar por Juan"), y eso es lo que le sirve al
+ * conductor en la calle. Si el envío está enlazado con una ficha nuestra, manda
+ * el nombre de la ficha (el de la sede si es una sede); si no, el del envío.
+ */
+export const nombreDestinatarioEnRuta = (shipment, clients = []) => {
+    if (!shipment) return '';
+    const ficha = fichaDelDestinatario(shipment, clients);
+    const deLaFicha = String(ficha?.branch?.name || ficha?.client?.name || '').trim();
+    return deLaFicha || shipment.destinationName || shipment.client || '';
 };
 
 /**
@@ -341,4 +397,41 @@ export const importeParaMostrar = (amount) => {
     const str = String(amount).trim();
     if (!/\d/.test(str)) return str;
     return `€${importeDelAlbaran(str).toFixed(2)}`;
+};
+
+/**
+ * Separa una dirección de albarán en la población y la calle, para que en la lista
+ * la población se lea siempre aunque la calle no quepa.
+ *
+ * Las direcciones vienen como "C/ Fresadores s/n, 14900 Lucena" y en la columna se
+ * truncaba por la derecha: se veía el polígono y nunca el pueblo. La población se
+ * toma del campo propio del envío y, si no lo trae, del último tramo tras la coma
+ * quitando el código postal.
+ */
+export const poblacionYCalle = (direccion, poblacion) => {
+    const texto = String(direccion || '').trim();
+    const tramos = texto.split(',').map(t => t.trim()).filter(Boolean);
+    let ciudad = String(poblacion || '').trim();
+    let calle = texto;
+
+    if (tramos.length > 1) {
+        const ultimo = tramos[tramos.length - 1];
+        const sinCp = ultimo.replace(/^\d{4,5}\s*/, '').trim();
+        if (!ciudad) ciudad = sinCp;
+        if (!ciudad || ultimo.toLowerCase().includes(ciudad.toLowerCase())) {
+            calle = tramos.slice(0, -1).join(', ');
+        }
+    } else if (tramos.length === 1) {
+        const sinCp = tramos[0].replace(/^\d{4,5}\s*/, '').trim();
+        if (!ciudad && /^\d{4,5}\s/.test(tramos[0])) {
+            ciudad = sinCp;
+            calle = '';
+        } else if (ciudad && sinCp.toLowerCase() === ciudad.toLowerCase()) {
+            calle = '';
+        }
+    }
+
+    if (!ciudad) ciudad = calle;
+    if (ciudad === calle) calle = '';
+    return { ciudad, calle };
 };

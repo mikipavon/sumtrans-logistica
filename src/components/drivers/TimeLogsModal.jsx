@@ -1,9 +1,10 @@
-import { X, Clock, Calendar, Edit2, CheckCircle, Trash2, Download, FileSpreadsheet, FileText, AlertTriangle } from 'lucide-react';
+import { X, Clock, Calendar, Edit2, CheckCircle, Trash2, Download, FileSpreadsheet, FileText, AlertTriangle, ShieldCheck, MapPin } from 'lucide-react';
+import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, DIAS_SEMANA } from '../../utils/normasFichaje';
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import * as XLSX from 'xlsx';
 
-export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) {
+export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked, drivers = [] }) {
     const [logs, setLogs] = useState([]);
     const [absences, setAbsences] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -16,8 +17,15 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
     const [showPurge, setShowPurge] = useState(false);
     const [purgeDate, setPurgeDate] = useState('');
     const [purgeMode, setPurgeMode] = useState('day'); // 'day' = sólo ese día | 'upto' = ese día y anteriores
+    const [purgeDriverId, setPurgeDriverId] = useState('all'); // 'all' = todos los conductores | id de uno
     const [purgePreview, setPurgePreview] = useState(null);
     const [isPurging, setIsPurging] = useState(false);
+    // ─── NORMAS DE FICHAJE (días laborables, automático, geocerca) ───
+    const [showNormas, setShowNormas] = useState(false);
+    const [normas, setNormas] = useState(() => normalizarNormasFichaje(null));
+    const [normasGuardadas, setNormasGuardadas] = useState(() => normalizarNormasFichaje(null));
+    const [savingNormas, setSavingNormas] = useState(false);
+    const [buscandoNave, setBuscandoNave] = useState(false);
 
     useEffect(() => {
         if (isOpen) {
@@ -29,6 +37,13 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
                     setLoadingToggle(false);
                 })
                 .catch(() => setLoadingToggle(false));
+            supabase.from('settings').select('value').eq('key', CLAVE_NORMAS_FICHAJE).maybeSingle()
+                .then(({ data }) => {
+                    const n = normalizarNormasFichaje(data?.value);
+                    setNormas(n);
+                    setNormasGuardadas(n);
+                })
+                .catch(() => {});
         }
     }, [month, isOpen]);
 
@@ -232,13 +247,24 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
         }
     };
 
+    // Conductores para el desplegable: los de la ficha y, por si alguno se borró,
+    // los que aparezcan en los fichajes del mes con otro id.
+    const conductoresPurge = (() => {
+        const vistos = new Map();
+        (drivers || []).forEach(d => vistos.set(String(d.id), d.name || `Conductor ${d.id}`));
+        logs.forEach(l => { if (l.driver_id != null && !vistos.has(String(l.driver_id))) vistos.set(String(l.driver_id), l.driver_name || `Conductor ${l.driver_id}`); });
+        return [...vistos.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+    })();
+    const nombreConductorPurge = (id) => conductoresPurge.find(c => c.id === String(id))?.name || `Conductor ${id}`;
+
     const previewPurge = async () => {
         if (!purgeDate) return;
         setIsPurging(true);
         setPurgePreview(null);
         try {
             const base = supabase.from('time_logs').select('*');
-            const query = purgeMode === 'day' ? base.eq('date', purgeDate) : base.lte('date', purgeDate);
+            let query = purgeMode === 'day' ? base.eq('date', purgeDate) : base.lte('date', purgeDate);
+            if (purgeDriverId !== 'all') query = query.eq('driver_id', purgeDriverId);
             const [{ data, error }, confirmedKeys] = await Promise.all([query, loadConfirmedKeys()]);
             if (error) throw error;
             if (confirmedKeys === null) {
@@ -263,9 +289,10 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
     const runPurge = async () => {
         if (!purgePreview || purgePreview.deletable.length === 0) return;
         const total = purgePreview.deletable.length;
-        const rango = purgeMode === 'day'
+        const quien = purgeDriverId === 'all' ? '' : ` de ${nombreConductorPurge(purgeDriverId)}`;
+        const rango = (purgeMode === 'day'
             ? `del día ${formatDateFull(purgeDate)}`
-            : `del ${formatDateFull(purgeDate)} y de todos los días anteriores`;
+            : `del ${formatDateFull(purgeDate)} y de todos los días anteriores`) + quien;
         if (!window.confirm(`⚠️ Vas a BORRAR ${total} fichaje(s) ${rango}.\n\nEsto no se puede deshacer. Si quieres una copia, cancela y exporta antes a Excel.\n\n¿Continuar?`)) return;
         if (!window.confirm(`Última confirmación:\n\nSe borran ${total} registro(s) de forma permanente.`)) return;
         setIsPurging(true);
@@ -285,6 +312,49 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
         } finally {
             setIsPurging(false);
             fetchLogs();
+        }
+    };
+
+    // ─── NORMAS DE FICHAJE ───
+    const normasCambiadas = JSON.stringify(normalizarNormasFichaje(normas)) !== JSON.stringify(normasGuardadas);
+    const toggleDia = (dia) => setNormas(n => ({
+        ...n,
+        diasLaborables: n.diasLaborables.includes(dia) ? n.diasLaborables.filter(d => d !== dia) : [...n.diasLaborables, dia].sort(),
+    }));
+    const setGeocerca = (cambios) => setNormas(n => ({ ...n, geocerca: { ...n.geocerca, ...cambios } }));
+    const usarPosicionDeLaOficina = () => {
+        if (!navigator.geolocation) { alert('Este navegador no da la ubicación. Escribe las coordenadas a mano.'); return; }
+        setBuscandoNave(true);
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                setGeocerca({ lat: Number(pos.coords.latitude.toFixed(6)), lng: Number(pos.coords.longitude.toFixed(6)) });
+                setBuscandoNave(false);
+            },
+            (err) => {
+                setBuscandoNave(false);
+                alert('No se ha podido leer la ubicación de este equipo (' + err.message + '). Escribe las coordenadas a mano: en Google Maps, clic derecho sobre la nave y copia los dos números.');
+            },
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+        );
+    };
+    const guardarNormas = async () => {
+        const limpias = normalizarNormasFichaje(normas);
+        if (normas.geocerca.activa && !limpias.geocerca.activa) {
+            alert('Para activar la geocerca hacen falta las coordenadas de la nave. Pulsa "Usar la posición de este equipo" o escríbelas a mano.');
+            return;
+        }
+        setSavingNormas(true);
+        try {
+            const { error } = await supabase.from('settings').upsert({ key: CLAVE_NORMAS_FICHAJE, value: JSON.stringify(limpias) });
+            if (error) throw error;
+            setNormas(limpias);
+            setNormasGuardadas(limpias);
+            alert('Normas guardadas. Se aplican en los móviles la próxima vez que abran la app.');
+        } catch (e) {
+            console.error('Error guardando normas de fichaje:', e);
+            alert('No se han podido guardar las normas. Revisa la conexión.');
+        } finally {
+            setSavingNormas(false);
         }
     };
 
@@ -559,6 +629,13 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
                         >
                             <Trash2 size={15} /> Borrar
                         </button>
+                        <button
+                            onClick={() => setShowNormas(v => !v)}
+                            className={`px-3 py-2 border rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${showNormas ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                            title="Normas de fichaje: días laborables, fichaje automático y geocerca de la nave"
+                        >
+                            <ShieldCheck size={15} /> Normas
+                        </button>
                         <button onClick={onClose} className="p-2 hover:bg-slate-200 text-slate-500 rounded-lg transition-colors">
                             <X size={20} />
                         </button>
@@ -589,6 +666,17 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
                         >
                             <option value="day">Sólo ese día</option>
                             <option value="upto">Ese día y todos los anteriores</option>
+                        </select>
+                        <select
+                            value={purgeDriverId}
+                            onChange={(e) => { setPurgeDriverId(e.target.value); setPurgePreview(null); }}
+                            className="px-3 py-2 border border-slate-200 rounded-lg font-bold text-xs text-slate-700 bg-white focus:ring-2 focus:ring-red-500/20 outline-none"
+                            title="Borrar solo los fichajes de un conductor"
+                        >
+                            <option value="all">Todos los conductores</option>
+                            {conductoresPurge.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
                         </select>
                         <button
                             onClick={previewPurge}
@@ -637,6 +725,113 @@ export default function TimeLogsModal({ isOpen, onClose, isGhostModeUnlocked }) 
                             )}
                         </div>
                     )}
+                </div>
+                )}
+
+                {/* Normas de fichaje */}
+                {showNormas && (
+                <div className="px-6 py-4 border-b border-indigo-100 bg-indigo-50/50 shrink-0 space-y-4">
+                    <div className="flex items-start gap-2">
+                        <ShieldCheck size={16} className="text-indigo-600 mt-0.5 shrink-0" />
+                        <div>
+                            <p className="text-xs font-bold text-indigo-900">Normas de fichaje</p>
+                            <p className="text-[10px] text-indigo-700/80">Cuándo y desde dónde cuenta la entrada. Fuera de estas normas la app no ficha sola: al abrirla desde casa un sábado, un festivo o un día de ausencia no queda registrada ninguna jornada.</p>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+                        <div>
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Días laborables</p>
+                            <div className="flex gap-1">
+                                {DIAS_SEMANA.map(d => {
+                                    const activo = normas.diasLaborables.includes(d.dia);
+                                    return (
+                                        <button
+                                            key={d.dia}
+                                            type="button"
+                                            onClick={() => toggleDia(d.dia)}
+                                            title={d.nombre}
+                                            className={`w-8 h-8 rounded-lg text-xs font-black border transition-colors ${activo ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}
+                                        >
+                                            {d.letra}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <p className="text-[10px] text-slate-500 mt-1">Los festivos de empresa se marcan en el calendario (Días festivos), y las vacaciones o bajas en la ficha de cada conductor.</p>
+                        </div>
+
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={normas.fichajeAutomatico}
+                                onChange={(e) => setNormas(n => ({ ...n, fichajeAutomatico: e.target.checked }))}
+                                className="w-4 h-4 accent-indigo-600"
+                            />
+                            <span className="text-xs font-bold text-slate-700">Fichar la entrada sola al abrir la app</span>
+                        </label>
+                    </div>
+
+                    <div className="bg-white border border-indigo-100 rounded-lg p-3">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={normas.geocerca.activa}
+                                onChange={(e) => setGeocerca({ activa: e.target.checked })}
+                                className="w-4 h-4 accent-indigo-600"
+                            />
+                            <MapPin size={14} className="text-indigo-600" />
+                            <span className="text-xs font-bold text-slate-700">Solo fichar sola si el móvil está cerca de la nave</span>
+                        </label>
+                        <p className="text-[10px] text-slate-500 mt-1 ml-6">Con esto activo, abrir la app desde casa no ficha. Si el móvil no da GPS tampoco: el conductor pulsa "Empezar Jornada" cuando llegue.</p>
+                        {normas.geocerca.activa && (
+                            <div className="flex flex-wrap items-end gap-3 mt-3 ml-6">
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                                    Latitud
+                                    <input type="number" step="0.000001" value={normas.geocerca.lat ?? ''} onChange={(e) => setGeocerca({ lat: e.target.value === '' ? null : Number(e.target.value) })}
+                                        className="block mt-1 w-36 px-2 py-1.5 border border-slate-200 rounded-lg text-sm font-mono text-slate-700 normal-case tracking-normal" />
+                                </label>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                                    Longitud
+                                    <input type="number" step="0.000001" value={normas.geocerca.lng ?? ''} onChange={(e) => setGeocerca({ lng: e.target.value === '' ? null : Number(e.target.value) })}
+                                        className="block mt-1 w-36 px-2 py-1.5 border border-slate-200 rounded-lg text-sm font-mono text-slate-700 normal-case tracking-normal" />
+                                </label>
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                                    Radio (metros)
+                                    <input type="number" min="50" step="50" value={normas.geocerca.radioMetros} onChange={(e) => setGeocerca({ radioMetros: Number(e.target.value) })}
+                                        className="block mt-1 w-28 px-2 py-1.5 border border-slate-200 rounded-lg text-sm font-mono text-slate-700 normal-case tracking-normal" />
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={usarPosicionDeLaOficina}
+                                    disabled={buscandoNave}
+                                    className="px-3 py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 disabled:opacity-40 transition-colors flex items-center gap-1.5"
+                                >
+                                    <MapPin size={13} /> {buscandoNave ? 'Localizando...' : 'Usar la posición de este equipo'}
+                                </button>
+                                {normas.geocerca.lat !== null && normas.geocerca.lng !== null && (
+                                    <a
+                                        href={`https://www.google.com/maps?q=${normas.geocerca.lat},${normas.geocerca.lng}`}
+                                        target="_blank" rel="noreferrer"
+                                        className="text-[11px] text-indigo-600 underline underline-offset-2 font-bold"
+                                    >
+                                        Ver en el mapa
+                                    </a>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={guardarNormas}
+                            disabled={!normasCambiadas || savingNormas}
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+                        >
+                            <CheckCircle size={14} /> {savingNormas ? 'Guardando...' : 'Guardar normas'}
+                        </button>
+                        {normasCambiadas && <span className="text-[11px] text-amber-700 font-bold">Hay cambios sin guardar.</span>}
+                    </div>
                 </div>
                 )}
 

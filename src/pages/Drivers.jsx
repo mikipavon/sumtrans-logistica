@@ -40,7 +40,7 @@ function SortableDriverCard({ id, children, isManualSort }) {
     );
 }
 
-export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDeleteDriver, shipments, clients, onImpersonate, onNavigate, isGhostModeUnlocked, routes = [], onUpdateRoutes, routeKnowledge = {}, onUpdateRouteKnowledge, driverOrder = [], onUpdateDriverOrder, gpsIntervalMinutes, setGpsIntervalMinutes, driverAlerts, setDriverAlerts, driverNamePreference = 'both', onUpdateDriverNamePreference }) {
+export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDeleteDriver, shipments, clients, onImpersonate, onNavigate, isGhostModeUnlocked, routes = [], onUpdateRoutes, horarioReparto, onUpdateHorarioReparto, routeKnowledge = {}, onUpdateRouteKnowledge, driverOrder = [], onUpdateDriverOrder, gpsIntervalMinutes, setGpsIntervalMinutes, driverAlerts, setDriverAlerts, driverNamePreference = 'both', onUpdateDriverNamePreference }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isRoutesModalOpen, setIsRoutesModalOpen] = useState(false);
     const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
@@ -377,6 +377,8 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                 onClose={() => setIsRoutesModalOpen(false)}
                 routes={routes}
                 onUpdateRoutes={onUpdateRoutes}
+                horarioReparto={horarioReparto}
+                onUpdateHorarioReparto={onUpdateHorarioReparto}
                 drivers={drivers}
                 routeKnowledge={routeKnowledge}
                 onUpdateRouteKnowledge={onUpdateRouteKnowledge}
@@ -415,6 +417,7 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                 isOpen={isTimeLogsModalOpen}
                 onClose={() => setIsTimeLogsModalOpen(false)}
                 isGhostModeUnlocked={isGhostModeUnlocked}
+                drivers={drivers}
             />
 
             <AbsenceManagerModal

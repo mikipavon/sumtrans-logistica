@@ -35,8 +35,9 @@ import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
-import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante } from '../../utils/shipmentUtils';
+import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
+import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, motivoSinJornada, puedeFicharAutomaticamente, textoSinJornada, MOTIVOS_BLOQUEO } from '../../utils/normasFichaje';
 import { esElMismoPueblo, normalizarPueblo, puebloDeRutaParaEnvio } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
 import { geocodificarDireccion } from '../../utils/geocodificar';
@@ -138,7 +139,7 @@ export const telefonosDeLaParada = (stop, clientes) => {
     if (!stop) return [];
     const esRecogida = stop.type === 'Recogida';
     return telefonosDelContacto(
-        esRecogida ? (stop.originName || stop.client) : (stop.destinationName || stop.client),
+        esRecogida ? (stop.originName || stop.client) : nombreDestinatarioEnRuta(stop, clientes),
         esRecogida ? stop.originPhone : stop.destinationPhone,
         clientes,
     );
@@ -166,7 +167,7 @@ export const movilesDelEnvio = (stop, clientes) => {
         },
         {
             papel: 'Destinatario',
-            nombre: stop.destinationName || (!esRecogida ? stop.client : '') || '',
+            nombre: (stop.destinationName || !esRecogida) ? nombreDestinatarioEnRuta(stop, clientes) : '',
             telefono: stop.destinationPhone,
         },
     ];
@@ -371,7 +372,7 @@ export const ShipmentCardUI = React.memo(({
                         backgroundColor: (() => {
                             if (stop.color) return stop.color;
                             if (!clients) return '#3b82f6';
-                            const client = clients.find(c => c && c.name === (stop.destinationName || stop.client));
+                            const client = fichaDelDestinatario(stop, clients)?.client || clients.find(c => c && c.name === (stop.destinationName || stop.client));
                             return client?.color || '#3b82f6';
                         })()
                     }}
@@ -463,7 +464,7 @@ export const ShipmentCardUI = React.memo(({
                                         );
                                     })()}
                                 </div>
-                                <h4 className="font-bold text-slate-800 truncate">{stop.destinationName || stop.client}</h4>
+                                <h4 className="font-bold text-slate-800 truncate">{nombreDestinatarioEnRuta(stop, clients)}</h4>
                             </div>
                             <div className="absolute right-4 top-2 flex flex-row-reverse gap-1.5 z-20">
                                 {(() => {
@@ -637,7 +638,7 @@ export const ShipmentCardUI = React.memo(({
                             {(() => {
                                 const normalizeText = (val) => String(val || '').trim().toLowerCase();
                                 const sName = normalizeText(stop.originName || stop.client);
-                                const dName = normalizeText(stop.destinationName || stop.client);
+                                const dName = normalizeText(nombreDestinatarioEnRuta(stop, clients));
                                 const senderClient = clients?.find(c => normalizeText(c.name) === sName || normalizeText(c.legalName) === sName);
                                 const destClient = clients?.find(c => normalizeText(c.name) === dName || normalizeText(c.legalName) === dName);
                                 const model = new Shipment({
@@ -1002,6 +1003,37 @@ const DriverVacationsPanel = ({ currentDriverId, onClose }) => {
     );
 };
 
+// Las normas de fichaje de la oficina y los festivos de empresa, ya en limpio.
+// Si la nube no contesta se aplica lo de fábrica (lunes a viernes, automático).
+const cargarNormasYFestivos = async () => {
+    let normas = normalizarNormasFichaje(null);
+    let festivos = [];
+    try {
+        const [{ data: n }, { data: f }] = await Promise.all([
+            supabase.from('settings').select('value').eq('key', CLAVE_NORMAS_FICHAJE).maybeSingle(),
+            supabase.from('settings').select('value').eq('key', 'company_blocked_days').maybeSingle(),
+        ]);
+        normas = normalizarNormasFichaje(n?.value);
+        if (f?.value) { try { festivos = JSON.parse(f.value) || []; } catch { festivos = []; } }
+    } catch (e) {
+        console.warn('[Fichaje] No se pudieron leer las normas; se aplica lo de fábrica.', e);
+    }
+    return { normas, festivos };
+};
+
+// Una posición del móvil para la geocerca, o null si no la da a tiempo. Primero
+// GPS fino; si no contesta, por antenas/wifi, que dentro de la nave es lo que hay.
+const posicionParaFichar = () => new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    const leer = (fina) => navigator.geolocation.getCurrentPosition(
+        (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+        (err) => (fina && err.code !== err.PERMISSION_DENIED) ? leer(false) : resolve(null),
+        fina ? { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+             : { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 },
+    );
+    leer(true);
+});
+
 const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety }) => {
     const [status, setStatus] = useState('loading'); // loading, pending_in, working, finished, paused, on_absence, weekend, company_holiday
     const [logId, setLogId] = useState(null);
@@ -1014,28 +1046,18 @@ const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety })
             try {
                 const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
 
-                // ── 1. Check weekend (Saturday=6, Sunday=0) ──
-                const todayDate = new Date(today + 'T12:00:00');
-                const dow = todayDate.getDay();
-                if (dow === 0 || dow === 6) {
+                // ── 1. ¿Hay jornada hoy? Días laborables (normas de la oficina) y festivos ──
+                const { normas, festivos } = await cargarNormasYFestivos();
+                const sinJornada = motivoSinJornada({ fechaISO: today, normas, festivos });
+                if (sinJornada === MOTIVOS_BLOQUEO.DIA_NO_LABORABLE) {
                     setStatus('weekend');
                     return;
                 }
-
-                // ── 2. Check company-wide blocked days ──
-                try {
-                    const { data: settingsData } = await supabase
-                        .from('settings').select('value').eq('key', 'company_blocked_days').maybeSingle();
-                    if (settingsData?.value) {
-                        const blocked = JSON.parse(settingsData.value);
-                        const match = blocked.find(d => d.date === today);
-                        if (match) {
-                            setHolidayInfo(match);
-                            setStatus('company_holiday');
-                            return;
-                        }
-                    }
-                } catch (_) {}
+                if (sinJornada === MOTIVOS_BLOQUEO.FESTIVO) {
+                    setHolidayInfo(festivos.find(d => d.date === today));
+                    setStatus('company_holiday');
+                    return;
+                }
 
                 const { data, error } = await supabase
                     .from('time_logs')
@@ -1166,10 +1188,11 @@ const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety })
     if (status === 'weekend') {
         const todayDate = new Date();
         const issunday = todayDate.getDay() === 0;
+        const hoyISO = new Date(Date.now() - todayDate.getTimezoneOffset() * 60000).toISOString().split('T')[0];
         return (
             <div className="w-full bg-rose-50 text-rose-700 py-5 rounded-xl border-2 border-rose-200 flex flex-col items-center justify-center gap-1.5 mb-8">
                 <span className="text-3xl">{issunday ? '🙏' : '💤'}</span>
-                <span className="text-sm font-black text-rose-800">{issunday ? 'Domingo' : 'Sábado'} — Día de descanso</span>
+                <span className="text-sm font-black text-rose-800">{textoSinJornada(MOTIVOS_BLOQUEO.DIA_NO_LABORABLE, hoyISO)}</span>
                 <span className="text-xs font-semibold text-rose-600">No hay jornada laboral hoy.</span>
                 <span className="text-[10px] text-rose-400 mt-0.5">Disfruta tu descanso 😊</span>
             </div>
@@ -1743,7 +1766,7 @@ const DriverTimeLogAlerts = ({ currentDriverId }) => {
     );
 };
 
-function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both', isTestMode = false, cachedDriverName = null, modoAdmin = false }) {
+function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, horarioReparto = null, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both', isTestMode = false, cachedDriverName = null, modoAdmin = false }) {
     console.log('DriverDashboard Render', { currentDriverId, drivers: drivers?.length, shipments: allShipments?.length, clients: clients?.length });
 
     const getDriverDisplayName = (driver) => {
@@ -1773,6 +1796,19 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     .limit(1);
                 if (error) { console.error("Error auto-clock-in check:", error); return; }
                 if (!data || data.length === 0) {
+                    // Normas de la oficina: día laborable, festivos, ausencia, interruptor
+                    // del automático y geocerca. Si algo no cuadra, NO se ficha solo: el
+                    // conductor verá el botón "Empezar Jornada" (o el cartel de descanso).
+                    const { normas, festivos } = await cargarNormasYFestivos();
+                    const { data: ausencia } = await supabase
+                        .from('driver_absences').select('id')
+                        .eq('driver_id', String(currentDriverId)).eq('date', today).maybeSingle();
+                    const posicion = normas.geocerca.activa ? await posicionParaFichar() : null;
+                    const veredicto = puedeFicharAutomaticamente({ fechaISO: today, normas, festivos, ausencia, posicion });
+                    if (!veredicto.ok) {
+                        console.log(`[Fichaje] Sin fichaje automático: ${veredicto.motivo}`, veredicto.distanciaMetros ? `(${veredicto.distanciaMetros} m de la nave)` : '');
+                        return;
+                    }
                     const driverObj = drivers?.find(d => String(d.id) === String(currentDriverId));
                     await supabase.from('time_logs').insert([{
                         driver_id: currentDriverId,
@@ -2524,7 +2560,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         const isPickup = shipment.type === 'Recogida';
         const targetName = isPickup
             ? (shipment.originName || shipment.client)
-            : (shipment.destinationName || shipment.client);
+            : nombreDestinatarioEnRuta(shipment, clients);
         const targetPhone = isPickup ? shipment.originPhone : shipment.destinationPhone;
 
         // Aquí solo vale un móvil: a un fijo el justificante no llega. Este es el de la
@@ -2660,11 +2696,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         // de compartir sin esperas de por medio (ver el bloque del final).
         const date = shipment.date || new Date().toLocaleDateString('es-ES');
         const origin = shipment.originName || shipment.client;
-        const dest = shipment.destinationName || shipment.client;
+        const dest = nombreDestinatarioEnRuta(shipment, clients);
 
         const normalize = (val) => String(val || '').toLowerCase().trim();
         const originClient = clientsMap?.get(normalizeClientName(shipment.originName || shipment.client));
-        const destClient = clientsMap?.get(normalizeClientName(shipment.destinationName || shipment.client));
+        const destClient = fichaDelDestinatario(shipment, clients)?.client || clientsMap?.get(normalizeClientName(shipment.destinationName || shipment.client));
 
         const mainBillingType = normalize(shipment.billingType || originClient?.billingType || '');
         const destBillingType = normalize(shipment.destinationBillingType || destClient?.billingType || '');
@@ -2904,6 +2940,20 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         return { name: clientName, cif: '' };
     };
 
+    // Nombre comercial + CIF para los justificantes de reembolso: el que firma
+    // conoce el negocio por su rotulo, no por la razon social.
+    const getClientCommercialInfo = (clientName) => {
+        if (!clients || !clientName) return { name: clientName, cif: '' };
+        const clientObj = clients.find(c => (c.name || '').toLowerCase() === clientName.toLowerCase());
+        if (clientObj) {
+            return {
+                name: clientObj.name || clientObj.legalName || clientName,
+                cif: clientObj.cif ? ` (CIF: ${clientObj.cif})` : ''
+            };
+        }
+        return { name: clientName, cif: '' };
+    };
+
     // Nombre del remitente para el justificante de reembolso: es quien recibe el
     // dinero y firma, así que se busca en el envío si el cobro no lo trae.
     // Los cobros viejos guardaron el literal 'N/A', que aquí vale como vacío.
@@ -2913,13 +2963,13 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         const ship = raw ? null : (allShipments || []).find(s => s.id === shipmentId);
         const name = raw || ship?.originName || ship?.client || '';
         if (!name) return '__________________________';
-        const legal = getClientLegalInfo(name);
+        const legal = getClientCommercialInfo(name);
         return `${legal.name}${legal.cif}`;
     };
 
     // Print Receipt Function (with QR code for scanning)
     const handlePrintReceipt = (collection) => {
-        const legalInfo = getClientLegalInfo(collection.client);
+        const legalInfo = getClientCommercialInfo(collection.client);
         // Extract the shipment ID from collection
         const shipmentId = collection.original?.shipmentId || collection.id?.replace('-reembolso', '') || collection.id || 'N/A';
         const qrData = `COD:${shipmentId}`;
@@ -3033,7 +3083,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
         // Build receipt cards HTML
         const buildReceiptCard = (item) => {
-            const legalInfo = getClientLegalInfo(item.client);
+            const legalInfo = getClientCommercialInfo(item.client);
             const shipmentId = item.original?.shipmentId || item.id?.replace('-reembolso', '') || item.id || 'N/A';
             const qrData = `COD:${shipmentId}`;
             return `
@@ -3643,7 +3693,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         setPositionLearning(prev => {
             const updated = registrarEntrega(prev, {
                 pueblo,
-                turno: turnoQueSeRepartaAhora(),
+                turno: turnoQueSeRepartaAhora(new Date(), horarioReparto),
                 cliente,
                 posicion,
                 total: entregadas.length + pendientes,
@@ -3791,6 +3841,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     aprendizaje: positionLearning,
                     conocimiento: routeKnowledge,
                     gps,
+                    horarioReparto,
                 });
 
                 setLocalRoute(orden);
@@ -4027,7 +4078,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             if (deliveryModalShipment.type === 'Recogida') return [];
 
             // 1. Determine who we are interacting with (The Entity)
-            let targetName = deliveryModalShipment.destinationName || (deliveryModalShipment.porteType !== 'Debido' ? deliveryModalShipment.client : 'Destinatario');
+            let targetName = (deliveryModalShipment.destinationName || deliveryModalShipment.porteType !== 'Debido') ? nombreDestinatarioEnRuta(deliveryModalShipment, clients) : 'Destinatario';
 
             if (!targetName || targetName === 'Destinatario') return [];
 
@@ -4157,7 +4208,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
             console.log("--- Dashboard: Checking Collection Alert Visibility ---", deliveryModalShipment.id);
 
-            let targetName = deliveryModalShipment.destinationName || deliveryModalShipment.client;
+            let targetName = nombreDestinatarioEnRuta(deliveryModalShipment, clients);
             const alertFallbackBilling = deliveryModalShipment.porteType === 'Debido'
                 ? (deliveryModalShipment.destinationBillingType || null)
                 : deliveryModalShipment.billingType;
@@ -5359,7 +5410,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                         )}
                                                     </div>
                                                     <h4 className="font-bold text-slate-800">
-                                                        {shipment.type === 'Recogida' ? shipment.client : (shipment.destinationName || shipment.client)}
+                                                        {shipment.type === 'Recogida' ? shipment.client : nombreDestinatarioEnRuta(shipment, clients)}
                                                     </h4>
                                                 </div>
                                                  <div className="flex flex-col items-end gap-1 relative">
@@ -5610,7 +5661,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                             </div>
                                             <div className="flex items-center gap-1 mt-0.5">
                                                 <span className="text-xs font-bold text-slate-500 uppercase">Destinatario:</span>
-                                                <h4 className={`text-sm truncate ${shipment.porteType !== 'Pagado' ? 'font-bold italic text-amber-800' : 'font-bold text-slate-700'}`}>{shipment.destinationName || shipment.client} <span className="font-normal text-slate-500 not-italic">({shipment.destinationCity || 'N/A'})</span></h4>
+                                                <h4 className={`text-sm truncate ${shipment.porteType !== 'Pagado' ? 'font-bold italic text-amber-800' : 'font-bold text-slate-700'}`}>{nombreDestinatarioEnRuta(shipment, clients)} <span className="font-normal text-slate-500 not-italic">({shipment.destinationCity || 'N/A'})</span></h4>
                                             </div>
                                         </div>
                                         {shipment.type === 'Recibo' && (

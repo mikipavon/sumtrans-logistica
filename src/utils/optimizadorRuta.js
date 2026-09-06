@@ -516,9 +516,12 @@ export const optimizarRuta = ({
     conocimiento = null,
     gps = null,
     ahora = new Date(),
+    // El programador de turnos del Gestor de Rutas (ver utils/turnos.js). Sin él,
+    // lo de fábrica.
+    horarioReparto = null,
     radioDeCaminoKm = RADIO_DE_CAMINO_KM,
 } = {}) => {
-    const turno = turnoQueSeRepartaAhora(ahora);
+    const turno = turnoQueSeRepartaAhora(ahora, horarioReparto);
     const lista = (envios || []).filter(Boolean);
 
     if (lista.length === 0) {

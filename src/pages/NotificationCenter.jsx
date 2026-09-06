@@ -87,7 +87,7 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
                     </div>
                     <div>
                         <h1 className="text-2xl font-black text-slate-800 tracking-tight">Centro de Notificaciones</h1>
-                        <p className="text-slate-500 font-medium">Atención especial: Palets, excesos de bultos y observaciones.</p>
+                        <p className="text-slate-500 font-medium">Atención especial: Palets, excesos de bultos, observaciones y kilos indicados por el cliente.</p>
                     </div>
                 </div>
                 <div className="bg-amber-50 px-4 py-2 rounded-lg border border-amber-200">
@@ -213,6 +213,12 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
                                         <p className="text-[10px] font-bold text-slate-400 uppercase">Destinatario</p>
                                         <p className="text-sm font-bold text-slate-800">{shipment.destinationName || shipment.client}</p>
                                     </div>
+                                    {parseFloat(shipment.weightKg) > 0 && (
+                                        <div>
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase">Peso indicado</p>
+                                            <p className="text-sm font-bold text-indigo-700">⚖️ {parseFloat(shipment.weightKg)} kg</p>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 

@@ -7,7 +7,7 @@
 
 import { normalizarTexto } from './busqueda';
 import { normalizarPueblo } from './townMatch';
-import { ciudadDeEnvio } from './shipmentUtils';
+import { ciudadDeEnvio, quienPagaElPorte } from './shipmentUtils';
 import { baremoDelPunto } from './precioArticulo';
 
 export const SIN_FILTRO = 'all';
@@ -112,3 +112,82 @@ export const filtroPoblacion = (poblacion, opciones = {}) => {
 /** La población elegida es donde se entrega (o se recoge) el envío, o su baremo. */
 export const coincidePoblacion = (envio, poblacion, opciones = {}) =>
     filtroPoblacion(poblacion, opciones)(envio);
+
+// ---------------------------------------------------------------------------
+// Filtro por tipo de cliente (Facturación / Clientes Habituales / Presupuesto)
+// ---------------------------------------------------------------------------
+//
+// El tipo no va en el albarán: está en la ficha de quien PAGA el porte (el
+// remitente en porte pagado, el destinatario en porte debido). Se busca la
+// ficha igual que lo hace la exportación a Excel: por nombre, razón social o
+// sucursal, y si la ficha es una sucursal numerada ("123-A") manda la matriz
+// ("123"). Sin ficha, vale el tipo que traiga el albarán; sin nada, Habitual,
+// que es la regla que aplica el resto del sistema al calcular cobros.
+
+export const TIPOS_DE_CLIENTE = ['Facturación', 'Clientes Habituales', 'Presupuesto'];
+
+/** Reduce cualquier escritura del tipo ("Facturación mensual", "presupuesto") a una de las tres. */
+export const tipoDeFacturacion = (valor) => {
+    const t = normalizarTexto(valor);
+    if (t.includes('presupuesto')) return 'Presupuesto';
+    if (t.includes('factur') || t.includes('mensual')) return 'Facturación';
+    return 'Clientes Habituales';
+};
+
+const indiceDeClientes = (clientes) => {
+    const porNombre = new Map();
+    const porId = new Map();
+    const porNumero = new Map();
+    (Array.isArray(clientes) ? clientes : []).forEach((c) => {
+        if (!c) return;
+        if (c.id != null) porId.set(String(c.id), c);
+        const numero = String(c.clientNumber || '').trim();
+        if (numero && !porNumero.has(numero)) porNumero.set(numero, c);
+        const nombres = [c.name, c.legalName]
+            .concat(Array.isArray(c.branches) ? c.branches.map((b) => b?.name) : []);
+        nombres.forEach((n) => {
+            const clave = normalizarTexto(n);
+            if (clave && !porNombre.has(clave)) porNombre.set(clave, c);
+        });
+    });
+    return { porNombre, porId, porNumero };
+};
+
+/** Una sucursal con número "123-A" hereda el tipo de la matriz "123". */
+const fichaMatriz = (ficha, indice) => {
+    if (!ficha) return ficha;
+    const m = String(ficha.clientNumber || '').trim().match(/^(.*?\d)[-_ ]?[a-zA-Z]{1,2}$/);
+    return (m && indice.porNumero.get(m[1])) || ficha;
+};
+
+/** El nombre de quien paga el porte de este albarán. */
+export const nombreDelPagador = (envio) =>
+    quienPagaElPorte(envio) === 'Destinatario'
+        ? (envio?.destinationName || envio?.destination)
+        : envio?.client;
+
+/**
+ * Tipo de cliente de un albarán, mirando a quien paga. Acepta la lista de
+ * clientes o el índice ya montado (para no recorrer la lista por cada envío).
+ */
+export const tipoDeClienteDelEnvio = (envio, clientesOIndice) => {
+    const indice = clientesOIndice?.porNombre ? clientesOIndice : indiceDeClientes(clientesOIndice);
+    const pagaDestinatario = quienPagaElPorte(envio) === 'Destinatario';
+    const nombre = normalizarTexto(nombreDelPagador(envio));
+    let ficha = indice.porNombre.get(nombre);
+    if (!ficha && !pagaDestinatario && envio?.clientId != null) ficha = indice.porId.get(String(envio.clientId));
+    ficha = fichaMatriz(ficha, indice);
+    const delAlbaran = pagaDestinatario ? envio?.destinationBillingType : envio?.billingType;
+    return tipoDeFacturacion(ficha?.billingType || ficha?.tipoFacturacion || delAlbaran);
+};
+
+/** Criba por tipo de cliente para un listado entero; monta el índice una sola vez. */
+export const filtroTipoDeCliente = (tipo, clientes) => {
+    if (esTodo(tipo)) return () => true;
+    const indice = indiceDeClientes(clientes);
+    const buscado = tipoDeFacturacion(tipo);
+    return (envio) => tipoDeClienteDelEnvio(envio, indice) === buscado;
+};
+
+export const coincideTipoDeCliente = (envio, tipo, clientes) =>
+    filtroTipoDeCliente(tipo, clientes)(envio);

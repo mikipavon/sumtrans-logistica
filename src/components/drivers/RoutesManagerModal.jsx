@@ -1,5 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { X, Plus, Trash2, Save, MapPin, Search, Sun, Moon, ChevronDown, ChevronUp, GripVertical, Brain, Copy, RotateCcw, Crown, ChevronRight } from 'lucide-react';
+import { X, Plus, Trash2, Save, MapPin, Search, Sun, Moon, ChevronDown, ChevronUp, GripVertical, Brain, Copy, RotateCcw, Crown, ChevronRight, Clock } from 'lucide-react';
+import {
+    normalizarHorarioReparto,
+    turnoQueSeRepartaAhora,
+    minutosDeHora,
+    horaDeMinutos,
+    HORARIO_REPARTO_POR_DEFECTO,
+    TURNO_TARDE,
+} from '../../utils/turnos';
 import { BAREMO_1_PUEBLOS, BAREMO_2_PUEBLOS } from '../../data/baremos';
 import {
     contarPueblos,
@@ -17,8 +25,10 @@ const ALL_TOWNS = [
     index === self.findIndex(t => t.name.toLowerCase() === town.name.toLowerCase())
 );
 
-export default function RoutesManagerModal({ isOpen, onClose, routes = [], onUpdateRoutes, drivers = [], routeKnowledge = {}, onUpdateRouteKnowledge }) {
+export default function RoutesManagerModal({ isOpen, onClose, routes = [], onUpdateRoutes, horarioReparto = null, onUpdateHorarioReparto, drivers = [], routeKnowledge = {}, onUpdateRouteKnowledge }) {
     const [localRoutes, setLocalRoutes] = useState([]);
+    // Programador de turnos: se edita aquí y se guarda con "Guardar Rutas".
+    const [localHorario, setLocalHorario] = useState({ ...HORARIO_REPARTO_POR_DEFECTO });
     const [searchTerm, setSearchTerm] = useState('');
     const [expandedRoute, setExpandedRoute] = useState(null);
     const [activeSlot, setActiveSlot] = useState(null);
@@ -34,11 +44,12 @@ export default function RoutesManagerModal({ isOpen, onClose, routes = [], onUpd
         if (isOpen) {
             const initial = routes && routes.length > 0 ? routes : [];
             setLocalRoutes(JSON.parse(JSON.stringify(initial)));
+            setLocalHorario(normalizarHorarioReparto(horarioReparto));
             setExpandedRoute(initial.length > 0 ? 0 : null);
             setActiveSlot(null);
             setSearchTerm('');
         }
-    }, [isOpen, routes]);
+    }, [isOpen, routes, horarioReparto]);
 
     const nombreDeConductor = (id) => drivers.find(d => String(d.id) === String(id))?.name || `Conductor ${id}`;
     const plural = (n, singular, plural_) => `${n} ${n === 1 ? singular : plural_}`;
@@ -163,8 +174,27 @@ export default function RoutesManagerModal({ isOpen, onClose, routes = [], onUpd
 
     const handleSave = () => {
         onUpdateRoutes(localRoutes);
+        // El horario solo se sube si ha cambiado: así no se escribe una fila en la
+        // nube (ni se avisa a todos los móviles) por guardar unos pueblos.
+        const horarioLimpio = normalizarHorarioReparto(localHorario);
+        const horarioActual = normalizarHorarioReparto(horarioReparto);
+        if (onUpdateHorarioReparto &&
+            (horarioLimpio.mananaDesde !== horarioActual.mananaDesde ||
+             horarioLimpio.tardeDesde !== horarioActual.tardeDesde)) {
+            onUpdateHorarioReparto(horarioLimpio);
+        }
         onClose();
     };
+
+    // El horario tal y como quedará guardado (con lo que no se entiende ya
+    // sustituido por lo de fábrica) y lo que eso significa ahora mismo.
+    const horarioEnLimpio = normalizarHorarioReparto(localHorario);
+    const horarioInvalido =
+        minutosDeHora(localHorario.mananaDesde) === null ||
+        minutosDeHora(localHorario.tardeDesde) === null ||
+        minutosDeHora(localHorario.mananaDesde) === minutosDeHora(localHorario.tardeDesde);
+    const turnoAhora = turnoQueSeRepartaAhora(new Date(), horarioEnLimpio);
+    const finDeVentana = (desde) => horaDeMinutos(minutosDeHora(desde) - 1);
 
     const getDriverName = (id) => {
         const d = drivers.find(d => d.id === id || String(d.id) === String(id));
@@ -264,6 +294,52 @@ export default function RoutesManagerModal({ isOpen, onClose, routes = [], onUpd
                 </div>
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
+                    {/* Programador de turnos: desde qué hora manda cada orden al pulsar Optimizar */}
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Clock className="text-blue-600" size={16} />
+                            <span className="text-sm font-bold text-slate-800">Programador de turnos</span>
+                            <span className="text-[11px] text-slate-400">Qué orden usa el móvil al pulsar Optimizar, según la hora</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                                <Sun size={14} className="text-amber-500" />
+                                Orden de la mañana desde las
+                                <input
+                                    type="time"
+                                    value={localHorario.mananaDesde}
+                                    onChange={(e) => setLocalHorario(h => ({ ...h, mananaDesde: e.target.value }))}
+                                    className="border border-slate-200 rounded-lg px-2 py-1 text-sm font-mono focus:outline-none focus:border-blue-400"
+                                />
+                                <span className="text-slate-400 font-normal">hasta las {finDeVentana(horarioEnLimpio.tardeDesde)}</span>
+                            </label>
+                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                                <Moon size={14} className="text-indigo-500" />
+                                Orden de la tarde desde las
+                                <input
+                                    type="time"
+                                    value={localHorario.tardeDesde}
+                                    onChange={(e) => setLocalHorario(h => ({ ...h, tardeDesde: e.target.value }))}
+                                    className="border border-slate-200 rounded-lg px-2 py-1 text-sm font-mono focus:outline-none focus:border-blue-400"
+                                />
+                                <span className="text-slate-400 font-normal">hasta las {finDeVentana(horarioEnLimpio.mananaDesde)}</span>
+                            </label>
+                            <button
+                                type="button"
+                                onClick={() => setLocalHorario({ ...HORARIO_REPARTO_POR_DEFECTO })}
+                                className="text-[11px] text-slate-500 hover:text-blue-600 underline underline-offset-2"
+                                title={`Mañana desde las ${HORARIO_REPARTO_POR_DEFECTO.mananaDesde}, tarde desde las ${HORARIO_REPARTO_POR_DEFECTO.tardeDesde}`}
+                            >
+                                Volver a lo de fábrica
+                            </button>
+                        </div>
+                        <p className={`text-[11px] mt-2 ${horarioInvalido ? 'text-red-600' : 'text-slate-500'}`}>
+                            {horarioInvalido
+                                ? `Las dos horas tienen que ser válidas y distintas. Se guardará: mañana desde las ${horarioEnLimpio.mananaDesde}, tarde desde las ${horarioEnLimpio.tardeDesde}.`
+                                : `Ahora mismo, si un repartidor pulsa Optimizar, le sale primero el orden de la ${turnoAhora === TURNO_TARDE ? 'TARDE' : 'MAÑANA'}. Se guarda con "Guardar Rutas" y llega a los móviles al momento.`}
+                        </p>
+                    </div>
+
                     {/* Routes List */}
                     {localRoutes.map((route, i) => (
                         <div key={route.id} className={`bg-white rounded-xl border transition-all ${expandedRoute === i ? 'border-blue-200 shadow-md' : 'border-slate-200 shadow-sm'}`}>

@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import AgencyDatabasesPanel from '../components/clients/AgencyDatabasesPanel';
 import { getOwnerLabel } from '../utils/agencyOwnership';
+import { SIN_FILTRO, TIPOS_DE_CLIENTE, tipoDeFacturacion } from '../utils/filtrosEnvios';
 
 export default function Clients({ clients, allClients, shipments, allPoblaciones, articles, onUpdateClient, onAddClient, onImportClients, onDeleteClient, onAssignOwnerAgency, onDeleteAgencyDatabase, onImpersonateClient, tariffs }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -16,6 +17,10 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
     const [expandedClients, setExpandedClients] = useState(new Set());
     // 'all' | 'own' | id de agencia — ver utils/agencyOwnership.js
     const [ownerFilter, setOwnerFilter] = useState('all');
+    const [tipoFilter, setTipoFilter] = useState(SIN_FILTRO);
+
+    // El mismo tipo que enseña la columna: sin tipo marcado la tabla pone "Facturación".
+    const tipoDelCliente = (c) => tipoDeFacturacion(c.billingType || c.tipoFacturacion || 'Facturación');
 
     const filteredClients = useMemo(() => {
         const safeClients = Array.isArray(clients) ? clients : [];
@@ -29,6 +34,9 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
 
             // GPS filter
             if (filterGPS && !(c.coordinates && c.coordinates.trim())) return false;
+
+            // Facturación / Clientes Habituales / Presupuesto
+            if (tipoFilter !== SIN_FILTRO && tipoDelCliente(c) !== tipoFilter) return false;
 
             const search = (searchTerm || '').toLowerCase();
             const mainMatch = (c.name || '').toLowerCase().includes(search) ||
@@ -66,7 +74,7 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
             });
         }
         return result;
-    }, [clients, searchTerm, sortConfig, filterGPS, ownerFilter]);
+    }, [clients, searchTerm, sortConfig, filterGPS, ownerFilter, tipoFilter]);
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -416,7 +424,20 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
-                <div className="flex gap-2 w-full sm:w-auto">
+                <div className="flex gap-2 w-full sm:w-auto flex-wrap">
+                    <select
+                        className={`px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium text-sm cursor-pointer transition-all ${
+                            tipoFilter !== SIN_FILTRO ? 'bg-blue-50 border-blue-400 text-blue-700' : 'bg-white border-slate-200 text-slate-600'
+                        }`}
+                        value={tipoFilter}
+                        onChange={(e) => setTipoFilter(e.target.value)}
+                        title="Filtrar por tipo de cliente (columna Tipo)"
+                    >
+                        <option value={SIN_FILTRO}>Todos los Tipos</option>
+                        {TIPOS_DE_CLIENTE.map(t => (
+                            <option key={t} value={t}>{t}{tipoFilter === t ? ` (${filteredClients.length})` : ''}</option>
+                        ))}
+                    </select>
                     <button
                         onClick={() => setFilterGPS(!filterGPS)}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all border ${
