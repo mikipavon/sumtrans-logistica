@@ -37,6 +37,7 @@ import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
+import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, motivoSinJornada, puedeFicharAutomaticamente, textoSinJornada, MOTIVOS_BLOQUEO } from '../../utils/normasFichaje';
 import { esElMismoPueblo, normalizarPueblo, puebloDeRutaParaEnvio } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
 import { geocodificarDireccion } from '../../utils/geocodificar';
@@ -1002,6 +1003,37 @@ const DriverVacationsPanel = ({ currentDriverId, onClose }) => {
     );
 };
 
+// Las normas de fichaje de la oficina y los festivos de empresa, ya en limpio.
+// Si la nube no contesta se aplica lo de fábrica (lunes a viernes, automático).
+const cargarNormasYFestivos = async () => {
+    let normas = normalizarNormasFichaje(null);
+    let festivos = [];
+    try {
+        const [{ data: n }, { data: f }] = await Promise.all([
+            supabase.from('settings').select('value').eq('key', CLAVE_NORMAS_FICHAJE).maybeSingle(),
+            supabase.from('settings').select('value').eq('key', 'company_blocked_days').maybeSingle(),
+        ]);
+        normas = normalizarNormasFichaje(n?.value);
+        if (f?.value) { try { festivos = JSON.parse(f.value) || []; } catch { festivos = []; } }
+    } catch (e) {
+        console.warn('[Fichaje] No se pudieron leer las normas; se aplica lo de fábrica.', e);
+    }
+    return { normas, festivos };
+};
+
+// Una posición del móvil para la geocerca, o null si no la da a tiempo. Primero
+// GPS fino; si no contesta, por antenas/wifi, que dentro de la nave es lo que hay.
+const posicionParaFichar = () => new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    const leer = (fina) => navigator.geolocation.getCurrentPosition(
+        (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+        (err) => (fina && err.code !== err.PERMISSION_DENIED) ? leer(false) : resolve(null),
+        fina ? { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+             : { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 },
+    );
+    leer(true);
+});
+
 const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety }) => {
     const [status, setStatus] = useState('loading'); // loading, pending_in, working, finished, paused, on_absence, weekend, company_holiday
     const [logId, setLogId] = useState(null);
@@ -1014,28 +1046,18 @@ const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety })
             try {
                 const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
 
-                // ── 1. Check weekend (Saturday=6, Sunday=0) ──
-                const todayDate = new Date(today + 'T12:00:00');
-                const dow = todayDate.getDay();
-                if (dow === 0 || dow === 6) {
+                // ── 1. ¿Hay jornada hoy? Días laborables (normas de la oficina) y festivos ──
+                const { normas, festivos } = await cargarNormasYFestivos();
+                const sinJornada = motivoSinJornada({ fechaISO: today, normas, festivos });
+                if (sinJornada === MOTIVOS_BLOQUEO.DIA_NO_LABORABLE) {
                     setStatus('weekend');
                     return;
                 }
-
-                // ── 2. Check company-wide blocked days ──
-                try {
-                    const { data: settingsData } = await supabase
-                        .from('settings').select('value').eq('key', 'company_blocked_days').maybeSingle();
-                    if (settingsData?.value) {
-                        const blocked = JSON.parse(settingsData.value);
-                        const match = blocked.find(d => d.date === today);
-                        if (match) {
-                            setHolidayInfo(match);
-                            setStatus('company_holiday');
-                            return;
-                        }
-                    }
-                } catch (_) {}
+                if (sinJornada === MOTIVOS_BLOQUEO.FESTIVO) {
+                    setHolidayInfo(festivos.find(d => d.date === today));
+                    setStatus('company_holiday');
+                    return;
+                }
 
                 const { data, error } = await supabase
                     .from('time_logs')
@@ -1166,10 +1188,11 @@ const TimeLogSection = ({ currentDriverId, driverName, handleLogoutWithSafety })
     if (status === 'weekend') {
         const todayDate = new Date();
         const issunday = todayDate.getDay() === 0;
+        const hoyISO = new Date(Date.now() - todayDate.getTimezoneOffset() * 60000).toISOString().split('T')[0];
         return (
             <div className="w-full bg-rose-50 text-rose-700 py-5 rounded-xl border-2 border-rose-200 flex flex-col items-center justify-center gap-1.5 mb-8">
                 <span className="text-3xl">{issunday ? '🙏' : '💤'}</span>
-                <span className="text-sm font-black text-rose-800">{issunday ? 'Domingo' : 'Sábado'} — Día de descanso</span>
+                <span className="text-sm font-black text-rose-800">{textoSinJornada(MOTIVOS_BLOQUEO.DIA_NO_LABORABLE, hoyISO)}</span>
                 <span className="text-xs font-semibold text-rose-600">No hay jornada laboral hoy.</span>
                 <span className="text-[10px] text-rose-400 mt-0.5">Disfruta tu descanso 😊</span>
             </div>
@@ -1773,6 +1796,19 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     .limit(1);
                 if (error) { console.error("Error auto-clock-in check:", error); return; }
                 if (!data || data.length === 0) {
+                    // Normas de la oficina: día laborable, festivos, ausencia, interruptor
+                    // del automático y geocerca. Si algo no cuadra, NO se ficha solo: el
+                    // conductor verá el botón "Empezar Jornada" (o el cartel de descanso).
+                    const { normas, festivos } = await cargarNormasYFestivos();
+                    const { data: ausencia } = await supabase
+                        .from('driver_absences').select('id')
+                        .eq('driver_id', String(currentDriverId)).eq('date', today).maybeSingle();
+                    const posicion = normas.geocerca.activa ? await posicionParaFichar() : null;
+                    const veredicto = puedeFicharAutomaticamente({ fechaISO: today, normas, festivos, ausencia, posicion });
+                    if (!veredicto.ok) {
+                        console.log(`[Fichaje] Sin fichaje automático: ${veredicto.motivo}`, veredicto.distanciaMetros ? `(${veredicto.distanciaMetros} m de la nave)` : '');
+                        return;
+                    }
                     const driverObj = drivers?.find(d => String(d.id) === String(currentDriverId));
                     await supabase.from('time_logs').insert([{
                         driver_id: currentDriverId,
