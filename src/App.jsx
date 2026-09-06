@@ -50,7 +50,7 @@ import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNom
 import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre } from './utils/ventanaPadre';
 import { CLAVE_HORARIO_REPARTO, HORARIO_REPARTO_POR_DEFECTO, normalizarHorarioReparto } from './utils/turnos';
-import { getIrregularReasons } from './utils/shipmentUtils';
+import { getIrregularReasons, fichaDelDestinatario } from './utils/shipmentUtils';
 import {
   fusionarConocimiento,
   claveAprendizaje,
@@ -3580,7 +3580,19 @@ function App() {
         let targetClient = null;
         let targetBranch = null;
 
+        // Primero el enlace que dejó la base de datos al guardar el envío (fase
+        // 21): casa también por dirección, así que "Ferretería Pérez" tecleado
+        // en el portal ya apunta a "Ferretería Pérez e Hijos S.L." aunque el
+        // nombre no coincida letra a letra. Sin esto, la búsqueda por nombre de
+        // abajo fallaba y nacía una segunda ficha de la misma empresa.
+        const enlazada = fichaDelDestinatario(shipment, clientsRef.current);
+        if (enlazada) {
+          targetClient = enlazada.client;
+          targetBranch = enlazada.branch;
+        }
+
         for (const c of clientsRef.current) {
+            if (targetClient) break;
             if (normalizeClientName(c.name) === normDest || normalizeClientName(c.legalName) === normDest) {
                 targetClient = c;
                 break;

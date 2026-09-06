@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { puedeAsignarloEsteConductor, estaEnElRepartoDe, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, importeParaMostrar } from './shipmentUtils';
+import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -373,6 +373,43 @@ describe('nombresDelCliente', () => {
     });
 });
 
+describe('getIrregularReasons · kilos del portal', () => {
+    const delPortal = (extra = {}) => ({
+        id: 'CLI-1',
+        status: 'Pendiente de asignar',
+        createdBy: 'ClienteWeb: Ferretería Pepe',
+        ...extra
+    });
+
+    it('un albarán del portal con kilos entra en el centro de notificaciones', () => {
+        expect(getIrregularReasons(delPortal({ weightKg: 12.5 }))).toContain('Indica peso: 12.5 kg');
+        expect(getIrregularReasons(delPortal({ weightKg: '8' }))).toContain('Indica peso: 8 kg');
+    });
+
+    it('sin kilos (o a cero) el portal no avisa por peso', () => {
+        expect(getIrregularReasons(delPortal({ weightKg: null }))).toEqual([]);
+        expect(getIrregularReasons(delPortal({ weightKg: 0 }))).toEqual([]);
+        expect(getIrregularReasons(delPortal({ weightKg: '' }))).toEqual([]);
+    });
+
+    it('los kilos que teclea la oficina o un conductor no son novedad', () => {
+        expect(getIrregularReasons(delPortal({ createdBy: 'Administrador', weightKg: 40 }))).toEqual([]);
+        expect(getIrregularReasons(delPortal({ createdBy: 'Cond.Paco ', weightKg: 40 }))).toEqual([]);
+        expect(getIrregularReasons(delPortal({ createdBy: 'Admin (Import Excel: Pepe)', weightKg: 40 }))).toEqual([]);
+    });
+
+    it('el aviso desaparece al marcarlo como visto', () => {
+        expect(getIrregularReasons(delPortal({ weightKg: 12, notificationDismissed: true }))).toEqual([]);
+    });
+
+    it('vieneDelPortal reconoce las dos marcas del creador', () => {
+        expect(vieneDelPortal({ createdBy: 'ClienteWeb: X' })).toBe(true);
+        expect(vieneDelPortal({ createdBy: 'Portal Cliente' })).toBe(true);
+        expect(vieneDelPortal({ createdBy: 'Administrador' })).toBe(false);
+        expect(vieneDelPortal({})).toBe(false);
+    });
+});
+
 describe('importeParaMostrar · la columna Valor con un solo formato', () => {
     it('lo que se teclea al editar ("6") sale como al crear ("€6.00")', () => {
         expect(importeParaMostrar('6')).toBe('€6.00');
@@ -385,5 +422,88 @@ describe('importeParaMostrar · la columna Valor con un solo formato', () => {
         expect(importeParaMostrar('Tarifa')).toBe('Tarifa');
         expect(importeParaMostrar('')).toBe('');
         expect(importeParaMostrar(null)).toBe('');
+    });
+});
+
+describe('poblacionYCalle', () => {
+    it('saca la población del último tramo y le quita el código postal', () => {
+        expect(poblacionYCalle('C/ FRESADORES S/N-POL. LOS SANTOS, 14900 Lucena'))
+            .toEqual({ ciudad: 'Lucena', calle: 'C/ FRESADORES S/N-POL. LOS SANTOS' });
+    });
+
+    it('prefiere la población grabada en el envío', () => {
+        expect(poblacionYCalle('Avda. de Andalucía 12, 14800 Priego de Córdoba', 'Priego de Córdoba'))
+            .toEqual({ ciudad: 'Priego de Córdoba', calle: 'Avda. de Andalucía 12' });
+    });
+
+    it('con la calle vacía sigue enseñando la población', () => {
+        expect(poblacionYCalle(', 14800 Priego de Córdoba'))
+            .toEqual({ ciudad: 'Priego de Córdoba', calle: '' });
+        expect(poblacionYCalle('14500 Puente Genil'))
+            .toEqual({ ciudad: 'Puente Genil', calle: '' });
+    });
+
+    it('sin comas ni código postal lo trata todo como población', () => {
+        expect(poblacionYCalle('Rute')).toEqual({ ciudad: 'Rute', calle: '' });
+        expect(poblacionYCalle('', 'Cabra')).toEqual({ ciudad: 'Cabra', calle: '' });
+        expect(poblacionYCalle('')).toEqual({ ciudad: '', calle: '' });
+    });
+});
+
+// ── El enlace con NUESTRA ficha del destinatario (fase 21) ──
+// El envío guarda lo que tecleó el cliente; el repartidor tiene que ver el nombre
+// comercial de la oficina, con sus señas, y el portal el texto del cliente.
+describe('fichaDelDestinatario / nombreDestinatarioEnRuta', () => {
+    const cartera = [
+        { id: 101, name: 'Ferretería Pérez e Hijos S.L. (la del polígono)', branches: [
+            { id: 'sede-2', name: 'Ferretería Pérez · almacén' },
+        ] },
+        { id: 102, name: 'Otra Empresa' },
+    ];
+
+    it('sin enlace, el repartidor ve lo que tecleó el cliente', () => {
+        const envio = { destinationName: 'Ferretería Pérez', client: 'Remitente S.A.' };
+        expect(fichaDelDestinatario(envio, cartera)).toBeNull();
+        expect(nombreDestinatarioEnRuta(envio, cartera)).toBe('Ferretería Pérez');
+    });
+
+    it('con enlace, el repartidor ve el nombre comercial de la ficha', () => {
+        const envio = { destinationName: 'Ferretería Pérez', destinatarioId: 101 };
+        expect(fichaDelDestinatario(envio, cartera)).toEqual({ client: cartera[0], branch: null });
+        expect(nombreDestinatarioEnRuta(envio, cartera)).toBe('Ferretería Pérez e Hijos S.L. (la del polígono)');
+    });
+
+    it('el id vale como número o como texto: la base lo guarda de una forma y la app de otra', () => {
+        const envio = { destinationName: 'Ferretería Pérez', destinatarioId: '101' };
+        expect(nombreDestinatarioEnRuta(envio, cartera)).toBe('Ferretería Pérez e Hijos S.L. (la del polígono)');
+    });
+
+    it('si el enlace es a una sede, manda el nombre de la sede', () => {
+        const envio = { destinationName: 'Ferretería Pérez', destinatarioId: 101, destinatarioSedeId: 'sede-2' };
+        expect(fichaDelDestinatario(envio, cartera)).toEqual({ client: cartera[0], branch: cartera[0].branches[0] });
+        expect(nombreDestinatarioEnRuta(envio, cartera)).toBe('Ferretería Pérez · almacén');
+    });
+
+    it('una sede que ya no existe cae en la ficha madre, no en el texto del envío', () => {
+        const envio = { destinationName: 'Ferretería Pérez', destinatarioId: 101, destinatarioSedeId: 'borrada' };
+        expect(fichaDelDestinatario(envio, cartera)).toEqual({ client: cartera[0], branch: null });
+        expect(nombreDestinatarioEnRuta(envio, cartera)).toBe('Ferretería Pérez e Hijos S.L. (la del polígono)');
+    });
+
+    it('si la ficha enlazada no está cargada, se queda con el texto del envío', () => {
+        const envio = { destinationName: 'Ferretería Pérez', destinatarioId: 999 };
+        expect(fichaDelDestinatario(envio, cartera)).toBeNull();
+        expect(nombreDestinatarioEnRuta(envio, cartera)).toBe('Ferretería Pérez');
+    });
+
+    it('un envío sin destinatario ni enlace no se casa con nadie por un id vacío', () => {
+        expect(fichaDelDestinatario({ destinatarioId: null }, [{ id: null, name: 'Rara' }])).toBeNull();
+        expect(fichaDelDestinatario({ destinatarioId: '' }, [{ id: '', name: 'Rara' }])).toBeNull();
+        expect(nombreDestinatarioEnRuta(null, cartera)).toBe('');
+    });
+
+    it('el portal sigue reconociendo al destinatario por el enlace', () => {
+        const envio = { destinationName: 'Ferretería Pérez', client: 'Remitente S.A.', destinatarioId: 101, porteType: 'Pagado' };
+        expect(papelDelClienteEnElEnvio(envio, cartera[0])).toBe('Destinatario');
     });
 });

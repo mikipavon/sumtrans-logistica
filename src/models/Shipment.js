@@ -41,6 +41,13 @@ export default class Shipment {
     this.destinationZip = data.destinationZip || '';
     this.destinationPhone = data.destinationPhone || '';
     this.destinationCoordinates = data.destinationCoordinates || '';
+    // Enlace a NUESTRA ficha del destinatario. Lo escribe la base de datos al
+    // guardar (trigger de la fase 21), no la app: el texto de arriba es lo que
+    // tecleó quien creó el envío y se respeta; esto dice a qué ficha corresponde.
+    // Sin copiarlos aquí se perderían en cualquier `new Shipment({...envio})`.
+    this.destinatarioId = data.destinatarioId ?? null;
+    this.destinatarioSedeId = data.destinatarioSedeId ?? null;
+    this.destinatarioEmparejadoPor = data.destinatarioEmparejadoPor || null;
     this.deliveryCoordinates = data.deliveryCoordinates || null;
 
     // Importes
