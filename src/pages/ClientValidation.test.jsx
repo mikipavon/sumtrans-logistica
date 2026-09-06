@@ -7,7 +7,7 @@
 // de contacto, así que no había forma de saber QUIÉN se había registrado.
 
 import { render, screen, within, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ClientValidation from './ClientValidation';
 
 // El modal de alta arrastra medio proyecto y aquí no se abre nunca.
@@ -39,6 +39,10 @@ const creadoEnAlbaran = {
     lastInteraction: '2026-08-16',
     city: 'Lucena',
 };
+
+// Estas pruebas miran la tarjeta entera. La lista compacta (la vista por
+// defecto) tiene las suyas al final.
+beforeEach(() => localStorage.setItem('validacion-vista', 'tarjetas'));
 
 const props = {
     onValidateClient: vi.fn(),
@@ -225,5 +229,49 @@ describe('Validar Clientes — solicitudes repetidas del mismo cliente', () => {
         renderLista();
         const contador = screen.getByText('repetidos en la lista').closest('div');
         expect(within(contador).getByText('1')).toBeInTheDocument();
+    });
+});
+
+// ── La lista compacta ──
+//
+// Con decenas de fichas de albarán la pantalla de tarjetas era un muro de
+// recuadros. La lista enseña una fila por cliente con TODO lo de la tarjeta
+// (conductor, ubicación, de quién es, avisos) sin tener que desplegar nada.
+describe('Validar Clientes — vista de lista', () => {
+    beforeEach(() => localStorage.setItem('validacion-vista', 'lista'));
+
+    const sinGps = { id: 10, name: 'BasicRoca', status: 'pending', type: 'Remitente', createdFrom: 'Albarán', city: 'Cordoba', lastInteraction: '2026-08-20' };
+    const conGps = { id: 11, name: 'BasicRoca', status: 'pending', type: 'Remitente', createdFrom: 'Albarán', createdBy: 'Cond. MANUEL', city: 'Cordoba', coordinates: '37.5, -4.6', lastInteraction: '2026-08-20' };
+    const sola = { id: 12, name: 'Zuricar', status: 'pending', type: 'Destinatario', city: 'Espejo' };
+
+    it('sin nada guardado sale la lista, con una fila por ficha', () => {
+        localStorage.removeItem('validacion-vista');
+        render(<ClientValidation clients={[sinGps, conGps, sola]} {...props} />);
+        expect(screen.getByText('Zuricar')).toBeInTheDocument();
+        expect(screen.getAllByRole('button', { name: 'Aprobar' })).toHaveLength(3);
+        expect(screen.getAllByRole('button', { name: 'Editar y Validar' })).toHaveLength(3);
+    });
+
+    it('la fila enseña conductor, ubicación, de quién es y los avisos, como la tarjeta', () => {
+        render(<ClientValidation clients={[sinGps, conGps, sola]} {...props} />);
+        expect(screen.getByText('Por: Cond. MANUEL')).toBeInTheDocument();
+        expect(screen.getByText('37.5, -4.6').closest('a')).toHaveAttribute('href', expect.stringContaining('google.com/maps'));
+        expect(screen.getAllByText('Mis clientes')).toHaveLength(3);
+        expect(screen.getAllByText('Repetida: 2 solicitudes de este mismo cliente')).toHaveLength(2);
+        expect(screen.getAllByRole('button', { name: /unir las demás/i })).toHaveLength(2);
+    });
+
+    it('los botones de la fila aprueban y rechazan igual que en la tarjeta', () => {
+        const onValidateClient = vi.fn().mockResolvedValue();
+        render(<ClientValidation clients={[sola]} {...props} onValidateClient={onValidateClient} />);
+        fireEvent.click(screen.getByRole('button', { name: 'Rechazar' }));
+        expect(onValidateClient).toHaveBeenCalledWith(12, false);
+    });
+
+    it('el conmutador cambia a tarjetas y lo deja guardado', () => {
+        render(<ClientValidation clients={[sola]} {...props} />);
+        fireEvent.click(screen.getByRole('button', { name: /Tarjetas/ }));
+        expect(screen.getByRole('button', { name: /Editar y Validar/ })).toHaveTextContent('Editar y Validar');
+        expect(localStorage.getItem('validacion-vista')).toBe('tarjetas');
     });
 });

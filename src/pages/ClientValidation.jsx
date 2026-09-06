@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2, AlertTriangle, KeyRound, Globe, Merge, Copy } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2, AlertTriangle, KeyRound, Globe, Merge, Copy, List, LayoutGrid } from 'lucide-react';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import { supabase } from '../lib/supabase';
 import { getOwnerLabel } from '../utils/agencyOwnership';
@@ -77,6 +77,225 @@ function cuandoSeRegistro(client) {
 function momentoDeRegistro(client) {
     const t = Date.parse(client?.createdAt || '');
     return isNaN(t) ? 0 : t;
+}
+
+// ── Trozos de la ficha que se pintan igual en la tarjeta y en la fila desplegada ──
+// `enTarjeta` los apila con una línea abajo; si no, van sueltos con su borde.
+
+function BloqueRegistroWeb({ client, enTarjeta }) {
+    return (
+        <div className={`bg-blue-50/60 px-4 py-3 space-y-1.5 ${enTarjeta ? 'border-b border-blue-100' : 'rounded-lg border border-blue-100'}`}>
+            <div className="flex items-center gap-2">
+                <Globe size={13} className="text-blue-600 shrink-0" />
+                <span className="text-xs font-bold text-blue-800">Se ha registrado en la web</span>
+            </div>
+            {client.email && (
+                <div className="flex items-center gap-2 min-w-0">
+                    <Mail size={13} className="text-blue-400 shrink-0" />
+                    <a href={`mailto:${client.email}`} className="text-xs text-blue-700 font-medium truncate hover:underline" title={client.email}>
+                        {client.email}
+                    </a>
+                </div>
+            )}
+            {client.cif && (
+                <div className="flex items-center gap-2">
+                    <Tag size={13} className="text-blue-400 shrink-0" />
+                    <span className="text-xs text-blue-700 font-mono">{client.cif}</span>
+                </div>
+            )}
+            {client.contactPerson && (
+                <div className="flex items-center gap-2 min-w-0">
+                    <User size={13} className="text-blue-400 shrink-0" />
+                    <span className="text-xs text-blue-700 truncate" title={client.contactPerson}>{client.contactPerson}</span>
+                </div>
+            )}
+            {client.legalName && client.legalName !== client.name && (
+                <div className="flex items-start gap-2 min-w-0">
+                    <Building2 size={13} className="text-blue-400 shrink-0 mt-0.5" />
+                    <span className="text-xs text-blue-700 break-words">{client.legalName}</span>
+                </div>
+            )}
+            <div className="flex items-center gap-2">
+                <Calendar size={13} className="text-blue-400 shrink-0" />
+                <span className="text-xs text-blue-600">{cuandoSeRegistro(client)}</span>
+            </div>
+        </div>
+    );
+}
+
+// Aviso de repetida — la misma empresa, varias veces en esta lista
+function AvisoRepetida({ client, gemelas, uniendo, onUnir, enTarjeta }) {
+    const aportado = loQueAportanLasGemelas(client, gemelas);
+    const detalle = explicarAportacion(aportado);
+    return (
+        <div className={`bg-orange-50 px-4 py-3 ${enTarjeta ? 'border-b border-orange-200' : 'rounded-lg border border-orange-200'}`}>
+            <div className="flex items-start gap-2">
+                <Copy size={15} className="text-orange-600 mt-0.5 shrink-0" />
+                <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-orange-800">
+                        Repetida: {gemelas.length + 1} solicitudes de este mismo cliente
+                    </p>
+                    <ul className="mt-1 space-y-0.5">
+                        {gemelas.map(g => (
+                            <li key={g.id} className="text-xs text-orange-700 leading-snug">
+                                <span className="break-words">{g.name}</span>
+                                <span className="text-orange-500">
+                                    {g.createdFrom ? ` — ${g.createdFrom}` : ''}
+                                    {g.coordinates ? ' — con coordenadas' : ''}
+                                </span>
+                            </li>
+                        ))}
+                    </ul>
+                    <p className="text-[10px] text-orange-600 mt-1.5 leading-snug">
+                        {detalle
+                            ? `Al unirlas, ésta se queda ${detalle} de las otras.`
+                            : 'Las otras no aportan ningún dato que a ésta le falte.'}
+                    </p>
+                    <button
+                        onClick={() => onUnir(client)}
+                        disabled={uniendo}
+                        className="mt-2 w-full flex items-center justify-center gap-2 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white font-bold rounded-lg text-xs transition-colors"
+                    >
+                        <Merge size={13} />
+                        {uniendo ? 'Uniendo…' : 'Quedarme con ésta y unir las demás'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// Aviso de duplicado — la empresa ya está en cartera
+function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, enTarjeta }) {
+    return (
+        <div className={`bg-red-50 px-4 py-3 ${enTarjeta ? 'border-b border-red-200' : 'rounded-lg border border-red-200'}`}>
+            <div className="flex items-start gap-2">
+                <AlertTriangle size={15} className="text-red-600 mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                    <p className="text-xs font-bold text-red-800">Ya parece estar en tu cartera</p>
+                    <ul className="mt-1 space-y-2">
+                        {parecidas.map(({ client: ficha, motivos, yaTieneAcceso }) => (
+                            <li key={ficha.id} className="text-xs text-red-700 leading-snug">
+                                <span className="font-bold break-words">{ficha.name}</span>
+                                {ficha.clientNumber && <span className="text-red-500"> (nº {ficha.clientNumber})</span>}
+                                <span className="text-red-600"> — {explicarMotivos(motivos)}</span>
+                                {yaTieneAcceso && (
+                                    <span className="mt-1 flex items-center gap-1 font-bold text-red-800">
+                                        <KeyRound size={11} className="shrink-0" />
+                                        Esa ficha ya entra en el portal
+                                    </span>
+                                )}
+                                {/* Lo que casi siempre hay que hacer con un registro web en rojo:
+                                    no es un cliente nuevo, es el de siempre pidiendo entrar. */}
+                                {emailDeAcceso(client) && (
+                                    <button
+                                        onClick={() => onDarAcceso(client, ficha)}
+                                        disabled={dandoAcceso}
+                                        className="mt-1.5 w-full flex items-center justify-center gap-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold rounded-lg text-xs transition-colors"
+                                    >
+                                        <KeyRound size={13} />
+                                        {dandoAcceso ? 'Dando el acceso…' : 'Dar el acceso a esta ficha'}
+                                    </button>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                    <p className="text-[10px] text-red-600 mt-1.5 leading-snug">
+                        {emailDeAcceso(client)
+                            ? 'Con el botón, la ficha de siempre se queda como está y sólo se le pone el acceso: la solicitud se borra y no queda una segunda ficha. Aprobarla, en cambio, crea la segunda y el cliente entrará a la nueva —vacía—, no a la suya.'
+                            : 'Aprobarla crea una segunda ficha, y el cliente entrará a la nueva —vacía—, no a la suya.'}
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// Dirección, teléfono, GPS y de dónde salió la ficha
+function DatosFicha({ client, clients }) {
+    return (
+        <div className="p-4 space-y-3 text-sm">
+            {client.address && (
+                <div className="flex items-start gap-2">
+                    <MapPin size={14} className="text-slate-400 mt-0.5 shrink-0" />
+                    <span className="text-slate-600">{client.address}</span>
+                </div>
+            )}
+            {client.city && (
+                <div className="flex items-center gap-2">
+                    <Tag size={14} className="text-slate-400" />
+                    <span className="text-slate-600">{client.city} {client.zip && `(${client.zip})`}</span>
+                </div>
+            )}
+            {client.phone && (
+                <div className="flex items-center gap-2">
+                    <Phone size={14} className="text-slate-400" />
+                    <span className="text-slate-600">{client.phone}</span>
+                </div>
+            )}
+            {client.coordinates && (
+                <a
+                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(client.coordinates).trim())}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    title="Ver ubicación en Google Maps"
+                    className="flex items-center gap-2 w-fit"
+                >
+                    <MapPin size={14} className="text-emerald-500" />
+                    <span className="text-emerald-600 hover:text-emerald-700 hover:underline text-xs font-mono">{client.coordinates}</span>
+                </a>
+            )}
+
+            {/* Meta info */}
+            <div className="pt-2 border-t border-slate-100 space-y-1">
+                <div className="flex items-center gap-2 text-xs">
+                    <Building2 size={12} className={client.ownerAgencyId ? 'text-amber-500' : 'text-emerald-500'} />
+                    <span className={client.ownerAgencyId ? 'text-amber-600 font-bold' : 'text-emerald-600 font-bold'}>
+                        {client.ownerAgencyId ? getOwnerLabel(client, clients) : 'Mis clientes'}
+                    </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <Calendar size={12} />
+                    <span>Creado: {client.lastInteraction}</span>
+                </div>
+                {client.createdFrom && (
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                        <Tag size={12} />
+                        <span>Desde: {esRegistroWeb(client) ? 'formulario de la web' : client.createdFrom}</span>
+                    </div>
+                )}
+                {client.createdBy && (
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                        <User size={12} />
+                        <span>Por: {client.createdBy}</span>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// Chapa Remitente / Destinatario
+function ChapaTipo({ client, className = '' }) {
+    return (
+        <span className={`text-xs font-bold px-2 py-1 rounded-full shrink-0 ${className} ${client.type === 'Remitente'
+            ? 'bg-blue-100 text-blue-700'
+            : 'bg-purple-100 text-purple-700'
+            }`}>
+            {client.type}
+        </span>
+    );
+}
+
+// Cómo se lee la vista guardada. Si no hay nada, lista: es lo que se está probando.
+function vistaGuardada() {
+    try {
+        const v = localStorage.getItem('validacion-vista');
+        return v === 'tarjetas' ? 'tarjetas' : 'lista';
+    } catch {
+        return 'lista';
+    }
 }
 
 export default function ClientValidation({ clients, onValidateClient, onUpdateClient, onDeleteClients, onGrantAccessToExisting, articles, tariffs, allPoblaciones }) {
@@ -287,6 +506,14 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
     // Selección múltiple
     const [selectedIds, setSelectedIds] = useState([]);
 
+    // Lista compacta o tarjetas. Se guarda para no tener que elegirlo cada vez.
+    const [vista, setVista] = useState(vistaGuardada);
+    const cambiarVista = (v) => {
+        setVista(v);
+        try { localStorage.setItem('validacion-vista', v); } catch { /* sin memoria, da igual */ }
+    };
+
+
     const toggleSelected = (clientId) => {
         setSelectedIds(prev => prev.includes(clientId) ? prev.filter(id => id !== clientId) : [...prev, clientId]);
     };
@@ -436,6 +663,26 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                             className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
                         />
                     </div>
+                    <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl self-start md:self-auto">
+                        {[
+                            { clave: 'lista', texto: 'Lista', icono: <List size={15} /> },
+                            { clave: 'tarjetas', texto: 'Tarjetas', icono: <LayoutGrid size={15} /> },
+                        ].map(({ clave, texto, icono }) => (
+                            <button
+                                key={clave}
+                                type="button"
+                                onClick={() => cambiarVista(clave)}
+                                title={`Ver como ${texto.toLowerCase()}`}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${vista === clave
+                                    ? 'bg-white text-slate-800 shadow-sm'
+                                    : 'text-slate-500 hover:text-slate-700'
+                                    }`}
+                            >
+                                {icono}
+                                {texto}
+                            </button>
+                        ))}
+                    </div>
                     {filteredClients.length > 0 && (
                         <div className="flex items-center gap-3">
                             <label className="flex items-center gap-2 text-sm font-medium text-slate-600 cursor-pointer select-none">
@@ -461,8 +708,156 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                 </div>
             )}
 
-            {/* Pending Clients Grid */}
-            {filteredClients.length > 0 ? (
+            {/* Pendientes — en lista compacta o en tarjetas */}
+            {filteredClients.length > 0 && vista === 'lista' ? (
+                <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden divide-y divide-slate-100">
+                    {filteredClients.map(client => {
+                        const web = esRegistroWeb(client);
+                        const gemelas = gemelasPorCliente.get(client.id);
+                        const parecidas = duplicadosPorCliente.get(client.id);
+                        const seleccionado = selectedIds.includes(client.id);
+                        const dato = 'flex items-center gap-1 min-w-0';
+                        return (
+                            <div key={client.id} className={seleccionado ? 'bg-amber-50/60' : ''}>
+                                <div className="flex items-start gap-2 md:gap-3 px-3 py-2">
+                                    <input
+                                        type="checkbox"
+                                        checked={seleccionado}
+                                        onChange={() => toggleSelected(client.id)}
+                                        className="w-4 h-4 mt-1 rounded border-slate-300 text-amber-600 focus:ring-amber-500 shrink-0"
+                                    />
+                                    <div className={`p-1.5 rounded-lg shrink-0 ${web ? 'bg-blue-100' : 'bg-amber-100'}`}>
+                                        {web
+                                            ? <Globe size={14} className="text-blue-600" />
+                                            : <Building2 size={14} className="text-amber-600" />}
+                                    </div>
+
+                                    {/* Todo lo de la ficha, en tres líneas */}
+                                    <div className="flex-1 min-w-0 space-y-0.5">
+                                        <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 min-w-0">
+                                            <span className="font-bold text-slate-800 text-sm break-words" title={client.name}>{client.name}</span>
+                                            {client.clientNumber && (
+                                                <span className="text-[10px] font-mono text-slate-500 shrink-0">Nº {client.clientNumber}</span>
+                                            )}
+                                            <ChapaTipo client={client} className="sm:hidden" />
+                                            {web && (
+                                                <span className="flex items-center gap-1 text-[11px] font-bold text-blue-700 shrink-0">
+                                                    <Globe size={11} /> Se ha registrado en la web
+                                                </span>
+                                            )}
+                                            {client.legalName && client.legalName !== client.name && (
+                                                <span className="text-xs text-slate-500 break-words">({client.legalName})</span>
+                                            )}
+                                        </div>
+
+                                        {/* Dónde está y cómo contactar */}
+                                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-600">
+                                            {client.address && (
+                                                <span className={dato}><MapPin size={12} className="text-slate-400 shrink-0" /><span className="break-words">{client.address}</span></span>
+                                            )}
+                                            {client.city && (
+                                                <span className={dato}><Tag size={12} className="text-slate-400 shrink-0" />{client.city}{client.zip ? ` (${client.zip})` : ''}</span>
+                                            )}
+                                            {client.phone && (
+                                                <span className={dato}><Phone size={12} className="text-slate-400 shrink-0" />{client.phone}</span>
+                                            )}
+                                            {client.email && (
+                                                <a href={`mailto:${client.email}`} className={`${dato} text-blue-700 hover:underline`} title={client.email}>
+                                                    <Mail size={12} className="text-blue-400 shrink-0" /><span className="truncate">{client.email}</span>
+                                                </a>
+                                            )}
+                                            {client.cif && (
+                                                <span className={`${dato} font-mono`}><Tag size={12} className="text-blue-400 shrink-0" />{client.cif}</span>
+                                            )}
+                                            {client.contactPerson && (
+                                                <span className={dato} title={client.contactPerson}><User size={12} className="text-blue-400 shrink-0" /><span className="truncate">{client.contactPerson}</span></span>
+                                            )}
+                                            {client.coordinates && (
+                                                <a
+                                                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(client.coordinates).trim())}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    title="Ver ubicación en Google Maps"
+                                                    className={`${dato} text-emerald-600 hover:text-emerald-700 hover:underline font-mono`}
+                                                >
+                                                    <MapPin size={12} className="text-emerald-500 shrink-0" />{client.coordinates}
+                                                </a>
+                                            )}
+                                        </div>
+
+                                        {/* De dónde salió, quién la hizo y de quién es */}
+                                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-400">
+                                            <span className={`${dato} font-bold ${client.ownerAgencyId ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                                <Building2 size={12} className="shrink-0" />
+                                                {client.ownerAgencyId ? getOwnerLabel(client, clients) : 'Mis clientes'}
+                                            </span>
+                                            <span className={dato}><Calendar size={12} className="shrink-0" />Creado: {web ? cuandoSeRegistro(client) : client.lastInteraction}</span>
+                                            {client.createdFrom && (
+                                                <span className={dato}><Tag size={12} className="shrink-0" />Desde: {web ? 'formulario de la web' : client.createdFrom}</span>
+                                            )}
+                                            {client.createdBy && (
+                                                <span className={dato}><User size={12} className="shrink-0" />Por: {client.createdBy}</span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <ChapaTipo client={client} className="hidden sm:inline-block w-24 text-center mt-0.5" />
+
+                                    {/* Acciones */}
+                                    <div className="flex items-center gap-1 shrink-0">
+                                        <button
+                                            onClick={() => openEditModal(client)}
+                                            title="Editar y Validar"
+                                            aria-label="Editar y Validar"
+                                            className="p-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors"
+                                        >
+                                            <Edit size={15} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleApprove(client.id)}
+                                            title="Aprobar"
+                                            aria-label="Aprobar"
+                                            className="p-2 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-700 transition-colors"
+                                        >
+                                            <CheckCircle size={15} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleReject(client.id)}
+                                            title="Rechazar"
+                                            aria-label="Rechazar"
+                                            className="p-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-700 transition-colors"
+                                        >
+                                            <XCircle size={15} />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Avisos, siempre a la vista: son lo que decide qué hacer con la ficha */}
+                                {(gemelas || parecidas) && (
+                                    <div className="px-3 pb-2 sm:pl-12 grid grid-cols-1 md:grid-cols-2 gap-2">
+                                        {gemelas && (
+                                            <AvisoRepetida
+                                                client={client}
+                                                gemelas={gemelas}
+                                                uniendo={uniendoId === client.id}
+                                                onUnir={handleUnirGemelas}
+                                            />
+                                        )}
+                                        {parecidas && (
+                                            <AvisoDuplicado
+                                                client={client}
+                                                parecidas={parecidas}
+                                                dandoAcceso={dandoAccesoId === client.id}
+                                                onDarAcceso={handleDarAcceso}
+                                            />
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            ) : filteredClients.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {filteredClients.map(client => (
                         <div key={client.id} className={`bg-white rounded-xl shadow-sm border overflow-hidden hover:shadow-md transition-shadow ${selectedIds.includes(client.id) ? 'border-amber-400 ring-2 ring-amber-200' : 'border-slate-100'}`}>
@@ -492,201 +887,33 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                         )}
                                     </div>
                                 </div>
-                                <span className={`text-xs font-bold px-2 py-1 rounded-full shrink-0 ${client.type === 'Remitente'
-                                        ? 'bg-blue-100 text-blue-700'
-                                        : 'bg-purple-100 text-purple-700'
-                                    }`}>
-                                    {client.type}
-                                </span>
+                                <ChapaTipo client={client} />
                             </div>
 
                             {/* Quién se ha registrado — sólo en los altas de la web */}
-                            {esRegistroWeb(client) && (
-                                <div className="bg-blue-50/60 border-b border-blue-100 px-4 py-3 space-y-1.5">
-                                    <div className="flex items-center gap-2">
-                                        <Globe size={13} className="text-blue-600 shrink-0" />
-                                        <span className="text-xs font-bold text-blue-800">Se ha registrado en la web</span>
-                                    </div>
-                                    {client.email && (
-                                        <div className="flex items-center gap-2 min-w-0">
-                                            <Mail size={13} className="text-blue-400 shrink-0" />
-                                            <a href={`mailto:${client.email}`} className="text-xs text-blue-700 font-medium truncate hover:underline" title={client.email}>
-                                                {client.email}
-                                            </a>
-                                        </div>
-                                    )}
-                                    {client.cif && (
-                                        <div className="flex items-center gap-2">
-                                            <Tag size={13} className="text-blue-400 shrink-0" />
-                                            <span className="text-xs text-blue-700 font-mono">{client.cif}</span>
-                                        </div>
-                                    )}
-                                    {client.contactPerson && (
-                                        <div className="flex items-center gap-2 min-w-0">
-                                            <User size={13} className="text-blue-400 shrink-0" />
-                                            <span className="text-xs text-blue-700 truncate" title={client.contactPerson}>{client.contactPerson}</span>
-                                        </div>
-                                    )}
-                                    {client.legalName && client.legalName !== client.name && (
-                                        <div className="flex items-start gap-2 min-w-0">
-                                            <Building2 size={13} className="text-blue-400 shrink-0 mt-0.5" />
-                                            <span className="text-xs text-blue-700 break-words">{client.legalName}</span>
-                                        </div>
-                                    )}
-                                    <div className="flex items-center gap-2">
-                                        <Calendar size={13} className="text-blue-400 shrink-0" />
-                                        <span className="text-xs text-blue-600">{cuandoSeRegistro(client)}</span>
-                                    </div>
-                                </div>
+                            {esRegistroWeb(client) && <BloqueRegistroWeb client={client} enTarjeta />}
+
+                            {gemelasPorCliente.has(client.id) && (
+                                <AvisoRepetida
+                                    client={client}
+                                    gemelas={gemelasPorCliente.get(client.id)}
+                                    uniendo={uniendoId === client.id}
+                                    onUnir={handleUnirGemelas}
+                                    enTarjeta
+                                />
                             )}
 
-                            {/* Aviso de repetida — la misma empresa, varias veces en esta lista */}
-                            {gemelasPorCliente.has(client.id) && (() => {
-                                const gemelas = gemelasPorCliente.get(client.id);
-                                const aportado = loQueAportanLasGemelas(client, gemelas);
-                                const detalle = explicarAportacion(aportado);
-                                return (
-                                    <div className="bg-orange-50 border-b border-orange-200 px-4 py-3">
-                                        <div className="flex items-start gap-2">
-                                            <Copy size={15} className="text-orange-600 mt-0.5 shrink-0" />
-                                            <div className="min-w-0 flex-1">
-                                                <p className="text-xs font-bold text-orange-800">
-                                                    Repetida: {gemelas.length + 1} solicitudes de este mismo cliente
-                                                </p>
-                                                <ul className="mt-1 space-y-0.5">
-                                                    {gemelas.map(g => (
-                                                        <li key={g.id} className="text-xs text-orange-700 leading-snug">
-                                                            <span className="break-words">{g.name}</span>
-                                                            <span className="text-orange-500">
-                                                                {g.createdFrom ? ` — ${g.createdFrom}` : ''}
-                                                                {g.coordinates ? ' — con coordenadas' : ''}
-                                                            </span>
-                                                        </li>
-                                                    ))}
-                                                </ul>
-                                                <p className="text-[10px] text-orange-600 mt-1.5 leading-snug">
-                                                    {detalle
-                                                        ? `Al unirlas, ésta se queda ${detalle} de las otras.`
-                                                        : 'Las otras no aportan ningún dato que a ésta le falte.'}
-                                                </p>
-                                                <button
-                                                    onClick={() => handleUnirGemelas(client)}
-                                                    disabled={uniendoId === client.id}
-                                                    className="mt-2 w-full flex items-center justify-center gap-2 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white font-bold rounded-lg text-xs transition-colors"
-                                                >
-                                                    <Merge size={13} />
-                                                    {uniendoId === client.id ? 'Uniendo…' : 'Quedarme con ésta y unir las demás'}
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })()}
-
-                            {/* Aviso de duplicado — la empresa ya está en cartera */}
                             {duplicadosPorCliente.has(client.id) && (
-                                <div className="bg-red-50 border-b border-red-200 px-4 py-3">
-                                    <div className="flex items-start gap-2">
-                                        <AlertTriangle size={15} className="text-red-600 mt-0.5 shrink-0" />
-                                        <div className="min-w-0">
-                                            <p className="text-xs font-bold text-red-800">Ya parece estar en tu cartera</p>
-                                            <ul className="mt-1 space-y-2">
-                                                {duplicadosPorCliente.get(client.id).map(({ client: ficha, motivos, yaTieneAcceso }) => (
-                                                    <li key={ficha.id} className="text-xs text-red-700 leading-snug">
-                                                        <span className="font-bold break-words">{ficha.name}</span>
-                                                        {ficha.clientNumber && <span className="text-red-500"> (nº {ficha.clientNumber})</span>}
-                                                        <span className="text-red-600"> — {explicarMotivos(motivos)}</span>
-                                                        {yaTieneAcceso && (
-                                                            <span className="mt-1 flex items-center gap-1 font-bold text-red-800">
-                                                                <KeyRound size={11} className="shrink-0" />
-                                                                Esa ficha ya entra en el portal
-                                                            </span>
-                                                        )}
-                                                        {/* Lo que casi siempre hay que hacer con un registro web en rojo:
-                                                            no es un cliente nuevo, es el de siempre pidiendo entrar. */}
-                                                        {emailDeAcceso(client) && (
-                                                            <button
-                                                                onClick={() => handleDarAcceso(client, ficha)}
-                                                                disabled={dandoAccesoId === client.id}
-                                                                className="mt-1.5 w-full flex items-center justify-center gap-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold rounded-lg text-xs transition-colors"
-                                                            >
-                                                                <KeyRound size={13} />
-                                                                {dandoAccesoId === client.id ? 'Dando el acceso…' : 'Dar el acceso a esta ficha'}
-                                                            </button>
-                                                        )}
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                            <p className="text-[10px] text-red-600 mt-1.5 leading-snug">
-                                                {emailDeAcceso(client)
-                                                    ? 'Con el botón, la ficha de siempre se queda como está y sólo se le pone el acceso: la solicitud se borra y no queda una segunda ficha. Aprobarla, en cambio, crea la segunda y el cliente entrará a la nueva —vacía—, no a la suya.'
-                                                    : 'Aprobarla crea una segunda ficha, y el cliente entrará a la nueva —vacía—, no a la suya.'}
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
+                                <AvisoDuplicado
+                                    client={client}
+                                    parecidas={duplicadosPorCliente.get(client.id)}
+                                    dandoAcceso={dandoAccesoId === client.id}
+                                    onDarAcceso={handleDarAcceso}
+                                    enTarjeta
+                                />
                             )}
 
-                            {/* Body */}
-                            <div className="p-4 space-y-3 text-sm">
-                                {client.address && (
-                                    <div className="flex items-start gap-2">
-                                        <MapPin size={14} className="text-slate-400 mt-0.5 shrink-0" />
-                                        <span className="text-slate-600">{client.address}</span>
-                                    </div>
-                                )}
-                                {client.city && (
-                                    <div className="flex items-center gap-2">
-                                        <Tag size={14} className="text-slate-400" />
-                                        <span className="text-slate-600">{client.city} {client.zip && `(${client.zip})`}</span>
-                                    </div>
-                                )}
-                                {client.phone && (
-                                    <div className="flex items-center gap-2">
-                                        <Phone size={14} className="text-slate-400" />
-                                        <span className="text-slate-600">{client.phone}</span>
-                                    </div>
-                                )}
-                                {client.coordinates && (
-                                    <a
-                                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(client.coordinates).trim())}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={(e) => e.stopPropagation()}
-                                        title="Ver ubicación en Google Maps"
-                                        className="flex items-center gap-2 w-fit"
-                                    >
-                                        <MapPin size={14} className="text-emerald-500" />
-                                        <span className="text-emerald-600 hover:text-emerald-700 hover:underline text-xs font-mono">{client.coordinates}</span>
-                                    </a>
-                                )}
-
-                                {/* Meta info */}
-                                <div className="pt-2 border-t border-slate-100 space-y-1">
-                                    <div className="flex items-center gap-2 text-xs">
-                                        <Building2 size={12} className={client.ownerAgencyId ? 'text-amber-500' : 'text-emerald-500'} />
-                                        <span className={client.ownerAgencyId ? 'text-amber-600 font-bold' : 'text-emerald-600 font-bold'}>
-                                            {client.ownerAgencyId ? getOwnerLabel(client, clients) : 'Mis clientes'}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center gap-2 text-xs text-slate-400">
-                                        <Calendar size={12} />
-                                        <span>Creado: {client.lastInteraction}</span>
-                                    </div>
-                                    {client.createdFrom && (
-                                        <div className="flex items-center gap-2 text-xs text-slate-400">
-                                            <Tag size={12} />
-                                            <span>Desde: {esRegistroWeb(client) ? 'formulario de la web' : client.createdFrom}</span>
-                                        </div>
-                                    )}
-                                    {client.createdBy && (
-                                        <div className="flex items-center gap-2 text-xs text-slate-400">
-                                            <User size={12} />
-                                            <span>Por: {client.createdBy}</span>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+                            <DatosFicha client={client} clients={clients} />
 
                             {/* Actions */}
                             <div className="px-4 pb-4 space-y-2">
