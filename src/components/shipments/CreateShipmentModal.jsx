@@ -180,6 +180,19 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     const [selectedArticles, setSelectedArticles] = useState([]);
     const [tempArticleId, setTempArticleId] = useState('');
     const [tempQuantity, setTempQuantity] = useState(1);
+    // El desplegable de artículos añade al cambiar, y un <select> nativo cambia
+    // MUCHAS veces seguidas sin que nadie pinche una opción: con el foco puesto,
+    // cada flecha del teclado (y en algunos navegadores la rueda del ratón) es un
+    // cambio. Como tras cada alta el desplegable vuelve a «Seleccionar…», la
+    // siguiente flecha caía otra vez en el primer artículo y salía repetido.
+    // Ahora el alta espera a que el desplegable se quede quieto (o pierda el
+    // foco) y sólo entra el último valor elegido.
+    const altaArticuloPendienteRef = useRef(null);
+    const selectedArticlesRef = useRef(selectedArticles);
+    selectedArticlesRef.current = selectedArticles;
+    // Date.now() como id repetía el número si entraban dos en el mismo milisegundo,
+    // y la papelera de uno se llevaba los dos.
+    const contadorArticulosRef = useRef(0);
 
     // Weight-based pricing state (for agencies like XPO, TSB, TXT)
     const [weightKg, setWeightKg] = useState('');
@@ -430,6 +443,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
 
     useEffect(() => {
         if (isOpen) {
+            cancelarAltaArticuloPendiente(); // Que no entre un artículo de la sesión anterior
             setSelectedArticles([]); // Reset articles on open
             setTempArticleId('');
             setTempQuantity(1);
@@ -838,20 +852,54 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         // utils/precioArticulo.js, la misma que usa la ficha del albarán al editar.
         const unitPrice = precioUnitarioArticulo(article, { baremo, tariffId, cliente: client, porKilos: !!weightClientData });
 
+        const cantidad = parseInt(quantity) || 1;
+        contadorArticulosRef.current += 1;
         const newItem = {
             ...article,
-            uniqueId: Date.now(),
-            quantity: parseInt(tempQuantity),
+            uniqueId: `${Date.now()}-${contadorArticulosRef.current}`,
+            quantity: cantidad,
             unitPrice: unitPrice,
-            totalPrice: unitPrice * parseInt(tempQuantity)
+            totalPrice: unitPrice * cantidad
         };
 
-        const updatedList = [...selectedArticles, newItem];
+        // La lista se lee del ref y no del cierre: esto puede llegar desde el
+        // temporizador de abajo, con un render de por medio.
+        const updatedList = [...selectedArticlesRef.current, newItem];
+        selectedArticlesRef.current = updatedList;
         setSelectedArticles(updatedList);
 
         setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedList) }));
         setTempArticleId('');
     };
+
+    // Ver el comentario junto a altaArticuloPendienteRef: cada cambio del
+    // desplegable reprograma el alta y sólo entra el último valor cuando el
+    // desplegable lleva un momento quieto.
+    const cancelarAltaArticuloPendiente = () => {
+        const pendiente = altaArticuloPendienteRef.current;
+        altaArticuloPendienteRef.current = null;
+        if (pendiente) clearTimeout(pendiente.timer);
+        return pendiente;
+    };
+
+    const programarAltaArticulo = (id, quantity) => {
+        cancelarAltaArticuloPendiente();
+        if (!id) return;
+        const timer = setTimeout(() => {
+            altaArticuloPendienteRef.current = null;
+            addArticle(id, quantity);
+        }, 350);
+        altaArticuloPendienteRef.current = { timer, id, quantity };
+    };
+
+    // Al salir del desplegable (Tab, pinchar en otro campo, Generar Albarán) el
+    // artículo elegido entra al momento, sin esperar.
+    const ejecutarAltaArticuloPendiente = () => {
+        const pendiente = cancelarAltaArticuloPendiente();
+        if (pendiente) addArticle(pendiente.id, pendiente.quantity);
+    };
+
+    useEffect(() => cancelarAltaArticuloPendiente, []);
 
     const removeArticle = (uniqueId) => {
         const updatedList = selectedArticles.filter(item => item.uniqueId !== uniqueId);
@@ -1772,7 +1820,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                             <div className="flex gap-2 items-end mb-3">
                                 <div className="flex-1">
                                     <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Artículo</label>
-                                    <select className={inputClass} value={tempArticleId} onChange={(e) => { const val = e.target.value; setTempArticleId(val); if (val) addArticle(val, tempQuantity); }}>
+                                    <select className={inputClass} value={tempArticleId} onChange={(e) => { const val = e.target.value; setTempArticleId(val); programarAltaArticulo(val, tempQuantity); }} onBlur={ejecutarAltaArticuloPendiente}>
                                         <option value="">Seleccionar artículo...</option>
                                         {(() => {
                                             let availableArticles = [...(articles || [])];
