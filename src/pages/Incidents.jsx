@@ -1,8 +1,13 @@
 import { useState, useMemo } from 'react';
 
-import { AlertTriangle, Calendar, Truck, MapPin, CheckCircle, Search, Filter, MessageSquare, Send, User, Package, Euro, Clock } from 'lucide-react';
+import { AlertTriangle, Calendar, Truck, MapPin, CheckCircle, Search, Filter, MessageSquare, Send, User, Package, Euro, Clock, Eye } from 'lucide-react';
+import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 
-export default function Incidents({ shipments, onUpdateStatus, onResolve, onReply, drivers, driverNamePreference = 'both' }) {
+export default function Incidents({ shipments, onUpdateStatus, onResolve, onReply, onUpdateShipment, drivers, clients = [], allPoblaciones = [], articles = [], tariffs = null, coverageZones = [], familyOrder = [], driverNamePreference = 'both' }) {
+    const [detalleId, setDetalleId] = useState(null);
+    // Se busca por id en cada render para que el modal vea los cambios que llegan por sincronizacion
+    const detalle = detalleId ? (shipments || []).find(s => s.id === detalleId) || null : null;
+    const abrirDetalle = (id) => setDetalleId(id);
     const [filterDriver, setFilterDriver] = useState('');
     const [filterDate, setFilterDate] = useState('');
     const [replyState, setReplyState] = useState({}); // Local text for inputs
@@ -103,7 +108,12 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
                     </div>
                 ) : (
                     incidents.map((shipment) => (
-                        <div key={shipment.id} className="bg-white rounded-xl shadow-sm border border-red-100 overflow-hidden flex flex-col md:flex-row">
+                        <div
+                            key={shipment.id}
+                            className="bg-white rounded-xl shadow-sm border border-red-100 overflow-hidden flex flex-col md:flex-row cursor-pointer hover:border-red-300 hover:shadow-md transition-all"
+                            onClick={() => abrirDetalle(shipment.id)}
+                            title="Pincha para ver los detalles del albarán"
+                        >
                             {/* Left Status Strip */}
                             <div className="w-full md:w-2 bg-red-500"></div>
 
@@ -168,14 +178,14 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
                                                         src={shipment.incidentPhoto} 
                                                         alt="Evidencia de incidencia" 
                                                         className="w-full h-auto cursor-pointer hover:scale-105 transition-transform"
-                                                        onClick={() => window.open(shipment.incidentPhoto, '_blank')}
+                                                        onClick={(e) => { e.stopPropagation(); window.open(shipment.incidentPhoto, '_blank'); }}
                                                     />
                                                 </div>
                                             )}
                                         </div>
 
                                         {/* Admin Reply Section */}
-                                        <div className="bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                                        <div className="bg-blue-50/50 p-3 rounded-lg border border-blue-100 cursor-default" onClick={(e) => e.stopPropagation()}>
                                             <p className="text-xs text-blue-500 font-bold uppercase mb-2 flex items-center gap-1">
                                                 <MessageSquare size={12} />
                                                 Instrucciones para el Conductor
@@ -219,7 +229,14 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
 
                                 <div className="flex gap-3 pt-4 border-t border-slate-100 justify-end">
                                     <button
-                                        onClick={() => onResolve(shipment.id)}
+                                        onClick={(e) => { e.stopPropagation(); abrirDetalle(shipment.id); }}
+                                        className="px-4 py-2 bg-white text-slate-700 border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2"
+                                    >
+                                        <Eye size={16} />
+                                        Ver Detalles
+                                    </button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onResolve(shipment.id); }}
                                         className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-500/30 flex items-center gap-2"
                                     >
                                         <CheckCircle size={16} />
@@ -231,6 +248,21 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
                     ))
                 )}
             </div>
+
+            <ShipmentDetailsModal
+                isOpen={!!detalle}
+                onClose={() => setDetalleId(null)}
+                shipment={detalle}
+                drivers={drivers}
+                allPoblaciones={allPoblaciones}
+                onUpdate={onUpdateShipment}
+                clients={clients}
+                articles={articles}
+                tariffs={tariffs}
+                coverageZones={coverageZones}
+                familyOrder={familyOrder}
+                driverNamePreference={driverNamePreference}
+            />
         </div>
     );
 }

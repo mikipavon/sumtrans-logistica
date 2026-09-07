@@ -4852,7 +4852,7 @@ function App() {
         onUpdateFamilyOrder={handleUpdateFamilyOrder} 
         onRenameCategory={handleRenameCategory} 
       />}
-      {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onReply={handleIncidentReply} drivers={drivers} driverNamePreference={driverNamePreference} />}
+      {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onReply={handleIncidentReply} onUpdateShipment={handleUpdateShipment} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} articles={articles} tariffs={tariffs} coverageZones={coverageZones} familyOrder={familyOrder} driverNamePreference={driverNamePreference} />}
       {currentView === 'notifications' && <NotificationCenter shipments={visibleShipments} drivers={drivers} clients={visibleClients} onUpdateShipment={handleUpdateShipment} articles={articles} tariffs={tariffs} defaultCodFee={defaultCodFee} familyOrder={familyOrder} coverageZones={coverageZones} />}
       {currentView === 'clientValidation' && <ClientValidation clients={clients} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} onDeleteClients={handleDeleteClients} onGrantAccessToExisting={handleDarAccesoAFichaExistente} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
       </Suspense>
