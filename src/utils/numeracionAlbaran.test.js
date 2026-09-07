@@ -1,13 +1,29 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 
 const rpc = vi.fn();
-vi.mock('../lib/supabase', () => ({ supabase: { rpc: (...args) => rpc(...args) } }));
+const insert = vi.fn(); // recibe las filas; devuelve { data, error } como PostgREST
+vi.mock('../lib/supabase', () => ({
+    supabase: {
+        rpc: (...args) => rpc(...args),
+        from: () => ({ insert: (filas) => ({ select: () => insert(filas) }) })
+    }
+}));
 
-import { maximoDeLaSerie, reservarNumerosAlbaran } from './numeracionAlbaran';
+// Import dinámico tras vaciar el registro: los ficheros de test comparten
+// entorno (ver vitest.config.js) y CreateShipmentModal.test.jsx, que va antes,
+// ya ha cargado este módulo con el supabase de verdad. Con el import estático
+// el mock de arriba no llegaba y los tests tiraban contra la base de datos.
+let maximoDeLaSerie, reservarNumerosAlbaran, darDeAltaSinPisar, CODIGO_ID_REPETIDO;
+beforeAll(async () => {
+    vi.resetModules();
+    ({ maximoDeLaSerie, reservarNumerosAlbaran, darDeAltaSinPisar, CODIGO_ID_REPETIDO } = await import('./numeracionAlbaran'));
+});
 
 beforeEach(() => {
     rpc.mockReset();
+    insert.mockReset();
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
 describe('maximoDeLaSerie', () => {
@@ -97,5 +113,80 @@ describe('reservarNumerosAlbaran', () => {
         await reservarNumerosAlbaran('sum', 1, { enviosLocales: [] });
 
         expect(rpc).toHaveBeenCalledWith('reservar_numeros_albaran', { p_prefijo: 'SUM', p_cantidad: 1 });
+    });
+});
+
+describe('darDeAltaSinPisar', () => {
+    const FILA = { id: 'SUM-518', status: 'Pendiente de asignar', assignedDriverId: null, data: { id: 'SUM-518', client: 'Hijos de Lastre' } };
+    // Literal a propósito: este bloque se evalúa al recoger los tests, antes del beforeAll.
+    const REPETIDO = { code: '23505', message: 'duplicate key value violates unique constraint "shipments_pkey"' };
+
+    it('el código que se reconoce como número repetido es el 23505 de Postgres', () => {
+        expect(CODIGO_ID_REPETIDO).toBe('23505');
+    });
+
+    it('si el número está libre entra a la primera y no toca el id', async () => {
+        insert.mockResolvedValue({ data: [{ ...FILA }], error: null });
+
+        const r = await darDeAltaSinPisar(FILA);
+
+        expect(r.error).toBeNull();
+        expect(r.id).toBe('SUM-518');
+        expect(r.renumerado).toBe(false);
+        expect(insert).toHaveBeenCalledTimes(1);
+        expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it('si otro móvil ya ocupó el número, pide otro al servidor y guarda con ése sin pisar al primero', async () => {
+        // El caso del 07/09/2026: SUM-518 ya era de otro repartidor.
+        insert
+            .mockResolvedValueOnce({ data: null, error: REPETIDO })
+            .mockResolvedValueOnce({ data: [{ id: 'SUM-556' }], error: null });
+        rpc.mockResolvedValue({ data: 556, error: null });
+
+        const r = await darDeAltaSinPisar(FILA, { enviosLocales: [{ id: 'SUM-518' }] });
+
+        expect(r.error).toBeNull();
+        expect(r.id).toBe('SUM-556');
+        expect(r.renumerado).toBe(true);
+        const segundaFila = insert.mock.calls[1][0][0];
+        expect(segundaFila.id).toBe('SUM-556');
+        expect(segundaFila.data.id).toBe('SUM-556'); // el JSON interno también
+        expect(segundaFila.data.client).toBe('Hijos de Lastre');
+    });
+
+    it('sin servidor que reserve, avanza al menos un número por intento', async () => {
+        insert
+            .mockResolvedValueOnce({ data: null, error: REPETIDO })
+            .mockResolvedValueOnce({ data: null, error: REPETIDO })
+            .mockResolvedValueOnce({ data: [{ id: 'SUM-520' }], error: null });
+        rpc.mockRejectedValue(new TypeError('Load failed'));
+
+        const r = await darDeAltaSinPisar(FILA, { enviosLocales: [{ id: 'SUM-500' }] });
+
+        expect(r.id).toBe('SUM-520');
+        expect(insert.mock.calls.map(c => c[0][0].id)).toEqual(['SUM-518', 'SUM-519', 'SUM-520']);
+    });
+
+    it('un error que no sea de número repetido se devuelve tal cual, sin reintentar', async () => {
+        const rls = { code: '42501', message: 'new row violates row-level security policy' };
+        insert.mockResolvedValue({ data: null, error: rls });
+
+        const r = await darDeAltaSinPisar(FILA);
+
+        expect(r.error).toBe(rls);
+        expect(r.id).toBe('SUM-518');
+        expect(insert).toHaveBeenCalledTimes(1);
+    });
+
+    it('se rinde tras agotar los intentos y devuelve el último error', async () => {
+        insert.mockResolvedValue({ data: null, error: REPETIDO });
+        rpc.mockResolvedValue({ data: 600, error: null });
+
+        const r = await darDeAltaSinPisar(FILA, { intentos: 2 });
+
+        expect(r.error).toBe(REPETIDO);
+        expect(r.data).toBeNull();
+        expect(insert).toHaveBeenCalledTimes(2);
     });
 });

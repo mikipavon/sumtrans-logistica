@@ -62,6 +62,7 @@ import {
 import { BAREMO_1_PUEBLOS, BAREMO_2_PUEBLOS } from './data/baremos';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { enqueue, getQueue, dequeue, getQueueLength } from './utils/offlineQueue';
+import { darDeAltaSinPisar } from './utils/numeracionAlbaran';
 import { uploadProof } from './utils/storage';
 
 
@@ -1802,14 +1803,20 @@ function App() {
           }
         } else if (op.type === 'createShipment') {
           // Envío creado mientras el conductor no tenía sesión Auth (error RLS 42501)
-          const { error } = await supabase.from('shipments').upsert([{
+          // o sin cobertura. Va por insert, no por upsert: mientras estaba en la
+          // cola otro aparato ha podido ocupar ese número, y entonces se guarda
+          // con el siguiente libre en vez de pisar el ajeno.
+          const { error, id: idFinal, renumerado } = await darDeAltaSinPisar({
             id: op.shipmentData.id,
             status: op.shipmentData.status,
             assignedDriverId: op.shipmentData.assignedDriverId || null,
             data: op.shipmentData
-          }]);
+          }, { enviosLocales: shipmentsRef.current });
           if (!error) {
             await dequeue(op.id);
+            if (renumerado) {
+              setShipments(prev => prev.map(s => s.id === op.shipmentId ? { ...s, id: idFinal } : s));
+            }
             // El remitente, ahora que hay cobertura. Este albarán se hizo sin
             // red, así que su ficha no llegó a crearse y el envío se quedaba
             // apuntando a un cliente que no estaba en ninguna parte.
@@ -3087,14 +3094,18 @@ function App() {
         if (delErr) console.warn("Could not delete original pickup (might be same ID):", delErr);
       }
 
-      // 2. Save new shipment to Supabase (using upsert for resilience)
-      const { data, error } = await supabase.from('shipments').upsert([{
+      // 2. Save new shipment to Supabase. Con insert, NO con upsert: el número
+      // se calcula en cada aparato y dos a la vez pueden sacar el mismo; el
+      // upsert dejaba que el segundo pisara al primero sin avisar (07/09/2026,
+      // SUM-518). Si el número ya existe, darDeAltaSinPisar pide otro y reintenta.
+      const { data, error, renumerado, id: idFinal } = await darDeAltaSinPisar({
         id: shipmentWithMeta.id,
         status: shipmentWithMeta.status,
         assignedDriverId: shipmentWithMeta.assignedDriverId || null,
-        data: shipmentWithMeta 
-      }]).select();
-      
+        data: shipmentWithMeta
+      }, { enviosLocales: shipmentsRef.current });
+      if (renumerado) console.warn(`[handleAddShipment] ${shipmentWithMeta.id} ya estaba ocupado; guardado como ${idFinal}`);
+
       if (error) {
         console.error('Supabase Error Details:', error)
         // Error 42501 = RLS: el conductor no tiene sesión Auth activa.
