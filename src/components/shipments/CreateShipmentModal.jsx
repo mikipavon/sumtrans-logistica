@@ -11,6 +11,7 @@ import { resolveOwnerAgencyId, getOwnerLabel } from '../../utils/agencyOwnership
 import CityAutocomplete from '../CityAutocomplete';
 import { supabase } from '../../lib/supabase';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
+import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 
 // El nombre de quien crea la ficha lo pone App.jsx, que sabe caer en la sesión
 // guardada si la lista aún no ha cargado. `drivers` sí se vuelve a leer aquí, pero
@@ -1303,14 +1304,31 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
             }
         }
 
-        // Reservar el número de albarán ANTES de guardar: si el usuario encadena
-        // otro en Envío Múltiple, no puede volver a salir el mismo (allShipments
-        // aún no lo refleja y el upsert pisaría al anterior).
+        // Reservar el número de albarán ANTES de guardar. Hasta aquí el número
+        // sale del cálculo de este dispositivo (máximo de la BD al abrir el modal
+        // + lista local), y dos móviles con el formulario abierto a la vez sacan
+        // el mismo: el 07/09/2026 el albarán de una recogida ya hecha quedó
+        // pisado por el de otro repartidor guardado 0,4 s después. Ahora el
+        // número lo da el servidor (contador atómico, el mismo de las recogidas);
+        // sin cobertura se queda el local y es el insert de handleAddShipment
+        // quien evita el pisotón. También sirve para Envío Múltiple: el
+        // siguiente albarán no puede repetir éste aunque allShipments aún no lo
+        // refleje.
         const idMatch = String(finalData.id || '').match(/^([A-Z]+)-(\d+)$/i);
         if (idMatch) {
             const [, idPrefix, idNum] = idMatch;
             const key = idPrefix.toUpperCase();
-            issuedNumbersRef.current[key] = Math.max(issuedNumbersRef.current[key] || 0, parseInt(idNum, 10));
+            let numero = parseInt(idNum, 10);
+            const { primero, reservado } = await reservarNumerosAlbaran(key, 1, { enviosLocales: allShipments });
+            // Si lo local va por delante (albaranes en la cola offline que el
+            // servidor aún no ha visto) se respeta lo local: el servidor nunca
+            // devuelve un número por debajo del máximo real, así que el mayor
+            // de los dos es siempre libre.
+            if (reservado && primero > numero) {
+                numero = primero;
+                finalData.id = `${key}-${numero}`;
+            }
+            issuedNumbersRef.current[key] = Math.max(issuedNumbersRef.current[key] || 0, numero);
         }
 
         // await: en Envío Múltiple el modal sigue abierto y el usuario puede

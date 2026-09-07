@@ -82,3 +82,62 @@ export const reservarNumerosAlbaran = async (prefijo, cantidad = 1, { enviosLoca
         return { primero: maximoDeLaSerie(enviosLocales, serie) + 1, reservado: false };
     }
 };
+
+/** Código de Postgres cuando ya existe una fila con esa clave. */
+export const CODIGO_ID_REPETIDO = '23505';
+
+/**
+ * Da de alta una fila de `shipments` sin pisar ninguna que ya exista.
+ *
+ * ── Por qué no vale `upsert` ─────────────────────────────────────────────────────
+ * El 07/09/2026 dos repartidores guardaron un albarán con cuatro décimas de
+ * segundo de diferencia. Los dos móviles habían calculado el mismo número
+ * (máximo de la base de datos al abrir el formulario + 1), y como el alta iba por
+ * `upsert`, el segundo no falló: sobrescribió al primero. Una recogida ya hecha
+ * en Fernán-Núñez desapareció sin dejar rastro y nadie se enteró hasta que la
+ * oficina la echó en falta.
+ *
+ * Con `insert` Postgres rechaza la repetida (23505). Aquí se recoge ese error,
+ * se pide otro número al servidor y se vuelve a intentar: el segundo albarán
+ * entra con el número siguiente y el primero se queda como estaba.
+ *
+ * @param {object} fila  { id, status, assignedDriverId, data } tal como va a la tabla.
+ * @param {object} opciones
+ * @param {Array}  opciones.enviosLocales  Envíos cargados, plan B si el servidor no reserva.
+ * @param {number} opciones.intentos       Números distintos que se prueban antes de rendirse.
+ * @returns {Promise<{data: Array|null, error: object|null, id: string, renumerado: boolean}>}
+ *          `id` es el que ha quedado grabado; `renumerado` avisa de que no es el
+ *          que traía la fila, para que quien llama actualice su copia.
+ */
+export const darDeAltaSinPisar = async (fila, { enviosLocales = [], intentos = 3 } = {}) => {
+    let actual = { ...fila };
+    let ultimoError = null;
+
+    for (let intento = 0; intento < intentos; intento++) {
+        const { data, error } = await supabase.from('shipments').insert([actual]).select();
+        if (!error) {
+            return { data, error: null, id: actual.id, renumerado: actual.id !== fila.id };
+        }
+        if (error.code !== CODIGO_ID_REPETIDO) {
+            return { data: null, error, id: actual.id, renumerado: false };
+        }
+        ultimoError = error;
+
+        const m = String(actual.id || '').match(/^([A-Z]+)-(\d+)$/i);
+        if (!m) break; // Sin serie correlativa no hay "siguiente número" que probar
+
+        const serie = m[1].toUpperCase();
+        const { primero } = await reservarNumerosAlbaran(serie, 1, {
+            // El id que acaba de chocar cuenta como ocupado aunque no esté en la lista local
+            enviosLocales: [...enviosLocales, { id: actual.id }]
+        });
+        // Nunca por debajo del que ya ha chocado: si el servidor no reserva y la
+        // lista local va atrasada, al menos se avanza un número por intento.
+        const numero = Math.max(primero, parseInt(m[2], 10) + 1);
+        const nuevoId = `${serie}-${numero}`;
+        console.warn(`[numeracionAlbaran] ${actual.id} ya existía; se guarda como ${nuevoId}`);
+        actual = { ...actual, id: nuevoId, data: { ...(actual.data || {}), id: nuevoId } };
+    }
+
+    return { data: null, error: ultimoError, id: actual.id, renumerado: false };
+};
