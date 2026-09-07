@@ -4002,72 +4002,26 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
 
 
-    // Otras paradas de HOY para el mismo destinatario, para poder entregarlas y cobrarlas
-    // en un solo gesto. Se agrupa por NOMBRE, no por dirección: dos albaranes de "MIKI"
-    // son el mismo cliente aunque la dirección esté escrita distinta en cada uno.
-    // El motivo de fondo no es la comodidad: hacer firmar dos veces por la misma entrega
-    // física acaba con el conductor firmando él el segundo albarán, y eso sí deja el
-    // albarán sin prueba.
-    const sameClientStops = useMemo(() => {
-        if (!deliveryModalShipment) return [];
-        if (deliveryModalShipment.type === 'Recogida') return [];
+    // Otras paradas de HOY, aún sin entregar, para el mismo destinatario. Cada una se
+    // cierra por separado con su propia firma cuando le toque, así que sus cobros NO
+    // entran en la lista de deudas de esta entrega: se cobran al entregarla a ella.
+    // Se compara por NOMBRE, no por dirección: dos albaranes de "MIKI" son el mismo
+    // cliente aunque la dirección esté escrita distinta en cada uno.
+    const idsParadasDeHoyMismoCliente = useMemo(() => {
+        if (!deliveryModalShipment) return new Set();
+        if (deliveryModalShipment.type === 'Recogida') return new Set();
 
         const objetivo = normalizeClientName(deliveryModalShipment.destinationName || deliveryModalShipment.client);
-        if (!objetivo) return [];
+        if (!objetivo) return new Set();
 
-        return (localRoute || [])
+        return new Set((localRoute || [])
             .filter(s => s
                 && s.id !== deliveryModalShipment.id
                 && s.type !== 'Recogida'
                 && s.status !== 'Entregado'
                 && normalizeClientName(s.destinationName || s.client) === objetivo)
-            .map(s => {
-                const isDebido = s.porteType === 'Debido';
-                const porteVal = parseAmount(s.customAmount) || parseAmount(s.amount);
-                const codVal = s.hasCod ? parseAmount(s.codAmount) : 0;
-                const portePayer = isDebido ? (s.destinationName || s.client) : (s.originName || s.client);
-                const porteFallback = isDebido ? (s.destinationBillingType || null) : s.billingType;
-
-                // Se entregan ahora mismo, así que su porte entra en el cobro aunque sea
-                // Debido y todavía no conste como entregado.
-                const debts = [];
-                if (porteVal > 0 && !s.portePaid && isCashClient(portePayer, clientsMap, porteFallback)) {
-                    debts.push({
-                        id: `${s.id}-porte`,
-                        shipmentId: s.id,
-                        type: 'Porte',
-                        amount: porteVal.toFixed(2),
-                        label: `Porte · Albarán ${s.id}`,
-                        detail: portePayer || 'N/A'
-                    });
-                }
-                if (s.hasCod && codVal > 0 && !s.codPaid && isCashClient(s.destinationName || s.client, clientsMap, s.destinationBillingType || null)) {
-                    debts.push({
-                        id: `${s.id}-reembolso`,
-                        shipmentId: s.id,
-                        type: 'Reembolso',
-                        amount: codVal.toFixed(2),
-                        label: `Reembolso · Albarán ${s.id}`,
-                        detail: s.destinationName || s.client || 'N/A'
-                    });
-                }
-
-                const arts = s.articles || [];
-                const resumen = arts.length > 0
-                    ? arts.map(a => {
-                        const cantidad = parseInt(a.quantity) || 1;
-                        return cantidad > 1 ? `${cantidad}× ${a.name}` : a.name;
-                    }).join(', ')
-                    : (s.packages || `Albarán ${s.id}`);
-
-                return {
-                    shipment: s,
-                    debts,
-                    resumen,
-                    totalCobro: debts.reduce((sum, d) => sum + parseAmount(d.amount), 0)
-                };
-            });
-    }, [deliveryModalShipment, localRoute, clientsMap]);
+            .map(s => s.id));
+    }, [deliveryModalShipment, localRoute]);
 
     // Safe calculations for Modal Props - Optimized to only run when modal is open
     const pendingDebts = useMemo(() => {
@@ -4096,14 +4050,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             // Pre-normalize target name once
             const targetNameClean = targetName.trim().toLowerCase();
             
-            // Las paradas de hoy del mismo destinatario van por su propia lista, con su
-            // casilla de "entregar también". Si además entraran por aquí, el mismo cobro
-            // saldría dos veces en pantalla y contaría doble en el total.
-            const idsParadasDeHoy = new Set(sameClientStops.map(st => st.shipment.id));
-
+            // Las paradas de hoy del mismo destinatario que aún no se han entregado se
+            // cobran cuando se entreguen ellas, no en esta.
             const otherPendingShipments = (allShipments || []).filter(s => {
                 if (!s || s.id === deliveryModalShipment.id) return false;
-                if (idsParadasDeHoy.has(s.id)) return false;
+                if (idsParadasDeHoyMismoCliente.has(s.id)) return false;
 
                 // Simple status check first
                 const isPending = s.status === 'Entrega aplazada' || s.status === 'Pendiente de asignar' || s.status === 'Entregado' || s.paymentStatus === 'Pending';
@@ -4196,7 +4147,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
             return debtParts;
         } catch (err) { console.error('Debts Logic Error', err); return []; }
-    }, [deliveryModalShipment, allShipments, sameClientStops]);
+    }, [deliveryModalShipment, allShipments, idsParadasDeHoyMismoCliente]);
 
     const collectionAlert = useMemo(() => {
         try {
@@ -4243,13 +4194,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const [isUploading, setIsUploading] = useState(false);
 
     // Helper to Add to Collections
-    const handleDeliveryConfirm = async (id, proof, status, selectedDebtIds = [], customAmounts = {}, generateReturn = false, extraFlags = null, extraStopIds = []) => {
+    const handleDeliveryConfirm = async (id, proof, status, selectedDebtIds = [], customAmounts = {}, generateReturn = false, extraFlags = null) => {
         const currentShip = (allShipments || []).find(s => s.id === id) || deliveryModalShipment;
         if (!currentShip) return;
-
-        // Paradas del mismo destinatario que el conductor ha marcado para cerrar en este
-        // mismo gesto. Se cierran como entregas completas, no como simples cobros.
-        const paradasExtra = new Set((extraStopIds || []).filter(sid => sid && sid !== id));
 
         // Si el conductor eligió "Saltar Cobros" en una recogida, solo abrimos el modal de recogida
         if (status === 'skip_pickup') {
@@ -4530,8 +4477,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         }
 
         // 4. Sync each affected shipment to Database
-        // Las paradas extra entran aunque no lleven cobro: hay que cerrarlas igual.
-        const affectedIds = Array.from(new Set([...workingShipments.keys(), id, ...paradasExtra]));
+        const affectedIds = Array.from(new Set([...workingShipments.keys(), id]));
         
         // Optimistic UI: Add all affected IDs to processing set
         setProcessingIds(prev => {
@@ -4548,7 +4494,6 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         try {
             for (const sid of affectedIds) {
                 const isMain = sid === id;
-                const esParadaExtra = !isMain && paradasExtra.has(sid);
                 const shipData = getLatestShip(sid);
                 if (!shipData) continue;
 
@@ -4593,10 +4538,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 const pf = shipData.portePaid || !isPayerCash || parseAmount(shipData.amount) === 0;
                 const cf = (shipData.hasCod ? shipData.codPaid : true) || !isCodCash || parseAmount(shipData.codAmount) === 0;
 
-                // Las paradas extra se entregan de verdad, así que toman el estado de la
-                // entrega igual que la principal. Si el porte se aplaza, pf será false y
-                // se quedan en 'Entregado' con la deuda viva, que es lo correcto.
-                let targetStatus = (isMain || esParadaExtra) ? status : (shipData.status || original?.status || 'Pendiente');
+                let targetStatus = isMain ? status : (shipData.status || original?.status || 'Pendiente');
                 if (pf && cf) {
                     targetStatus = 'Entregado';
                     flags.paymentStatus = 'Paid';
@@ -4620,17 +4562,6 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     if (targetStatus === 'Entregado') {
                         recordDeliveryPosition(currentShip);
                     }
-                } else if (esParadaExtra) {
-                    // Entrega completa con la misma firma, ubicación y datos de quien
-                    // recibe, pero con su propia copia de la prueba subida bajo su id.
-                    // No se llama a recordDeliveryPosition: es la misma parada física que
-                    // ya ha registrado el albarán principal, y contarla dos veces sesgaría
-                    // el aprendizaje de dónde está el cliente.
-                    if (!shipData.assignedDriverId) {
-                        flags.assignedDriverId = Number(currentDriverId);
-                    }
-                    const pruebaExtra = await construirPruebaPara(sid);
-                    await onStatusChange(sid, targetStatus, proof?.coordinates || null, null, null, pruebaExtra.finalProof, flags, pruebaExtra.uploads);
                 } else {
                     // Envíos secundarios (ya entregados, solo pendientes de cobro):
                     // NO pasamos por onStatusChange (que re-ejecuta el modelo de entrega
@@ -6592,7 +6523,6 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 shipment={deliveryModalShipment}
                 collectionAlert={collectionAlert}
                 pendingDebts={pendingDebts}
-                sameClientStops={sameClientStops}
                 clients={clients}
                 zoom={zoom}
                 onConfirm={handleDeliveryConfirm}

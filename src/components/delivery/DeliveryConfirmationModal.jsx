@@ -13,7 +13,7 @@ import CameraCaptureModal from '../CameraCaptureModal';
 const GPS_MAX_ATTEMPTS = 8;
 const GPS_RETRY_INTERVAL_MS = 5000;
 
-export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, shipment, collectionAlert, pendingDebts = [], clients = [], sameClientStops = [], zoom = 1 }) {
+export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, shipment, collectionAlert, pendingDebts = [], clients = [], zoom = 1 }) {
     const labelClass = "block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1";
     const inputClass = "w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all shadow-sm";
     const [isSignatureCaptured, setIsSignatureCaptured] = useState(false);
@@ -35,9 +35,6 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
     const gpsRetryTimeoutRef = useRef(null);
     const [customAmounts, setCustomAmounts] = useState({});
     const [selectedDebts, setSelectedDebts] = useState([]);
-    // Otras paradas de hoy para el mismo destinatario que se cerrarán en este mismo
-    // gesto. El conductor las puede desmarcar si el cliente solo se queda una parte.
-    const [selectedStopIds, setSelectedStopIds] = useState([]);
     const [showReturnPrompt, setShowReturnPrompt] = useState(false);
     const [initialReturnAlert, setInitialReturnAlert] = useState(false);
     const [initialSignatureAlert, setInitialSignatureAlert] = useState(false);
@@ -186,42 +183,14 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
         return parts;
     }, [shipment, shipmentModel]);
 
-    // Paradas extra realmente marcadas por el conductor.
-    const selectedStops = useMemo(
-        () => sameClientStops.filter(st => selectedStopIds.includes(st.shipment?.id)),
-        [sameClientStops, selectedStopIds]
+    // Cada albarán se cierra por separado, aunque el conductor lleve varios para el
+    // mismo destinatario: aquí sólo se agrupan los cobros que el cliente tenga pendientes.
+    const effectiveRules = shipment?.deliveryRules || {};
+
+    const allSelectableDebts = useMemo(
+        () => [...currentParts, ...pendingDebts],
+        [currentParts, pendingDebts]
     );
-
-    // Si se cierran varios albaranes en el mismo gesto manda la regla más estricta de
-    // todos. Pedir el DNI una vez y guardarlo en los dos es correcto; cerrar en silencio
-    // un albarán que exigía DNI sin haberlo pedido, no.
-    const effectiveRules = useMemo(() => {
-        const merged = { ...(shipment?.deliveryRules || {}) };
-        selectedStops.forEach(st => {
-            const r = st.shipment?.deliveryRules || {};
-            if (r.requireDNI) merged.requireDNI = true;
-            if (r.requirePhoto) merged.requirePhoto = true;
-            // Firma y nombre se dan por obligatorios salvo que se desactiven a propósito,
-            // así que basta con que uno de los albaranes no los desactive.
-            if (r.requireSignature !== false && merged.requireSignature === false) merged.requireSignature = true;
-            if (r.requireName !== false && merged.requireName === false) merged.requireName = true;
-        });
-        return merged;
-    }, [shipment, selectedStops]);
-
-    const allSelectableDebts = useMemo(() => {
-        const extras = selectedStops.flatMap(st => st.debts || []);
-        return [...currentParts, ...pendingDebts, ...extras];
-    }, [currentParts, pendingDebts, selectedStops]);
-
-    // Al abrir, se marcan todas las paradas del mismo destinatario. Sólo se reinicia si
-    // cambia el conjunto de paradas, no en cada refresco: si no, una actualización en
-    // tiempo real volvería a marcar lo que el conductor acababa de desmarcar.
-    const stopIdsKey = sameClientStops.map(st => st.shipment?.id).join('|');
-    useEffect(() => {
-        if (!isOpen) { setSelectedStopIds([]); return; }
-        setSelectedStopIds(stopIdsKey ? stopIdsKey.split('|') : []);
-    }, [isOpen, stopIdsKey]);
 
     // Los cobros se marcan solos según van apareciendo: los del albarán actual al abrir,
     // y los de una parada extra en cuanto se marca. Lo que el conductor haya desmarcado
@@ -341,7 +310,6 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
     if (!isOpen || !shipment) return null;
 
-    // Las reglas ya vienen fusionadas con las de las paradas extra marcadas.
     const rules = effectiveRules;
     const requiresPhoto1 = !!(rules.requirePhoto || shipment.needsSignatureReturn);
     const requiresPhoto2 = !!(rules.requirePhoto && shipment.needsSignatureReturn);
@@ -550,12 +518,8 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                 articles: shipment.articles || []
             });
         }
-        
-        // Las paradas extra sólo se arrastran en una entrega efectiva. Al aplazar el
-        // porte el paquete también se entrega (sólo queda la deuda), así que también
-        // se cierran; los cobros ya vienen vaciados en fDebts.
-        const extraStopIds = stat === 'Entregado' ? selectedStopIds : [];
-        onConfirm(shipId, pData, stat, fDebts, cAmts, shouldGen, extraFlags, extraStopIds);
+
+        onConfirm(shipId, pData, stat, fDebts, cAmts, shouldGen, extraFlags);
     };
 
     const handleConfirmReturn = (shouldGenerate) => {
@@ -587,57 +551,6 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                         <X size={20} />
                     </button>
                 </div>
-
-                {/* Otras paradas de hoy para el mismo destinatario. Se cierran con esta
-                    misma firma y ubicación, pero cada albarán guarda su propia prueba.
-                    Van marcadas de salida porque el caso normal es entregarlo todo; se
-                    desmarcan si el cliente sólo se queda una parte. */}
-                {sameClientStops.length > 0 && (
-                    <div
-                        className="bg-blue-50 border-b border-blue-100 p-3 sm:p-4 shrink-0 overflow-y-auto max-h-[calc(28dvh/var(--z,1))] custom-scrollbar"
-                        style={{ zoom, '--z': zoom }}
-                    >
-                        <div className="flex items-center gap-2 mb-1">
-                            <Package className="text-blue-600 shrink-0" size={18} />
-                            <h4 className="text-sm font-black text-blue-700 uppercase tracking-tighter">
-                                Más entregas para {shipment.destinationName || shipment.client}
-                            </h4>
-                        </div>
-                        <p className="text-[11px] text-blue-700/80 mb-3 leading-snug">
-                            Se cerrarán con esta misma firma y ubicación. Desmarca lo que no entregues.
-                        </p>
-                        <div className="space-y-2">
-                            {sameClientStops.map(st => {
-                                const marcada = selectedStopIds.includes(st.shipment.id);
-                                return (
-                                    <label
-                                        key={st.shipment.id}
-                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer ${marcada ? 'bg-white border-blue-200 shadow-sm' : 'bg-blue-50/50 border-blue-100 opacity-60'}`}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={marcada}
-                                            onChange={(e) => {
-                                                if (e.target.checked) setSelectedStopIds([...selectedStopIds, st.shipment.id]);
-                                                else setSelectedStopIds(selectedStopIds.filter(sid => sid !== st.shipment.id));
-                                            }}
-                                            className="w-5 h-5 accent-blue-600 shrink-0"
-                                        />
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-bold text-slate-800 leading-tight">{st.resumen}</p>
-                                            <p className="text-[10px] text-slate-400 font-mono">{st.shipment.id}</p>
-                                        </div>
-                                        {st.totalCobro > 0 && (
-                                            <span className="text-sm font-black text-red-600 shrink-0">
-                                                {st.totalCobro.toFixed(2)}€
-                                            </span>
-                                        )}
-                                    </label>
-                                );
-                            })}
-                        </div>
-                    </div>
-                )}
 
                 {/* Unified Cobros Section (The "Alarma").
                     El alto máximo se divide entre el zoom porque este bloque se dibuja
