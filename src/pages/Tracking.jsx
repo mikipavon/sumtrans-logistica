@@ -68,6 +68,9 @@ const fetchRoadSegment = async (from, to) => {
     }
     return { coords: [from, to], distance: null, duration: null };
 };
+// Caché de tramos por carretera (vista general): clave = extremos redondeados a ~10 m
+const roadCache = new Map();
+const roadKey = (a, b) => `${a[0].toFixed(4)},${a[1].toFixed(4)}|${b[0].toFixed(4)},${b[1].toFixed(4)}`;
 const calcBearing = (p1, p2) => {
     const r = d => d * Math.PI / 180;
     const y = Math.sin(r(p2[1] - p1[1])) * Math.cos(r(p2[0]));
@@ -338,6 +341,44 @@ export default function Tracking({ drivers, shipments = [], onRequestGps }) {
         return () => { cancelled = true; };
     }, [selectedDriverId, rawPendingStops.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // ── OSRM: vista general, tramos por carretera de cada conductor ───────────
+    const [globalRoads, setGlobalRoads] = useState({});
+    const globalPointsByDriver = useMemo(() => {
+        const out = {};
+        activeDrivers.forEach(driver => {
+            const route = driverRoutes[driver.id];
+            if (!route) return;
+            const pts = [...filteredStops(route.stops).map(s => s.pos), ...(isToday && !timelineActive && driver.currentLat ? [[driver.currentLat, driver.currentLng]] : [])];
+            if (pts.length > 1) out[driver.id] = pts;
+        });
+        return out;
+    }, [activeDrivers, driverRoutes, isToday, timelineActive, timelineMs]); // eslint-disable-line react-hooks/exhaustive-deps
+    const globalPointsKey = Object.entries(globalPointsByDriver).map(([id, pts]) => id + ':' + pts.map(p => p[0].toFixed(4) + ',' + p[1].toFixed(4)).join(';')).join('|');
+    useEffect(() => {
+        if (selectedDriverId) return;
+        let cancelled = false;
+        const build = () => {
+            const out = {};
+            Object.entries(globalPointsByDriver).forEach(([id, pts]) => {
+                out[id] = pts.slice(1).map((p, i) => roadCache.get(roadKey(pts[i], p)) || null);
+            });
+            return out;
+        };
+        setGlobalRoads(build());
+        (async () => {
+            for (const pts of Object.values(globalPointsByDriver)) {
+                for (let i = 0; i < pts.length - 1; i++) {
+                    if (cancelled) return;
+                    const k = roadKey(pts[i], pts[i + 1]);
+                    if (roadCache.has(k)) continue;
+                    const seg = await fetchRoadSegment(pts[i], pts[i + 1]);
+                    if (seg.distance != null) { roadCache.set(k, seg.coords); if (!cancelled) setGlobalRoads(build()); }
+                }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [globalPointsKey, selectedDriverId]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // ── OSRM: ruta pendiente ──────────────────────────────────────────────────
     const pendingCoordsKey = pendingStopsWithCoords.map(s => s.id).join(',') + (driverPos ? '|drv' : '');
     useEffect(() => {
@@ -554,11 +595,13 @@ export default function Tracking({ drivers, shipments = [], onRequestGps }) {
                             const route = driverRoutes[driver.id];
                             if (!route) return null;
                             const visStops = filteredStops(route.stops);
-                            const visPoints = [...visStops.map(s => s.pos), ...(isToday && !timelineActive && driver.currentLat ? [[driver.currentLat, driver.currentLng]] : [])];
+                            const visPoints = globalPointsByDriver[driver.id] || [];
+                            const roads     = globalRoads[driver.id] || [];
                             return (
                                 <span key={driver.id}>
-                                    {visPoints.length > 1 && (
-                                        <Polyline positions={visPoints} color={route.color} weight={3} opacity={0.5} dashArray="4, 8" />
+                                    {visPoints.slice(1).map((p, i) => roads[i]
+                                        ? <Polyline key={'r' + i} positions={roads[i]} pathOptions={{ color: route.color, weight: 4, opacity: 0.75 }} />
+                                        : <Polyline key={'s' + i} positions={[visPoints[i], p]} pathOptions={{ color: route.color, weight: 3, opacity: 0.5, dashArray: '4, 8' }} />
                                     )}
                                     {visStops.map((stop, i) => (
                                         <Marker key={stop.id} position={stop.pos} icon={doneIcon(timelineActive)}>
