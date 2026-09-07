@@ -15,9 +15,9 @@ L.Icon.Default.mergeOptions({
 
 // ─── Estilos de mapa ──────────────────────────────────────────────────────────
 const MAP_STYLES = {
-    street:    { label: '🗺️ Calles',   url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',         attr: '© OpenStreetMap © CARTO' },
+    street:    { label: '🗺️ Calles',   url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OpenStreetMap' },
     satellite: { label: '🛰️ Satélite', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: '© Esri © DigitalGlobe' },
-    dark:      { label: '🌙 Noche',    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',                    attr: '© OpenStreetMap © CARTO' },
+    dark:      { label: '🌙 Noche',    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OpenStreetMap', className: 'tiles-night' },
 };
 const STYLE_ORDER = ['street', 'satellite', 'dark'];
 
@@ -137,7 +137,7 @@ function DynamicTileLayer({ styleKey }) {
     useEffect(() => {
         // Forzar re-render del tile layer cambiando su URL
     }, [styleKey]);
-    return <TileLayer key={styleKey} url={style.url} attribution={style.attr} />;
+    return <TileLayer key={styleKey} url={style.url} attribution={style.attr} className={style.className} maxZoom={19} />;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

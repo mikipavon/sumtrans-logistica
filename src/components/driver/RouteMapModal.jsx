@@ -15,9 +15,9 @@ L.Icon.Default.mergeOptions({
 
 // ─── Estilos de mapa ──────────────────────────────────────────────────────────
 const MAP_STYLES = {
-    street:    { label: '🗺️ Calles',   url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',         attr: '© OpenStreetMap © CARTO' },
+    street:    { label: '🗺️ Calles',   url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OpenStreetMap' },
     satellite: { label: '🛰️ Satélite', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: '© Esri © DigitalGlobe' },
-    dark:      { label: '🌙 Noche',    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',                    attr: '© OpenStreetMap © CARTO' },
+    dark:      { label: '🌙 Noche',    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OpenStreetMap', className: 'tiles-night' },
 };
 const STYLE_ORDER = ['street', 'satellite', 'dark'];
 
@@ -297,7 +297,7 @@ export default function RouteMapModal({ route, driverCoords, onClose }) {
                 ) : (
                     <>
                         <MapContainer center={mapCenter} zoom={13} style={{ width: '100%', height: '100%' }} zoomControl>
-                            <TileLayer url={MAP_STYLES[mapStyleKey].url} attribution={MAP_STYLES[mapStyleKey].attr} key={mapStyleKey} />
+                            <TileLayer url={MAP_STYLES[mapStyleKey].url} attribution={MAP_STYLES[mapStyleKey].attr} className={MAP_STYLES[mapStyleKey].className} maxZoom={19} key={mapStyleKey} />
                             <FitBounds positions={allMapPositions} />
 
                             {/* Tramos de ruta con flechas */}

@@ -200,3 +200,8 @@ html, body, #root, .lista-repartos {
     max-height: 90dvh;
   }
 }
+
+/* Modo Noche del mapa: teselas de OpenStreetMap con los colores invertidos (CARTO ya exige clave) */
+.leaflet-tile-pane .tiles-night {
+    filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9);
+}
