@@ -4542,7 +4542,11 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 if (pf && cf) {
                     targetStatus = 'Entregado';
                     flags.paymentStatus = 'Paid';
-                    flags.paidAt = flags.updatedAt;
+                    // Fecha de cobro: la de HOY solo si no había ninguna. Un Porte
+                    // Pagado cobrado en origen el día 4 y entregado el día 7 por otro
+                    // compañero se pisaba con la hora de la entrega, y la Cuenta lo
+                    // pintaba en los dos días al que lo cobró (caso HAB-101).
+                    if (!flags.paidAt) flags.paidAt = original?.paidAt || flags.updatedAt;
                 }
 
                 if (targetStatus === 'Entregado' && original?.status !== 'Entregado') {
@@ -4569,7 +4573,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     const updates = { ...flags };
                     if (pf && cf) {
                         updates.paymentStatus = 'Paid';
-                        updates.paidAt = updates.updatedAt || new Date().toISOString();
+                        // Misma regla que arriba: no pisar una fecha de cobro anterior.
+                        if (!updates.paidAt) updates.paidAt = original?.paidAt || updates.updatedAt || new Date().toISOString();
                     }
                     await onUpdateShipment(sid, updates);
                 }
