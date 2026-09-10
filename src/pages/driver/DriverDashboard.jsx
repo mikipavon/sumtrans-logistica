@@ -35,6 +35,7 @@ import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
+import { agregarReceptor, leerReceptores } from '../../utils/receptoresHabituales';
 import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
 import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, motivoSinJornada, puedeFicharAutomaticamente, textoSinJornada, MOTIVOS_BLOQUEO } from '../../utils/normasFichaje';
@@ -4403,31 +4404,39 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         // Se ejecuta SIEMPRE que se entrega (independientemente del tipo de proof).
         // Dos cosas distintas:
         //  · La ubicación capturada (proof.coordinates) se guarda si aún no tiene.
-        //  · Quién recibió (nombre y DNI) se guarda SIEMPRE, pisando lo anterior: es
-        //    una chuleta para la próxima entrega, y la que vale es la última. En el
-        //    modal sale en gris como sugerencia, nunca rellenado a la fuerza.
+        //  · Quién recibió (nombre y DNI) se APUNTA A LA LISTA de la dirección, el
+        //    último el primero. Antes se guardaba sólo uno y cada entrega borraba al
+        //    anterior, así que en un negocio con varias personas en recepción la
+        //    chuleta sugería justo a quien hoy no estaba. En el modal salen en gris
+        //    como sugerencia, nunca rellenadas a la fuerza.
         if (status === 'Entregado' && (proof?.coordinates || proof?.name?.trim()) && currentShip && onUpdateClient) {
             const isPickupType = currentShip.type === 'Recogida';
             const clientName = isPickupType
                 ? currentShip.client
                 : (currentShip.destinationName || currentShip.client);
 
-            const receptorAprendido = proof?.name?.trim()
+            const receptorDeHoy = proof?.name?.trim()
                 ? {
-                    lastReceiver: {
-                        name: proof.name.trim(),
-                        dni: (proof.id || '').trim(),
-                        at: new Date().toISOString(),
-                    },
+                    name: proof.name.trim(),
+                    dni: (proof.id || '').trim(),
+                    at: new Date().toISOString(),
                 }
                 : null;
+
+            // La lista nueva para una ficha o una sede. `lastReceiver` se pone a null
+            // en el mismo guardado: ya está dentro de la lista (leerReceptores lo
+            // arrastra), y dejarlo suelto sería el mismo dato en dos sitios, con el
+            // riesgo de que algún día se lea el viejo.
+            const apuntarReceptor = (ficha) => (receptorDeHoy
+                ? { receivers: agregarReceptor(leerReceptores(ficha), receptorDeHoy), lastReceiver: null }
+                : {});
 
             if (clientName) {
                 const destClientObj = clientsMap.get(normalizeClientName(clientName));
                 if (destClientObj) {
                     if (destClientObj._isBranch) {
                         const branch = destClientObj._branch;
-                        const cambios = { ...(receptorAprendido || {}) };
+                        const cambios = { ...apuntarReceptor(branch) };
                         if (proof?.coordinates && !(branch.coordinates && String(branch.coordinates).trim().length > 0)) {
                             cambios.coordinates = proof.coordinates;
                         }
@@ -4436,7 +4445,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             console.log(`[AutoAprendizaje] Destinatario (Sede) "${clientName}"`, cambios);
                         }
                     } else {
-                        const cambios = { ...(receptorAprendido || {}) };
+                        const cambios = { ...apuntarReceptor(destClientObj) };
                         if (proof?.coordinates && !(destClientObj.coordinates && String(destClientObj.coordinates).trim().length > 0)) {
                             cambios.coordinates = proof.coordinates;
                         }
@@ -4465,7 +4474,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         createdBy: firmaDelConductor,
                         creatorId: currentDriverId,
                         // Quien ha recibido hoy, para sugerirlo en la próxima entrega.
-                        ...(receptorAprendido || {}),
+                        // La ficha nace ahora, así que no hay lista previa que fusionar.
+                        ...(receptorDeHoy ? { receivers: [receptorDeHoy] } : {}),
                     });
                 }
             }

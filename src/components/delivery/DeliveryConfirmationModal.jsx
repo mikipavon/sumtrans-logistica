@@ -5,6 +5,7 @@ import SignatureCanvas from 'react-signature-canvas';
 import Shipment from '../../models/Shipment';
 import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
+import { leerReceptores, normalizarNombreReceptor } from '../../utils/receptoresHabituales';
 import CameraCaptureModal from '../CameraCaptureModal';
 
 // Reintentos de localización GPS al abrir el modal: en sitios con mala señal
@@ -84,31 +85,34 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
     }, [shipment, clients]);
 
     /**
-     * Quién recibió la última vez en esta dirección. Se guarda al confirmar la entrega
-     * (ver el auto-aprendizaje del destinatario en DriverDashboard) y aquí sale como
-     * chuleta: en gris, y sólo se escribe en los campos si el conductor la toca. No se
-     * rellena solo a propósito — la prueba de entrega dice quién ha recibido HOY, y un
-     * nombre que nadie ha mirado es peor que uno en blanco.
+     * Quiénes han recibido antes en esta dirección, el último el primero. Se apuntan al
+     * confirmar la entrega (ver el auto-aprendizaje del destinatario en DriverDashboard)
+     * y aquí salen como chuleta: en gris, y sólo se escriben en los campos si el
+     * conductor toca una. No se rellena solo a propósito — la prueba de entrega dice
+     * quién ha recibido HOY, y un nombre que nadie ha mirado es peor que uno en blanco.
      */
-    const receptorHabitual = useMemo(() => {
-        if (!shipment) return null;
+    const receptoresHabituales = useMemo(() => {
+        if (!shipment) return [];
         const sinTildes = new RegExp('[\\u0300-\\u036f]', 'g');
         const norm = (v) => String(v || '').trim().toLowerCase().normalize('NFD').replace(sinTildes, '');
         const destNorm = norm(shipment.destinationName);
-        if (!destNorm) return null;
+        if (!destNorm) return [];
 
         for (const c of (clients || [])) {
-            if (norm(c.name) === destNorm) return c.lastReceiver || null;
+            if (norm(c.name) === destNorm) return leerReceptores(c);
             for (const b of (Array.isArray(c.branches) ? c.branches : [])) {
                 // La sede tiene su propia chuleta; si no la tiene, la de la casa madre
                 // no vale: quien firma en un almacén no es quien firma en otro.
-                if (norm(b.name) === destNorm) return b.lastReceiver || null;
+                if (norm(b.name) === destNorm) return leerReceptores(b);
             }
         }
-        return null;
+        return [];
     }, [shipment, clients]);
 
-    const haySugerencia = !!(receptorHabitual?.name || '').trim();
+    // El último que recibió aquí: es el que se enseña en gris dentro de los campos
+    // vacíos, como pista de qué se espera que se escriba ahí.
+    const receptorHabitual = receptoresHabituales[0] || null;
+    const haySugerencia = receptoresHabituales.length > 0;
 
     // Build list of current shipment cobros using the MODEL logic
     const currentParts = useMemo(() => {
@@ -737,27 +741,52 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                 Datos de quien recibe
                             </h4>
 
-                            {/* Chuleta de la última entrega en esta dirección. Se toca y
-                                rellena los dos campos; si no, no escribe nada. */}
-                            {haySugerencia && !receiverName?.trim() && (
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setReceiverName(receptorHabitual.name);
-                                        if (receptorHabitual.dni) setReceiverId(receptorHabitual.dni);
-                                    }}
-                                    className="w-full flex items-center gap-2 text-left bg-white border border-dashed border-slate-300 rounded-xl px-3 py-2 active:bg-slate-100 transition-colors"
-                                >
-                                    <RotateCcw size={14} className="text-slate-400 shrink-0" />
-                                    <span className="flex-1 min-w-0">
-                                        <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">La última vez recibió</span>
-                                        <span className="block text-sm font-bold text-slate-500 truncate">
-                                            {receptorHabitual.name}
-                                            {receptorHabitual.dni ? ` · ${receptorHabitual.dni}` : ''}
-                                        </span>
-                                    </span>
-                                    <span className="text-[10px] font-black uppercase text-blue-600 shrink-0">Usar</span>
-                                </button>
+                            {/* Chuleta de quienes han recibido antes en esta dirección. En un
+                                negocio no siempre recibe el mismo, así que salen todos los
+                                conocidos y elige el conductor. Se queda a la vista aunque ya
+                                haya un nombre escrito: el repartidor suele empezar a teclear y
+                                sólo entonces se acuerda de que a esa persona ya la tenemos con
+                                su DNI, y esconder la lista justo ahí le obligaba a borrar lo
+                                escrito para que reapareciera. */}
+                            {haySugerencia && (
+                                <div>
+                                    <p className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                                        <RotateCcw size={12} className="shrink-0" />
+                                        {receptoresHabituales.length === 1 ? 'La última vez recibió' : 'Ya han recibido aquí'}
+                                    </p>
+                                    {/* En fila y con scroll lateral: apilados, seis fichas
+                                        empujaban los campos y la firma fuera de la pantalla. */}
+                                    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                                        {receptoresHabituales.map((receptor, i) => {
+                                            const estaPuesto = !!receiverName?.trim()
+                                                && normalizarNombreReceptor(receptor.name) === normalizarNombreReceptor(receiverName);
+                                            return (
+                                                <button
+                                                    key={`${receptor.name}-${i}`}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        // Nombre y DNI viajan juntos SIEMPRE, incluso si
+                                                        // esta persona no tiene documento apuntado: dejar
+                                                        // el DNI anterior firmaría la entrega con el
+                                                        // nombre de uno y el documento de otro.
+                                                        setReceiverName(receptor.name);
+                                                        setReceiverId(receptor.dni || '');
+                                                    }}
+                                                    className={`shrink-0 max-w-[70%] text-left rounded-xl px-3 py-2 border transition-colors ${estaPuesto
+                                                        ? 'bg-blue-50 border-blue-500'
+                                                        : 'bg-white border-dashed border-slate-300 active:bg-slate-100'}`}
+                                                >
+                                                    <span className={`block text-sm font-bold truncate ${estaPuesto ? 'text-blue-700' : 'text-slate-600'}`}>
+                                                        {receptor.name}
+                                                    </span>
+                                                    <span className={`block text-[11px] font-semibold truncate ${estaPuesto ? 'text-blue-500' : 'text-slate-400'}`}>
+                                                        {receptor.dni || 'sin DNI'}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
                             )}
 
                             <div>
