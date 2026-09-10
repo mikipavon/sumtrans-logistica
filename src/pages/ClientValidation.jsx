@@ -7,6 +7,10 @@ import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, loQue
 import { esRegistroWeb } from '../utils/altaClientes';
 import { planDeAcceso, explicarElAcceso } from '../utils/accesoFichaExistente';
 import { emailDeAcceso } from '../utils/clientAccess';
+// Una ficha puede llevar varios correos separados por ';'. El enlace mailto los
+// quiere separados por comas, así que se rearma en vez de meter el campo tal
+// cual: con el ';' el gestor de correo abre un destinatario inválido.
+import { correosDeFicha } from '../utils/correosDeFicha';
 
 // ── Llama a la Edge Function para enviar email de acceso al cliente ──
 // `email` es opcional y sólo se usa cuando el que espera el aviso no es el
@@ -92,7 +96,7 @@ function BloqueRegistroWeb({ client, enTarjeta }) {
             {client.email && (
                 <div className="flex items-center gap-2 min-w-0">
                     <Mail size={13} className="text-blue-400 shrink-0" />
-                    <a href={`mailto:${client.email}`} className="text-xs text-blue-700 font-medium truncate hover:underline" title={client.email}>
+                    <a href={`mailto:${correosDeFicha(client.email).join(",") || client.email}`} className="text-xs text-blue-700 font-medium truncate hover:underline" title={client.email}>
                         {client.email}
                     </a>
                 </div>
@@ -762,7 +766,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                                 <span className={dato}><Phone size={12} className="text-slate-400 shrink-0" />{client.phone}</span>
                                             )}
                                             {client.email && (
-                                                <a href={`mailto:${client.email}`} className={`${dato} text-blue-700 hover:underline`} title={client.email}>
+                                                <a href={`mailto:${correosDeFicha(client.email).join(",") || client.email}`} className={`${dato} text-blue-700 hover:underline`} title={client.email}>
                                                     <Mail size={12} className="text-blue-400 shrink-0" /><span className="truncate">{client.email}</span>
                                                 </a>
                                             )}

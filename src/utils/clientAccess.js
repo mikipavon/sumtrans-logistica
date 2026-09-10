@@ -1,3 +1,5 @@
+import { primerCorreoDeFicha } from './correosDeFicha';
+
 // ── Con qué correo entra un cliente en el portal ──
 //
 // Hasta ahora `email` hacía dos papeles a la vez: el correo de la ficha
@@ -22,7 +24,12 @@ export function emailDeAcceso(client) {
     // búsqueda de la cuenta existente compara en crudo. Con una mayúscula de
     // más no encuentra la cuenta que ya hay y acabaría creando una segunda.
     if (acceso) return acceso.toLowerCase();
-    return String(client.email || '').trim().toLowerCase();
+    // El e-mail de la ficha puede traer VARIOS correos separados por ';' (la
+    // oficina apunta ahí a todo el que tiene que enterarse). Una cuenta de Auth
+    // es una sola dirección: de la lista, la primera. Sin esto, la ficha con
+    // varios correos intentaría crear la cuenta con la lista entera de usuario
+    // —Supabase la rechaza— y el cliente se quedaría sin portal.
+    return primerCorreoDeFicha(client.email);
 }
 
 // ── ¿Esta ficha entra en el portal? ──
@@ -47,7 +54,10 @@ export function tieneAccesoAlPortal(client) {
 export function tieneCorreoDeAccesoPropio(client) {
     const acceso = String(client?.accessEmail || '').trim().toLowerCase();
     if (!acceso) return false;
-    return acceso !== String(client?.email || '').trim().toLowerCase();
+    // Contra la PRIMERA de la ficha, que es la que se usaría si no hubiera
+    // correo de acceso propio. Comparando con la lista entera, una ficha con
+    // varios correos avisaría siempre de que el usuario del portal es otro.
+    return acceso !== primerCorreoDeFicha(client?.email);
 }
 
 // ── Varias personas de la misma empresa entrando al portal ──

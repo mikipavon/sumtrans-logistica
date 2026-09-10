@@ -19,6 +19,7 @@
 // formulario puede no ser de esa empresa.
 
 import { correosDeAcceso, tieneAccesoAlPortal } from './clientAccess';
+import { correosDeFicha } from './correosDeFicha';
 
 const normalizarTexto = (valor) => String(valor || '')
     .toLowerCase()
@@ -38,7 +39,10 @@ const normalizarCif = (valor) => String(valor || '')
 const correosDe = (client) => {
     const usuario = String(client?.username || '').trim().toLowerCase();
     return [
-        String(client?.email || '').trim().toLowerCase(),
+        // Todos los de la ficha, no la lista como una cadena: si la ficha
+        // guarda 'compras@x.com ; almacen@x.com' y el que se registra por la
+        // web es almacen@x.com, tiene que saltar el aviso de duplicado.
+        ...correosDeFicha(client?.email),
         ...correosDeAcceso(client),
         usuario.includes('@') ? usuario : '',
     ].filter(Boolean);
