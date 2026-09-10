@@ -4,8 +4,19 @@ import './index.css'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { registrarError, engancharErroresGlobales } from './utils/errorLog'
+import { esRuidoDeSesion } from './utils/ruidoDeSesion'
 
 // --- EMERGENCY GLOBAL ERROR HANDLER ---
+//
+// La pantalla roja es para una sola cosa: que la app NO haya llegado a arrancar
+// (lo típico, las variables de Vercel vacías). En cuanto la app está en marcha,
+// borrarla entera por un fallo suelto es peor que el fallo: al repartidor se le
+// queda el móvil muerto a mitad de ruta por algo que a lo mejor no le afectaba.
+//
+// Con la app ya montada, un fallo de fondo se registra en la nube y se deja pasar;
+// los fallos de pantalla los sigue recogiendo el ErrorBoundary, que enseña su aviso
+// sin tirar la sesión.
+let appMontada = false;
 const displayError = (msg) => {
   const root = document.getElementById('root');
   if (root) {
@@ -29,12 +40,19 @@ const displayError = (msg) => {
 };
 
 window.onerror = (message, source, lineno, colno, error) => {
-  displayError(`${message}\n\nEn: ${source}:${lineno}:${colno}`);
+  if (!appMontada) displayError(`${message}\n\nEn: ${source}:${lineno}:${colno}`);
   return false;
 };
 
 window.onunhandledrejection = (event) => {
-  displayError(`Promesa fallida: ${event.reason}`);
+  // Supabase renueva la sesión sola en segundo plano. Si la app está abierta dos
+  // veces en el mismo móvil, las dos copias forcejean por el mismo cerrojo y la
+  // que lo pierde suelta un error que no le importa a nadie. No es un fallo.
+  if (esRuidoDeSesion(event?.reason)) {
+    event.preventDefault?.();
+    return;
+  }
+  if (!appMontada) displayError(`Promesa fallida: ${event.reason}`);
 };
 
 // En producción Vite pre-carga los ficheros que necesita cada pantalla. Si uno no
@@ -60,6 +78,9 @@ try {
       </ErrorBoundary>
     </StrictMode>,
   )
+
+  // A partir de aquí la app está en pie: la pantalla roja ya no debe salir nunca.
+  appMontada = true;
 } catch (e) {
   registrarError(e, { origen: 'arranque' });
   displayError(e.message);

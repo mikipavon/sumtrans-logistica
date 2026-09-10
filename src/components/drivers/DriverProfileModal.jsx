@@ -1,6 +1,6 @@
 import { X, Truck, Phone, Smartphone, MapPin, Package, Clock, Euro, Wallet, Calendar, CheckCircle, AlertTriangle, Edit2, Save, Eye, EyeOff, Key, BarChart2, TrendingUp, Target, Activity, Printer, Sun, Moon, FileText, Trash2, Download } from 'lucide-react';
 import { useMemo, useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../../lib/supabase';
 import { calculateDailyAccount, isToday } from '../../utils/accountLogic';
 import { generateCashReportPDF } from '../../utils/cashReportPdf';
 import ShipmentDetailsModal from '../shipments/ShipmentDetailsModal';
@@ -47,10 +47,10 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
             setActiveTab('actividad');
             // Cargar collectedCollections del conductor desde Supabase
             setDriverCollections([]);
-            const supabase = createClient(
-                import.meta.env.VITE_SUPABASE_URL,
-                import.meta.env.VITE_SUPABASE_ANON_KEY
-            );
+            // Se usa el cliente de siempre (`lib/supabase`). Abrir aquí uno nuevo
+            // levantaba una segunda sesión con el mismo cerrojo y el mismo temporizador
+            // de renovación dentro de la misma pestaña: las dos se lo quitaban entre
+            // ellas y el forcejeo acababa en la pantalla roja de error crítico.
             const todayStr = new Date().toISOString().split('T')[0];
             supabase.from('drivers').select('data').eq('id', driver.id).single().then(({ data: drvRow }) => {
                 const cloud = drvRow?.data?.[`collectedCollections_${todayStr}`];
