@@ -5,6 +5,10 @@ import { utils, writeFile } from 'xlsx';
 import { lineasDeCobro, needsDriverAfterCollecting } from '../utils/pendingCollections';
 import { coincideBusqueda } from '../utils/busqueda';
 
+// Valor del desplegable para ver el dinero que no lleva nadie.
+const SIN_REPARTIDOR = 'unassigned';
+const sinRepartidor = (v) => v === null || v === undefined || v === '';
+
 export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onReassignCollection, onReassignCollections, onUpdateShipment, driverNamePreference = 'both' }) {
     const getDriverDisplayName = (driver) => {
         if (!driver) return '';
@@ -77,26 +81,58 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
             .filter(item => item.collectionTypes.length > 0);
     }, [shipments, clients]);
 
-    // Apply UI Filters
-    const filteredItems = pendingItems.filter(item => {
-        // Filter by Type
-        if (filterType !== 'all') {
-            const hasType = item.collectionTypes.some(t =>
-                (filterType === 'shipping_fee' && t.type.startsWith('Portes')) ||
-                (filterType === 'reimbursement' && t.type === 'Reembolso')
-            );
-            if (!hasType) return false;
-        }
+    const idsConFicha = useMemo(
+        () => new Set((Array.isArray(drivers) ? drivers : []).map(d => String(d.id))),
+        [drivers]
+    );
 
-        // Filter by Driver
-        if (filterDriver !== 'all') {
-            const hasDriverDebt = item.collectionTypes.some(t => String(t.responsibleDriverId) === String(filterDriver));
-            if (!hasDriverDebt) return false;
-        }
+    // ── Los filtros recortan las LÍNEAS, no sólo las filas ───────────────────
+    // Un mismo albarán puede tener dos deudas de dueños distintos: el porte
+    // pagado en origen lo cobra quien lo dio de alta y el reembolso quien lo
+    // entrega. Antes bastaba con que UNA de sus líneas fuera del repartidor
+    // filtrado para que pasara el albarán entero, y el total sumaba las dos: el
+    // mismo albarán se contaba completo en el filtro de cada uno de los dos, así
+    // que la suma de los repartidores no cuadraba con el total de «Todos».
+    // Un cobro «de nadie» no es sólo el que no tiene repartidor: también el que
+    // va a nombre de un id que no está en la lista de repartidores. Pasa con los
+    // albaranes dados de alta desde el portal del cliente (se graba el id del
+    // cliente, no el de un repartidor) y con los repartidores borrados. En la
+    // columna Repartidor ya salen como «Sin Asignar»; si no cayeran también en
+    // este filtro, su dinero contaría en «Todos» y en el de nadie.
+    const cobroDeNadie = (t) => sinRepartidor(t.responsibleDriverId)
+        || !idsConFicha.has(String(t.responsibleDriverId));
 
-        // Search: remitente y destinatario a la vez, sin depender de quién paga
-        return coincideBusqueda(item, searchTerm);
-    });
+    const lineaVisible = (t) => {
+        if (filterType === 'shipping_fee' && !t.type.startsWith('Portes')) return false;
+        if (filterType === 'reimbursement' && t.type !== 'Reembolso') return false;
+        if (filterDriver === SIN_REPARTIDOR) return cobroDeNadie(t);
+        if (filterDriver !== 'all') return String(t.responsibleDriverId) === String(filterDriver);
+        return true;
+    };
+
+    const filteredItems = pendingItems
+        .map(item => ({ ...item, collectionTypes: item.collectionTypes.filter(lineaVisible) }))
+        .filter(item => item.collectionTypes.length > 0)
+        // Búsqueda: remitente y destinatario a la vez, sin depender de quién paga
+        .filter(item => coincideBusqueda(item, searchTerm));
+
+    // Quién sale en el desplegable de repartidores. Un repartidor dado de baja
+    // que todavía tenga dinero por cobrar tiene que poder elegirse, y los cobros
+    // que no lleva nadie tienen su propia opción: si no, ese dinero cuenta en el
+    // total de «Todos» y no aparece en el filtro de nadie.
+    const { opcionesDeRepartidor, hayCobrosSinRepartidor } = useMemo(() => {
+        const conCobro = new Set();
+        let huerfanos = false;
+        pendingItems.forEach(item => item.collectionTypes.forEach(t => {
+            if (cobroDeNadie(t)) huerfanos = true;
+            else conCobro.add(String(t.responsibleDriverId));
+        }));
+        return {
+            opcionesDeRepartidor: (Array.isArray(drivers) ? drivers : [])
+                .filter(d => d.isActive !== false || conCobro.has(String(d.id))),
+            hayCobrosSinRepartidor: huerfanos
+        };
+    }, [pendingItems, drivers, idsConFicha]);
 
     const sortedItems = useMemo(() => {
         let result = [...filteredItems];
@@ -106,12 +142,8 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                 let bVal = b[sortConfig.key];
 
                 if (sortConfig.key === 'amount') {
-                    // Sum up the amounts in collectionTypes
-                    const getSum = (item) => item.collectionTypes.reduce((s, t) => {
-                        if (filterType === 'shipping_fee' && !t.type.startsWith('Portes')) return s;
-                        if (filterType === 'reimbursement' && t.type !== 'Reembolso') return s;
-                        return s + t.amount;
-                    }, 0);
+                    // Las líneas que no tocan ya vienen quitadas por los filtros.
+                    const getSum = (item) => item.collectionTypes.reduce((s, t) => s + t.amount, 0);
                     return sortConfig.direction === 'asc' ? getSum(a) - getSum(b) : getSum(b) - getSum(a);
                 }
 
@@ -132,15 +164,13 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
     }, [filteredItems, sortConfig, filterType]);
 
 
-    const totalPending = filteredItems.reduce((sum, item) => {
-        const itemTotal = item.collectionTypes.reduce((subSum, t) => {
-            // Filter sum based on view filter too? Ideally yes.
-            if (filterType === 'shipping_fee' && !t.type.startsWith('Portes')) return subSum;
-            if (filterType === 'reimbursement' && t.type !== 'Reembolso') return subSum;
-            return subSum + t.amount;
-        }, 0);
-        return sum + itemTotal;
-    }, 0);
+    // El total es exactamente la suma de lo que se ve: con el filtro puesto en un
+    // repartidor, sólo su dinero. Así la suma de todos los repartidores (más los
+    // cobros sin repartidor) cuadra con el total de «Todos».
+    const totalPending = filteredItems.reduce(
+        (sum, item) => sum + item.collectionTypes.reduce((subSum, t) => subSum + t.amount, 0),
+        0
+    );
 
     // ── Cambio de transportista en una zona ─────────────────────────────────
     // Con el filtro puesto en un repartidor, todos los cobros que se ven pasan
@@ -148,10 +178,13 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
     // cambia quién cobra, ni el estado ni el reparto. Al terminar, el filtro
     // salta al repartidor que los recibe, para ver que han llegado.
     const repartidorFiltrado = Array.isArray(drivers) ? drivers.find(d => String(d.id) === String(filterDriver)) : null;
+    const nombreDelFiltro = filterDriver === SIN_REPARTIDOR
+        ? 'los cobros sin repartidor'
+        : (getDriverDisplayName(repartidorFiltrado) || 'este repartidor');
     const pasarTodosLosCobros = () => {
         if (!bulkDriverId || filteredItems.length === 0) return;
         const destino = Array.isArray(drivers) ? drivers.find(d => String(d.id) === String(bulkDriverId)) : null;
-        const aviso = '¿Pasar los ' + filteredItems.length + ' cobros de ' + getDriverDisplayName(repartidorFiltrado)
+        const aviso = '¿Pasar los ' + filteredItems.length + ' cobros de ' + nombreDelFiltro
             + ' a ' + getDriverDisplayName(destino) + '?\n\n'
             + 'Sólo cambia quién los cobra. El reparto y el estado de los albaranes no se tocan.';
         if (!window.confirm(aviso)) return;
@@ -173,7 +206,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
 
         const data = filteredItems.flatMap(item => {
             return item.collectionTypes.map(t => {
-                const driver = Array.isArray(drivers) ? drivers.find(d => d.id === t.responsibleDriverId) : null;
+                const driver = Array.isArray(drivers) ? drivers.find(d => String(d.id) === String(t.responsibleDriverId)) : null;
                 return {
                     'ID Envío': item.id,
                     'Fecha': item.date,
@@ -350,9 +383,10 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                         onChange={(e) => setFilterDriver(e.target.value)}
                     >
                         <option value="all">Todos los Repartidores</option>
-                        {Array.isArray(drivers) && drivers.filter(d => d.isActive !== false).map(d => (
+                        {opcionesDeRepartidor.map(d => (
                             <option key={d.id} value={d.id}>{getDriverDisplayName(d)}</option>
                         ))}
+                        {hayCobrosSinRepartidor && <option value={SIN_REPARTIDOR}>Sin asignar</option>}
                     </select>
                 </div>
             </div>
@@ -361,7 +395,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
             {filterDriver !== 'all' && filteredItems.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-3 flex flex-wrap items-center gap-3">
                     <span className="text-sm text-amber-900">
-                        Pasar los <strong>{filteredItems.length}</strong> cobros de <strong>{getDriverDisplayName(repartidorFiltrado) || 'este repartidor'}</strong> a
+                        Pasar los <strong>{filteredItems.length}</strong> cobros de <strong>{nombreDelFiltro}</strong> a
                     </span>
                     <select
                         aria-label="Repartidor que se queda todos los cobros"
@@ -537,7 +571,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                                             ) : (
                                                 <div className="flex flex-col gap-2">
                                                     {item.collectionTypes.map((t, idx) => {
-                                                        const driver = Array.isArray(drivers) ? drivers.find(d => d.id === t.responsibleDriverId) : null;
+                                                        const driver = Array.isArray(drivers) ? drivers.find(d => String(d.id) === String(t.responsibleDriverId)) : null;
                                                         return (
                                                             <div key={idx} className="flex items-center gap-2">
                                                                 <span className="text-[10px] text-slate-400 w-12 font-medium truncate shrink-0">{t.type === 'Reembolso' ? 'Reemb.' : 'Porte'}</span>

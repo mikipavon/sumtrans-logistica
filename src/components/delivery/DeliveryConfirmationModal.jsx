@@ -7,6 +7,12 @@ import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { leerReceptores, normalizarNombreReceptor } from '../../utils/receptoresHabituales';
 import CameraCaptureModal from '../CameraCaptureModal';
+import {
+    exigeJustificacionLegal,
+    nombreCompletoValido,
+    documentoIdentidadValido,
+    firmaTieneTrazo,
+} from '../../utils/justificacionEntrega';
 
 // Reintentos de localización GPS al abrir el modal: en sitios con mala señal
 // (naves, sótanos) un solo intento sin timeout se queda esperando para siempre.
@@ -189,7 +195,20 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
     // Cada albarán se cierra por separado, aunque el conductor lleve varios para el
     // mismo destinatario: aquí sólo se agrupan los cobros que el cliente tenga pendientes.
-    const effectiveRules = shipment?.deliveryRules || {};
+
+    // Clientes que exigen poder justificar legalmente la entrega (nombre y
+    // apellidos, documento y firma de verdad). Se mira su ficha VIVA y no la copia
+    // de reglas que el albarán lleva congelada desde que se creó: si no, activarlo
+    // hoy no valdría para lo que ya está en la calle, que es lo que reclaman.
+    const justificacionLegal = useMemo(
+        () => exigeJustificacionLegal(shipment, clients),
+        [shipment, clients]
+    );
+
+    const reglasDelAlbaran = shipment?.deliveryRules || {};
+    const effectiveRules = justificacionLegal
+        ? { ...reglasDelAlbaran, requireName: true, requireDNI: true, requireSignature: true }
+        : reglasDelAlbaran;
 
     const allSelectableDebts = useMemo(
         () => [...currentParts, ...pendingDebts],
@@ -412,11 +431,35 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             }
         }
 
-        // Validation: At least name + (signature OR photo) if status is 'Entregado' and NOT a pickup
-        if (status === 'Entregado' && shipment?.type !== 'Recogida') {
+        // Trazos crudos de la firma. Hacen falta para distinguir una firma de un
+        // toque con el dedo: sobre la imagen ya comprimida eso no se puede ver.
+        let trazosFirma = [];
+        try {
+            if (sigCanvas.current && typeof sigCanvas.current.toData === 'function') {
+                trazosFirma = sigCanvas.current.toData() || [];
+            }
+        } catch {
+            trazosFirma = [];
+        }
+
+        // Validation: At least name + (signature OR photo) if status is 'Entregado' and NOT a pickup.
+        // Las recogidas se saltan este control salvo en los clientes que exigen
+        // justificación legal: ahí el que retira el material tiene que identificarse
+        // igual que el que la recibe.
+        if (status === 'Entregado' && (shipment?.type !== 'Recogida' || justificacionLegal)) {
             const rules = effectiveRules;
             let hasError = false;
-            
+
+            // Justificación legal del cliente: nombre y apellidos, documento con la
+            // letra correcta y firma con trazo. Va en bloque a propósito: a este
+            // cliente, con un dato de menos, la entrega no le justifica nada.
+            const faltaNombreCompleto = justificacionLegal && !nombreCompletoValido(receiverName);
+            const documentoNoValido = justificacionLegal && !documentoIdentidadValido(receiverId);
+            const firmaSinTrazo = justificacionLegal && !firmaTieneTrazo(trazosFirma);
+            if (faltaNombreCompleto || documentoNoValido || firmaSinTrazo) {
+                hasError = true;
+            }
+
             // Check required DNI
             if (rules.requireDNI && !receiverId?.trim()) {
                 hasError = true;
@@ -450,7 +493,13 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             if (hasError) {
                 setValidationFailed(true);
                 // Show specific error for the first failing rule
-                if (rules.requireDNI && !receiverId?.trim()) {
+                if (faltaNombreCompleto) {
+                    alert("📝 NOMBRE Y APELLIDOS\n\nEste cliente sólo acepta la entrega con el nombre COMPLETO de quien recibe (nombre y apellidos).\n\nSin eso no puede justificar la entrega ante su seguro y no paga el porte.");
+                } else if (documentoNoValido) {
+                    alert("🪪 DNI / NIE / PASAPORTE\n\nEste cliente exige el documento de quien recibe, y tiene que estar bien escrito (el DNI, con su letra).\n\nPídeselo y cópialo tal cual del documento.");
+                } else if (firmaSinTrazo) {
+                    alert("✍️ FIRMA COMPLETA\n\nEste cliente no acepta un garabato ni una raya como firma.\n\nQue firme como firma siempre, dentro del recuadro.");
+                } else if (rules.requireDNI && !receiverId?.trim()) {
                     alert("🪪 DNI OBLIGATORIO\n\nEste cliente exige que el receptor identifique su DNI/NIE antes de entregar.");
                 } else if (requiresPhoto1 && !proofData.photoData) {
                     alert(shipment.needsSignatureReturn
@@ -789,13 +838,33 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                 </div>
                             )}
 
+                            {/* Aviso por delante de los campos: este cliente no admite una
+                                entrega a medias, y el repartidor tiene que saberlo ANTES de
+                                pedirle los datos a quien recibe, no cuando ya le ha dado la
+                                espalda y la app le bloquea. */}
+                            {justificacionLegal && (
+                                <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-3 flex items-start gap-2">
+                                    <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="text-xs font-black text-amber-800 uppercase tracking-wide">Entrega justificada</p>
+                                        <p className="text-[11px] text-amber-700 leading-tight mt-0.5">
+                                            Este cliente exige <strong>nombre y apellidos</strong>, <strong>DNI</strong> y <strong>firma completa</strong>.
+                                            Pídeselos antes de soltar el material: sin los tres no se puede cerrar la entrega.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
                             <div>
-                                <label className={labelClass}>Nombre Completo {rules.requireName !== false && <span className="text-red-500">*</span>}</label>
+                                <label className={labelClass}>
+                                    {justificacionLegal ? 'Nombre y Apellidos' : 'Nombre Completo'}{' '}
+                                    {rules.requireName !== false && <span className="text-red-500">*</span>}
+                                </label>
                                 <div className="relative">
                                     <input
                                         type="text"
-                                        placeholder={haySugerencia ? receptorHabitual.name : "Pulsa el micro y habla..."}
-                                        className={`${inputClass} pr-10 ${validationFailed && rules.requireName !== false && !receiverName?.trim() ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
+                                        placeholder={haySugerencia ? receptorHabitual.name : (justificacionLegal ? "Nombre y apellidos de quien recibe" : "Pulsa el micro y habla...")}
+                                        className={`${inputClass} pr-10 ${validationFailed && rules.requireName !== false && (justificacionLegal ? !nombreCompletoValido(receiverName) : !receiverName?.trim()) ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
                                         value={receiverName}
                                         onChange={(e) => setReceiverName(e.target.value)}
                                     />
@@ -824,7 +893,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                 <input
                                     type="text"
                                     placeholder={receptorHabitual?.dni || "12345678X"}
-                                    className={`${inputClass} ${validationFailed && rules.requireDNI && !receiverId?.trim() ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
+                                    className={`${inputClass} ${validationFailed && rules.requireDNI && (justificacionLegal ? !documentoIdentidadValido(receiverId) : !receiverId?.trim()) ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
                                     value={receiverId}
                                     onChange={(e) => setReceiverId(e.target.value)}
                                 />
@@ -876,7 +945,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                     Limpiar
                                 </button>
                             </div>
-                            <div className={`bg-white border-2 rounded-2xl h-[160px] relative overflow-hidden shadow-inner ${validationFailed && shipment.deliveryRules?.requireSignature !== false && !isSignatureCaptured ? 'border-red-500 ring-2 ring-red-500/30 animate-pulse' : 'border-slate-200'}`}>
+                            <div className={`bg-white border-2 rounded-2xl h-[160px] relative overflow-hidden shadow-inner ${validationFailed && rules.requireSignature !== false && !isSignatureCaptured ? 'border-red-500 ring-2 ring-red-500/30 animate-pulse' : 'border-slate-200'}`}>
                                 <SignatureCanvas
                                     ref={sigCanvas}
                                     onBegin={() => setIsSignatureCaptured(true)}

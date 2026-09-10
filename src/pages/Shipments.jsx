@@ -36,7 +36,6 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     const [importClientSearch, setImportClientSearch] = useState('');
     const [viewMode, setViewMode] = useState('list'); // 'list' or 'stats'
     const [assignmentModal, setAssignmentModal] = useState({ isOpen: false, shipmentId: null, driverId: '', scheduledDate: '' });
-    const [bulkAssignModal, setBulkAssignModal] = useState({ isOpen: false, driverId: '', scheduledDate: '' });
 
 
     // Details Modal State
@@ -48,7 +47,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
     // Filters State
     const [searchTerm, setSearchTerm] = useState('');
-    const [statusFilter, setStatusFilter] = useState(initialStatusFilter || 'all');
+    const [statusFilter, setStatusFilter] = useState(typeof initialStatusFilter === 'string' ? initialStatusFilter : 'all');
     const [driverFilter, setDriverFilter] = useState('all');
     const [clientFilter, setClientFilter] = useState(SIN_FILTRO);
     const [poblacionFilter, setPoblacionFilter] = useState(SIN_FILTRO);
@@ -57,6 +56,11 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
+    // Un aviso del Centro de Alertas no manda un estado, manda la lista exacta de
+    // albaranes que ha contado. Sin esto, pinchar en "4 envíos de cliente web sin
+    // asignar" abría el listado entero y había que buscarlos a mano.
+    const [idsDeAlerta, setIdsDeAlerta] = useState(Array.isArray(initialStatusFilter?.ids) ? initialStatusFilter.ids : null);
+    const [etiquetaDeAlerta, setEtiquetaDeAlerta] = useState(initialStatusFilter?.etiqueta || '');
 
     // Las opciones de cliente y población salen de lo que hay en el listado, no de
     // la ficha de clientes: así no se ofrece a nadie sin envíos y sí sale el
@@ -66,10 +70,18 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
     // Apply initial filter from Dashboard navigation
     useEffect(() => {
-        if (initialStatusFilter) {
+        if (!initialStatusFilter) return;
+        if (Array.isArray(initialStatusFilter.ids)) {
+            // Viene del Centro de Alertas: la alerta ya sabe qué albaranes contó.
+            setStatusFilter('all');
+            setIdsDeAlerta(initialStatusFilter.ids);
+            setEtiquetaDeAlerta(initialStatusFilter.etiqueta || '');
+        } else {
             setStatusFilter(initialStatusFilter);
-            if (onClearStatusFilter) onClearStatusFilter();
+            setIdsDeAlerta(null);
+            setEtiquetaDeAlerta('');
         }
+        if (onClearStatusFilter) onClearStatusFilter();
     }, [initialStatusFilter]);
 
 
@@ -139,7 +151,10 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
             const matchesPoblacion = pasaPoblacion(shipment);
             const matchesTipoCliente = pasaTipoCliente(shipment);
 
-            return matchesSearch && matchesStatus && matchesDriver && matchesClient && matchesPoblacion && matchesTipoCliente && matchesCodReceipt && matchesDate;
+            // Se ha llegado pinchando una alerta: sólo esos albaranes, ni uno más.
+            const matchesAlerta = !idsDeAlerta || idsDeAlerta.includes(shipment.id);
+
+            return matchesSearch && matchesStatus && matchesDriver && matchesClient && matchesPoblacion && matchesTipoCliente && matchesCodReceipt && matchesDate && matchesAlerta;
         });
 
         // Apply Sorting
@@ -205,7 +220,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         }
 
         return result;
-    }, [shipments, searchTerm, statusFilter, driverFilter, clientFilter, poblacionFilter, tipoClienteFilter, clients, tariffs, coverageZones, sortConfig, dateFrom, dateTo]);
+    }, [shipments, searchTerm, statusFilter, driverFilter, clientFilter, poblacionFilter, tipoClienteFilter, clients, tariffs, coverageZones, sortConfig, dateFrom, dateTo, idsDeAlerta]);
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -213,48 +228,6 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
             direction = 'desc';
         }
         setSortConfig({ key, direction });
-    };
-
-    // Programar en bloque: todos los seleccionados al mismo conductor y a la misma hora.
-    // Los ya entregados se quedan fuera para que un clic de más no resucite un albarán
-    // cerrado; el modal dice cuántos ha apartado.
-    const seleccionParaProgramar = () => {
-        const seleccionados = (shipments || []).filter(s => selectedIds.includes(s.id));
-        return {
-            programables: seleccionados.filter(s => s.status !== 'Entregado'),
-            entregados: seleccionados.filter(s => s.status === 'Entregado')
-        };
-    };
-
-    const programarSeleccionados = async () => {
-        const { driverId, scheduledDate } = bulkAssignModal;
-        if (!driverId) return;
-        const { programables } = seleccionParaProgramar();
-        // Los envíos de modo pruebas no entran en la escritura en lote: van uno a uno por
-        // la asignación de siempre, que sabe quedarse en local sin tocar Supabase.
-        const dePruebas = programables.filter(s => s.isTest);
-        const reales = programables.filter(s => !s.isTest);
-
-        for (const s of dePruebas) {
-            await onAssignDriver(s.id, driverId, scheduledDate);
-        }
-
-        if (reales.length > 0) {
-            await onUpdateMultipleShipments(reales.map(s => ({
-                id: s.id,
-                updates: {
-                    assignedDriverId: Number(driverId),
-                    status: 'En reparto',
-                    scheduledDate,
-                    // Igual que al asignar desde la fila: una asignación deliberada cierra el
-                    // "lo devolví yo, lo reasigno yo" del conductor anterior.
-                    returnedToAssignById: null
-                }
-            })));
-        }
-
-        setBulkAssignModal({ isOpen: false, driverId: '', scheduledDate: '' });
-        setSelectedIds([]);
     };
 
     const SortIcon = ({ column }) => {
@@ -327,6 +300,22 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                         </button>
                     </div>
                 </div>
+
+                {/* Ha llegado desde el Centro de Alertas: se dice en alto que la lista
+                    está recortada a esos albaranes y se deja salir de un clic. */}
+                {idsDeAlerta && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2">
+                        <p className="text-sm text-blue-900 font-medium">
+                            Mostrando sólo los <span className="font-bold">{idsDeAlerta.length}</span> {etiquetaDeAlerta || 'envíos de la alerta'}
+                        </p>
+                        <button
+                            onClick={() => { setIdsDeAlerta(null); setEtiquetaDeAlerta(''); }}
+                            className="shrink-0 px-3 py-1.5 bg-white border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors text-xs font-bold"
+                        >
+                            Ver todos los envíos
+                        </button>
+                    </div>
+                )}
 
                 {/* Filters Row */}
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex flex-col gap-3">
@@ -461,20 +450,6 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             >
                                 <Trash2 size={15} />
                                 Eliminar ({selectedIds.length})
-                            </button>
-                        )}
-                        {selectedIds.length > 0 && (
-                            <button
-                                onClick={() => {
-                                    const nowLocal = new Date();
-                                    nowLocal.setMinutes(nowLocal.getMinutes() - nowLocal.getTimezoneOffset());
-                                    setBulkAssignModal({ isOpen: true, driverId: '', scheduledDate: nowLocal.toISOString().slice(0, 16) });
-                                }}
-                                className="flex items-center gap-1.5 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors border border-blue-200 text-xs font-bold"
-                                title="Asignar conductor y hora a todos los envíos seleccionados"
-                            >
-                                <Clock size={15} />
-                                Programar ({selectedIds.length})
                             </button>
                         )}
                         <button
@@ -689,6 +664,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 whitespace-nowrap">
+                                            <div className="flex flex-col items-start gap-1">
                                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border
                                                 ${isProgrammed ? 'bg-indigo-50 text-indigo-700 border-indigo-100' :
                                                 shipment.status === 'En reparto' ? 'bg-blue-50 text-blue-700 border-blue-100' :
@@ -710,6 +686,19 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 )}
                                                 {isProgrammed ? `Prog: ${programmedStr}` : shipment.status}
                                             </span>
+                                            {/* Un albarán puede estar en Incidencias con el estado en otra cosa
+                                                — SUM-966 salía como "Pendiente de asignar" y aquí no había forma
+                                                de saber que tenía una incidencia abierta. */}
+                                            {shipment.incidentStatus === 'active' && shipment.status !== 'Incidencia' && (
+                                                <span
+                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-red-50 text-red-600 border border-red-200"
+                                                    title="Tiene una incidencia abierta en la pantalla de Incidencias"
+                                                >
+                                                    <AlertCircle size={11} />
+                                                    INCIDENCIA
+                                                </span>
+                                            )}
+                                            </div>
                                         </td>
                                         <td className="px-4 py-3 min-w-[200px]">
                                             <div className="flex items-center gap-2 min-w-0">
@@ -951,76 +940,6 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                 allShipments={allShipments || shipments}
                 onUpdateShipment={onUpdateShipment}
             />
-
-            {bulkAssignModal.isOpen && (() => {
-                const { programables, entregados } = seleccionParaProgramar();
-                const conConductor = programables.filter(s => s.assignedDriverId);
-                return (
-                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-xl animate-in zoom-in-95 duration-200">
-                        <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                            <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                                <Clock size={16} className="text-blue-500" />
-                                Programar {programables.length} envío{programables.length === 1 ? '' : 's'}
-                            </h3>
-                            <button onClick={() => setBulkAssignModal({ isOpen: false, driverId: '', scheduledDate: '' })} className="text-slate-400 hover:text-slate-600">
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <div className="p-6 space-y-4">
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Conductor</label>
-                                <select
-                                    value={bulkAssignModal.driverId}
-                                    onChange={(e) => setBulkAssignModal(prev => ({ ...prev, driverId: e.target.value }))}
-                                    className="w-full text-sm border-2 border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none font-semibold text-slate-700 bg-white"
-                                >
-                                    <option value="">-- Elige conductor --</option>
-                                    {(drivers || []).map(driver => (
-                                        <option key={driver.id} value={driver.id}>{getDriverDisplayName(driver)}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Fecha y Hora de Asignación</label>
-                                <input
-                                    type="datetime-local"
-                                    value={bulkAssignModal.scheduledDate}
-                                    onChange={(e) => setBulkAssignModal(prev => ({ ...prev, scheduledDate: e.target.value }))}
-                                    className="w-full text-sm border-2 border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none font-semibold text-slate-700"
-                                />
-                            </div>
-                            {conConductor.length > 0 && (
-                                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 font-semibold">
-                                    {conConductor.length} de los seleccionados ya tenían conductor: se les cambia por el que elijas aquí.
-                                </p>
-                            )}
-                            {entregados.length > 0 && (
-                                <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3 font-semibold">
-                                    {entregados.length} ya entregado{entregados.length === 1 ? '' : 's'}: se queda{entregados.length === 1 ? '' : 'n'} como está{entregados.length === 1 ? '' : 'n'}.
-                                </p>
-                            )}
-                        </div>
-                        <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
-                            <button
-                                onClick={() => setBulkAssignModal({ isOpen: false, driverId: '', scheduledDate: '' })}
-                                className="flex-1 py-3 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                onClick={programarSeleccionados}
-                                disabled={!bulkAssignModal.driverId || programables.length === 0}
-                                className="flex-[2] py-3 text-sm font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:bg-slate-300 disabled:shadow-none disabled:cursor-not-allowed"
-                            >
-                                <CheckCircle size={16} />
-                                Confirmar
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                );
-            })()}
 
             {assignmentModal.isOpen && (
                 <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">

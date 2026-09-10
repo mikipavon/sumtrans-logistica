@@ -31,6 +31,20 @@ describe('esDeAgencia', () => {
         expect(esDeAgencia({ destinationName: 'Almacén TSB Córdoba' })).toBe(true);
     });
 
+    // SUM-774: EXPODISEÑO lleva "xpo" dentro (e-XPO-diseño) y se marcaba como
+    // agencia XPO. El nombre de la agencia tiene que ser una palabra suelta.
+    it('un nombre que lleva las letras de una agencia dentro no es una agencia', () => {
+        expect(esDeAgencia({ client: 'GUMESA', destinationName: 'EXPODISEÑO' })).toBe(false);
+        expect(resolverLogo({ client: 'GUMESA', destinationName: 'EXPODISEÑO' })).toBe(LOGO_SUM);
+        expect(esDeAgencia({ destinationName: 'Textiles del Sur' })).toBe(false);
+    });
+
+    // Pero pegada a un guion o a una barra sigue siendo la agencia.
+    it('el nombre de la agencia también cuenta separado por guiones o barras', () => {
+        expect(esDeAgencia({ destinationName: 'AGENCIA-XPO' })).toBe(true);
+        expect(esDeAgencia({ client: 'TSB/Córdoba' })).toBe(true);
+    });
+
     // La prioridad es otro eje: un cliente nuestro "normal" sigue siendo nuestro.
     it('la prioridad del cliente no convierte a nadie en agencia', () => {
         const cliente = { name: 'Mamaki', priority: 'normal' };

@@ -523,19 +523,11 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 setMerchandisePhoto(null);
             }
 
-            // Auto-capture GPS on open (for origin - where shipment is being created)
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        const coords = `${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`;
-                        setFormData(prev => ({ ...prev, originCoordinates: coords }));
-                    },
-                    (error) => {
-                        console.log('GPS auto-capture failed:', error.message);
-                    },
-                    { enableHighAccuracy: true, timeout: 10000 }
-                );
-            }
+            // El GPS de origen se captura sólo cuando el modal lo abre un
+            // conductor (el efecto de más abajo, junto a captureOriginGps).
+            // Aquí había otra captura para todo el mundo: la oficina abría el
+            // albarán y el remitente nuevo nacía con las coordenadas de la
+            // oficina en vez de las suyas.
         }
     }, [isOpen, prefillData]);
 
@@ -1227,13 +1219,18 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                         // 'entregado'), así que nadie volvía a verlo. Cobrar no es
                         // entregar: el estado solo lo cambia la entrega de verdad.
                         updates.porteCollectedById = currentDriverId;
+                        updates.portePaidAt = new Date().toISOString();
                     }
                     if (debtShipment.hasCod && !debtShipment.codPaid) {
                         updates.codPaid = true;
                         updates.codCollectedById = currentDriverId;
+                        updates.codPaidAt = new Date().toISOString();
                     }
-                    // Hora del cobro: la Cuenta del repartidor se fija en paidAt para
-                    // saber en qué día cae el dinero.
+                    // Hora del cobro: la Cuenta del repartidor se fija en la fecha de cobro
+                    // para saber en qué día cae el dinero. Cada concepto lleva la suya
+                    // (arriba): `paidAt` es una sola para el porte y el reembolso, así que
+                    // saldar aquí el porte pisaba la fecha del reembolso cobrado otro día y
+                    // la Cuenta lo volvía a sumar.
                     if (updates.portePaid !== debtShipment.portePaid || updates.codPaid !== debtShipment.codPaid) {
                         updates.paidAt = new Date().toISOString();
                     }

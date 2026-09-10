@@ -29,6 +29,8 @@ import { calculateDailyAccount, parseAmount, isToday, isCashClient } from '../..
 import { generateCashReportPDF } from '../../utils/cashReportPdf';
 import { printShipmentTicket } from '../../utils/printShipment';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
+import { estilosDeHoja, scriptDeAjuste } from '../../utils/hojaDeImpresion';
+import { fechaSinHora } from '../../utils/fechaSinHora';
 import ScannerModal from '../../components/delivery/ScannerModal';
 import VersionDeLaApp from '../../components/VersionDeLaApp';
 import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
@@ -2973,35 +2975,43 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         const legalInfo = getClientCommercialInfo(collection.client);
         // Extract the shipment ID from collection
         const shipmentId = collection.original?.shipmentId || collection.id?.replace('-reembolso', '') || collection.id || 'N/A';
+        // La fecha del albarán, sin hora. Antes salía el reloj del móvil, así que
+        // una reimpresión le ponía al papel una fecha distinta a la del envío.
+        const fechaDelEnvio = fechaSinHora(collection.date || collection.original?.date);
         const qrData = `COD:${shipmentId}`;
         const receiptWindow = window.open('', '_blank');
         receiptWindow.document.write(`
             <html>
                 <head>
+                    <meta charset="UTF-8" />
+                    <meta name="viewport" content="width=device-width, initial-scale=1" />
                     <title>Justificante de Entrega de Fondos</title>
                     <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"><\/script>
                     <style>
-                        body { font-family: 'Arial', sans-serif; padding: 20px; max-width: 80mm; margin: 0 auto; }
-                        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
+                        body { font-family: 'Arial', sans-serif; margin: 0 auto; }
+${estilosDeHoja()}
+                        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 6px; margin-bottom: 10px; }
                         .title { font-size: 16px; font-weight: bold; margin: 0; }
                         .subtitle { font-size: 12px; color: #666; }
-                        .details { margin-bottom: 20px; }
-                        .row { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 5px; font-size: 12px; }
+                        .details { margin-bottom: 10px; }
+                        .row { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; font-size: 12px; }
                         .row span:last-child { text-align: right; word-break: break-word; }
                         .label { font-weight: bold; flex-shrink: 0; }
-                        .amount { font-size: 18px; font-weight: bold; text-align: right; margin-top: 10px; border-top: 1px dashed #ccc; padding-top: 10px; }
-                        .qr-section { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 20px; }
-                        .signature-box { flex: 1; border-top: 1px solid #000; padding-top: 5px; text-align: center; font-size: 10px; margin-right: 15px; }
+                        .amount { font-size: 18px; font-weight: bold; text-align: right; margin-top: 8px; border-top: 1px dashed #ccc; padding-top: 8px; }
+                        .qr-section { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 12px; }
+                        .signature-box { flex: 1; border-top: 1px solid #000; padding-top: 4px; text-align: center; font-size: 10px; margin-right: 15px; }
                         .qr-box { text-align: center; }
                         .qr-box p { font-size: 7px; color: #999; margin: 2px 0 0 0; }
-                        .footer { margin-top: 20px; font-size: 8px; text-align: center; color: #888; }
+                        .footer { margin-top: 10px; font-size: 8px; text-align: center; color: #888; }
                         @media print {
                             body { width: 80mm; }
-                            button { display: none; }
+                            @page { margin: 6mm; }
+                            button, #no-print-actions { display: none !important; }
                         }
                     </style>
                 </head>
                 <body>
+                  <div id="hoja"><div id="contenido">
                     <div class="header">
                         <h1 class="title">SUMTRANS LOGISTICA</h1>
                         <p class="subtitle">Justificante de Reembolso</p>
@@ -3009,8 +3019,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     
                     <div class="details">
                         <div class="row">
-                            <span class="label">Fecha:</span>
-                            <span>${new Date().toLocaleString()}</span>
+                            <span class="label">Fecha del envío:</span>
+                            <span>${fechaDelEnvio}</span>
                         </div>
                          <div class="row">
                             <span class="label">ID Envío:</span>
@@ -3037,7 +3047,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     <div class="qr-section">
                         <div class="signature-box">
                             Firma y Sello del Cliente (Remitente)
-                            <br/><br/><br/>
+                            <br/><br/>
                         </div>
                         <div class="qr-box">
                             <div id="qrcode"></div>
@@ -3048,6 +3058,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     <div class="footer">
                         Este documento justifica la entrega del importe recaudado al remitente.
                     </div>
+                  </div></div>
 
                     <div id="no-print-actions" style="margin-top: 30px; text-align: center;">
                         <button onclick="window.close()" style="background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer; width: 100%;">
@@ -3056,12 +3067,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     </div>
 
                     <script>
+${scriptDeAjuste()}
                         window.onload = function() { 
                             var qr = qrcode(0, 'M');
                             qr.addData('${qrData}');
                             qr.make();
                             document.getElementById('qrcode').innerHTML = qr.createImgTag(3, 4);
                             setTimeout(() => {
+                                ajustarAlFolio();
                                 window.print();
                             }, 500);
                         }
@@ -3087,6 +3100,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             const legalInfo = getClientCommercialInfo(item.client);
             const shipmentId = item.original?.shipmentId || item.id?.replace('-reembolso', '') || item.id || 'N/A';
             const qrData = `COD:${shipmentId}`;
+            // La del albarán, como en el justificante suelto: aquí se imprimen de
+            // golpe todos los del día y cada uno lleva la suya, no la de hoy.
+            const fechaDelEnvio = fechaSinHora(item.date || item.original?.date);
             return `
                 <div class="page">
                     <div class="receipt-card">
@@ -3095,7 +3111,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                             <p>Justificante de Reembolso</p>
                         </div>
                         <div class="card-details">
-                            <div class="card-row"><span class="lbl">Fecha:</span><span>${new Date().toLocaleDateString('es-ES')}</span></div>
+                            <div class="card-row"><span class="lbl">Fecha del envío:</span><span>${fechaDelEnvio}</span></div>
                             <div class="card-row"><span class="lbl">ID Envío:</span><span class="mono">${shipmentId}</span></div>
                             <div class="card-row"><span class="lbl">Cliente:</span><span>${legalInfo.name}${legalInfo.cif}</span></div>
                             <div class="card-row"><span class="lbl">Recibe (Remitente):</span><span>${getReceiptSenderName(item)}</span></div>
@@ -3120,6 +3136,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         printWindow.document.write(`
             <html>
             <head>
+                <meta charset="UTF-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <title>Justificantes de Reembolso (A6)</title>
                 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"><\/script>
                 <style>
@@ -3134,6 +3152,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         flex-direction: column;
                         page-break-after: always;
                         box-shadow: 0 0 5px rgba(0,0,0,0.1);
+                        overflow: hidden;
                     }
                     .page:last-child { page-break-after: auto; }
                     .receipt-card {
@@ -3184,6 +3203,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     </button>
                 </div>
                 <script>
+${scriptDeAjuste({ hoja: '.page', contenido: '.receipt-card', fijarAlto: false })}
                     window.onload = function() {
                         document.querySelectorAll('.card-qr').forEach(function(el) {
                             var data = el.getAttribute('data-qr');
@@ -3195,6 +3215,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                 el.innerHTML = qr.createImgTag(3, 4) + '<p>' + label + '</p>';
                             }
                         });
+                        ajustarAlFolio();
                         setTimeout(function() { window.print(); }, 600);
                     };
                     window.onafterprint = function() { setTimeout(function() { window.close(); }, 300); };
@@ -3215,7 +3236,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
 
             return `
             <tr>
-                <td>${item.date || ''} ${displaySender} - ${displayReceiver}</td>
+                <td>${fechaSinHora(item.date)} ${displaySender} - ${displayReceiver}</td>
                 <td>${item.sourceTitle}</td>
                 <td style="text-align:right">€${parseAmount(item.amount).toFixed(2)}</td>
             </tr>
@@ -3226,22 +3247,30 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         porteWindow.document.write(`
                 <html>
                 <head>
+                    <meta charset="UTF-8" />
+                    <meta name="viewport" content="width=device-width, initial-scale=1" />
                     <title>Resumen Porte del Día</title>
                     <style>
-                        body { font-family: 'Arial', sans-serif; padding: 20px; max-width: 80mm; margin: 0 auto; }
-                        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 15px; }
+                        body { font-family: 'Arial', sans-serif; margin: 0 auto; }
+${estilosDeHoja({ ancho: '105mm', relleno: '5mm' })}
+                        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 8px; margin-bottom: 10px; }
                         .title { font-size: 14px; font-weight: bold; margin: 0; }
                         .subtitle { font-size: 10px; color: #666; }
-                        .info { font-size: 11px; margin-bottom: 10px; }
+                        .info { font-size: 11px; margin-bottom: 6px; }
                         table { width: 100%; font-size: 10px; border-collapse: collapse; }
-                        th { text-align: left; border-bottom: 1px solid #ccc; padding: 4px 0; }
-                        td { padding: 4px 0; border-bottom: 1px dashed #eee; }
-                        .total { font-size: 14px; font-weight: bold; text-align: right; margin-top: 10px; border-top: 2px solid #333; padding-top: 10px; }
-                        .footer { margin-top: 15px; font-size: 8px; text-align: center; color: #888; }
-                        @media print { body { width: 80mm; } button { display: none; } }
+                        th { text-align: left; border-bottom: 1px solid #ccc; padding: 2px 0; }
+                        td { padding: 1px 0; border-bottom: 1px dashed #eee; line-height: 1.15; }
+                        .total { font-size: 14px; font-weight: bold; text-align: right; margin-top: 6px; border-top: 2px solid #333; padding-top: 6px; }
+                        .footer { margin-top: 8px; font-size: 8px; text-align: center; color: #888; }
+                        @media print {
+                            body { width: 105mm; }
+                            @page { margin: 0; }
+                            button, #no-print-actions { display: none !important; }
+                        }
                     </style>
                 </head>
                 <body>
+                  <div id="hoja"><div id="contenido">
                     <div class="header">
                         <h1 class="title">SUMTRANS LOGISTICA</h1>
                         <p class="subtitle">Resumen de Porte (Solo Clientes Habituales)</p>
@@ -3269,6 +3298,7 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                         * Solo incluye clientes cliente habitual / contado<br/>
                         Generado: ${new Date().toLocaleString()}
                     </div>
+                  </div></div>
 
                     <div id="no-print-actions" style="margin-top: 30px; text-align: center;">
                         <button onclick="window.close()" style="background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer; width: 100%;">
@@ -3277,8 +3307,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     </div>
 
                     <script>
+${scriptDeAjuste()}
                         window.onload = function() { 
                             setTimeout(() => {
+                                ajustarAlFolio();
                                 window.print();
                             }, 500);
                         }
@@ -4322,6 +4354,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     // apuntaba al que faltaba.
                     updated.porteCollectedById = currentDriverId;
                     updated.paidAt = new Date().toISOString();
+                    // La fecha del cobro DEL PORTE, aparte. `paidAt` la comparten los dos
+                    // conceptos: cobrar aquí el porte pisaba la fecha del reembolso que se
+                    // cobró otro día y la Cuenta lo resucitaba.
+                    updated.portePaidAt = updated.paidAt;
                     // Si el conductor modificó el importe del porte, guardar como customAmount
                     // para que la Cuenta y la BD reflejen el importe real cobrado
                     if (customAmounts[debtKey] !== undefined && parseAmount(customAmounts[debtKey]) !== parseAmount(originalAmount)) {
@@ -4332,6 +4368,8 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     updated.codPaid = true;
                     updated.codCollectedById = currentDriverId;
                     updated.paidAt = new Date().toISOString();
+                    // La fecha del cobro DEL REEMBOLSO, aparte (ver el porte, arriba).
+                    updated.codPaidAt = updated.paidAt;
                     // Si el conductor modificó el importe del reembolso, guardar también
                     if (customAmounts[debtKey] !== undefined && parseAmount(customAmounts[debtKey]) !== parseAmount(originalAmount)) {
                         updated.codAmount = parseAmount(customAmounts[debtKey]);
@@ -4519,6 +4557,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 if (shipData.portePaid && !original?.portePaid) {
                     flags.portePaid = true;
                     flags.porteCollectedById = currentDriverId;
+                    // Hora del cobro DEL PORTE. Aparte del paidAt común, que lo pisan
+                    // los dos conceptos (ver el reembolso, justo debajo).
+                    flags.portePaidAt = flags.updatedAt;
                     // Si el conductor cambió el importe del porte, persistir en la BD
                     if (shipData.customAmount !== undefined && shipData.customAmount !== original?.customAmount) {
                         flags.customAmount = shipData.customAmount;
@@ -4527,9 +4568,12 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                 if (shipData.codPaid && !original?.codPaid) {
                     flags.codPaid = true;
                     flags.codCollectedById = currentDriverId;
-                    // Hora del cobro: la Cuenta se fija en paidAt para saber en qué
-                    // día cae el reembolso, no en updatedAt.
+                    // Hora del cobro: la Cuenta se fija en la fecha de cobro para saber
+                    // en qué día cae el reembolso, no en updatedAt. Y en la del reembolso
+                    // (codPaidAt), no en el paidAt común: cobrar el porte de este mismo
+                    // albarán otro día pisaba paidAt y lo resucitaba en la caja de ese día.
                     flags.paidAt = flags.updatedAt;
+                    flags.codPaidAt = flags.updatedAt;
                     // Si el conductor cambió el importe del reembolso, persistir en la BD
                     if (shipData.codAmount !== undefined && shipData.codAmount !== original?.codAmount) {
                         flags.codAmount = shipData.codAmount;
@@ -5842,12 +5886,19 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                                                             paidAt: nowIso
                                                         };
                                                         
+                                                        // La fecha va también al concepto que se cobra, no sólo al
+                                                        // paidAt común: si no, cobrar aquí el porte que quedaba
+                                                        // pendiente pisaba la fecha del reembolso cobrado otro día y
+                                                        // la Cuenta lo volvía a sumar hoy, en la caja del compañero
+                                                        // que lo cobró entonces.
                                                         if (isPorte) {
                                                             updates.portePaid = true;
                                                             updates.porteCollectedById = currentDriverId;
+                                                            updates.portePaidAt = nowIso;
                                                         } else {
                                                             updates.codPaid = true;
                                                             updates.codCollectedById = currentDriverId;
+                                                            updates.codPaidAt = nowIso;
                                                         }
 
                                                         // Check if this makes the shipment fully paid

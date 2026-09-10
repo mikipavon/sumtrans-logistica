@@ -1,6 +1,6 @@
 import Sidebar from './Sidebar';
 import OfflineBanner from './OfflineBanner';
-import { Bell, Moon, Sun, Package, Euro, AlertTriangle, Truck, X, CheckCheck, PlayCircle, StopCircle, RefreshCw } from 'lucide-react';
+import { Bell, Moon, Sun, Package, Euro, AlertTriangle, Truck, X, CheckCheck, PlayCircle, StopCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 
 export default function Layout({ children, onLogout, currentView, onNavigate, pendingClientsCount, pendingIncidentsCount, irregularCount = 0, shipments = [], collections = [], incidents = [], vehicles = [], onSecretUnlock, isTestMode, setIsTestMode, onResetToZero, isOnline = true, justReconnected = false, pendingQueueCount = 0, isSyncingQueue = false }) {
@@ -43,7 +43,13 @@ export default function Layout({ children, onLogout, currentView, onNavigate, pe
                 detail: clientWebPending.map(s => s.id).join(', '),
                 time: 'Ahora',
                 urgency: 'high',
-                action: () => { onNavigate('shipments'); setShowNotifications(false); }
+                action: () => {
+                    onNavigate('shipments', {
+                        ids: clientWebPending.map(s => s.id),
+                        etiqueta: `envío${clientWebPending.length > 1 ? 's' : ''} de cliente web sin asignar`
+                    });
+                    setShowNotifications(false);
+                }
             });
         }
 
@@ -61,7 +67,13 @@ export default function Layout({ children, onLogout, currentView, onNavigate, pe
                 detail: genericPending.slice(0, 3).map(s => s.id).join(', ') + (genericPending.length > 3 ? '...' : ''),
                 time: 'Pendiente',
                 urgency: 'medium',
-                action: () => { onNavigate('shipments'); setShowNotifications(false); }
+                action: () => {
+                    onNavigate('shipments', {
+                        ids: genericPending.map(s => s.id),
+                        etiqueta: `envío${genericPending.length > 1 ? 's' : ''} pendiente${genericPending.length > 1 ? 's' : ''} de asignar conductor`
+                    });
+                    setShowNotifications(false);
+                }
             });
         }
 

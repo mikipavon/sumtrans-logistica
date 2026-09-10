@@ -48,6 +48,151 @@ const correosDe = (client) => {
     ].filter(Boolean);
 };
 
+// ── Nombres que se parecen sin llegar a ser el mismo ──
+//
+// Comparar los nombres letra a letra deja pasar lo más común: que a una ficha le
+// sobre el "S.L.", que una lleve el plural y la otra no, o que las palabras
+// vayan en otro orden. Para la pantalla, "Transportes Garcia" y "Transportes
+// Garcia S.L." eran dos empresas distintas. Y las fichas que nacen de un albarán
+// no traen ni CIF ni correo: el nombre es lo único por lo que reconocerlas.
+//
+// Esto SÓLO AVISA. Nunca junta ni borra nada, y a propósito no entra en
+// buscarSolicitudesGemelas, que es la que alimenta el botón de unir —ése borra
+// fichas y necesita una coincidencia segura—. Un parecido no es una certeza:
+// "Bar Manolo" y "Bar Manolo 2" pueden ser dos locales de verdad, así que quien
+// decide es el que mira los dos nombres.
+
+// La forma jurídica no distingue a nadie: la misma empresa se escribe con ella y
+// sin ella según quién teclee.
+const FORMAS_JURIDICAS = new Set([
+    'sl', 'sll', 'slu', 'slne', 'sa', 'sau', 'sat', 'sc', 'scp', 'scv',
+    'scoop', 'coop', 'cb', 'srl', 'sociedad', 'limitada', 'anonima',
+    'unipersonal', 'cooperativa',
+]);
+
+// Palabras de unión: no ayudan a reconocer la empresa y son las que más bailan.
+const PALABRAS_VACIAS = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'y', 'e', 'en', 'al', 'a']);
+
+// Lo que la oficina escribe de las dos maneras.
+const ABREVIATURAS = {
+    hnos: 'hermanos', hno: 'hermano', hnas: 'hermanas', hna: 'hermana',
+    cia: 'compania', sdad: 'sociedad', dpto: 'departamento',
+};
+
+// Singular y plural tienen que caer en la misma palabra: "Talleres Ruiz" y
+// "Taller Ruiz", "Autoservicio El Arco" y "Autoservicios El Arco". El plural
+// castellano es de dos formas —"transporte→transportes" y "taller→talleres"— y
+// desde la palabra ya escrita no se sabe cuál es, así que se recorta de más y a
+// las dos por igual: "transportes" y "transporte" acaban las dos en
+// "transport", y "talleres" y "taller" en "taller". No es una palabra de
+// verdad, y da igual: sólo hace falta que las dos lleguen al mismo sitio.
+const enSingular = (palabra) => {
+    let p = palabra;
+    if (p.length > 3 && p.endsWith('s')) p = p.slice(0, -1);
+    if (p.length > 4 && p.endsWith('e')) p = p.slice(0, -1);
+    return p;
+};
+
+// Palabras que dicen a qué se dedica, no quién es. Sirven para no dar por
+// parecidas a dos empresas cuyo único punto en común es "transportes". Se
+// guardan ya recortadas, para poder escribirlas aquí como se dicen.
+const PALABRAS_DEL_RAMO = new Set([
+    'transporte', 'comercial', 'distribucion', 'suministro', 'taller', 'bar',
+    'cafe', 'cafeteria', 'restaurante', 'mueble', 'ferreteria', 'panaderia',
+    'carniceria', 'almacen', 'grupo', 'hermano', 'hermana', 'hijo',
+    'construccion', 'servicio', 'autoservicio', 'electricidad', 'fontaneria',
+    'logistica', 'industrial', 'industria', 'empresa', 'compania', 'tienda',
+].map(enSingular));
+
+// Las palabras con las que se reconoce a una empresa, ya limpias. Se exporta
+// para poder probarla suelta.
+export function clavesDelNombre(valor) {
+    const palabras = normalizarTexto(valor)
+        .split(' ')
+        .map(p => p.replace(/[^a-z0-9]/g, ''))   // paréntesis, barras, símbolos
+        .filter(Boolean)
+        .map(p => ABREVIATURAS[p] || p)
+        .map(enSingular)
+        .filter(p => !PALABRAS_VACIAS.has(p) && !FORMAS_JURIDICAS.has(p));
+    return new Set(palabras);
+}
+
+// Cuántas letras hay que cambiar para pasar de una palabra a la otra.
+const letrasDeDiferencia = (a, b) => {
+    if (a === b) return 0;
+    const fila = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+        let esquina = fila[0];
+        fila[0] = i;
+        for (let j = 1; j <= b.length; j++) {
+            const guardado = fila[j];
+            fila[j] = Math.min(
+                fila[j] + 1,                                        // borrar
+                fila[j - 1] + 1,                                    // añadir
+                esquina + (a[i - 1] === b[j - 1] ? 0 : 1),          // cambiar
+            );
+            esquina = guardado;
+        }
+    }
+    return fila[b.length];
+};
+
+// Una errata de teclado: "Gomez" y "Gomes", "Martinez" y "Martines". En palabras
+// cortas no se mira, que ahí una letra ya cambia el apellido: "Ruiz" y "Diaz"
+// son dos empresas distintas y sólo se llevan cuatro letras.
+const esUnaErrata = (unaPalabra, otraPalabra) => {
+    const largo = Math.max(unaPalabra.length, otraPalabra.length);
+    if (largo < 5) return false;
+    return letrasDeDiferencia(unaPalabra, otraPalabra) <= (largo >= 8 ? 2 : 1);
+};
+
+// Lo que comparten, ¿dice quién es la empresa o sólo a qué se dedica? Con dos
+// palabras en común basta; con una sola tiene que ser un nombre propio.
+const identificaALaEmpresa = (compartidas) => compartidas.length >= 2
+    || (compartidas.length === 1 && !PALABRAS_DEL_RAMO.has(compartidas[0]));
+
+export function nombresSeParecen(unNombre, otroNombre) {
+    const unas = clavesDelNombre(unNombre);
+    const otras = clavesDelNombre(otroNombre);
+    if (unas.size === 0 || otras.size === 0) return false;
+
+    const compartidas = [...unas].filter(p => otras.has(p));
+
+    // Las mismas palabras, en otro orden o con la forma jurídica de más:
+    // "Panaderia La Espiga" y "La Espiga Panaderia", "Cafe Central" y
+    // "CAFE CENTRAL S.L".
+    if (compartidas.length === unas.size && compartidas.length === otras.size) return true;
+
+    // A una le sobra algo: "Bar Manolo" y "Bar Manolo 2", "Muebles Lopez" y
+    // "Muebles Lopez (Sevilla)".
+    const laCorta = unas.size <= otras.size ? unas : otras;
+    if (compartidas.length === laCorta.size && identificaALaEmpresa(compartidas)) return true;
+
+    // Todo igual menos una palabra, y esa por una errata: "Ferreteria Gomez" y
+    // "Ferreteria Gomes". Aquí no se mira si lo compartido identifica a la
+    // empresa —en este ejemplo lo común es justo el ramo—, porque el peso lo
+    // lleva la palabra que baila: tiene que ser larga y casi la misma.
+    if (unas.size === otras.size && compartidas.length === unas.size - 1) {
+        const sobraDeUna = [...unas].filter(p => !otras.has(p));
+        const sobraDeOtra = [...otras].filter(p => !unas.has(p));
+        if (sobraDeUna.length === 1 && sobraDeOtra.length === 1) {
+            return esUnaErrata(sobraDeUna[0], sobraDeOtra[0]);
+        }
+    }
+
+    return false;
+}
+
+// La ficha puede llamarse de una manera y facturar con otra: se cruzan las dos.
+const nombresDe = (client) => [client?.name, client?.legalName]
+    .filter(v => String(v || '').trim() !== '');
+
+export const algunNombreSeParece = (unaFicha, otraFicha) => nombresDe(unaFicha)
+    .some(uno => nombresDe(otraFicha).some(otro => nombresSeParecen(uno, otro)));
+
+// El motivo flojo: avisa, pero no habilita nada que borre ni dé accesos.
+export const PARECIDO_DE_NOMBRE = 'un nombre casi igual';
+
 // Devuelve las fichas de cartera que se parecen a la solicitud pendiente, con
 // el motivo por el que se parecen. Más fuerte primero: CIF, correo, nombre.
 export function buscarFichasParecidas(pendiente, clients = []) {
@@ -79,6 +224,8 @@ export function buscarFichasParecidas(pendiente, clients = []) {
 
         if (nombrePendiente && normalizarTexto(client.name) === nombrePendiente) {
             motivos.push('el mismo nombre');
+        } else if (algunNombreSeParece(pendiente, client)) {
+            motivos.push(PARECIDO_DE_NOMBRE);
         }
 
         // La pista que dejó el registro web, aunque hoy ya no coincida nada:
@@ -94,12 +241,19 @@ export function buscarFichasParecidas(pendiente, clients = []) {
                 // El caso delicado: si esa ficha YA entra en el portal, aprobar
                 // esto es dar acceso a una empresa que ya tiene su cuenta.
                 yaTieneAcceso: tieneAccesoAlPortal(client),
+                // Sin nada que lo confirme —ni CIF, ni correo, ni el nombre
+                // entero—: sólo se parecen. Vale para avisar, no para darle a
+                // esa ficha el acceso al portal, que sería meter a una empresa
+                // en los envíos de otra.
+                soloPorParecido: !motivos.some(m => m !== PARECIDO_DE_NOMBRE),
             });
         }
     }
 
-    // Primero las que coinciden por más motivos, que son las más seguras.
-    return encontradas.sort((a, b) => b.motivos.length - a.motivos.length);
+    // Primero las seguras, y entre ellas las que coinciden por más motivos. Las
+    // que sólo se parecen van al final: son las que menos hay que creerse.
+    return encontradas.sort((a, b) => (Number(a.soloPorParecido) - Number(b.soloPorParecido))
+        || (b.motivos.length - a.motivos.length));
 }
 
 // Texto para el aviso: "el mismo CIF y el mismo correo".
@@ -145,6 +299,27 @@ export function buscarSolicitudesGemelas(pendiente, pendientes = []) {
         if (correos.some(c => correosOtra.includes(c))) return true;
 
         return false;
+    });
+}
+
+// ── Solicitudes pendientes que sólo se PARECEN ──
+//
+// Aparte, y no dentro de buscarSolicitudesGemelas, a propósito: las gemelas
+// alimentan el botón de unir, que borra las otras fichas, y para borrar hace
+// falta una coincidencia segura. Esto es más flojo —un nombre parecido— así que
+// se queda en aviso: se enseñan las dos y decide quien las mira. Si de verdad
+// son la misma, con igualar el nombre pasan a ser gemelas y ya se pueden unir.
+export function buscarSolicitudesParecidas(pendiente, pendientes = []) {
+    if (!pendiente) return [];
+
+    // Lo que ya salta como gemela no se repite aquí: sería el mismo aviso dos
+    // veces, uno con botón de unir y otro sin él.
+    const gemelas = new Set(buscarSolicitudesGemelas(pendiente, pendientes).map(g => g.id));
+
+    return pendientes.filter(otra => {
+        if (!otra || otra.id === pendiente.id || otra.isTest) return false;
+        if (gemelas.has(otra.id)) return false;
+        return algunNombreSeParece(pendiente, otra);
     });
 }
 

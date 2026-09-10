@@ -143,6 +143,20 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
 
     const getShipmentDate = (s) => s.date || s.date_created || (s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : todayStr);
 
+    // CADA CONCEPTO TIENE SU PROPIA FECHA DE COBRO.
+    //
+    // Un albarán con porte y reembolso se cobra muchas veces en dos días distintos: el
+    // reembolso al entregarlo y el porte cuando el cliente lo paga. `paidAt` es UNO solo
+    // para los dos, así que el segundo cobro pisaba la fecha del primero y la Cuenta
+    // resucitaba en la caja de hoy un reembolso cobrado hace días — y se lo apuntaba a
+    // quien lo cobró entonces, no a quien acaba de cobrar el porte (caso Carmen
+    // HAB-122/HAB-145: Juan Carlos tenía 1.112,30 € de más).
+    //
+    // `portePaidAt` y `codPaidAt` guardan cada uno el suyo. `paidAt` se sigue escribiendo
+    // y se usa aquí de respaldo para los albaranes anteriores al cambio.
+    const fechaCobroPorte = (s) => s.portePaidAt || s.paidAt;
+    const fechaCobroReembolso = (s) => s.codPaidAt || s.paidAt;
+
     // 1. Cobros en Origen (Porte Pagado hoy)
     const prepaidCollections = (allShipments || []).filter(s => {
         if (!s || s.porteType !== 'Pagado' || !s.portePaid) return false;
@@ -160,7 +174,7 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         
         if (!isMyResponsibility) return false;
         // BUG FIX: removed isToday(s.updatedAt) to prevent old prepaid shipments from reappearing when unassigned or edited today.
-        if (!isToday(s.paidAt, targetDate) && !isToday(s.date, targetDate)) return false;
+        if (!isToday(fechaCobroPorte(s), targetDate) && !isToday(s.date, targetDate)) return false;
         return isCashClient(s.client, clients, s.billingType);
     });
 
@@ -177,10 +191,10 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         }
 
         if (!isMyResponsibility) return false;
-        // Día del cobro o, si falta, día de la entrega. Nunca updatedAt: un
+        // Día del cobro DEL PORTE o, si falta, día de la entrega. Nunca updatedAt: un
         // retoque de la oficina al albarán hoy hacía reaparecer en la Cuenta de
         // hoy un porte Debido cobrado ayer (mismo fallo que los reembolsos).
-        if (!isToday(s.paidAt, targetDate) && !isToday(s.deliveredAt, targetDate)) return false;
+        if (!isToday(fechaCobroPorte(s), targetDate) && !isToday(s.deliveredAt, targetDate)) return false;
         // Para Porte Debido, el que paga es el DESTINATARIO, por tanto miramos si el destino es contado
         return isCashClient(s.destinationName || s.client, clients, s.destinationBillingType);
     });
@@ -249,16 +263,27 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         !manualPorteCollections.some(c => c.shipmentId === s.id)
     );
 
+    // MANDA EL ALBARÁN.
+    // La entrada de cobro que apunta el móvil guarda el importe tal como estaba
+    // al cobrarlo, y la Cuenta la usaba con prioridad. Así, cuando la oficina
+    // corregía el precio de un porte ya cobrado (un porte de 12 € que el
+    // repartidor cobró a 15), la Cuenta seguía enseñando los 15 para siempre: el
+    // precio bueno es el de la ficha, y el cobro es sólo lo que se apuntó en su
+    // día. El importe del cobro únicamente se usa si no se puede consultar el
+    // albarán: no está cargado, o no tiene un precio numérico (p.ej. "Tarifa").
+    const importeVigente = (ship, importeAlbaran, importeCobro) => (
+        ship && parseAmount(importeAlbaran) > 0 ? importeAlbaran : importeCobro
+    );
+    const porteDelAlbaran = (ship) => (
+        ship ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : null
+    );
+
     // 4. Totales de Portes (priorizamos customAmount si está modificado)
     const totalPrepaid = uniquePrepaidCollections.reduce((sum, s) => sum + parseAmount(parseAmount(s.customAmount) > 0 ? s.customAmount : s.amount), 0);
     const totalDelivered = uniqueDeliveredCollections.reduce((sum, s) => sum + parseAmount(parseAmount(s.customAmount) > 0 ? s.customAmount : s.amount), 0);
     const totalManualPorte = manualPorteCollections.reduce((sum, c) => {
-        // Prioridad: importe del cobro (lo que realmente se cobró) > importe del envío
-        const collectedAmt = parseAmount(c.amount);
-        if (collectedAmt > 0) return sum + collectedAmt;
         const ship = (allShipments || []).find(s => s.id === c.shipmentId);
-        const shipAmt = ship ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : null;
-        return sum + (shipAmt !== null ? parseAmount(shipAmt) : 0);
+        return sum + parseAmount(importeVigente(ship, porteDelAlbaran(ship), c.amount));
     }, 0);
     const totalPorteValue = totalPrepaid + totalDelivered + totalManualPorte;
 
@@ -274,14 +299,15 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     console.log("📊 [AccountLogic] Filtered manual Porte:", manualPorteCollections.length);
     console.log("📊 [AccountLogic] Filtered manual Reembolso:", collectedReembolsosRaw.length);
 
-    // Un reembolso entra en la caja del día en que se COBRÓ (paidAt) o, si el
-    // albarán no guardó esa hora, del día en que se ENTREGÓ (deliveredAt). Nunca
+    // Un reembolso entra en la caja del día en que se COBRÓ EL REEMBOLSO (codPaidAt) o,
+    // si el albarán no guardó esa hora, del día en que se ENTREGÓ (deliveredAt). Nunca
     // por updatedAt: cualquier retoque de la oficina al albarán (corregir un
     // nombre, un bulto) pone updatedAt a hoy, y así un reembolso cobrado ayer se
-    // volvía a colar en la Cuenta de hoy del repartidor.
+    // volvía a colar en la Cuenta de hoy del repartidor. Y nunca por el paidAt a secas,
+    // que también lo pisa el cobro del porte (ver fechaCobroReembolso).
     const derivedReembolsos = (allShipments || []).filter(s => {
         if (!s || !s.codAmount || parseAmount(s.codAmount) <= 0 || s.status !== 'Entregado' || !s.codPaid) return false;
-        if (!isToday(s.paidAt || s.deliveredAt, targetDate)) return false;
+        if (!isToday(fechaCobroReembolso(s) || s.deliveredAt, targetDate)) return false;
 
         let isMyResponsibility = false;
         if (s.codCollectedById) {
@@ -295,9 +321,11 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     const uniqueDerivedReembolsos = derivedReembolsos.filter(d => 
         !collectedReembolsosRaw.some(c => c.shipmentId === d.id)
     );
+    // El reembolso del albarán, igual que el porte (ver importeVigente): si la
+    // oficina lo corrige después de cobrarlo, la Cuenta enseña el importe nuevo.
     const totalReimbursements = [...uniqueDerivedReembolsos.map(s => s.codAmount), ...collectedReembolsosRaw.map(c => {
         const ship = (allShipments || []).find(s => s.id === c.shipmentId);
-        return ship ? ship.codAmount : c.amount;
+        return importeVigente(ship, ship?.codAmount, c.amount);
     })].reduce((sum, a) => sum + parseAmount(a), 0);
 
     // 6. Preparar listados para UI e Impresión
@@ -334,10 +362,8 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         })),
         ...manualPorteCollections.map(c => {
             const ship = (allShipments || []).find(s => s.id === c.shipmentId);
-            // Prioridad: importe del cobro (lo que el conductor realmente cobró) > importe del envío
-            const collectedAmt = parseAmount(c.amount);
-            const shipAmt = ship ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : null;
-            const amountToUse = collectedAmt > 0 ? c.amount : ((shipAmt !== null && parseAmount(shipAmt) > 0) ? shipAmt : c.amount);
+            // El precio bueno es el del albarán (ver importeVigente)
+            const amountToUse = importeVigente(ship, porteDelAlbaran(ship), c.amount);
             // El nombre del pagador se guardó en la entrada tal como estaba al
             // cobrar. Si la oficina corrige después el destinatario (o el
             // remitente), la Cuenta debe enseñar el nombre actual del albarán.
@@ -347,7 +373,12 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
             return {
                 id: c.shipmentId || c.id,
                 key: `man-${c.id}`,
-                date: c.date || (ship ? getShipmentDate(ship) : todayStr),
+                // La del ALBARÁN, igual que en los reembolsos. `c.date` es el día en
+                // que se marcó cobrado (siempre hoy: es lo que mete el cobro en la
+                // cuenta de hoy), y en el resumen de porte lo que se lee al lado de
+                // cada línea es de qué envío es. Sólo se cae al cobro si el albarán
+                // ya no está cargado.
+                date: ship ? getShipmentDate(ship) : (c.date || todayStr),
                 client: pagadorActual || c.client,
                 sender: c.sender || (ship ? (ship.originName || ship.client) : 'Remitente'),
                 receiver: (ship ? ship.destinationName : (c.client === 'Destinatario' ? c.client : 'Destinatario')) || 'Destinatario',
@@ -367,6 +398,10 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         ...uniqueDerivedReembolsos.map(s => ({
             id: s.id,
             key: s.id,
+            // La fecha del ALBARÁN, no la de hoy: el justificante de reembolso la
+            // imprime y antes se sacaba del reloj del móvil, así que una
+            // reimpresión cambiaba la fecha del papel.
+            date: getShipmentDate(s),
             client: s.destinationName || s.client,
             sender: s.originName || s.client,
             type: 'Reembolso',
@@ -379,12 +414,16 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         })),
         ...collectedReembolsosRaw.map(c => {
             const ship = (allShipments || []).find(s => s.id === c.shipmentId);
-            // Prioridad: importe del cobro (lo que realmente se cobró) > importe del envío
-            const collectedAmt = parseAmount(c.amount);
-            const amountToUse = collectedAmt > 0 ? c.amount : (ship ? ship.codAmount : c.amount);
+            // El importe bueno es el del albarán (ver importeVigente)
+            const amountToUse = importeVigente(ship, ship?.codAmount, c.amount);
             return {
                 id: c.shipmentId || c.id,
                 key: c.id,
+                // Manda la del ALBARÁN, no la del cobro. Aquí `c.date` es el día en
+                // que se marcó cobrado (siempre hoy: por eso pasa el filtro de
+                // arriba), y el justificante que se imprime es del envío. Sólo se
+                // cae al cobro cuando el albarán ya no está.
+                date: ship ? getShipmentDate(ship) : (c.date || todayStr),
                 client: c.client,
                 // El remitente es a quien se le entrega el dinero, así que el
                 // justificante lo necesita sí o sí. Los cobros antiguos se
@@ -406,7 +445,7 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     const simplifiedInvoices = (allShipments || []).filter(s => {
         if (!s || !s.hasSimplifiedInvoice || !s.simplifiedInvoicePaid) return false;
         // Evitar que s.updatedAt cause falsos positivos al desasignar
-        if (!isToday(s.paidAt, targetDate) && !isToday(s.date, targetDate)) return false;
+        if (!isToday(fechaCobroPorte(s), targetDate) && !isToday(s.date, targetDate)) return false;
 
         let isMyResponsibility = false;
         if (s.porteCollectedById) {

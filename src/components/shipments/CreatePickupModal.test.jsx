@@ -180,3 +180,43 @@ describe('CreatePickupModal — numeración y guardado', () => {
         expect(onClose).not.toHaveBeenCalled();
     });
 });
+
+// ── El GPS de origen es cosa del conductor ──
+//
+// El modal capturaba la posición del navegador al abrirse para todo el mundo.
+// Desde la oficina eso ponía las coordenadas de la oficina a la recogida y, de
+// ahí, a la ficha del cliente nuevo (o al hueco de uno existente sin GPS). El
+// botón que lo avisaba está oculto, así que nadie lo veía.
+
+describe('CreatePickupModal — captura de GPS al abrir', () => {
+    let getCurrentPosition;
+
+    beforeEach(() => {
+        getCurrentPosition = vi.fn((ok) => ok({ coords: { latitude: 37.586, longitude: -4.638 } }));
+        vi.stubGlobal('navigator', { ...navigator, geolocation: { getCurrentPosition } });
+        reservar.mockReset();
+        reservar.mockResolvedValue({ primero: 425, reservado: true });
+    });
+
+    it('la oficina no captura el GPS: la recogida sale sin coordenadas de origen', async () => {
+        const onSave = vi.fn().mockResolvedValue(true);
+        abrirConGuardado({ onSave, isDriver: false });
+
+        expect(getCurrentPosition).not.toHaveBeenCalled();
+
+        rellenarYEnviar();
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        expect(onSave.mock.calls[0][0].originCoordinates).toBe('');
+    });
+
+    it('el conductor sí lo captura y va en la recogida', async () => {
+        const onSave = vi.fn().mockResolvedValue(true);
+        abrirConGuardado({ onSave, isDriver: true });
+
+        expect(getCurrentPosition).toHaveBeenCalled();
+
+        rellenarYEnviar();
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        expect(onSave.mock.calls[0][0].originCoordinates).toBe('37.586000, -4.638000');
+    });
+});

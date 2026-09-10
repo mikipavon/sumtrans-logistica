@@ -130,6 +130,9 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         requireDNI: false,
         requirePhoto: false,
         requireSignature: false,
+        // Clientes que necesitan justificar legalmente cada entrega (seguros,
+        // impagos). Ver utils/justificacionEntrega.js
+        requireLegalProof: false,
     };
 
     // Agencias disponibles para asignar la ficha, excluyendo la que se está editando
@@ -1712,10 +1715,32 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                                 <div className="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform"></div>
                                             </div>
                                         </label>
+
+                                        {/* Justificación legal de la entrega.
+                                            Para los clientes cuyo seguro les pide saber QUIÉN se
+                                            llevó el material cuando hay un impago o un siniestro:
+                                            un nombre de pila y un garabato no les justifican nada
+                                            y no pagan el porte. Aprieta también los albaranes ya
+                                            grabados, porque se lee de la ficha y no de la copia
+                                            de reglas que el albarán se lleva al crearse. */}
+                                        <label className="flex items-center justify-between p-4 bg-white rounded-xl border-2 border-amber-200 cursor-pointer hover:border-amber-400 transition-colors group">
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-lg">⚖️</span>
+                                                <div>
+                                                    <p className="text-sm font-bold text-slate-700 group-hover:text-amber-700 transition-colors">Justificación Legal de la Entrega</p>
+                                                    <p className="text-[10px] text-slate-400">Exige a la vez nombre Y apellidos, DNI/NIE válido y firma completa (no vale un garabato). Afecta también a los albaranes ya grabados.</p>
+                                                </div>
+                                            </div>
+                                            <div className="relative">
+                                                <input type="checkbox" className="sr-only peer" checked={!!formData.requireLegalProof} onChange={e => set('requireLegalProof', e.target.checked)} />
+                                                <div className="w-11 h-6 bg-slate-200 peer-checked:bg-amber-500 rounded-full transition-colors"></div>
+                                                <div className="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform"></div>
+                                            </div>
+                                        </label>
                                     </div>
                                 </div>
 
-                                {(formData.requireName !== false || formData.requireWeight || formData.requireDNI || formData.requirePhoto) && (
+                                {(formData.requireName !== false || formData.requireWeight || formData.requireDNI || formData.requirePhoto || formData.requireLegalProof) && (
                                     <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
                                         <p className="text-xs text-blue-700 font-medium">✅ Reglas activas para este cliente:</p>
                                         <ul className="text-[11px] text-blue-600 mt-1 space-y-0.5">
@@ -1724,6 +1749,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                             {formData.requireDNI && <li>• El repartidor deberá poner DNI al entregar.</li>}
                                             {formData.requirePhoto && <li>• El repartidor deberá hacer foto al entregar.</li>}
                                             {formData.requireSignature !== false && <li>• Se exigirá firma real (no firma ausente).</li>}
+                                            {formData.requireLegalProof && <li>• ⚖️ Entrega justificada: nombre y apellidos + DNI/NIE válido + firma completa. También en las recogidas y en los albaranes ya grabados.</li>}
                                         </ul>
                                     </div>
                                 )}

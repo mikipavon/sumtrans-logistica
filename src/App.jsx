@@ -1846,6 +1846,18 @@ function App() {
             if (renumerado) {
               setShipments(prev => prev.map(s => s.id === op.shipmentId ? { ...s, id: idFinal } : s));
             }
+            // Ahora que el albarán está guardado se puede retirar la recogida de la
+            // que salió. Se quedó en la base de datos a propósito mientras el alta
+            // esperaba cobertura: así, si el móvil se pierde antes de sincronizar,
+            // la recogida sigue estando y el trabajo no desaparece.
+            if (op.originalPickupId && op.originalPickupId !== idFinal) {
+              const { error: delErr } = await supabase.from('shipments').delete().eq('id', op.originalPickupId);
+              if (delErr) {
+                console.warn(`[OfflineQueue] ${op.shipmentId} se guardó pero la recogida ${op.originalPickupId} no se pudo retirar:`, delErr);
+              } else {
+                setShipments(prev => prev.filter(s => s.id !== op.originalPickupId));
+              }
+            }
             // El remitente, ahora que hay cobertura. Este albarán se hizo sin
             // red, así que su ficha no llegó a crearse y el envío se quedaba
             // apuntando a un cliente que no estaba en ninguna parte.
@@ -2658,6 +2670,10 @@ function App() {
           deliveryPhoto: null,
           deliveryCoordinates: null,
           paidAt: null,
+          // Las fechas de cobro de cada concepto van con paidAt: si se quedaran
+          // puestas, la Cuenta seguiría fechando por ellas el cobro que se revierte.
+          portePaidAt: null,
+          codPaidAt: null,
           isPaid: false,
           isCodPaid: false,
           porteCollectedById: null,
@@ -3116,6 +3132,10 @@ function App() {
         type: 'createShipment',
         shipmentId: shipmentWithMeta.id,
         shipmentData: shipmentWithMeta,
+        // La recogida de la que sale este albarán sigue viva en la base de datos: se
+        // retira al vaciar la cola, cuando el albarán ya esté guardado. Si el alta
+        // nunca llega a sincronizar, la recogida sigue ahí y no se pierde el trabajo.
+        originalPickupId: originalPickupId || null,
         timestamp: Date.now(),
       });
       setPendingQueueCount(qLen);
@@ -3135,13 +3155,7 @@ function App() {
     }
 
     try {
-      // 1. If replacing an existing pickup, delete it FIRST to avoid Primary Key collisions
-      if (originalPickupId) {
-        const { error: delErr } = await supabase.from('shipments').delete().eq('id', originalPickupId);
-        if (delErr) console.warn("Could not delete original pickup (might be same ID):", delErr);
-      }
-
-      // 2. Save new shipment to Supabase. Con insert, NO con upsert: el número
+      // 1. Save new shipment to Supabase. Con insert, NO con upsert: el número
       // se calcula en cada aparato y dos a la vez pueden sacar el mismo; el
       // upsert dejaba que el segundo pisara al primero sin avisar (07/09/2026,
       // SUM-518). Si el número ya existe, darDeAltaSinPisar pide otro y reintenta.
@@ -3174,10 +3188,19 @@ function App() {
 
       const newShipmentFromDB = (data && data[0]) ? { ...data[0].data, id: data[0].id } : { ...shipmentWithMeta };
 
-      // 2. Update local state
-      // (el pickup original ya se borró en el paso 1, antes del upsert — repetir el
-      // delete aquí era una llamada de red redundante, y si el nuevo albarán reutiliza
-      // el mismo id que el pickup, borraba la fila que se acababa de crear)
+      // 2. Retirar la recogida de la que salió este albarán. Va DESPUÉS del alta y sólo
+      // si el alta ha ido bien: borrándola antes, un error que no fuera de red (el
+      // `alert` de ahí arriba) dejaba a la oficina sin las dos cosas — la recogida ya
+      // borrada y el albarán sin crear, con su cobro dentro. Si el borrado falla, lo
+      // peor que queda es la recogida repetida, que se ve y se arregla a mano.
+      // La guarda del id es por si el albarán se quedara con el número de la recogida:
+      // sin ella se borraría la fila que se acaba de crear.
+      if (originalPickupId && originalPickupId !== idFinal) {
+        const { error: delErr } = await supabase.from('shipments').delete().eq('id', originalPickupId);
+        if (delErr) console.warn('[handleAddShipment] El albarán se guardó pero la recogida no se pudo retirar:', delErr);
+      }
+
+      // 3. Update local state
       if (originalPickupId) {
         setShipments(prev => {
           const filtered = prev.filter(s => s.id !== originalPickupId);
@@ -4854,8 +4877,8 @@ function App() {
   <Layout
       onLogout={handleLogout}
       currentView={currentView}
-      onNavigate={setCurrentView}
-      pendingClientsCount={pendingClientsCount} 
+      onNavigate={(view, filtro) => { setShipmentStatusFilter(filtro || null); setCurrentView(view); }}
+      pendingClientsCount={pendingClientsCount}
       pendingIncidentsCount={visibleShipments.filter(s => s.incidentStatus === 'active' || s.status === 'Incidencia').length}
       irregularCount={irregularCount}
       shipments={visibleShipments}
