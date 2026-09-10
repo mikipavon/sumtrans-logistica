@@ -555,13 +555,18 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     const updateSuggestions = (value) => {
         if (!clients) return;
         const search = normalizeForSearch(value);
-        // Solo mostrar clientes validados por administración
-        // (approved o sin status para compatibilidad con clientes antiguos)
-        const approvedClients = clients
-            .filter(c => !c.status || c.status === 'approved')
+        // La misma regla que la lista maestra de Clientes (pages/Clients.jsx):
+        // se esconde lo que está pendiente de validar, y nada más.
+        //
+        // Pedir status === 'approved' era más estricto que la lista, y cualquier
+        // ficha con otro estado (valores viejos de importaciones o de una copia
+        // restaurada) salía en Clientes pero desaparecía del buscador: la
+        // oficina la veía en la lista y no podía usarla en el albarán.
+        const fichasUsables = clients
+            .filter(c => c.status !== 'pending')
             .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         const results = [];
-        approvedClients.forEach(c => {
+        fichasUsables.forEach(c => {
             const nameMatch = !search || normalizeForSearch(c.name).includes(search);
             // Collect matching branches (keeping user's saved order)
             const matchingBranches = [];
@@ -593,12 +598,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     const updateDestSuggestions = (value) => {
         if (!clients) return;
         const search = normalizeForSearch(value);
-        // Solo mostrar clientes validados por administración
-        const approvedClients = clients
-            .filter(c => !c.status || c.status === 'approved')
+        // Misma regla que el remitente: fuera sólo lo que está pendiente de validar.
+        const fichasUsables = clients
+            .filter(c => c.status !== 'pending')
             .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         const results = [];
-        approvedClients.forEach(c => {
+        fichasUsables.forEach(c => {
             const nameMatch = !search || normalizeForSearch(c.name).includes(search);
             const matchingBranches = [];
             if (Array.isArray(c.branches) && c.branches.length > 0) {
@@ -1531,7 +1536,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                                     required
                                                 />
                                                 <datalist id="payer-clients-list">
-                                                    {(clients || []).filter(c => !c.status || c.status === 'approved').map(c => (
+                                                    {(clients || []).filter(c => c.status !== 'pending').map(c => (
                                                         <option key={`payer-${c.id}`} value={c.name} />
                                                     ))}
                                                     {(clients || []).flatMap(c => c.branches || []).map(b => (
