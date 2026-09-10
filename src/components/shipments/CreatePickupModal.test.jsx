@@ -6,12 +6,25 @@
 // teclearlo a mano. Estas pruebas fijan el mismo comportamiento en los dos.
 
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 
 // El número lo reserva el servidor; aquí se sustituye la llamada.
 const { reservar } = vi.hoisted(() => ({ reservar: vi.fn() }));
 vi.mock('../../utils/numeracionAlbaran', () => ({ reservarNumerosAlbaran: (...args) => reservar(...args) }));
-import CreatePickupModal from './CreatePickupModal';
+
+// Import dinámico tras vaciar el registro, igual que en numeracionAlbaran.test.js:
+// los ficheros comparten entorno Y registro de módulos (ver vitest.config.js).
+// Con el import estático, el componente se quedaba con la copia de
+// numeracionAlbaran que hubiera cargado otro fichero antes, sin el mock de
+// arriba: la recogida se numeraba con la implementación de verdad (REC-1 en vez
+// de REC-424) y estos tests pasaban o fallaban según en qué orden le tocara
+// ejecutar los ficheros a vitest, que lo decide con lo que tardaron la vez
+// anterior.
+let CreatePickupModal;
+beforeAll(async () => {
+    vi.resetModules();
+    CreatePickupModal = (await import('./CreatePickupModal')).default;
+});
 
 function abrirRecogida({ coverageZones = [] } = {}) {
     return render(
@@ -190,12 +203,24 @@ describe('CreatePickupModal — numeración y guardado', () => {
 
 describe('CreatePickupModal — captura de GPS al abrir', () => {
     let getCurrentPosition;
+    let geolocationOriginal;
 
     beforeEach(() => {
         getCurrentPosition = vi.fn((ok) => ok({ coords: { latitude: 37.586, longitude: -4.638 } }));
-        vi.stubGlobal('navigator', { ...navigator, geolocation: { getCurrentPosition } });
+        // Se toca SÓLO navigator.geolocation. Sustituir el navigator entero dejaba
+        // fuera userAgent (vive en el prototipo, así que el spread no se lo lleva)
+        // y no se deshacía al acabar: como los ficheros comparten entorno (ver
+        // vitest.config.js), el siguiente que cargara leaflet —que lee userAgent
+        // nada más importarse— reventaba entero.
+        geolocationOriginal = Object.getOwnPropertyDescriptor(navigator, 'geolocation');
+        Object.defineProperty(navigator, 'geolocation', { value: { getCurrentPosition }, configurable: true });
         reservar.mockReset();
         reservar.mockResolvedValue({ primero: 425, reservado: true });
+    });
+
+    afterEach(() => {
+        if (geolocationOriginal) Object.defineProperty(navigator, 'geolocation', geolocationOriginal);
+        else delete navigator.geolocation;
     });
 
     it('la oficina no captura el GPS: la recogida sale sin coordenadas de origen', async () => {
