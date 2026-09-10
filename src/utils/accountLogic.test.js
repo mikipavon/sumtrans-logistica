@@ -128,6 +128,34 @@ describe('calculateDailyAccount logic - Los 7 Casos de Negocio', () => {
         expect(result.collectedReembolsos).toBe(90);
     });
 
+    it('el detalle de reembolsos lleva la fecha DEL ALBARÁN, que es la que imprime el justificante', () => {
+        // Un reembolso de un albarán de días atrás, cobrado hoy: es justo el caso en
+        // el que el justificante sacaba la fecha del reloj del móvil y le ponía hoy.
+        const shipments = [{
+            id: 'R1', client: 'Cash Client', assignedDriverId: 1, amount: '30.00',
+            hasCod: true, codAmount: '148.19', codPaid: true, status: 'Entregado',
+            paidAt: today, date: '7/9/2026'
+        }];
+        const result = calculateDailyAccount({ allShipments: shipments, driverId: mockDriverId, clients: mockClients, collectedCollections: [] });
+        expect(result.allReimbursementsDetail).toHaveLength(1);
+        expect(result.allReimbursementsDetail[0].date).toBe('7/9/2026');
+    });
+
+    it('un reembolso cobrado a mano trae la fecha del albarán, no la del día en que se marcó cobrado', () => {
+        const shipments = [{ id: 'R2', client: 'Cash Client', assignedDriverId: 1, date: '3/9/2026', codPaid: true }];
+        // c.date es de hoy: es lo que hace que el cobro entre en la cuenta de hoy.
+        const collected = [{ id: 'M9', type: 'Reembolso', amount: '50.00', date: today, client: 'Cash Client', shipmentId: 'R2', driverId: 1 }];
+        const result = calculateDailyAccount({ allShipments: shipments, driverId: mockDriverId, clients: mockClients, collectedCollections: collected });
+        expect(result.allReimbursementsDetail[0].date).toBe('3/9/2026');
+    });
+
+    it('un porte cobrado a mano se lista con la fecha de su albarán, no con la del día del cobro', () => {
+        const shipments = [{ id: 'P9', client: 'Cash Client', assignedDriverId: 1, date: '3/9/2026', portePaid: true, amount: '40.00' }];
+        const collected = [{ id: 'M8', type: 'Porte', amount: '40.00', date: today, client: 'Cash Client', shipmentId: 'P9', driverId: 1 }];
+        const result = calculateDailyAccount({ allShipments: shipments, driverId: mockDriverId, clients: mockClients, collectedCollections: collected });
+        expect(result.allPorteDetail[0].date).toBe('3/9/2026');
+    });
+
     it('should include manual collections', () => {
         const collected = [{ id: 'M1', type: 'Porte', amount: '20.00', date: today, client: 'Manual' }];
         const result = calculateDailyAccount({ allShipments: [], driverId: mockDriverId, clients: [], collectedCollections: collected });
@@ -496,5 +524,139 @@ describe('portes Debido cobrados otro día no entran en la Cuenta de hoy', () =>
     it('entregado hoy sin hora de cobro guardada: sale', () => {
         const result = cuenta(porte({ deliveredAt: hoy, updatedAt: hoy }));
         expect(result.collectedPorte).toBe(7);
+    });
+});
+
+// ── Cobrar el porte no arrastra el reembolso (ni al revés) ───────────────────
+//
+// Caso real del 10/09/2026: el reembolso de Carmen lo cobró Juan Carlos hace días;
+// hoy un compañero cobra el porte que quedaba pendiente de ESE MISMO albarán. Como
+// `paidAt` era una sola fecha para los dos conceptos, el cobro del porte la pisaba
+// con la de hoy y la Cuenta le resucitaba a Juan Carlos el reembolso de otro día
+// (HAB-122: 382,80 € y HAB-145: 729,50 €, dinero que no llevaba encima).
+
+describe('cada concepto se fecha por su propio cobro', () => {
+    const driverId = 1;
+    const hoy = new Date().toISOString();
+    const ayer = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString(); })();
+
+    const cuenta = (envio) => calculateDailyAccount({
+        allShipments: [envio], driverId, clients: [], collectedCollections: []
+    });
+
+    const carmen = (extra = {}) => ({
+        id: 'HAB-122', porteType: 'Debido', status: 'Entregado', amount: '7.00',
+        hasCod: true, codAmount: '382.80', codPaid: true, codCollectedById: driverId,
+        assignedDriverId: driverId, client: 'Remitente', destinationName: 'Carmen',
+        deliveredAt: ayer, ...extra,
+    });
+
+    it('el reembolso se cobró ayer y hoy se cobra el porte: el reembolso NO vuelve a la caja de hoy', () => {
+        const result = cuenta(carmen({
+            codPaidAt: ayer,
+            portePaid: true, portePaidAt: hoy, porteCollectedById: driverId,
+            paidAt: hoy, // lo pisó el cobro del porte, y antes esto bastaba para resucitarlo
+            updatedAt: hoy,
+        }));
+        expect(result.collectedReembolsos).toBe(0);
+        expect(result.allReimbursementsDetail).toHaveLength(0);
+        // El porte, que sí se ha cobrado hoy, entra igual.
+        expect(result.collectedPorte).toBe(7);
+    });
+
+    it('al revés: el porte se cobró ayer y hoy se cobra el reembolso', () => {
+        const result = cuenta(carmen({
+            portePaid: true, portePaidAt: ayer, porteCollectedById: driverId,
+            codPaidAt: hoy,
+            paidAt: hoy,
+            updatedAt: hoy,
+        }));
+        expect(result.collectedPorte).toBe(0);
+        expect(result.collectedReembolsos).toBe(382.8);
+    });
+
+    it('los dos cobrados hoy: entran los dos', () => {
+        const result = cuenta(carmen({
+            portePaid: true, portePaidAt: hoy, porteCollectedById: driverId,
+            codPaidAt: hoy, paidAt: hoy, deliveredAt: hoy,
+        }));
+        expect(result.collectedPorte).toBe(7);
+        expect(result.collectedReembolsos).toBe(382.8);
+    });
+
+    it('albarán de antes del cambio (sin fechas por concepto): se sigue apañando con paidAt', () => {
+        const conFecha = cuenta(carmen({ paidAt: hoy }));
+        expect(conFecha.collectedReembolsos).toBe(382.8);
+
+        const deAyer = cuenta(carmen({ paidAt: ayer, updatedAt: hoy }));
+        expect(deAyer.collectedReembolsos).toBe(0);
+    });
+
+    it('un Porte Pagado cobrado en origen ayer no vuelve porque hoy se cobre el reembolso', () => {
+        const result = cuenta({
+            id: 'HAB-145', porteType: 'Pagado', status: 'Entregado', amount: '9.00',
+            client: 'Remitente', destinationName: 'Carmen',
+            portePaid: true, portePaidAt: ayer, porteCollectedById: driverId,
+            hasCod: true, codAmount: '729.50', codPaid: true, codCollectedById: driverId,
+            codPaidAt: hoy, paidAt: hoy,
+            assignedDriverId: driverId, date: '9/9/2026', updatedAt: hoy,
+        });
+        expect(result.collectedPorte).toBe(0);
+        expect(result.collectedReembolsos).toBe(729.5);
+    });
+});
+
+// -- La oficina corrige el precio de un albaran YA cobrado --------------------
+// El repartidor cobro 15 EUR de un porte que eran 12 y la oficina lo corrige en
+// la ficha. Manda el albaran: la Cuenta tiene que enseñar 12. Antes ganaba el
+// importe que el movil apunto al cobrar y se quedaba en 15 para siempre.
+
+describe('la oficina corrige el precio despues del cobro', () => {
+    const driverId = 1;
+    const hoy = new Date().toISOString();
+
+    it('el porte de la Cuenta pasa a ser el precio nuevo del albaran', () => {
+        const albaran = { id: 'HAB-122', porteType: 'Debido', status: 'Entregado', portePaid: true, assignedDriverId: driverId, amount: '12.00', customAmount: 12, destinationName: 'Mundo fiesta', paidAt: hoy };
+        const cobros = [{ id: 'COL-1', type: 'Porte', amount: '15.00', shipmentId: 'HAB-122', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [albaran], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.collectedPorte).toBe(12);
+        expect(result.allPorteDetail).toHaveLength(1);
+        expect(result.allPorteDetail[0].amount).toBe('12.00');
+        expect(result.dailyTotal).toBe(12);
+    });
+
+    it('el reembolso corregido tambien manda, y el total cuadra con sus lineas', () => {
+        const albaran = { id: 'SUM-667', status: 'Entregado', hasCod: true, codAmount: '100.00', codPaid: true, assignedDriverId: driverId, codPaidAt: hoy };
+        const cobros = [{ id: 'COL-2', type: 'Reembolso', amount: '112.80', shipmentId: 'SUM-667', date: hoy, client: 'ISPAVICARS' }];
+        const result = calculateDailyAccount({
+            allShipments: [albaran], driverId, clients: [], collectedCollections: cobros
+        });
+        const sumaLineas = result.allReimbursementsDetail.reduce((t, l) => t + parseAmount(l.amount), 0);
+        expect(result.collectedReembolsos).toBe(100);
+        expect(sumaLineas).toBe(100);
+    });
+
+    // Sin albaran que consultar no hay precio bueno que valga: se respeta lo que
+    // apunto el cobro, que es la unica constancia de ese dinero.
+    it('si el albaran no esta cargado, se queda el importe del cobro', () => {
+        const cobros = [{ id: 'COL-3', type: 'Porte', amount: '15.00', shipmentId: 'NO-CARGADO', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.collectedPorte).toBe(15);
+        expect(result.allPorteDetail[0].amount).toBe('15.00');
+    });
+
+    // "Tarifa" no es un precio: parsearlo da 0 y borraria el cobro de la caja.
+    it('un albaran con precio "Tarifa" no borra el importe cobrado', () => {
+        const albaran = { id: 'HAB-124', porteType: 'Debido', status: 'Entregado', portePaid: true, assignedDriverId: driverId, amount: 'Tarifa', paidAt: hoy };
+        const cobros = [{ id: 'COL-4', type: 'Porte', amount: '10.00', shipmentId: 'HAB-124', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [albaran], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.collectedPorte).toBe(10);
+        expect(result.allPorteDetail[0].amount).toBe('10.00');
     });
 });

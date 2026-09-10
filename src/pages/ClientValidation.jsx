@@ -3,10 +3,14 @@ import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calen
 import CreateClientModal from '../components/clients/CreateClientModal';
 import { supabase } from '../lib/supabase';
 import { getOwnerLabel } from '../utils/agencyOwnership';
-import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, loQueAportanLasGemelas, explicarAportacion } from '../utils/duplicadosClientes';
+import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, buscarSolicitudesParecidas, loQueAportanLasGemelas, explicarAportacion } from '../utils/duplicadosClientes';
 import { esRegistroWeb } from '../utils/altaClientes';
 import { planDeAcceso, explicarElAcceso } from '../utils/accesoFichaExistente';
 import { emailDeAcceso } from '../utils/clientAccess';
+// Una ficha puede llevar varios correos separados por ';'. El enlace mailto los
+// quiere separados por comas, así que se rearma en vez de meter el campo tal
+// cual: con el ';' el gestor de correo abre un destinatario inválido.
+import { correosDeFicha } from '../utils/correosDeFicha';
 
 // ── Llama a la Edge Function para enviar email de acceso al cliente ──
 // `email` es opcional y sólo se usa cuando el que espera el aviso no es el
@@ -92,7 +96,7 @@ function BloqueRegistroWeb({ client, enTarjeta }) {
             {client.email && (
                 <div className="flex items-center gap-2 min-w-0">
                     <Mail size={13} className="text-blue-400 shrink-0" />
-                    <a href={`mailto:${client.email}`} className="text-xs text-blue-700 font-medium truncate hover:underline" title={client.email}>
+                    <a href={`mailto:${correosDeFicha(client.email).join(",") || client.email}`} className="text-xs text-blue-700 font-medium truncate hover:underline" title={client.email}>
                         {client.email}
                     </a>
                 </div>
@@ -165,16 +169,58 @@ function AvisoRepetida({ client, gemelas, uniendo, onUnir, enTarjeta }) {
     );
 }
 
+// Aviso de parecida — otra solicitud de la lista se llama casi igual
+//
+// Sin botón de unir, y es a propósito: unir borra la otra ficha, y un nombre
+// parecido no da para eso. "Bar Manolo" y "Bar Manolo 2" pueden ser dos locales
+// de verdad. Esto pone las dos delante y decide quien las mira; si son la misma,
+// con dejarles el mismo nombre pasan a ser repetidas y ya sale el botón.
+function AvisoParecida({ parecidas, enTarjeta }) {
+    return (
+        <div className={`bg-amber-50 px-4 py-3 ${enTarjeta ? 'border-b border-amber-200' : 'rounded-lg border border-amber-200'}`}>
+            <div className="flex items-start gap-2">
+                <Copy size={15} className="text-amber-600 mt-0.5 shrink-0" />
+                <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-amber-800">
+                        Se llama casi igual que {parecidas.length === 1 ? 'otra de la lista' : `otras ${parecidas.length} de la lista`}
+                    </p>
+                    <ul className="mt-1 space-y-0.5">
+                        {parecidas.map(p => (
+                            <li key={p.id} className="text-xs text-amber-700 leading-snug">
+                                <span className="break-words font-bold">{p.name}</span>
+                                <span className="text-amber-500">
+                                    {p.city ? ` — ${p.city}` : ''}
+                                    {p.createdFrom ? ` — ${p.createdFrom}` : ''}
+                                </span>
+                            </li>
+                        ))}
+                    </ul>
+                    <p className="text-[10px] text-amber-600 mt-1.5 leading-snug">
+                        Míralas antes de aprobar. Si son la misma empresa, borra la que sobre —o
+                        déjales el mismo nombre y podrás unirlas—. Si son dos de verdad, aprueba
+                        tranquilo: esto sólo avisa, no toca nada.
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 // Aviso de duplicado — la empresa ya está en cartera
 function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, enTarjeta }) {
+    // Cuando lo único que hay es un nombre parecido, el aviso baja el tono: no
+    // es "ya la tienes", es "míralo antes".
+    const todoSonParecidos = parecidas.every(p => p.soloPorParecido);
     return (
         <div className={`bg-red-50 px-4 py-3 ${enTarjeta ? 'border-b border-red-200' : 'rounded-lg border border-red-200'}`}>
             <div className="flex items-start gap-2">
                 <AlertTriangle size={15} className="text-red-600 mt-0.5 shrink-0" />
                 <div className="min-w-0">
-                    <p className="text-xs font-bold text-red-800">Ya parece estar en tu cartera</p>
+                    <p className="text-xs font-bold text-red-800">
+                        {todoSonParecidos ? 'Se parece a una ficha que ya tienes' : 'Ya parece estar en tu cartera'}
+                    </p>
                     <ul className="mt-1 space-y-2">
-                        {parecidas.map(({ client: ficha, motivos, yaTieneAcceso }) => (
+                        {parecidas.map(({ client: ficha, motivos, yaTieneAcceso, soloPorParecido }) => (
                             <li key={ficha.id} className="text-xs text-red-700 leading-snug">
                                 <span className="font-bold break-words">{ficha.name}</span>
                                 {ficha.clientNumber && <span className="text-red-500"> (nº {ficha.clientNumber})</span>}
@@ -186,8 +232,11 @@ function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, enTarjeta
                                     </span>
                                 )}
                                 {/* Lo que casi siempre hay que hacer con un registro web en rojo:
-                                    no es un cliente nuevo, es el de siempre pidiendo entrar. */}
-                                {emailDeAcceso(client) && (
+                                    no es un cliente nuevo, es el de siempre pidiendo entrar.
+                                    Con un nombre parecido a secas no se ofrece: darle el acceso
+                                    a la ficha equivocada mete a una empresa en los envíos de
+                                    otra, y eso no se arregla borrando nada. */}
+                                {emailDeAcceso(client) && !soloPorParecido && (
                                     <button
                                         onClick={() => onDarAcceso(client, ficha)}
                                         disabled={dandoAcceso}
@@ -201,9 +250,11 @@ function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, enTarjeta
                         ))}
                     </ul>
                     <p className="text-[10px] text-red-600 mt-1.5 leading-snug">
-                        {emailDeAcceso(client)
-                            ? 'Con el botón, la ficha de siempre se queda como está y sólo se le pone el acceso: la solicitud se borra y no queda una segunda ficha. Aprobarla, en cambio, crea la segunda y el cliente entrará a la nueva —vacía—, no a la suya.'
-                            : 'Aprobarla crea una segunda ficha, y el cliente entrará a la nueva —vacía—, no a la suya.'}
+                        {todoSonParecidos
+                            ? 'Sólo se parecen los nombres, así que no se da por hecho nada: compruébalo tú. Si es la misma empresa, aprobarla crea una segunda ficha y el cliente entrará a la nueva —vacía—, no a la suya.'
+                            : emailDeAcceso(client)
+                                ? 'Con el botón, la ficha de siempre se queda como está y sólo se le pone el acceso: la solicitud se borra y no queda una segunda ficha. Aprobarla, en cambio, crea la segunda y el cliente entrará a la nueva —vacía—, no a la suya.'
+                                : 'Aprobarla crea una segunda ficha, y el cliente entrará a la nueva —vacía—, no a la suya.'}
                     </p>
                 </div>
             </div>
@@ -344,6 +395,33 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
         return mapa;
     }, [pendingClients]);
 
+    // ── Solicitudes que sólo se llaman casi igual ──
+    // Aparte de las gemelas, y sin botón de unir: unir borra fichas y para eso
+    // hace falta una coincidencia segura, no un parecido. Esto es el aviso de
+    // "míralas antes de aprobar", que es justo lo que se escapaba: bastaba con
+    // que a una le sobrara el S.L. para que pasaran por dos empresas.
+    const parecidasEnLaLista = useMemo(() => {
+        const mapa = new Map();
+        pendingClients.forEach(p => {
+            const parecidas = buscarSolicitudesParecidas(p, pendingClients);
+            if (parecidas.length > 0) mapa.set(p.id, parecidas);
+        });
+        return mapa;
+    }, [pendingClients]);
+
+    // Cuántos grupos de nombres parecidos hay, no cuántas tarjetas se señalan.
+    const cuantosParecidos = useMemo(() => {
+        const vistos = new Set();
+        let grupos = 0;
+        pendingClients.forEach(p => {
+            if (vistos.has(p.id) || !parecidasEnLaLista.has(p.id)) return;
+            grupos += 1;
+            vistos.add(p.id);
+            parecidasEnLaLista.get(p.id).forEach(g => vistos.add(g.id));
+        });
+        return grupos;
+    }, [pendingClients, parecidasEnLaLista]);
+
     // Cuántos clientes distintos están repetidos (no cuántas tarjetas sobran).
     const cuantosRepetidos = useMemo(() => {
         const vistos = new Set();
@@ -446,6 +524,20 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                 `(coordenadas, teléfono...).\n\n` +
                 `Lo suyo es usar antes «Quedarme con ésta y unir las demás».\n\n` +
                 `¿Aprobar sólo ésta de todas formas?`
+            );
+            if (!seguir) return false;
+        }
+
+        // Las que sólo se llaman casi igual: aquí no se puede afirmar nada, así
+        // que se enseñan los dos nombres y decide el que mira. No se ofrece unir
+        // ni borrar: si son la misma, se hace a mano.
+        const seParecen = parecidasEnLaLista.get(clientId);
+        if (seParecen && seParecen.length > 0) {
+            const seguir = window.confirm(
+                `⚠️ En la lista hay ${seParecen.length === 1 ? 'otra solicitud que se llama' : `otras ${seParecen.length} solicitudes que se llaman`} casi igual:\n\n` +
+                seParecen.map(p => `   • ${p.name}${p.city ? ` — ${p.city}` : ''}`).join('\n') +
+                `\n\nPuede ser la misma empresa escrita de otra forma, o pueden ser dos de verdad.\n\n` +
+                `¿Aprobar ésta?`
             );
             if (!seguir) return false;
         }
@@ -614,6 +706,13 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                             <span className="text-orange-600">repetidos en la lista</span>
                         </div>
                     )}
+                    {cuantosParecidos > 0 && (
+                        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl">
+                            <Copy size={18} className="text-amber-600" />
+                            <span className="font-bold text-amber-700">{cuantosParecidos}</span>
+                            <span className="text-amber-600">con nombre parecido</span>
+                        </div>
+                    )}
                     {duplicadosPorCliente.size > 0 && (
                         <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border border-red-200 rounded-xl">
                             <AlertTriangle size={18} className="text-red-600" />
@@ -715,6 +814,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                         const web = esRegistroWeb(client);
                         const gemelas = gemelasPorCliente.get(client.id);
                         const parecidas = duplicadosPorCliente.get(client.id);
+                        const casiIgual = parecidasEnLaLista.get(client.id);
                         const seleccionado = selectedIds.includes(client.id);
                         const dato = 'flex items-center gap-1 min-w-0';
                         return (
@@ -762,7 +862,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                                 <span className={dato}><Phone size={12} className="text-slate-400 shrink-0" />{client.phone}</span>
                                             )}
                                             {client.email && (
-                                                <a href={`mailto:${client.email}`} className={`${dato} text-blue-700 hover:underline`} title={client.email}>
+                                                <a href={`mailto:${correosDeFicha(client.email).join(",") || client.email}`} className={`${dato} text-blue-700 hover:underline`} title={client.email}>
                                                     <Mail size={12} className="text-blue-400 shrink-0" /><span className="truncate">{client.email}</span>
                                                 </a>
                                             )}
@@ -833,7 +933,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                 </div>
 
                                 {/* Avisos, siempre a la vista: son lo que decide qué hacer con la ficha */}
-                                {(gemelas || parecidas) && (
+                                {(gemelas || parecidas || casiIgual) && (
                                     <div className="px-3 pb-2 sm:pl-12 grid grid-cols-1 md:grid-cols-2 gap-2">
                                         {gemelas && (
                                             <AvisoRepetida
@@ -843,6 +943,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                                 onUnir={handleUnirGemelas}
                                             />
                                         )}
+                                        {casiIgual && <AvisoParecida parecidas={casiIgual} />}
                                         {parecidas && (
                                             <AvisoDuplicado
                                                 client={client}
@@ -901,6 +1002,10 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                     onUnir={handleUnirGemelas}
                                     enTarjeta
                                 />
+                            )}
+
+                            {parecidasEnLaLista.has(client.id) && (
+                                <AvisoParecida parecidas={parecidasEnLaLista.get(client.id)} enTarjeta />
                             )}
 
                             {duplicadosPorCliente.has(client.id) && (

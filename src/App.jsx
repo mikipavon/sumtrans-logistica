@@ -48,7 +48,7 @@ import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, fichaSinContras
 import { planDeAcceso } from './utils/accesoFichaExistente';
 import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNombreCliente } from './utils/altaClientes';
 import { establecerContextoDeError } from './utils/errorLog';
-import { avisarAlPadre } from './utils/ventanaPadre';
+import { avisarAlPadre, hayAutoLoginPendiente } from './utils/ventanaPadre';
 import { CLAVE_HORARIO_REPARTO, HORARIO_REPARTO_POR_DEFECTO, normalizarHorarioReparto } from './utils/turnos';
 import { getIrregularReasons, fichaDelDestinatario } from './utils/shipmentUtils';
 import {
@@ -198,7 +198,14 @@ const GHOST_PASS_KEY = 'ghost_mode_pass';
 
 function App() {
   // ── Restaurar sesión LOCAL instantáneamente (para sobrevivir a Android matando la página) ──
+  //
+  // Menos cuando la carga viene mandada por la web padre. Esta nota es de la
+  // pestaña, no una credencial, y dentro del portal de sumtransportes.com
+  // adelantaría al cliente ANTERIOR mientras llegan las credenciales del que
+  // de verdad está entrando. Al repartidor, que es para quien se hizo esto, no
+  // le afecta: su móvil no va embebido en ninguna web.
   const savedSession = (() => {
+    if (hayAutoLoginPendiente()) return null;
     try {
       const s = sessionStorage.getItem('sumtrans_session');
       if (s) return JSON.parse(s);
@@ -276,6 +283,28 @@ function App() {
 
     async function restoreSession() {
       try {
+        // ── Dentro del portal de la web padre manda ella, no lo guardado aquí ──
+        //
+        // El 10/09/2026 un cliente vio los albaranes de otra empresa. No hubo
+        // ningún fallo de permisos: la web mandó unas credenciales, esta
+        // función encontró en localStorage la sesión del cliente anterior —que
+        // sobrevive a cerrar la pestaña y el navegador— y como nadie espera a
+        // nadie (isRestoringSession no se mira al pintar), la sesión vieja ganó
+        // la carrera. El portal enseñó a AGRO mientras el acceso que se estaba
+        // intentando era el de TIPECAM, y encima la web avisaba de que las
+        // credenciales no valían: las dos cosas a la vez y ninguna verdad.
+        //
+        // Así que aquí no se restaura nada: quien entra lo dicen las
+        // credenciales que llegan, y de cerrar la sesión que hubiera se encarga
+        // el propio auto-login justo antes de usarlas (ver intentarAutoLogin).
+        // Se hace allí y no aquí a propósito: dos sitios cerrando sesión a la
+        // vez es una carrera nueva, y un signOut que llegue tarde tiraría la
+        // sesión buena recién creada.
+        if (hayAutoLoginPendiente()) {
+          console.log('[Session] La web padre manda credenciales: no se restaura ninguna sesión guardada.');
+          return;
+        }
+
         const session = await getCurrentSession();
         if (session && !cancelled) {
           const profile = await getUserProfile();
@@ -1817,6 +1846,18 @@ function App() {
             if (renumerado) {
               setShipments(prev => prev.map(s => s.id === op.shipmentId ? { ...s, id: idFinal } : s));
             }
+            // Ahora que el albarán está guardado se puede retirar la recogida de la
+            // que salió. Se quedó en la base de datos a propósito mientras el alta
+            // esperaba cobertura: así, si el móvil se pierde antes de sincronizar,
+            // la recogida sigue estando y el trabajo no desaparece.
+            if (op.originalPickupId && op.originalPickupId !== idFinal) {
+              const { error: delErr } = await supabase.from('shipments').delete().eq('id', op.originalPickupId);
+              if (delErr) {
+                console.warn(`[OfflineQueue] ${op.shipmentId} se guardó pero la recogida ${op.originalPickupId} no se pudo retirar:`, delErr);
+              } else {
+                setShipments(prev => prev.filter(s => s.id !== op.originalPickupId));
+              }
+            }
             // El remitente, ahora que hay cobertura. Este albarán se hizo sin
             // red, así que su ficha no llegó a crearse y el envío se quedaba
             // apuntando a un cliente que no estaba en ninguna parte.
@@ -1973,6 +2014,24 @@ function App() {
     // Un fallo aquí es del servidor (no "ese correo no existe"), así que se
     // lanza para que la pantalla pueda decir que se reintente.
     if (error) throw error;
+  };
+
+  // ── Antes de un auto-login, fuera lo que hubiera ──
+  //
+  // La web padre está diciendo QUIÉN entra. La sesión guardada en este
+  // navegador es de otro momento y puede ser de otra empresa, así que no puede
+  // sobrevivir al intento: si las credenciales fallan y no se ha cerrado, el
+  // que está delante se queda mirando el portal del cliente anterior.
+  //
+  // Con tope de tiempo porque esto va por delante del acceso: un signOut que se
+  // quede colgado no puede dejar a nadie sin poder entrar. Si falla, da igual —
+  // el signInWithPassword que viene detrás sustituye la sesión de todos modos.
+  const cerrarSesionPrevia = async () => {
+    try {
+      await conTopeDeTiempo(supabase.auth.signOut(), 5);
+    } catch (e) {
+      console.warn('[AutoLogin] No se ha podido cerrar la sesión anterior:', e);
+    }
   };
 
   const handleLogin = async (role = 'admin', username = '', password = '') => {
@@ -2611,6 +2670,10 @@ function App() {
           deliveryPhoto: null,
           deliveryCoordinates: null,
           paidAt: null,
+          // Las fechas de cobro de cada concepto van con paidAt: si se quedaran
+          // puestas, la Cuenta seguiría fechando por ellas el cobro que se revierte.
+          portePaidAt: null,
+          codPaidAt: null,
           isPaid: false,
           isCodPaid: false,
           porteCollectedById: null,
@@ -3069,6 +3132,10 @@ function App() {
         type: 'createShipment',
         shipmentId: shipmentWithMeta.id,
         shipmentData: shipmentWithMeta,
+        // La recogida de la que sale este albarán sigue viva en la base de datos: se
+        // retira al vaciar la cola, cuando el albarán ya esté guardado. Si el alta
+        // nunca llega a sincronizar, la recogida sigue ahí y no se pierde el trabajo.
+        originalPickupId: originalPickupId || null,
         timestamp: Date.now(),
       });
       setPendingQueueCount(qLen);
@@ -3088,13 +3155,7 @@ function App() {
     }
 
     try {
-      // 1. If replacing an existing pickup, delete it FIRST to avoid Primary Key collisions
-      if (originalPickupId) {
-        const { error: delErr } = await supabase.from('shipments').delete().eq('id', originalPickupId);
-        if (delErr) console.warn("Could not delete original pickup (might be same ID):", delErr);
-      }
-
-      // 2. Save new shipment to Supabase. Con insert, NO con upsert: el número
+      // 1. Save new shipment to Supabase. Con insert, NO con upsert: el número
       // se calcula en cada aparato y dos a la vez pueden sacar el mismo; el
       // upsert dejaba que el segundo pisara al primero sin avisar (07/09/2026,
       // SUM-518). Si el número ya existe, darDeAltaSinPisar pide otro y reintenta.
@@ -3127,10 +3188,19 @@ function App() {
 
       const newShipmentFromDB = (data && data[0]) ? { ...data[0].data, id: data[0].id } : { ...shipmentWithMeta };
 
-      // 2. Update local state
-      // (el pickup original ya se borró en el paso 1, antes del upsert — repetir el
-      // delete aquí era una llamada de red redundante, y si el nuevo albarán reutiliza
-      // el mismo id que el pickup, borraba la fila que se acababa de crear)
+      // 2. Retirar la recogida de la que salió este albarán. Va DESPUÉS del alta y sólo
+      // si el alta ha ido bien: borrándola antes, un error que no fuera de red (el
+      // `alert` de ahí arriba) dejaba a la oficina sin las dos cosas — la recogida ya
+      // borrada y el albarán sin crear, con su cobro dentro. Si el borrado falla, lo
+      // peor que queda es la recogida repetida, que se ve y se arregla a mano.
+      // La guarda del id es por si el albarán se quedara con el número de la recogida:
+      // sin ella se borraría la fila que se acaba de crear.
+      if (originalPickupId && originalPickupId !== idFinal) {
+        const { error: delErr } = await supabase.from('shipments').delete().eq('id', originalPickupId);
+        if (delErr) console.warn('[handleAddShipment] El albarán se guardó pero la recogida no se pudo retirar:', delErr);
+      }
+
+      // 3. Update local state
       if (originalPickupId) {
         setShipments(prev => {
           const filtered = prev.filter(s => s.id !== originalPickupId);
@@ -4671,6 +4741,7 @@ function App() {
     return (
       <Login
         onLogin={handleLogin}
+        onCerrarSesionPrevia={cerrarSesionPrevia}
         onRecuperarContrasena={pedirCorreoDeRecuperacion}
         aviso={avisoDeSesion}
         onAvisoVisto={() => setAvisoDeSesion('')}
@@ -4806,8 +4877,8 @@ function App() {
   <Layout
       onLogout={handleLogout}
       currentView={currentView}
-      onNavigate={setCurrentView}
-      pendingClientsCount={pendingClientsCount} 
+      onNavigate={(view, filtro) => { setShipmentStatusFilter(filtro || null); setCurrentView(view); }}
+      pendingClientsCount={pendingClientsCount}
       pendingIncidentsCount={visibleShipments.filter(s => s.incidentStatus === 'active' || s.status === 'Incidencia').length}
       irregularCount={irregularCount}
       shipments={visibleShipments}

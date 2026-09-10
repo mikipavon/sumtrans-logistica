@@ -242,6 +242,10 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                         finalFormData.deliveryPhoto = null;
                         finalFormData.deliveryCoordinates = null;
                         finalFormData.paidAt = null;
+                        // Las fechas de cobro de cada concepto van con la misma suerte: si
+                        // se quedaran puestas, la Cuenta seguiría fechando por ellas.
+                        finalFormData.portePaidAt = null;
+                        finalFormData.codPaidAt = null;
                         finalFormData.receiverName = null;
                         finalFormData.receiverId = null;
                     } else {
@@ -256,10 +260,12 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                 // REVERSION DE COBROS MANUAL POR ADMINISTRADOR
                 if (shipment.portePaid && !finalFormData.portePaid) {
                     finalFormData.porteCollectedById = null;
+                    finalFormData.portePaidAt = null; // Ya no hay cobro que fechar
                     finalFormData.isPaid = false; // Compatibilidad
                 }
                 if (shipment.hasCod && shipment.codPaid && !finalFormData.codPaid) {
                     finalFormData.codCollectedById = null;
+                    finalFormData.codPaidAt = null; // Ya no hay cobro que fechar
                     finalFormData.isCodPaid = false; // Compatibilidad
                 }
 
@@ -1194,6 +1200,42 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                         </div>
                     )}
 
+                    {/* ── DEVOLUCIÓN DE DOCUMENTACIÓN FIRMADA ──
+                        Esta casilla sólo estaba en el alta (CreateShipmentModal). Si a la oficina
+                        se le olvidaba marcarla al crear el albarán —lo normal con las agencias,
+                        que casi siempre piden el papel de vuelta— ya no había manera de añadirlo:
+                        había que dar el albarán de baja y volver a teclearlo. Aquí se puede marcar
+                        al editar, y a partir de ese momento el repartidor ve el aviso "Papel
+                        Firmado" al abrir la entrega y la foto del documento le pasa a ser
+                        obligatoria (DeliveryConfirmationModal). */}
+                    {((isEditing && !isReadOnly) || formData.needsSignatureReturn) && (
+                        <div className={`p-4 rounded-xl border shadow-sm transition-colors ${formData.needsSignatureReturn ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-gray-200'}`}>
+                            {isEditing && !isReadOnly ? (
+                                <label className="flex items-center gap-3 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={!!formData.needsSignatureReturn}
+                                        onChange={(e) => setFormData({ ...formData, needsSignatureReturn: e.target.checked })}
+                                        className="w-5 h-5 rounded text-emerald-600 border-gray-300 focus:ring-emerald-500"
+                                    />
+                                    <div className="flex-1">
+                                        <span className="text-sm font-bold text-slate-800 block leading-none mb-1">📄 Devolver Documentación Firmada</span>
+                                        <span className="text-[10px] text-slate-500 uppercase leading-none block">El repartidor recoge el papel firmado y le hace foto</span>
+                                    </div>
+                                    <FileText size={16} className={formData.needsSignatureReturn ? 'text-emerald-600' : 'text-slate-300'} />
+                                </label>
+                            ) : (
+                                <div className="flex items-center gap-3">
+                                    <FileText size={16} className="text-emerald-600" />
+                                    <div className="flex-1">
+                                        <span className="text-sm font-bold text-emerald-800 block leading-none mb-1">📄 Devolver Documentación Firmada</span>
+                                        <span className="text-[10px] text-emerald-600 uppercase leading-none block">El repartidor recoge el papel firmado y le hace foto</span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {/* Observations */}
                     <div className={`p-4 rounded-xl border ${isEditing ? 'bg-white border-gray-200' : 'bg-yellow-50 border-yellow-100'} transition-colors`}>
                         {renderField("Observaciones", formData.observations, "observations", <FileText />, "textarea", true)}
@@ -1276,43 +1318,78 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                         </div>
                     )}
 
-                    {/* Incidencia Activa */}
-                    {shipment.incidentStatus === 'active' && (
-                        <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 space-y-3 animate-in fade-in slide-in-from-bottom-2">
-                            <h3 className="font-bold text-red-700 text-[10px] uppercase tracking-wider flex items-center gap-2 border-b border-red-100 pb-2">
-                                <Shield size={14} className="text-red-500" />
-                                INCIDENCIA REPORTADA
+                    {/* Incidencia — abierta o ya resuelta.
+                        Antes esto sólo se pintaba mientras estuviera abierta, así que al
+                        resolverla (o al entregar el envío, que la cierra sola) el motivo y
+                        la foto desaparecían de la ficha aunque siguieran guardados. */}
+                    {(shipment.incidentStatus === 'active' || shipment.incidentStatus === 'resolved') && (() => {
+                        const abierta = shipment.incidentStatus === 'active';
+                        const c = abierta
+                            ? { caja: 'bg-red-50 border-red-200', titulo: 'text-red-700', linea: 'border-red-100', etiqueta: 'text-red-400', texto: 'text-red-900', borde: 'border-red-100', icono: 'text-red-500' }
+                            : { caja: 'bg-slate-50 border-slate-200', titulo: 'text-slate-600', linea: 'border-slate-200', etiqueta: 'text-slate-400', texto: 'text-slate-700', borde: 'border-slate-200', icono: 'text-slate-400' };
+                        return (
+                        <div className={`${c.caja} border-2 rounded-xl p-4 space-y-3 animate-in fade-in slide-in-from-bottom-2`}>
+                            <h3 className={`font-bold ${c.titulo} text-[10px] uppercase tracking-wider flex items-center gap-2 border-b ${c.linea} pb-2`}>
+                                <Shield size={14} className={c.icono} />
+                                {abierta ? 'INCIDENCIA REPORTADA' : 'INCIDENCIA RESUELTA'}
                             </h3>
                             <div className="space-y-4">
                                 <div>
-                                    <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider block mb-1">Motivo / Nota del Conductor</span>
-                                    <p className="text-sm font-bold text-red-900 bg-white/50 p-2 rounded-lg border border-red-100">
+                                    <span className={`text-[10px] font-bold ${c.etiqueta} uppercase tracking-wider block mb-1`}>Motivo / Nota del Conductor</span>
+                                    <p className={`text-sm font-bold ${c.texto} bg-white/50 p-2 rounded-lg border ${c.borde}`}>
                                         "{shipment.incidentReason || 'Sin motivo especificado'}"
                                     </p>
                                 </div>
-                                {shipment.incidentPhoto && (
+                                {shipment.incidentCoordinates && (
                                     <div>
-                                        <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider block mb-1">Evidencia Visual</span>
-                                        <div className="relative group bg-white border border-red-200 rounded-xl overflow-hidden aspect-video flex items-center justify-center p-1 shadow-sm">
-                                            <img 
-                                                src={shipment.incidentPhoto} 
-                                                alt="Foto de la incidencia" 
+                                        <span className={`text-[10px] font-bold ${c.etiqueta} uppercase tracking-wider block mb-1`}>Dónde se reportó</span>
+                                        <a
+                                            href={`https://www.google.com/maps?q=${encodeURIComponent(shipment.incidentCoordinates)}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className={`text-sm font-bold ${c.texto} bg-white/50 p-2 rounded-lg border ${c.borde} flex items-center gap-2 hover:underline`}
+                                        >
+                                            <MapPin size={14} className={c.icono} />
+                                            {shipment.incidentCoordinates}
+                                        </a>
+                                    </div>
+                                )}
+                                <div>
+                                    <span className={`text-[10px] font-bold ${c.etiqueta} uppercase tracking-wider block mb-1`}>Evidencia Visual</span>
+                                    {shipment.incidentPhoto ? (
+                                        <div className={`relative group bg-white border ${c.borde} rounded-xl overflow-hidden aspect-video flex items-center justify-center p-1 shadow-sm`}>
+                                            <img
+                                                src={shipment.incidentPhoto}
+                                                alt="Foto de la incidencia"
                                                 className="max-w-full max-h-full object-contain rounded-lg"
                                             />
-                                            <a 
-                                                href={shipment.incidentPhoto} 
-                                                target="_blank" 
+                                            <a
+                                                href={shipment.incidentPhoto}
+                                                target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="absolute inset-0 bg-red-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2 text-xs font-bold backdrop-blur-[1px]"
+                                                className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2 text-xs font-bold backdrop-blur-[1px]"
                                             >
                                                 <ExternalLink size={14} /> Ver Foto Completa
                                             </a>
                                         </div>
-                                    </div>
-                                )}
+                                    ) : shipment.proofUploadPending ? (
+                                        // Hay foto, pero se quedó en el móvil esperando cobertura.
+                                        // Sin este aviso era idéntico a no haberla hecho.
+                                        <p className="text-sm font-bold text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-200 flex items-center gap-2">
+                                            <Camera size={14} className="text-amber-500 shrink-0" />
+                                            El conductor hizo foto pero aún no ha subido del móvil. Aparecerá aquí en cuanto tenga cobertura.
+                                        </p>
+                                    ) : (
+                                        <p className={`text-sm ${c.etiqueta} bg-white/50 p-2 rounded-lg border ${c.borde} flex items-center gap-2`}>
+                                            <ImageIcon size={14} className="shrink-0" />
+                                            El conductor no adjuntó foto (es opcional al reportar).
+                                        </p>
+                                    )}
+                                </div>
                             </div>
                         </div>
-                    )}
+                        );
+                    })()}
 
                     {/* Audit Trail */}
                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">

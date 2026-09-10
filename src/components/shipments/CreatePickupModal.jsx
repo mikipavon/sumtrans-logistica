@@ -95,11 +95,14 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
             setAvisoGuardado(null);
             setGuardando(false);
             numeroReservadoRef.current = null;
-        } else {
-            // Try auto-capture on open if supported
+        } else if (isDriver) {
+            // Sólo el conductor está donde se recoge. Si lo capturaba también la
+            // oficina, el cliente nuevo nacía con las coordenadas de la oficina
+            // y luego el GPS bueno del repartidor no las pisaba (sólo rellena
+            // huecos).
             captureGps();
         }
-    }, [isOpen]);
+    }, [isOpen, isDriver]);
 
     const captureGps = () => {
         if (!navigator.geolocation) return;

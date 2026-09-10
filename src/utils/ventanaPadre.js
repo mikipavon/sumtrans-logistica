@@ -29,7 +29,16 @@
 //         }, PORTAL);
 //       }
 //       if (e.data?.type === 'SUM_CLIENT_LOGIN_SUCCESS') { /* ocultar spinner */ }
-//       if (e.data?.type === 'SUM_CLIENT_LOGIN_FAILED')  { /* mostrar error */ }
+//       if (e.data?.type === 'SUM_CLIENT_LOGIN_FAILED') {
+//         // OJO: el mensaje lo manda el portal, que es el único que sabe por qué
+//         // ha fallado. La web NO debe tener su propio texto fijo: hoy enseña
+//         // "Credenciales inválidas" pase lo que pase, y cuando el que falla es
+//         // el servidor eso es mentira — manda al cliente a cambiar una
+//         // contraseña que está bien. Ver el comentario de intentarAutoLogin.
+//         //   e.data.motivo === 'credenciales' → la contraseña o el usuario no valen
+//         //   e.data.motivo === 'servidor'     → no ha contestado; que vuelva a probar
+//         alert(e.data.mensaje || 'No se ha podido entrar. Inténtalo de nuevo.');
+//       }
 //     });
 //   </script>
 //
@@ -67,6 +76,31 @@ export const estamosEmbebidos = () => {
 
 /** ¿Este origen es una de las webs que tienen permiso para hablarnos? */
 export const esOrigenPadrePermitido = (origen) => ORIGENES_PADRE.includes(origen);
+
+/**
+ * ¿Esta carga la manda la web padre, con credenciales por delante?
+ *
+ * Importa para una cosa concreta: cuando es que sí, quien decide qué cliente
+ * entra son esas credenciales, NO la sesión que quedara guardada en este
+ * navegador. Sin esa distinción pasaba lo del 10/09/2026: la web mandaba las
+ * credenciales de un cliente, la sesión guardada era la del cliente anterior, y
+ * como nadie esperaba a nadie ganaba la guardada — el portal enseñaba los
+ * albaranes de otra empresa mientras la web avisaba de que el acceso había
+ * fallado. Ver restoreSession en App.jsx.
+ *
+ * Estar embebidos basta: este portal no se mete en el iframe de nadie más, y
+ * ante la duda lo seguro es no dar por buena una sesión que no ha pedido quien
+ * nos abre.
+ */
+export const hayAutoLoginPendiente = () => {
+  if (estamosEmbebidos()) return true;
+  try {
+    // El canal viejo, mientras siga vivo: las credenciales en la URL.
+    return new URLSearchParams(window.location.search).get('autoLogin') === 'true';
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Manda un aviso a la web que nos embebe, uno por cada origen permitido.

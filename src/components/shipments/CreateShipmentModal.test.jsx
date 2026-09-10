@@ -88,3 +88,64 @@ describe('CreateShipmentModal — alta de artículos desde el desplegable', () =
         expect(lineas('BLT_6')).toHaveLength(1);
     });
 });
+
+// ── El buscador escondía fichas que sí salen en la lista de Clientes ──
+//
+// La lista maestra de Clientes sólo esconde lo que está pendiente de validar.
+// El buscador del albarán pedía status === 'approved', más estricto, así que
+// una ficha con cualquier otro estado (los que deja una importación o una copia
+// restaurada) se veía en Clientes y no había forma de ponerla en un albarán.
+
+const CLIENTES_POR_ESTADO = [
+    { id: 1, name: 'ADAMUZ Y CENTELLA EL PLANE', status: 'activo', city: 'CORDOBA' },
+    { id: 2, name: 'ADAMUZ RECIEN DADO DE ALTA', status: 'pending', city: 'CORDOBA' },
+    { id: 3, name: 'ADAMUZ DE TODA LA VIDA', status: 'approved', city: 'CORDOBA' },
+    { id: 4, name: 'ADAMUZ SIN ESTADO', city: 'CORDOBA' },
+];
+
+function abrirAltaConClientes() {
+    return render(
+        <CreateShipmentModal
+            isOpen
+            onClose={vi.fn()}
+            onSave={vi.fn()}
+            clients={CLIENTES_POR_ESTADO}
+            allPoblaciones={['CORDOBA']}
+            tariffs={[]}
+            articles={[]}
+            defaultCodFee={0}
+            familyOrder={[]}
+            coverageZones={[]}
+            allShipments={[]}
+        />
+    );
+}
+
+describe('CreateShipmentModal — qué fichas ofrece el buscador', () => {
+    it('ofrece la ficha con un estado distinto de approved, igual que la lista de Clientes', () => {
+        abrirAltaConClientes();
+
+        fireEvent.change(screen.getByPlaceholderText('Buscar cliente...'), { target: { value: 'adamuz' } });
+
+        expect(screen.getByText('ADAMUZ Y CENTELLA EL PLANE')).toBeInTheDocument();
+        expect(screen.getByText('ADAMUZ DE TODA LA VIDA')).toBeInTheDocument();
+        expect(screen.getByText('ADAMUZ SIN ESTADO')).toBeInTheDocument();
+    });
+
+    it('sigue escondiendo lo que está pendiente de validar', () => {
+        abrirAltaConClientes();
+
+        fireEvent.change(screen.getByPlaceholderText('Buscar cliente...'), { target: { value: 'adamuz' } });
+
+        expect(screen.queryByText('ADAMUZ RECIEN DADO DE ALTA')).not.toBeInTheDocument();
+    });
+
+    it('aplica la misma regla al destinatario', () => {
+        abrirAltaConClientes();
+
+        fireEvent.change(screen.getByPlaceholderText('Buscar destino...'), { target: { value: 'adamuz' } });
+
+        expect(screen.getByText('ADAMUZ Y CENTELLA EL PLANE')).toBeInTheDocument();
+        expect(screen.queryByText('ADAMUZ RECIEN DADO DE ALTA')).not.toBeInTheDocument();
+    });
+});

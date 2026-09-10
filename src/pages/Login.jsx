@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { Truck, ArrowRight, Shield, User, Eye, EyeOff } from 'lucide-react';
 import { avisarAlPadre, esOrigenPadrePermitido, estamosEmbebidos } from '../utils/ventanaPadre';
+import { mensajeDeCredenciales } from '../utils/mensajesDeLogin';
 
-export default function Login({ onLogin, onRecuperarContrasena, aviso = '', onAvisoVisto }) {
+export default function Login({ onLogin, onCerrarSesionPrevia, onRecuperarContrasena, aviso = '', onAvisoVisto }) {
     const emailRef = useRef(null);
     const passwordRef = useRef(null);
     const [showPassword, setShowPassword] = useState(false);
@@ -23,7 +24,22 @@ export default function Login({ onLogin, onRecuperarContrasena, aviso = '', onAv
     }, [activeTab]);
 
     // ── Auto-login: intenta entrar con las credenciales que manda la web padre ──
-    // Reintenta porque la primera carga puede pillar la base de datos aún despertando.
+    //
+    // Reintenta porque la primera carga puede pillar la base de datos aún
+    // despertando. Lo que no puede hacer es reintentar a ciegas y acabar
+    // siempre en el mismo aviso: hasta el 10/09/2026 el `catch` de este bucle
+    // se tragaba también los fallos de conexión, así que un servidor que no
+    // contestaba gastaba los ocho intentos y terminaba diciendo que las
+    // credenciales no valían — con la contraseña bien puesta. Es exactamente el
+    // enredo que errorDeServidorSiLoEs quitó del login a mano, colándose otra
+    // vez por aquí.
+    //
+    // Ahora cada final se distingue, y cada uno se reintenta lo que debe:
+    //   • Auth contesta que no  → se para en el primer intento. Repetirlo no
+    //     cambia la respuesta, y ocho envíos seguidos se ganan un 429 que
+    //     además se leería como "demasiados intentos" y taparía el motivo real.
+    //   • El servidor no contesta → se reintenta, que para eso está el bucle, y
+    //     si se agotan los intentos se dice que ha sido el servidor.
     const intentarAutoLogin = async (usuario, contrasena, maxIntentos = 8, esperaMs = 800) => {
         if (!usuario || !contrasena || initializedRef.current) return;
         initializedRef.current = true;
@@ -31,7 +47,26 @@ export default function Login({ onLogin, onRecuperarContrasena, aviso = '', onAv
         if (emailRef.current) emailRef.current.value = usuario;
         if (passwordRef.current) passwordRef.current.value = contrasena;
 
+        // El motivo viaja a la web padre además de pintarse aquí. Dentro del
+        // iframe esta pantalla está tapada hasta que el portal entra del todo,
+        // así que lo único que el cliente llega a leer es lo que enseñe ella:
+        // si no se le manda el motivo, no tiene con qué decir la verdad.
+        const rendirse = (motivo, mensaje) => {
+            setError(mensaje);
+            setIsLoading(false);
+            avisarAlPadre({ type: 'SUM_CLIENT_LOGIN_FAILED', motivo, mensaje });
+        };
+
         setIsLoading(true);
+
+        // La sesión que hubiera guardada en este navegador es de otro momento y
+        // puede ser de otra empresa. Se cierra ANTES de probar, y se espera a
+        // que termine: si el acceso falla, lo que tiene que quedar es la
+        // pantalla de entrada, no el portal del cliente anterior con sus
+        // albaranes a la vista.
+        await onCerrarSesionPrevia?.();
+
+        let ultimoFallo = null;
         for (let intento = 1; intento <= maxIntentos; intento++) {
             try {
                 console.log(`[AutoLogin] Intento ${intento}/${maxIntentos}...`);
@@ -42,17 +77,29 @@ export default function Login({ onLogin, onRecuperarContrasena, aviso = '', onAv
                     setIsLoading(false);
                     return;
                 }
+                // Ha contestado, y ha dicho que no. Esa respuesta es definitiva:
+                // los fallos del servidor no llegan por aquí, llegan lanzados.
+                console.warn('[AutoLogin] ❌ Credenciales rechazadas; no se reintenta');
+                rendirse('credenciales', mensajeDeCredenciales(activeTabRef.current));
+                return;
             } catch (e) {
+                ultimoFallo = e;
                 console.warn(`[AutoLogin] Error en intento ${intento}:`, e);
             }
             if (intento < maxIntentos) {
                 await new Promise(r => setTimeout(r, esperaMs));
             }
         }
+
         console.error('[AutoLogin] ❌ Todos los intentos fallaron');
-        setError('No se pudo conectar. Inténtalo de nuevo.');
-        setIsLoading(false);
-        avisarAlPadre({ type: 'SUM_CLIENT_LOGIN_FAILED' });
+        // El mensaje del fallo de conexión va tal cual: ya viene escrito para
+        // quien lo va a leer ("El servidor no responde. No es tu contraseña…",
+        // o el de demasiados intentos si ha sido un 429).
+        if (ultimoFallo?.esFalloDeConexion) {
+            rendirse('servidor', ultimoFallo.message);
+        } else {
+            rendirse('desconocido', 'No se ha podido entrar. Inténtalo de nuevo en unos minutos.');
+        }
     };
 
     // ── Canal nuevo: la web padre manda las credenciales por postMessage ──
@@ -161,7 +208,7 @@ export default function Login({ onLogin, onRecuperarContrasena, aviso = '', onAv
                     try { localStorage.removeItem(`sum_saved_user_${activeTabRef.current}`); } catch (_) {}
                 }
             } else {
-                setError(activeTab === 'driver' ? 'Usuario o contraseña incorrectos' : 'Credenciales inválidas');
+                setError(mensajeDeCredenciales(activeTab));
                 triggerShake();
             }
         } catch (err) {

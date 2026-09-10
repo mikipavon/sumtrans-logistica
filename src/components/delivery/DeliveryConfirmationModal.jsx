@@ -5,7 +5,14 @@ import SignatureCanvas from 'react-signature-canvas';
 import Shipment from '../../models/Shipment';
 import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
+import { leerReceptores, normalizarNombreReceptor } from '../../utils/receptoresHabituales';
 import CameraCaptureModal from '../CameraCaptureModal';
+import {
+    exigeJustificacionLegal,
+    nombreCompletoValido,
+    documentoIdentidadValido,
+    firmaTieneTrazo,
+} from '../../utils/justificacionEntrega';
 
 // Reintentos de localización GPS al abrir el modal: en sitios con mala señal
 // (naves, sótanos) un solo intento sin timeout se queda esperando para siempre.
@@ -84,31 +91,34 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
     }, [shipment, clients]);
 
     /**
-     * Quién recibió la última vez en esta dirección. Se guarda al confirmar la entrega
-     * (ver el auto-aprendizaje del destinatario en DriverDashboard) y aquí sale como
-     * chuleta: en gris, y sólo se escribe en los campos si el conductor la toca. No se
-     * rellena solo a propósito — la prueba de entrega dice quién ha recibido HOY, y un
-     * nombre que nadie ha mirado es peor que uno en blanco.
+     * Quiénes han recibido antes en esta dirección, el último el primero. Se apuntan al
+     * confirmar la entrega (ver el auto-aprendizaje del destinatario en DriverDashboard)
+     * y aquí salen como chuleta: en gris, y sólo se escriben en los campos si el
+     * conductor toca una. No se rellena solo a propósito — la prueba de entrega dice
+     * quién ha recibido HOY, y un nombre que nadie ha mirado es peor que uno en blanco.
      */
-    const receptorHabitual = useMemo(() => {
-        if (!shipment) return null;
+    const receptoresHabituales = useMemo(() => {
+        if (!shipment) return [];
         const sinTildes = new RegExp('[\\u0300-\\u036f]', 'g');
         const norm = (v) => String(v || '').trim().toLowerCase().normalize('NFD').replace(sinTildes, '');
         const destNorm = norm(shipment.destinationName);
-        if (!destNorm) return null;
+        if (!destNorm) return [];
 
         for (const c of (clients || [])) {
-            if (norm(c.name) === destNorm) return c.lastReceiver || null;
+            if (norm(c.name) === destNorm) return leerReceptores(c);
             for (const b of (Array.isArray(c.branches) ? c.branches : [])) {
                 // La sede tiene su propia chuleta; si no la tiene, la de la casa madre
                 // no vale: quien firma en un almacén no es quien firma en otro.
-                if (norm(b.name) === destNorm) return b.lastReceiver || null;
+                if (norm(b.name) === destNorm) return leerReceptores(b);
             }
         }
-        return null;
+        return [];
     }, [shipment, clients]);
 
-    const haySugerencia = !!(receptorHabitual?.name || '').trim();
+    // El último que recibió aquí: es el que se enseña en gris dentro de los campos
+    // vacíos, como pista de qué se espera que se escriba ahí.
+    const receptorHabitual = receptoresHabituales[0] || null;
+    const haySugerencia = receptoresHabituales.length > 0;
 
     // Build list of current shipment cobros using the MODEL logic
     const currentParts = useMemo(() => {
@@ -185,7 +195,20 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
     // Cada albarán se cierra por separado, aunque el conductor lleve varios para el
     // mismo destinatario: aquí sólo se agrupan los cobros que el cliente tenga pendientes.
-    const effectiveRules = shipment?.deliveryRules || {};
+
+    // Clientes que exigen poder justificar legalmente la entrega (nombre y
+    // apellidos, documento y firma de verdad). Se mira su ficha VIVA y no la copia
+    // de reglas que el albarán lleva congelada desde que se creó: si no, activarlo
+    // hoy no valdría para lo que ya está en la calle, que es lo que reclaman.
+    const justificacionLegal = useMemo(
+        () => exigeJustificacionLegal(shipment, clients),
+        [shipment, clients]
+    );
+
+    const reglasDelAlbaran = shipment?.deliveryRules || {};
+    const effectiveRules = justificacionLegal
+        ? { ...reglasDelAlbaran, requireName: true, requireDNI: true, requireSignature: true }
+        : reglasDelAlbaran;
 
     const allSelectableDebts = useMemo(
         () => [...currentParts, ...pendingDebts],
@@ -408,11 +431,35 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             }
         }
 
-        // Validation: At least name + (signature OR photo) if status is 'Entregado' and NOT a pickup
-        if (status === 'Entregado' && shipment?.type !== 'Recogida') {
+        // Trazos crudos de la firma. Hacen falta para distinguir una firma de un
+        // toque con el dedo: sobre la imagen ya comprimida eso no se puede ver.
+        let trazosFirma = [];
+        try {
+            if (sigCanvas.current && typeof sigCanvas.current.toData === 'function') {
+                trazosFirma = sigCanvas.current.toData() || [];
+            }
+        } catch {
+            trazosFirma = [];
+        }
+
+        // Validation: At least name + (signature OR photo) if status is 'Entregado' and NOT a pickup.
+        // Las recogidas se saltan este control salvo en los clientes que exigen
+        // justificación legal: ahí el que retira el material tiene que identificarse
+        // igual que el que la recibe.
+        if (status === 'Entregado' && (shipment?.type !== 'Recogida' || justificacionLegal)) {
             const rules = effectiveRules;
             let hasError = false;
-            
+
+            // Justificación legal del cliente: nombre y apellidos, documento con la
+            // letra correcta y firma con trazo. Va en bloque a propósito: a este
+            // cliente, con un dato de menos, la entrega no le justifica nada.
+            const faltaNombreCompleto = justificacionLegal && !nombreCompletoValido(receiverName);
+            const documentoNoValido = justificacionLegal && !documentoIdentidadValido(receiverId);
+            const firmaSinTrazo = justificacionLegal && !firmaTieneTrazo(trazosFirma);
+            if (faltaNombreCompleto || documentoNoValido || firmaSinTrazo) {
+                hasError = true;
+            }
+
             // Check required DNI
             if (rules.requireDNI && !receiverId?.trim()) {
                 hasError = true;
@@ -446,7 +493,13 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
             if (hasError) {
                 setValidationFailed(true);
                 // Show specific error for the first failing rule
-                if (rules.requireDNI && !receiverId?.trim()) {
+                if (faltaNombreCompleto) {
+                    alert("📝 NOMBRE Y APELLIDOS\n\nEste cliente sólo acepta la entrega con el nombre COMPLETO de quien recibe (nombre y apellidos).\n\nSin eso no puede justificar la entrega ante su seguro y no paga el porte.");
+                } else if (documentoNoValido) {
+                    alert("🪪 DNI / NIE / PASAPORTE\n\nEste cliente exige el documento de quien recibe, y tiene que estar bien escrito (el DNI, con su letra).\n\nPídeselo y cópialo tal cual del documento.");
+                } else if (firmaSinTrazo) {
+                    alert("✍️ FIRMA COMPLETA\n\nEste cliente no acepta un garabato ni una raya como firma.\n\nQue firme como firma siempre, dentro del recuadro.");
+                } else if (rules.requireDNI && !receiverId?.trim()) {
                     alert("🪪 DNI OBLIGATORIO\n\nEste cliente exige que el receptor identifique su DNI/NIE antes de entregar.");
                 } else if (requiresPhoto1 && !proofData.photoData) {
                     alert(shipment.needsSignatureReturn
@@ -737,36 +790,81 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                 Datos de quien recibe
                             </h4>
 
-                            {/* Chuleta de la última entrega en esta dirección. Se toca y
-                                rellena los dos campos; si no, no escribe nada. */}
-                            {haySugerencia && !receiverName?.trim() && (
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setReceiverName(receptorHabitual.name);
-                                        if (receptorHabitual.dni) setReceiverId(receptorHabitual.dni);
-                                    }}
-                                    className="w-full flex items-center gap-2 text-left bg-white border border-dashed border-slate-300 rounded-xl px-3 py-2 active:bg-slate-100 transition-colors"
-                                >
-                                    <RotateCcw size={14} className="text-slate-400 shrink-0" />
-                                    <span className="flex-1 min-w-0">
-                                        <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">La última vez recibió</span>
-                                        <span className="block text-sm font-bold text-slate-500 truncate">
-                                            {receptorHabitual.name}
-                                            {receptorHabitual.dni ? ` · ${receptorHabitual.dni}` : ''}
-                                        </span>
-                                    </span>
-                                    <span className="text-[10px] font-black uppercase text-blue-600 shrink-0">Usar</span>
-                                </button>
+                            {/* Chuleta de quienes han recibido antes en esta dirección. En un
+                                negocio no siempre recibe el mismo, así que salen todos los
+                                conocidos y elige el conductor. Se queda a la vista aunque ya
+                                haya un nombre escrito: el repartidor suele empezar a teclear y
+                                sólo entonces se acuerda de que a esa persona ya la tenemos con
+                                su DNI, y esconder la lista justo ahí le obligaba a borrar lo
+                                escrito para que reapareciera. */}
+                            {haySugerencia && (
+                                <div>
+                                    <p className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                                        <RotateCcw size={12} className="shrink-0" />
+                                        {receptoresHabituales.length === 1 ? 'La última vez recibió' : 'Ya han recibido aquí'}
+                                    </p>
+                                    {/* En fila y con scroll lateral: apilados, seis fichas
+                                        empujaban los campos y la firma fuera de la pantalla. */}
+                                    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                                        {receptoresHabituales.map((receptor, i) => {
+                                            const estaPuesto = !!receiverName?.trim()
+                                                && normalizarNombreReceptor(receptor.name) === normalizarNombreReceptor(receiverName);
+                                            return (
+                                                <button
+                                                    key={`${receptor.name}-${i}`}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        // Nombre y DNI viajan juntos SIEMPRE, incluso si
+                                                        // esta persona no tiene documento apuntado: dejar
+                                                        // el DNI anterior firmaría la entrega con el
+                                                        // nombre de uno y el documento de otro.
+                                                        setReceiverName(receptor.name);
+                                                        setReceiverId(receptor.dni || '');
+                                                    }}
+                                                    className={`shrink-0 max-w-[70%] text-left rounded-xl px-3 py-2 border transition-colors ${estaPuesto
+                                                        ? 'bg-blue-50 border-blue-500'
+                                                        : 'bg-white border-dashed border-slate-300 active:bg-slate-100'}`}
+                                                >
+                                                    <span className={`block text-sm font-bold truncate ${estaPuesto ? 'text-blue-700' : 'text-slate-600'}`}>
+                                                        {receptor.name}
+                                                    </span>
+                                                    <span className={`block text-[11px] font-semibold truncate ${estaPuesto ? 'text-blue-500' : 'text-slate-400'}`}>
+                                                        {receptor.dni || 'sin DNI'}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Aviso por delante de los campos: este cliente no admite una
+                                entrega a medias, y el repartidor tiene que saberlo ANTES de
+                                pedirle los datos a quien recibe, no cuando ya le ha dado la
+                                espalda y la app le bloquea. */}
+                            {justificacionLegal && (
+                                <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-3 flex items-start gap-2">
+                                    <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                                    <div>
+                                        <p className="text-xs font-black text-amber-800 uppercase tracking-wide">Entrega justificada</p>
+                                        <p className="text-[11px] text-amber-700 leading-tight mt-0.5">
+                                            Este cliente exige <strong>nombre y apellidos</strong>, <strong>DNI</strong> y <strong>firma completa</strong>.
+                                            Pídeselos antes de soltar el material: sin los tres no se puede cerrar la entrega.
+                                        </p>
+                                    </div>
+                                </div>
                             )}
 
                             <div>
-                                <label className={labelClass}>Nombre Completo {rules.requireName !== false && <span className="text-red-500">*</span>}</label>
+                                <label className={labelClass}>
+                                    {justificacionLegal ? 'Nombre y Apellidos' : 'Nombre Completo'}{' '}
+                                    {rules.requireName !== false && <span className="text-red-500">*</span>}
+                                </label>
                                 <div className="relative">
                                     <input
                                         type="text"
-                                        placeholder={haySugerencia ? receptorHabitual.name : "Pulsa el micro y habla..."}
-                                        className={`${inputClass} pr-10 ${validationFailed && rules.requireName !== false && !receiverName?.trim() ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
+                                        placeholder={haySugerencia ? receptorHabitual.name : (justificacionLegal ? "Nombre y apellidos de quien recibe" : "Pulsa el micro y habla...")}
+                                        className={`${inputClass} pr-10 ${validationFailed && rules.requireName !== false && (justificacionLegal ? !nombreCompletoValido(receiverName) : !receiverName?.trim()) ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
                                         value={receiverName}
                                         onChange={(e) => setReceiverName(e.target.value)}
                                     />
@@ -795,7 +893,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                 <input
                                     type="text"
                                     placeholder={receptorHabitual?.dni || "12345678X"}
-                                    className={`${inputClass} ${validationFailed && rules.requireDNI && !receiverId?.trim() ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
+                                    className={`${inputClass} ${validationFailed && rules.requireDNI && (justificacionLegal ? !documentoIdentidadValido(receiverId) : !receiverId?.trim()) ? '!border-red-500 !ring-2 !ring-red-500/30 animate-pulse' : ''}`}
                                     value={receiverId}
                                     onChange={(e) => setReceiverId(e.target.value)}
                                 />
@@ -847,7 +945,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
                                     Limpiar
                                 </button>
                             </div>
-                            <div className={`bg-white border-2 rounded-2xl h-[160px] relative overflow-hidden shadow-inner ${validationFailed && shipment.deliveryRules?.requireSignature !== false && !isSignatureCaptured ? 'border-red-500 ring-2 ring-red-500/30 animate-pulse' : 'border-slate-200'}`}>
+                            <div className={`bg-white border-2 rounded-2xl h-[160px] relative overflow-hidden shadow-inner ${validationFailed && rules.requireSignature !== false && !isSignatureCaptured ? 'border-red-500 ring-2 ring-red-500/30 animate-pulse' : 'border-slate-200'}`}>
                                 <SignatureCanvas
                                     ref={sigCanvas}
                                     onBegin={() => setIsSignatureCaptured(true)}

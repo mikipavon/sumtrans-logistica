@@ -12,10 +12,23 @@ export default function IncidentModal({ isOpen, onClose, onConfirm, shipment, in
     const [camaraAbierta, setCamaraAbierta] = useState(false);
     const inputRespaldoRef = useRef(null);
 
+    // Dónde se reporta. Se pide nada más abrir para que el GPS tenga tiempo de
+    // fijar mientras se escribe el motivo, y no se le pone puerta: si no hay señal
+    // o no da permiso, la incidencia sale igual — sólo que sin sitio.
+    const [ubicacion, setUbicacion] = useState('');
+
     useEffect(() => {
         if (isOpen) {
             setReason(initialReason);
             setPhoto(null);
+            setUbicacion('');
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => setUbicacion(`${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`),
+                    (err) => console.warn('[Incidencia] Sin ubicación:', err?.message),
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+                );
+            }
         }
     }, [isOpen, initialReason]);
 
@@ -70,7 +83,9 @@ export default function IncidentModal({ isOpen, onClose, onConfirm, shipment, in
             alert("Por favor, describe el motivo de la incidencia.");
             return;
         }
-        onConfirm(shipment.id, 'Incidencia', null, reason, photo);
+        // El sitio va en su propio campo (7º argumento, extraData). El 3º es el de la
+        // entrega y tiene que seguir vacío: una incidencia no entrega nada.
+        onConfirm(shipment.id, 'Incidencia', null, reason, photo, null, ubicacion ? { incidentCoordinates: ubicacion } : {});
         setReason('');
         setPhoto(null);
         onClose();

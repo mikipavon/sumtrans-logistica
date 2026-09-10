@@ -77,3 +77,50 @@ describe('ShipmentDetailsModal: el precio al editar', () => {
         expect(screen.getByDisplayValue('21.50')).toBeInTheDocument();
     });
 });
+
+// ── Marcar la documentación firmada al modificar el albarán ──
+//
+// El albarán de agencia se daba de alta sin marcar "Firma Doc." y no había forma
+// de añadirlo después: la casilla sólo estaba en el alta. Sin ese campo el
+// repartidor no ve el aviso del papel firmado ni se le exige la foto del
+// documento. Ahora se puede marcar desde la ficha, al editar.
+describe('ShipmentDetailsModal: la documentación firmada', () => {
+    it('no se anuncia en un albarán que no la pide', () => {
+        render(
+            <ShipmentDetailsModal
+                isOpen={true} onClose={() => {}} shipment={sum258} onUpdate={vi.fn()}
+                allPoblaciones={[]} clients={[]} articles={[BLT_5]} tariffs={null} coverageZones={[]}
+            />
+        );
+        expect(screen.queryByText(/Devolver Documentación Firmada/)).not.toBeInTheDocument();
+    });
+
+    it('se puede marcar al editar y se guarda en el albarán', async () => {
+        const onUpdate = vi.fn();
+        render(
+            <ShipmentDetailsModal
+                isOpen={true} onClose={() => {}} shipment={sum258} onUpdate={onUpdate}
+                allPoblaciones={[]} clients={[]} articles={[BLT_5]} tariffs={null} coverageZones={[]}
+            />
+        );
+        fireEvent.click(screen.getByTitle('Editar'));
+
+        const casilla = screen.getByRole('checkbox', { name: /Devolver Documentación Firmada/ });
+        expect(casilla.checked).toBe(false);
+        fireEvent.click(casilla);
+
+        fireEvent.click(screen.getByText('Guardar Cambios'));
+        await vi.waitFor(() => expect(onUpdate).toHaveBeenCalled());
+        expect(onUpdate.mock.calls[0][1].needsSignatureReturn).toBe(true);
+    });
+
+    it('el albarán que ya la pide lo enseña sin entrar a editar', () => {
+        render(
+            <ShipmentDetailsModal
+                isOpen={true} onClose={() => {}} shipment={{ ...sum258, needsSignatureReturn: true }} onUpdate={vi.fn()}
+                allPoblaciones={[]} clients={[]} articles={[BLT_5]} tariffs={null} coverageZones={[]}
+            />
+        );
+        expect(screen.getByText(/Devolver Documentación Firmada/)).toBeInTheDocument();
+    });
+});

@@ -523,19 +523,11 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 setMerchandisePhoto(null);
             }
 
-            // Auto-capture GPS on open (for origin - where shipment is being created)
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        const coords = `${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`;
-                        setFormData(prev => ({ ...prev, originCoordinates: coords }));
-                    },
-                    (error) => {
-                        console.log('GPS auto-capture failed:', error.message);
-                    },
-                    { enableHighAccuracy: true, timeout: 10000 }
-                );
-            }
+            // El GPS de origen se captura sólo cuando el modal lo abre un
+            // conductor (el efecto de más abajo, junto a captureOriginGps).
+            // Aquí había otra captura para todo el mundo: la oficina abría el
+            // albarán y el remitente nuevo nacía con las coordenadas de la
+            // oficina en vez de las suyas.
         }
     }, [isOpen, prefillData]);
 
@@ -555,13 +547,18 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     const updateSuggestions = (value) => {
         if (!clients) return;
         const search = normalizeForSearch(value);
-        // Solo mostrar clientes validados por administración
-        // (approved o sin status para compatibilidad con clientes antiguos)
-        const approvedClients = clients
-            .filter(c => !c.status || c.status === 'approved')
+        // La misma regla que la lista maestra de Clientes (pages/Clients.jsx):
+        // se esconde lo que está pendiente de validar, y nada más.
+        //
+        // Pedir status === 'approved' era más estricto que la lista, y cualquier
+        // ficha con otro estado (valores viejos de importaciones o de una copia
+        // restaurada) salía en Clientes pero desaparecía del buscador: la
+        // oficina la veía en la lista y no podía usarla en el albarán.
+        const fichasUsables = clients
+            .filter(c => c.status !== 'pending')
             .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         const results = [];
-        approvedClients.forEach(c => {
+        fichasUsables.forEach(c => {
             const nameMatch = !search || normalizeForSearch(c.name).includes(search);
             // Collect matching branches (keeping user's saved order)
             const matchingBranches = [];
@@ -593,12 +590,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     const updateDestSuggestions = (value) => {
         if (!clients) return;
         const search = normalizeForSearch(value);
-        // Solo mostrar clientes validados por administración
-        const approvedClients = clients
-            .filter(c => !c.status || c.status === 'approved')
+        // Misma regla que el remitente: fuera sólo lo que está pendiente de validar.
+        const fichasUsables = clients
+            .filter(c => c.status !== 'pending')
             .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         const results = [];
-        approvedClients.forEach(c => {
+        fichasUsables.forEach(c => {
             const nameMatch = !search || normalizeForSearch(c.name).includes(search);
             const matchingBranches = [];
             if (Array.isArray(c.branches) && c.branches.length > 0) {
@@ -1222,13 +1219,18 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                         // 'entregado'), así que nadie volvía a verlo. Cobrar no es
                         // entregar: el estado solo lo cambia la entrega de verdad.
                         updates.porteCollectedById = currentDriverId;
+                        updates.portePaidAt = new Date().toISOString();
                     }
                     if (debtShipment.hasCod && !debtShipment.codPaid) {
                         updates.codPaid = true;
                         updates.codCollectedById = currentDriverId;
+                        updates.codPaidAt = new Date().toISOString();
                     }
-                    // Hora del cobro: la Cuenta del repartidor se fija en paidAt para
-                    // saber en qué día cae el dinero.
+                    // Hora del cobro: la Cuenta del repartidor se fija en la fecha de cobro
+                    // para saber en qué día cae el dinero. Cada concepto lleva la suya
+                    // (arriba): `paidAt` es una sola para el porte y el reembolso, así que
+                    // saldar aquí el porte pisaba la fecha del reembolso cobrado otro día y
+                    // la Cuenta lo volvía a sumar.
                     if (updates.portePaid !== debtShipment.portePaid || updates.codPaid !== debtShipment.codPaid) {
                         updates.paidAt = new Date().toISOString();
                     }
@@ -1531,7 +1533,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                                     required
                                                 />
                                                 <datalist id="payer-clients-list">
-                                                    {(clients || []).filter(c => !c.status || c.status === 'approved').map(c => (
+                                                    {(clients || []).filter(c => c.status !== 'pending').map(c => (
                                                         <option key={`payer-${c.id}`} value={c.name} />
                                                     ))}
                                                     {(clients || []).flatMap(c => c.branches || []).map(b => (

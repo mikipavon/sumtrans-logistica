@@ -94,6 +94,10 @@ export default class Shipment {
     this.observations = data.observations || '';
     this.incidentReason = data.incidentReason || '';
     this.incidentPhoto = data.incidentPhoto || null;
+    // Dónde estaba el repartidor al reportarla. Campo aparte a propósito: si se
+    // reutilizara deliveryCoordinates, una incidencia pisaría el sitio donde de
+    // verdad se entregó el albarán.
+    this.incidentCoordinates = data.incidentCoordinates || null;
     this.incidentStatus = data.incidentStatus || 'none'; // 'none', 'active', 'resolved'
     this.incidentReply = data.incidentReply || ''; // Response from admin
     
@@ -118,6 +122,13 @@ export default class Shipment {
     this.updatedAt = data.updatedAt || new Date().toISOString();
     this.deliveredAt = data.deliveredAt || null;
     this.paidAt = data.paidAt || (this.portePaid || this.codPaid ? this.updatedAt : null);
+    // La fecha de cobro DE CADA CONCEPTO. `paidAt` es una sola para el porte y el
+    // reembolso: cobrar hoy el porte pendiente pisaba la fecha del reembolso cobrado
+    // hace días, y la Cuenta lo volvía a sumar en la caja de hoy del que lo cobró
+    // entonces. Aquí no se cae a updatedAt a propósito: si el albarán no la trae, la
+    // Cuenta se apaña con paidAt y con la migración 23 (albaranes de antes del cambio).
+    this.portePaidAt = data.portePaidAt || null;
+    this.codPaidAt = data.codPaidAt || null;
 
     // Referencia externa del cliente (QR, código de barras, SSCC)
     this.clientReference = data.clientReference || null;
@@ -307,6 +318,11 @@ export default class Shipment {
       this.status = 'Entregado';
       this.incidentStatus = 'resolved';
 
+      // Qué estaba ya cobrado ANTES de esta entrega, para fechar sólo lo que se cobra
+      // ahora y no volver a fechar un cobro de otro día (ver el sello, más abajo).
+      const porteYaCobrado = this.portePaid;
+      const codYaCobrado = this.codPaid;
+
       // Asignar pruebas de entrega si se proporcionan
       if (proof) {
         if (proof.signatureUrl) this.deliverySignature = proof.signatureUrl;
@@ -348,6 +364,13 @@ export default class Shipment {
           this.codPaid = true; // Se asume cobrado al entregar al destinatario
         }
       }
+
+      // Se sella la fecha SÓLO de lo que se cobra en esta entrega. Lo que ya venía
+      // cobrado conserva la suya: es justo lo que rompía el paidAt común, que lo pisaba
+      // cualquier cobro posterior y resucitaba el otro concepto en la caja de ese día.
+      const ahoraIso = new Date().toISOString();
+      if (this.portePaid && !porteYaCobrado && !this.portePaidAt) this.portePaidAt = ahoraIso;
+      if (this.codPaid && !codYaCobrado && !this.codPaidAt) this.codPaidAt = ahoraIso;
 
       // SOLO ponemos paymentStatus = 'Paid' si AMBOS están liquidados
       if (this.portePaid && (!this.hasCod || this.codPaid)) {

@@ -55,16 +55,27 @@ export const buscarClienteDeEnvio = (envio, clientes) => {
     }) || null;
 };
 
-/** Una de las agencias que reconocemos por el nombre, si es que es alguna. */
+/**
+ * Una de las agencias que reconocemos por el nombre, si es que es alguna.
+ *
+ * Se compara palabra a palabra, no por trozo. Buscando "xpo" suelto dentro del
+ * texto, EXPODISEÑO —un destinatario nuestro de La Rambla— salía marcado como
+ * agencia XPO: chapa amarilla, logo de XPO en la tarjeta y, lo de verdad grave,
+ * el optimizador lo mandaba al bloque de las agencias, donde hay margen de
+ * entrega que a lo nuestro no le corresponde.
+ *
+ * "XPO Logistics" o "Almacén TSB Córdoba" siguen enganchando: ahí sí son
+ * palabras sueltas.
+ */
 const agenciaPorNombre = (envio, cliente) => {
-    const texto = [
+    const palabras = new Set([
         envio?.agencyLabel,
         envio?.client,
         envio?.destinationName,
         cliente?.agencyLabel,
         cliente?.name,
-    ].map(norm).join(' ');
-    return AGENCIAS_CONOCIDAS.find(a => texto.includes(a.clave)) || null;
+    ].map(norm).join(' ').split(/[^a-z0-9]+/).filter(Boolean));
+    return AGENCIAS_CONOCIDAS.find(a => palabras.has(a.clave)) || null;
 };
 
 /**

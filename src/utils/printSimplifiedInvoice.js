@@ -1,6 +1,11 @@
+import { estilosDeHoja, scriptDeAjuste } from './hojaDeImpresion';
+
 /**
  * Genera e imprime una Factura Simplificada en formato ticket (80mm).
  * Incluye desglose de Base + IVA 21% + Total.
+ *
+ * Va dentro de una hoja con la proporción de un folio (ver hojaDeImpresion) para
+ * que salga siempre en una sola página, tenga una línea o veinte.
  */
 export const printSimplifiedInvoice = (shipmentData) => {
     const printWindow = window.open('', '_blank');
@@ -55,61 +60,64 @@ export const printSimplifiedInvoice = (shipmentData) => {
     printWindow.document.write(`
         <html>
             <head>
+                <meta charset="UTF-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
                 <title>Factura Simplificada ${ref}</title>
                 <style>
-                    body { 
-                        font-family: 'Courier New', Courier, monospace; 
-                        padding: 10px; 
-                        max-width: 80mm; 
-                        margin: 0 auto; 
+                    body {
+                        font-family: 'Courier New', Courier, monospace;
+                        margin: 0 auto;
                         color: #000;
-                        line-height: 1.3;
+                        line-height: 1.25;
                     }
-                    .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 10px; }
-                    .logo { font-size: 14px; font-weight: bold; margin: 0; }
-                    .cif { font-size: 10px; margin: 2px 0; }
-                    .doc-type { font-size: 11px; text-transform: uppercase; font-weight: bold; margin-top: 4px; border: 2px solid #000; display: inline-block; padding: 3px 8px; letter-spacing: 1px; }
-                    
-                    .info-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 2px; }
+${estilosDeHoja()}
+
+                    .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 6px; }
+                    .logo { font-size: 13px; font-weight: bold; margin: 0; }
+                    .cif { font-size: 10px; margin: 1px 0; }
+                    .doc-type { font-size: 11px; text-transform: uppercase; font-weight: bold; margin-top: 3px; border: 2px solid #000; display: inline-block; padding: 2px 8px; letter-spacing: 1px; }
+
+                    .info-row { display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 1px; }
                     .label { font-weight: bold; }
-                    
-                    .section { margin-top: 8px; border-top: 1px solid #ccc; padding-top: 5px; }
-                    .section-title { font-size: 10px; font-weight: bold; text-decoration: underline; margin-bottom: 3px; }
-                    .client-data { font-size: 11px; margin-bottom: 5px; }
-                    
-                    .items-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
+
+                    .section { margin-top: 5px; border-top: 1px solid #ccc; padding-top: 4px; }
+                    .section-title { font-size: 10px; font-weight: bold; text-decoration: underline; margin-bottom: 2px; }
+                    .client-data { font-size: 10px; margin-bottom: 2px; }
+
+                    .items-table { width: 100%; border-collapse: collapse; margin-top: 5px; font-size: 10px; }
                     .items-table th { text-align: left; border-bottom: 1px solid #000; padding: 2px 0; }
-                    .items-table td { padding: 3px 0; }
-                    
-                    .totals { margin-top: 10px; border-top: 1px solid #000; padding-top: 5px; font-size: 11px; }
-                    .total-row { display: flex; justify-content: space-between; margin-bottom: 2px; }
-                    .grand-total { font-size: 14px; font-weight: bold; border-top: 2px double #000; padding-top: 5px; margin-top: 5px; display: flex; justify-content: space-between; }
-                    
-                    .email-box { margin-top: 15px; border: 1px dashed #000; padding: 8px; text-align: center; font-size: 9px; }
+                    .items-table td { padding: 2px 0; }
+
+                    .totals { margin-top: 6px; border-top: 1px solid #000; padding-top: 4px; font-size: 10px; }
+                    .total-row { display: flex; justify-content: space-between; margin-bottom: 1px; }
+                    .grand-total { font-size: 13px; font-weight: bold; border-top: 2px double #000; padding-top: 4px; margin-top: 4px; display: flex; justify-content: space-between; }
+
+                    .email-box { margin-top: 8px; border: 1px dashed #000; padding: 5px; text-align: center; font-size: 9px; }
                     .email-box strong { font-size: 10px; }
-                    
-                    .footer { margin-top: 15px; font-size: 9px; text-align: center; color: #555; border-top: 1px dashed #ccc; padding-top: 5px; }
-                    
+
+                    .footer { margin-top: 8px; font-size: 9px; text-align: center; color: #555; border-top: 1px dashed #ccc; padding-top: 4px; }
+
                     .actions { margin-top: 20px; text-align: center; }
                     .actions button { display: block; width: 100%; padding: 12px; margin-bottom: 8px; border: none; border-radius: 8px; font-weight: bold; font-size: 14px; cursor: pointer; }
                     .btn-whatsapp { background: #25D366; color: white; }
                     .btn-print { background: #3b82f6; color: white; }
                     .btn-close { background: #64748b; color: white; }
-                    
+
                     @media print {
                         body { width: 80mm; }
-                        @page { margin: 0; }
+                        @page { margin: 6mm; }
                         .actions, #no-print { display: none !important; }
                     }
                 </style>
             </head>
             <body>
+              <div id="hoja"><div id="contenido">
                 <div class="header">
                     <div class="logo">SUMTRANS LOGISTICA S.L.</div>
                     <div class="cif">CIF: B56131717</div>
                     <div class="doc-type">FACTURA SIMPLIFICADA</div>
                 </div>
-                
+
                 <div class="info-row">
                     <span class="label">REF:</span>
                     <span>FS-${ref}</span>
@@ -157,21 +165,21 @@ export const printSimplifiedInvoice = (shipmentData) => {
 
                 <div class="email-box">
                     <strong>¿Necesita factura completa?</strong><br/>
-                    Solicítela en:<br/>
-                    📧 <strong>info@sumtransportes.com</strong>
+                    Solicítela en 📧 <strong>info@sumtransportes.com</strong>
                 </div>
-                
+
                 <div class="footer">
-                    <div style="margin-bottom: 10px; text-align: center;">
-                        <img 
-                            src="https://bwipjs-api.metafloor.com/?bcid=qrcode&text=FS-${ref}&scale=3" 
+                    <div style="margin-bottom: 3px; text-align: center;">
+                        <img
+                            src="https://bwipjs-api.metafloor.com/?bcid=qrcode&text=FS-${ref}&scale=3"
                             alt="QR"
-                            style="width: 80px; height: 80px; display: block; margin: 0 auto 3px auto;"
+                            style="width: 58px; height: 58px; display: block; margin: 0 auto 2px auto;"
                         />
                         <div style="font-weight: bold; font-size: 9px; letter-spacing: 1px;">FS-${ref}</div>
                     </div>
                     Gracias por confiar en SUMTRANS.
                 </div>
+              </div></div>
 
                 <div class="actions" id="no-print">
                     <button class="btn-whatsapp" onclick="window.open('https://wa.me/?text=${waText}', '_blank')">
@@ -184,6 +192,15 @@ export const printSimplifiedInvoice = (shipmentData) => {
                         ← Volver
                     </button>
                 </div>
+
+                <script>
+${scriptDeAjuste()}
+                    // Aquí no se imprime solo: el botón de Imprimir puede pulsarse en
+                    // cualquier momento, así que la hoja se cuadra al cargar y otra vez
+                    // justo antes de imprimir.
+                    window.onload = function() { ajustarAlFolio(); };
+                    window.onbeforeprint = function() { ajustarAlFolio(); };
+                </script>
             </body>
         </html>
     `);

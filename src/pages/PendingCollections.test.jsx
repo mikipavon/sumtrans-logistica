@@ -304,3 +304,87 @@ describe('PendingCollections · pasar todos los cobros de un repartidor a otro',
         expect(onReassignCollection).toHaveBeenCalledWith('ALB-10', '8');
     });
 });
+
+// ── El total tiene que cuadrar repartidor a repartidor ──────────────────────
+//
+// Caso real: la oficina sumaba el Total Pendiente de cada repartidor y no le
+// daba el mismo dinero que con el filtro en «Todos». Dos motivos, los dos aquí:
+// un albarán con el porte a nombre de uno y el reembolso a nombre de otro se
+// contaba ENTERO en el filtro de cada uno, y el dinero que no lleva nadie sólo
+// salía en «Todos», sin filtro en el que verlo.
+describe('PendingCollections · el total cuadra con la suma por repartidor', () => {
+    const dosRepartidores = [
+        { id: 7, name: 'Juan Jesus', isActive: true },
+        { id: 8, name: 'Antonio', isActive: true }
+    ];
+    // Porte pagado en origen (lo cobra quien lo dio de alta: el 7) y reembolso
+    // (lo cobra quien lo entrega: el 8).
+    const mixto = {
+        ...albaran,
+        id: 'ALB-20',
+        createdById: 7,
+        assignedDriverId: 8,
+        status: 'Entregado',
+        amount: '15.00',
+        hasCod: true,
+        codAmount: '40.00'
+    };
+    // Cliente habitual todavía sin repartidor: su porte no es de nadie.
+    const huerfano = { ...albaran, id: 'ALB-21', amount: '10.00' };
+
+    const pintar = (envios = [mixto, huerfano], repartidores = dosRepartidores) => render(
+        <PendingCollections
+            shipments={envios}
+            drivers={repartidores}
+            clients={clients}
+            onAssignDriver={vi.fn()}
+            onReassignCollection={vi.fn()}
+            onUpdateShipment={vi.fn().mockResolvedValue(true)}
+        />
+    );
+    // El total de la cabecera, no los importes de las filas.
+    const total = () => screen.getByText('Total Pendiente').nextElementSibling.textContent;
+    const filtrarPor = (valor, actual = 'Todos los Repartidores') =>
+        fireEvent.change(screen.getByDisplayValue(actual), { target: { value: valor } });
+
+    it('sin filtrar suma todo el dinero pendiente', () => {
+        pintar();
+        expect(total()).toBe('€65.00');
+    });
+
+    it('cada repartidor sólo suma su parte del albarán compartido', () => {
+        pintar();
+        filtrarPor('7');
+        expect(total()).toBe('€15.00');
+
+        filtrarPor('8', 'Juan Jesus');
+        expect(total()).toBe('€40.00');
+    });
+
+    it('el dinero que no lleva nadie tiene su propio filtro', () => {
+        pintar();
+        filtrarPor('unassigned');
+        expect(total()).toBe('€10.00');
+        expect(screen.getByText('ALB-21')).toBeInTheDocument();
+        expect(screen.queryByText('ALB-20')).not.toBeInTheDocument();
+    });
+
+    it('un repartidor de baja con dinero pendiente sigue pudiendo filtrarse', () => {
+        pintar([mixto], [{ id: 7, name: 'Juan Jesus', isActive: false }, { id: 8, name: 'Antonio', isActive: true }]);
+        filtrarPor('7');
+        expect(total()).toBe('€15.00');
+    });
+
+    // El alta desde el portal graba el id del CLIENTE en createdById, que no es
+    // el de ningún repartidor. Ese cobro no es de nadie y tiene que salir en
+    // «Sin asignar», no quedarse sólo en el total de «Todos».
+    it('un cobro a nombre de un id que no es de ningún repartidor cae en Sin asignar', () => {
+        const delPortal = { ...albaran, id: 'ALB-22', createdById: 55, amount: '20.00' };
+        pintar([mixto, delPortal]);
+        expect(total()).toBe('€75.00');
+
+        filtrarPor('unassigned');
+        expect(total()).toBe('€20.00');
+        expect(screen.getByText('ALB-22')).toBeInTheDocument();
+    });
+});

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, loQueAportanLasGemelas, explicarAportacion } from './duplicadosClientes';
+import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, buscarSolicitudesParecidas, nombresSeParecen, loQueAportanLasGemelas, explicarAportacion } from './duplicadosClientes';
 
 const CARTERA = {
     id: 10,
@@ -146,5 +146,124 @@ describe('loQueAportanLasGemelas', () => {
     it('lo cuenta en castellano', () => {
         expect(explicarAportacion({ coordinates: 'x', phone: 'y' })).toBe('las coordenadas y el teléfono');
         expect(explicarAportacion({})).toBe('');
+    });
+});
+
+describe('nombresSeParecen', () => {
+    const seParecen = [
+        ['Transportes Garcia', 'Transportes Garcia S.L.', 'la forma jurídica de más'],
+        ['Cafe Central', 'CAFE CENTRAL S.L', 'la forma jurídica sin el punto final'],
+        ['Distribuciones Sur', 'DISTRIBUCIONES SUR, S.L.U.', 'la forma jurídica con coma'],
+        ['Muebles Lopez', 'Muebles Lopez (Sevilla)', 'la población entre paréntesis'],
+        ['Bar Manolo', 'Bar Manolo 2', 'el número del segundo local'],
+        ['Autoservicio El Arco', 'Autoservicios El Arco', 'el plural'],
+        ['Talleres Ruiz', 'Taller Ruiz', 'el singular'],
+        ['Panaderia La Espiga', 'La Espiga Panaderia', 'las palabras en otro orden'],
+        ['Hnos. Perez', 'Hermanos Perez', 'la abreviatura'],
+        ['Ferreteria Gomez', 'Ferreteria Gomes', 'una errata en el apellido'],
+        ['Ferreteria Gomez', 'Ferreteria Gomez e Hijos', 'la coletilla del final'],
+    ];
+
+    seParecen.forEach(([uno, otro, porque]) => {
+        it(`ve el parecido de «${uno}» y «${otro}» — ${porque}`, () => {
+            expect(nombresSeParecen(uno, otro)).toBe(true);
+            expect(nombresSeParecen(otro, uno)).toBe(true);
+        });
+    });
+
+    const noSeParecen = [
+        ['Transportes Garcia', 'Transportes Lopez', 'sólo comparten el ramo'],
+        ['Talleres Ruiz', 'Talleres Diaz', 'el apellido es otro'],
+        ['Transportes Sur', 'Transportes', 'lo único en común es a qué se dedican'],
+        ['Bar Pepe', 'Bar', 'la corta no dice quién es'],
+        ['Muebles Lopez', 'Comercial Ruiz', 'no tienen nada que ver'],
+        ['Ruiz', 'Diaz', 'palabras cortas: una letra ya es otro apellido'],
+    ];
+
+    noSeParecen.forEach(([uno, otro, porque]) => {
+        it(`no empareja «${uno}» con «${otro}» — ${porque}`, () => {
+            expect(nombresSeParecen(uno, otro)).toBe(false);
+            expect(nombresSeParecen(otro, uno)).toBe(false);
+        });
+    });
+
+    it('no da por parecido lo que está vacío', () => {
+        expect(nombresSeParecen('', 'Muebles Lopez')).toBe(false);
+        expect(nombresSeParecen('S.L.', 'Muebles Lopez')).toBe(false);
+    });
+});
+
+describe('el parecido de nombre en el aviso de cartera', () => {
+    it('avisa de la ficha de cartera a la que sólo se parece el nombre', () => {
+        const r = buscarFichasParecidas(pendiente({ name: 'Ferretería Luna S.L.' }), CLIENTES);
+        expect(r).toHaveLength(1);
+        expect(r[0].client.id).toBe(11);
+        expect(r[0].motivos).toEqual(['un nombre casi igual']);
+    });
+
+    it('lo marca como sólo un parecido, para no ofrecer el acceso a ciegas', () => {
+        const r = buscarFichasParecidas(pendiente({ name: 'Ferretería Luna S.L.' }), CLIENTES);
+        expect(r[0].soloPorParecido).toBe(true);
+    });
+
+    it('deja de ser sólo un parecido cuando además coincide el correo', () => {
+        const r = buscarFichasParecidas(
+            pendiente({ name: 'Ferretería Luna S.L.', email: 'luna@ferreteria.com' }),
+            CLIENTES,
+        );
+        expect(r[0].motivos).toEqual(['el mismo correo', 'un nombre casi igual']);
+        expect(r[0].soloPorParecido).toBe(false);
+    });
+
+    it('sigue diciendo "el mismo nombre" cuando es el mismo de verdad', () => {
+        const r = buscarFichasParecidas(pendiente({ name: 'FERRETERIA LUNA' }), CLIENTES);
+        expect(r[0].motivos).toEqual(['el mismo nombre']);
+        expect(r[0].soloPorParecido).toBe(false);
+    });
+
+    it('pone las seguras por delante de las que sólo se parecen', () => {
+        const r = buscarFichasParecidas(
+            pendiente({ name: 'Ferretería Luna S.L.', cif: 'B14123456' }),
+            CLIENTES,
+        );
+        expect(r.map(p => p.client.id)).toEqual([10, 11]);
+    });
+});
+
+describe('buscarSolicitudesParecidas', () => {
+    const unaDeAlbaran = (id, name) => ({ id, name, status: 'pending', createdFrom: 'albaran' });
+
+    it('ve las dos solicitudes de la misma empresa escritas distinto', () => {
+        const a = unaDeAlbaran(1, 'Transportes Garcia');
+        const b = unaDeAlbaran(2, 'TRANSPORTES GARCIA S.L.');
+        expect(buscarSolicitudesParecidas(a, [a, b]).map(p => p.id)).toEqual([2]);
+    });
+
+    it('no repite lo que ya sale como gemela, que es la que se puede unir', () => {
+        const a = unaDeAlbaran(1, 'Rafa Martínez');
+        const b = unaDeAlbaran(2, 'RAFA MARTINEZ');
+        expect(buscarSolicitudesGemelas(a, [a, b]).map(p => p.id)).toEqual([2]);
+        expect(buscarSolicitudesParecidas(a, [a, b])).toEqual([]);
+    });
+
+    it('no empareja a dos empresas distintas del mismo ramo', () => {
+        const a = unaDeAlbaran(1, 'Talleres Ruiz');
+        const b = unaDeAlbaran(2, 'Talleres Diaz');
+        expect(buscarSolicitudesParecidas(a, [a, b])).toEqual([]);
+    });
+
+    it('no se señala a sí misma ni a las de prueba', () => {
+        const a = unaDeAlbaran(1, 'Bar Manolo');
+        const prueba = { ...unaDeAlbaran(2, 'Bar Manolo 2'), isTest: true };
+        expect(buscarSolicitudesParecidas(a, [a, prueba])).toEqual([]);
+    });
+
+    it('el parecido de nombre NUNCA convierte a una solicitud en gemela', () => {
+        // Es la garantía de que esto sólo avisa: unir borra la otra ficha, y
+        // para borrar hace falta algo más que un nombre parecido.
+        const a = unaDeAlbaran(1, 'Bar Manolo');
+        const b = unaDeAlbaran(2, 'Bar Manolo 2');
+        expect(buscarSolicitudesGemelas(a, [a, b])).toEqual([]);
+        expect(buscarSolicitudesParecidas(a, [a, b]).map(p => p.id)).toEqual([2]);
     });
 });
