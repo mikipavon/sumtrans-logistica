@@ -17,6 +17,7 @@
  */
 
 import { supabase } from '../lib/supabase';
+import { esRuidoDeSesion } from './ruidoDeSesion';
 
 /** Tope de errores distintos que una sesión puede llegar a registrar. */
 export const MAX_POR_SESION = 25;
@@ -75,6 +76,11 @@ export const debeRegistrarse = (huella, ahora = Date.now()) => {
  */
 export const registrarError = async (error, datos = {}) => {
     try {
+        // El forcejeo por el cerrojo de sesión de Supabase no es un fallo, y se repite
+        // cada medio minuto: si entrara aquí se comería el cupo de la sesión y taparía
+        // los errores de verdad.
+        if (esRuidoDeSesion(error)) return;
+
         const mensaje = error?.message || String(error || 'Error sin mensaje');
         const pila = error?.stack || '';
 
