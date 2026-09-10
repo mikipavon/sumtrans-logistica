@@ -48,7 +48,7 @@ import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, fichaSinContras
 import { planDeAcceso } from './utils/accesoFichaExistente';
 import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNombreCliente } from './utils/altaClientes';
 import { establecerContextoDeError } from './utils/errorLog';
-import { avisarAlPadre } from './utils/ventanaPadre';
+import { avisarAlPadre, hayAutoLoginPendiente } from './utils/ventanaPadre';
 import { CLAVE_HORARIO_REPARTO, HORARIO_REPARTO_POR_DEFECTO, normalizarHorarioReparto } from './utils/turnos';
 import { getIrregularReasons, fichaDelDestinatario } from './utils/shipmentUtils';
 import {
@@ -198,7 +198,14 @@ const GHOST_PASS_KEY = 'ghost_mode_pass';
 
 function App() {
   // ── Restaurar sesión LOCAL instantáneamente (para sobrevivir a Android matando la página) ──
+  //
+  // Menos cuando la carga viene mandada por la web padre. Esta nota es de la
+  // pestaña, no una credencial, y dentro del portal de sumtransportes.com
+  // adelantaría al cliente ANTERIOR mientras llegan las credenciales del que
+  // de verdad está entrando. Al repartidor, que es para quien se hizo esto, no
+  // le afecta: su móvil no va embebido en ninguna web.
   const savedSession = (() => {
+    if (hayAutoLoginPendiente()) return null;
     try {
       const s = sessionStorage.getItem('sumtrans_session');
       if (s) return JSON.parse(s);
@@ -276,6 +283,28 @@ function App() {
 
     async function restoreSession() {
       try {
+        // ── Dentro del portal de la web padre manda ella, no lo guardado aquí ──
+        //
+        // El 10/09/2026 un cliente vio los albaranes de otra empresa. No hubo
+        // ningún fallo de permisos: la web mandó unas credenciales, esta
+        // función encontró en localStorage la sesión del cliente anterior —que
+        // sobrevive a cerrar la pestaña y el navegador— y como nadie espera a
+        // nadie (isRestoringSession no se mira al pintar), la sesión vieja ganó
+        // la carrera. El portal enseñó a AGRO mientras el acceso que se estaba
+        // intentando era el de TIPECAM, y encima la web avisaba de que las
+        // credenciales no valían: las dos cosas a la vez y ninguna verdad.
+        //
+        // Así que aquí no se restaura nada: quien entra lo dicen las
+        // credenciales que llegan, y de cerrar la sesión que hubiera se encarga
+        // el propio auto-login justo antes de usarlas (ver intentarAutoLogin).
+        // Se hace allí y no aquí a propósito: dos sitios cerrando sesión a la
+        // vez es una carrera nueva, y un signOut que llegue tarde tiraría la
+        // sesión buena recién creada.
+        if (hayAutoLoginPendiente()) {
+          console.log('[Session] La web padre manda credenciales: no se restaura ninguna sesión guardada.');
+          return;
+        }
+
         const session = await getCurrentSession();
         if (session && !cancelled) {
           const profile = await getUserProfile();
@@ -1973,6 +2002,24 @@ function App() {
     // Un fallo aquí es del servidor (no "ese correo no existe"), así que se
     // lanza para que la pantalla pueda decir que se reintente.
     if (error) throw error;
+  };
+
+  // ── Antes de un auto-login, fuera lo que hubiera ──
+  //
+  // La web padre está diciendo QUIÉN entra. La sesión guardada en este
+  // navegador es de otro momento y puede ser de otra empresa, así que no puede
+  // sobrevivir al intento: si las credenciales fallan y no se ha cerrado, el
+  // que está delante se queda mirando el portal del cliente anterior.
+  //
+  // Con tope de tiempo porque esto va por delante del acceso: un signOut que se
+  // quede colgado no puede dejar a nadie sin poder entrar. Si falla, da igual —
+  // el signInWithPassword que viene detrás sustituye la sesión de todos modos.
+  const cerrarSesionPrevia = async () => {
+    try {
+      await conTopeDeTiempo(supabase.auth.signOut(), 5);
+    } catch (e) {
+      console.warn('[AutoLogin] No se ha podido cerrar la sesión anterior:', e);
+    }
   };
 
   const handleLogin = async (role = 'admin', username = '', password = '') => {
@@ -4671,6 +4718,7 @@ function App() {
     return (
       <Login
         onLogin={handleLogin}
+        onCerrarSesionPrevia={cerrarSesionPrevia}
         onRecuperarContrasena={pedirCorreoDeRecuperacion}
         aviso={avisoDeSesion}
         onAvisoVisto={() => setAvisoDeSesion('')}
