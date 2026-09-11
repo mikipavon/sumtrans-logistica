@@ -45,6 +45,20 @@ export default defineConfig({
   server: {
     host: true,
     https: false,
-    allowedHosts: 'all'
+    allowedHosts: 'all',
+    // Sólo afecta a la ventana de pruebas, nunca a lo que se despliega.
+    // Sin esto, la primera vez que se pincha cada pestaña el servidor prepara sus
+    // ficheros en ese momento y se nota la espera. Así los deja listos al arrancar.
+    warmup: {
+      clientFiles: [
+        './src/pages/Shipments.jsx',
+        './src/pages/Clients.jsx',
+        './src/pages/Drivers.jsx',
+        './src/pages/Dashboard.jsx',
+        './src/pages/PendingCollections.jsx',
+        './src/pages/Incidents.jsx',
+        './src/pages/driver/DriverDashboard.jsx',
+      ]
+    }
   }
 })
