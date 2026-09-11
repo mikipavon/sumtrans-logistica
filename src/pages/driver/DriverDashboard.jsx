@@ -33,7 +33,8 @@ import { estilosDeHoja, scriptDeAjuste } from '../../utils/hojaDeImpresion';
 import { fechaSinHora } from '../../utils/fechaSinHora';
 import { laTablaLlevaParte, faltaElParte } from '../../utils/partesDeBaja';
 import { diasDeVacaciones, explicacionDeLosDias } from '../../utils/vacacionesDelAno';
-import ScannerModal from '../../components/delivery/ScannerModal';
+// ScannerModal NO se importa aquí a propósito: viaja en su propio fichero y se
+// pide aparte (ver "El escáner se baja aparte", más abajo).
 import VersionDeLaApp from '../../components/VersionDeLaApp';
 import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
@@ -2510,6 +2511,54 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
     const [isReadOnlyModal, setIsReadOnlyModal] = useState(false);
     const [isScannerModalOpen, setIsScannerModalOpen] = useState(false);
+
+    // ── El escáner se baja aparte ──
+    //
+    // La librería del escáner pesa 344 kB, casi la mitad de esta pantalla, y hasta
+    // ahora se bajaba SIEMPRE: el repartidor que no escanea un solo bulto en todo el
+    // día la pagaba igual, con sus datos, cada vez que se despliega una versión.
+    // Ahora viaja en su propio fichero.
+    //
+    // Pero no se espera a que pulse "Escanear" para pedirla. Se pide sola en cuanto
+    // la app está en pie y hay cobertura, para que el móvil ya la tenga guardada
+    // ANTES de que haga falta: si se esperara al botón, el que ya está en una zona
+    // sin cobertura se quedaría sin escáner a mitad de ruta, y eso es peor que el
+    // problema que arregla esto. Lo que se gana es que la pantalla arranca con la
+    // mitad de peso; el escáner llega después, por detrás, sin hacer esperar a nadie.
+    const [Escaner, setEscaner] = useState(null);
+    const [escanerFallo, setEscanerFallo] = useState(false);
+
+    const pedirElEscaner = useCallback(() => {
+        setEscanerFallo(false);
+        return import('../../components/delivery/ScannerModal')
+            .then((mod) => { setEscaner(() => mod.default); return true; })
+            .catch((e) => {
+                // Sin cobertura y sin haberlo guardado antes. No se deja caer el error:
+                // tumbaría la pantalla entera del repartidor por el escáner.
+                console.error('[Escáner] No se ha podido bajar:', e);
+                setEscanerFallo(true);
+                return false;
+            });
+    }, []);
+
+    useEffect(() => {
+        if (Escaner) return;                                  // ya está en el móvil
+        // Si lo acaba de pulsar se intenta igual, aunque el móvil se crea sin cobertura:
+        // puede estar guardado ya, y `import()` lo resuelve sin tocar la red.
+        if (!isScannerModalOpen && navigator.onLine === false) return;
+        // Fuera del arranque: primero que baje el reparto, que es lo que mira al abrir.
+        const t = setTimeout(() => { pedirElEscaner(); }, isScannerModalOpen ? 0 : 4000);
+        return () => clearTimeout(t);
+    }, [Escaner, isScannerModalOpen, pedirElEscaner]);
+
+    // Al recuperar cobertura se reintenta: el que arrancó la app sin línea se quedó sin él.
+    useEffect(() => {
+        if (Escaner) return;
+        const alVolverLaCobertura = () => { pedirElEscaner(); };
+        window.addEventListener('online', alVolverLaCobertura);
+        return () => window.removeEventListener('online', alVolverLaCobertura);
+    }, [Escaner, pedirElEscaner]);
+
     const [unregisteredSscc, setUnregisteredSscc] = useState(null); // Capa 2: SSCC escaneado no registrado
     const [ssccPrefill, setSsccPrefill] = useState(null);           // Capa 2: SSCC pre-rellenado en modal de creación
     const [dashboardCustomAmounts, setDashboardCustomAmounts] = useState({});
@@ -6634,7 +6683,8 @@ ${scriptDeAjuste()}
                 />
             )}
 
-            <ScannerModal 
+            {isScannerModalOpen && Escaner && (
+            <Escaner
                 isOpen={isScannerModalOpen}
                 onClose={() => { setIsScannerModalOpen(false); setActiveTab('assign'); }}
                 onScan={async (id) => {
@@ -6778,6 +6828,51 @@ ${scriptDeAjuste()}
                     }
                 }}
             />
+            )}
+
+            {/* El escáner pulsado antes de que termine de bajar. Casi nunca se ve: para
+                cuando el repartidor llega a pulsarlo ya está en el móvil. Se enseña
+                igualmente porque la alternativa es un botón que no hace nada. */}
+            {isScannerModalOpen && !Escaner && (
+                <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[9990] flex items-center justify-center p-6">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 text-center">
+                        {escanerFallo ? (
+                            <>
+                                <AlertTriangle size={40} className="text-amber-500 mx-auto mb-3" />
+                                <p className="font-bold text-slate-800">No se ha podido abrir el escáner</p>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    Hace falta cobertura para bajarlo la primera vez. Puedes teclear el código a mano mientras tanto.
+                                </p>
+                                <div className="flex gap-2 mt-5">
+                                    <button
+                                        onClick={() => setIsScannerModalOpen(false)}
+                                        className="flex-1 py-3 rounded-2xl border border-slate-200 text-slate-600 font-bold"
+                                    >
+                                        Cerrar
+                                    </button>
+                                    <button
+                                        onClick={() => pedirElEscaner()}
+                                        className="flex-1 py-3 rounded-2xl bg-blue-600 text-white font-bold"
+                                    >
+                                        Reintentar
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <Scan size={40} className="text-blue-500 mx-auto mb-3 animate-pulse" />
+                                <p className="font-bold text-slate-800">Abriendo el escáner…</p>
+                                <button
+                                    onClick={() => setIsScannerModalOpen(false)}
+                                    className="mt-5 w-full py-3 rounded-2xl border border-slate-200 text-slate-600 font-bold"
+                                >
+                                    Cancelar
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* ======= CAPA 2: MODAL DE RESCATE — SSCC NO REGISTRADO ======= */}
             {unregisteredSscc && (
