@@ -6,6 +6,13 @@ import AgencyDatabasesPanel from '../components/clients/AgencyDatabasesPanel';
 import { getOwnerLabel } from '../utils/agencyOwnership';
 import { SIN_FILTRO, TIPOS_DE_CLIENTE, tipoDeFacturacion } from '../utils/filtrosEnvios';
 
+// Ordenar comparando las letras a pelo manda los acentos al final del listado:
+// para el ordenador la "Á" va después de la "Z", así que "Álvarez" salía detrás
+// del último cliente. Esto ordena como se ordena en castellano —la Á con la A y
+// la Ñ después de la N— y de paso cuenta los números como números, así que el
+// CH-9 va antes que el CH-10 y no al revés.
+const ordenCastellano = new Intl.Collator('es', { sensitivity: 'base', numeric: true });
+
 export default function Clients({ clients, allClients, shipments, allPoblaciones, articles, onUpdateClient, onAddClient, onImportClients, onDeleteClient, onAssignOwnerAgency, onDeleteAgencyDatabase, onImpersonateClient, tariffs }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState(null);
@@ -59,18 +66,13 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
 
         if (sortConfig.key) {
             result.sort((a, b) => {
-                let aVal = String(a[sortConfig.key] || '').toLowerCase();
-                let bVal = String(b[sortConfig.key] || '').toLowerCase();
-                
-                if (sortConfig.key === 'clientNumber') {
-                    const padNum = (str) => str.replace(/(\d+)/g, (match) => match.padStart(10, '0'));
-                    aVal = padNum(aVal);
-                    bVal = padNum(bVal);
-                }
+                const aVal = String(a[sortConfig.key] || '');
+                const bVal = String(b[sortConfig.key] || '');
 
-                if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
-                if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
-                return 0;
+                // El relleno de ceros que había para el nº de cliente ya no hace
+                // falta: el propio orden cuenta los números como números.
+                const comparadas = ordenCastellano.compare(aVal, bVal);
+                return sortConfig.direction === 'asc' ? comparadas : -comparadas;
             });
         }
         return result;
