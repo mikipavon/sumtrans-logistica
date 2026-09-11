@@ -292,7 +292,10 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                             </div>
                             <div className="bg-slate-50 p-2 rounded-lg">
                                 <p className="text-xs text-slate-400 mb-1 flex items-center gap-1"><Clock size={12} /> Antigüedad</p>
-                                <p className="font-semibold text-slate-700">Desde {driver.since}</p>
+                                <p className="font-semibold text-slate-700">
+                                    {/* La fecha de alta, si está tecleada, manda sobre el año que se puso solo al crear la ficha */}
+                                    Desde {driver.hireDate ? driver.hireDate.split('-').reverse().join('/') : driver.since}
+                                </p>
                             </div>
                         </div>
 
