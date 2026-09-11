@@ -1,10 +1,11 @@
-import { Search, Filter, MapPin, Building2, Calendar, Database, Lock, Edit2, Trash2, Check, X, Plus, Upload, FileSpreadsheet, Download, ChevronUp, ChevronDown, Copy, LogIn } from 'lucide-react';
+import { Search, Filter, MapPin, Building2, Calendar, Database, Lock, Edit2, Trash2, Check, X, Plus, Upload, FileSpreadsheet, Download, ChevronUp, ChevronDown, Copy, LogIn, Hash } from 'lucide-react';
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import AgencyDatabasesPanel from '../components/clients/AgencyDatabasesPanel';
 import { getOwnerLabel } from '../utils/agencyOwnership';
 import { SIN_FILTRO, TIPOS_DE_CLIENTE, tipoDeFacturacion } from '../utils/filtrosEnvios';
+import { planDeNumeracion } from '../utils/numeracionCliente';
 
 // Ordenar comparando las letras a pelo manda los acentos al final del listado:
 // para el ordenador la "Á" va después de la "Z", así que "Álvarez" salía detrás
@@ -13,7 +14,7 @@ import { SIN_FILTRO, TIPOS_DE_CLIENTE, tipoDeFacturacion } from '../utils/filtro
 // CH-9 va antes que el CH-10 y no al revés.
 const ordenCastellano = new Intl.Collator('es', { sensitivity: 'base', numeric: true });
 
-export default function Clients({ clients, allClients, shipments, allPoblaciones, articles, onUpdateClient, onAddClient, onImportClients, onDeleteClient, onAssignOwnerAgency, onDeleteAgencyDatabase, onImpersonateClient, tariffs }) {
+export default function Clients({ clients, allClients, shipments, allPoblaciones, articles, onUpdateClient, onAddClient, onImportClients, onDeleteClient, onAssignOwnerAgency, onDeleteAgencyDatabase, onImpersonateClient, tariffs, isGhostModeUnlocked = true }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState(null);
     const fileInputRef = useRef(null);
@@ -25,6 +26,10 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
     // 'all' | 'own' | id de agencia — ver utils/agencyOwnership.js
     const [ownerFilter, setOwnerFilter] = useState('all');
     const [tipoFilter, setTipoFilter] = useState(SIN_FILTRO);
+    // El repaso de números: primero se enseña qué número le tocaría a cada ficha
+    // y sólo después se escribe. `numerando` es el contador mientras se guardan.
+    const [numeracionPlan, setNumeracionPlan] = useState(null);
+    const [numerando, setNumerando] = useState(null);
 
     // El mismo tipo que enseña la columna: sin tipo marcado la tabla pone "Facturación".
     const tipoDelCliente = (c) => tipoDeFacturacion(c.billingType || c.tipoFacturacion || 'Facturación');
@@ -77,6 +82,49 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
         }
         return result;
     }, [clients, searchTerm, sortConfig, filterGPS, ownerFilter, tipoFilter]);
+
+    // ── Las que se quedaron sin Nº ──
+    //
+    // No son un fallo de ahora: son fichas viejas, de antes de que el número se
+    // repartiera solo, y las que vuelven de una restauración de copia de
+    // seguridad tal cual venían en el fichero. Se cuentan sobre lo que hay en
+    // pantalla —las pendientes no, que ésas cogen número al aprobarlas en
+    // Validar Clientes— y no se filtran por la búsqueda ni por el resto de
+    // filtros: el repaso es de la cartera entera, no de lo que se esté mirando.
+    const fichasSinNumero = useMemo(() => (Array.isArray(clients) ? clients : [])
+        .filter(c => c.status !== 'pending' && !String(c.clientNumber || '').trim())
+        .sort((a, b) => ordenCastellano.compare(a.name || '', b.name || '')),
+        [clients]);
+
+    // Con el Modo Fantasma echado la oficina no ve las fichas de Clientes
+    // Habituales, así que el repaso tampoco puede tocarlas. Se dice cuántas se
+    // quedan fuera en vez de hacer como que no existen.
+    const sinNumeroOcultas = useMemo(() => {
+        if (isGhostModeUnlocked) return 0;
+        const todas = (Array.isArray(allClients) ? allClients : [])
+            .filter(c => c.status !== 'pending' && !String(c.clientNumber || '').trim()).length;
+        return Math.max(0, todas - fichasSinNumero.length);
+    }, [allClients, fichasSinNumero, isGhostModeUnlocked]);
+
+    const abrirRepasoDeNumeros = () => {
+        // Los números libres se miran contra la cartera COMPLETA: una ficha que
+        // ahora no se ve sigue teniendo ocupado el suyo.
+        setNumeracionPlan(planDeNumeracion(fichasSinNumero, Array.isArray(allClients) && allClients.length ? allClients : clients));
+    };
+
+    const ponerLosNumeros = async () => {
+        const plan = numeracionPlan || [];
+        setNumerando({ hechas: 0, total: plan.length });
+        for (let i = 0; i < plan.length; i++) {
+            // Se manda sólo el número. Esto no es el formulario: mandar la ficha
+            // entera pisaría lo que le haya cambiado el reparto mientras (el GPS
+            // de la entrega, el teléfono del destinatario).
+            await onUpdateClient(plan[i].id, { clientNumber: plan[i].clientNumber });
+            setNumerando({ hechas: i + 1, total: plan.length });
+        }
+        setNumerando(null);
+        setNumeracionPlan(null);
+    };
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -148,7 +196,14 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
             // que se les acaba de dejar la cuenta lista, y con ellos enseña las
             // credenciales antes de cerrarse. La contraseña no se guarda en
             // ninguna parte, así que ése es el único momento en que se puede ver.
-            const resultado = await onUpdateClient(clientData.id, clientData);
+            //
+            // `asignarNumeroSiFalta`: la casilla Nº Cliente pone "Auto", y hasta
+            // ahora "Auto" sólo valía al dar de alta. Las fichas viejas y las que
+            // vuelven de una copia de seguridad se quedaban en "--" para siempre,
+            // porque guardar aquí no le ponía número a nadie. Aquí se enciende y
+            // en el reparto no (ver handleUpdateClient): estas fichas ya están
+            // aprobadas y hay alguien delante revisándolas.
+            const resultado = await onUpdateClient(clientData.id, clientData, null, { asignarNumeroSiFalta: true });
             setEditingClient(null);
             return { ok: true, accesosCreados: resultado?.accesosCreados || [] };
         }
@@ -473,6 +528,18 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
                         <Download size={18} className="text-blue-600" />
                         Exportar a Factusol
                     </button>
+                    {/* Sólo aparece si hay algo que repasar: si no falta ninguno,
+                        un botón que no hace nada sobra de la barra. */}
+                    {fichasSinNumero.length > 0 && (
+                        <button
+                            onClick={abrirRepasoDeNumeros}
+                            className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-300 text-amber-800 rounded-lg hover:bg-amber-100 transition-colors font-medium text-sm"
+                            title="Fichas con la columna Nº Cliente en blanco: repasarlas y ponerles número"
+                        >
+                            <Hash size={18} className="text-amber-600" />
+                            Sin Nº ({fichasSinNumero.length})
+                        </button>
+                    )}
                     <button
                         onClick={() => {
                             setEditingClient(null);
@@ -770,6 +837,83 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
                 initialData={editingClient}
                 allClients={clients}
             />
+
+            {/* ── Repaso de las fichas sin Nº ──
+                Se enseña el reparto entero antes de escribir nada: el número de
+                cliente es con el que la ficha sale en Factusol y en sus
+                facturas, así que no se pone a espaldas de nadie. */}
+            {numeracionPlan && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh]">
+                        <div className="flex items-start justify-between gap-4 p-6 border-b border-slate-100">
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                    <Hash size={20} className="text-amber-600" />
+                                    Fichas sin Nº de Cliente
+                                </h3>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    {numeracionPlan.length === 1
+                                        ? 'Hay 1 ficha sin número. Éste es el que le tocaría:'
+                                        : `Hay ${numeracionPlan.length} fichas sin número. Éstos son los que les tocarían:`}
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setNumeracionPlan(null)}
+                                disabled={!!numerando}
+                                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-40"
+                                title="Cerrar sin tocar nada"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="overflow-y-auto px-6 py-2 divide-y divide-slate-100">
+                            {numeracionPlan.map(ficha => (
+                                <div key={ficha.id} className="flex items-center justify-between gap-4 py-2.5">
+                                    <div className="min-w-0">
+                                        <div className="font-semibold text-slate-700 text-sm truncate">{ficha.name}</div>
+                                        <div className="text-[11px] text-slate-400">{ficha.billingType || 'Facturación'}</div>
+                                    </div>
+                                    <span className="font-mono text-sm font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-md px-2.5 py-1 shrink-0">
+                                        {ficha.clientNumber}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="p-6 border-t border-slate-100 space-y-3">
+                            {sinNumeroOcultas > 0 && (
+                                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                                    Con el candado echado no se ven todas: hay {sinNumeroOcultas} ficha{sinNumeroOcultas === 1 ? '' : 's'} más sin número
+                                    que no salen aquí. Desbloquea el Modo Fantasma para repasarlas también.
+                                </p>
+                            )}
+                            <p className="text-xs text-slate-500">
+                                A las fichas que ya tienen número no se les toca: el suyo se queda como está.
+                            </p>
+                            <div className="flex justify-end gap-2">
+                                <button
+                                    onClick={() => setNumeracionPlan(null)}
+                                    disabled={!!numerando}
+                                    className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 font-medium text-sm hover:bg-slate-50 transition-colors disabled:opacity-40"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={ponerLosNumeros}
+                                    disabled={!!numerando || numeracionPlan.length === 0}
+                                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm shadow-lg shadow-blue-500/20 disabled:opacity-60"
+                                >
+                                    <Check size={16} />
+                                    {numerando
+                                        ? `Poniendo números… ${numerando.hechas} de ${numerando.total}`
+                                        : `Poner ${numeracionPlan.length === 1 ? 'el número' : `los ${numeracionPlan.length} números`}`}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

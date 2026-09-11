@@ -63,6 +63,7 @@ import { BAREMO_1_PUEBLOS, BAREMO_2_PUEBLOS } from './data/baremos';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { enqueue, getQueue, dequeue, getQueueLength } from './utils/offlineQueue';
 import { darDeAltaSinPisar } from './utils/numeracionAlbaran';
+import { prefijoDeCliente, siguienteNumeroDeCliente, numeroQueLeFalta } from './utils/numeracionCliente';
 import { uploadProof } from './utils/storage';
 
 
@@ -3782,6 +3783,22 @@ function App() {
         updated = { ...updated, ...updatedData };
     }
 
+    // "Auto" también al editar (ver utils/numeracionCliente.js). Va con
+    // interruptor y apagado por defecto porque este handler es sobre todo el
+    // recadero silencioso del reparto —el GPS que se aprende en la entrega, el
+    // teléfono del destinatario—, y una ficha que aún está en Validar Clientes
+    // no debe gastar número hasta que alguien la apruebe. Lo enciende el
+    // guardado de la ficha desde el listado de Clientes, que son fichas ya
+    // aprobadas y hay una persona delante mirándolas.
+    // Las sedes no llevan número propio: cuelgan de la ficha madre.
+    if (opciones.asignarNumeroSiFalta && !branchId) {
+        const numero = numeroQueLeFalta(updated, clientsRef.current || []);
+        if (numero) {
+            console.log(`[Cliente] "${updated.name}" no tenía Nº — se le asigna ${numero}`);
+            updated.clientNumber = numero;
+        }
+    }
+
     // Optimistic update — este handler se usa mucho como efecto secundario silencioso
     // (aprendizaje de GPS/receptor en la entrega), así que nunca debe bloquear al
     // conductor con un alert ni perder el dato si falla la red.
@@ -3861,36 +3878,6 @@ function App() {
       await enqueueClientOp();
     }
   }
-
-  const getClientPrefix = (billingType) => {
-    if (billingType === 'Presupuesto') return 'P-';
-    if (billingType === 'Clientes Habituales') return 'CH-';
-    return '';
-  };
-
-  const getNextClientNumber = (allClients, prefix) => {
-    const usedNumbers = new Set();
-    allClients.forEach(c => {
-      const str = String(c.clientNumber || '').trim();
-      if (prefix) {
-        if (str.startsWith(prefix)) {
-          const num = parseInt(str.substring(prefix.length), 10);
-          if (!isNaN(num) && num > 0) usedNumbers.add(num);
-        }
-      } else {
-        // Only accept pure numbers for normal sequence
-        if (/^\d+$/.test(str)) {
-          const num = parseInt(str, 10);
-          if (!isNaN(num) && num > 0) usedNumbers.add(num);
-        }
-      }
-    });
-    let next = 1;
-    while (usedNumbers.has(next)) {
-      next++;
-    }
-    return `${prefix}${next}`;
-  };
 
   // ── Una sola ficha por cliente ──
   //
@@ -3979,8 +3966,8 @@ function App() {
           console.warn('[AddClient] No se pudo comprobar en la base si ya existía:', e);
         }
 
-        const prefix = getClientPrefix(newClient.billingType);
-        const nextNum = getNextClientNumber(clientsRef.current, prefix);
+        const prefix = prefijoDeCliente(newClient.billingType);
+        const nextNum = siguienteNumeroDeCliente(clientsRef.current, prefix);
         const clientWithMeta = {
           ...newClient,
           id: newClient.id || Date.now(),
@@ -4111,10 +4098,10 @@ function App() {
     try {
       let currentClients = [...clientsRef.current];
       const clientsToInsert = newClients.map((c, index) => {
-        const prefix = getClientPrefix(c.billingType);
+        const prefix = prefijoDeCliente(c.billingType);
         let assignedNum = c.clientNumber;
         if (!assignedNum || String(assignedNum).trim() === '') {
-          assignedNum = getNextClientNumber(currentClients, prefix);
+          assignedNum = siguienteNumeroDeCliente(currentClients, prefix);
         }
         
         const clientData = { 
@@ -4403,8 +4390,8 @@ function App() {
       if (client && !client.clientNumber) {
         // Fallback: si billingType no está definido, usar 'Clientes Habituales' por defecto
         const billing = client.billingType || 'Clientes Habituales';
-        const prefix = getClientPrefix(billing);
-        const nextNum = getNextClientNumber(clientsRef.current, prefix);
+        const prefix = prefijoDeCliente(billing);
+        const nextNum = siguienteNumeroDeCliente(clientsRef.current, prefix);
         updateData.clientNumber = nextNum;
         console.log('[Validar] Asignando número:', nextNum, '| prefix:', prefix, '| billing:', billing);
       }
