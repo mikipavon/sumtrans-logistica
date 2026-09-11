@@ -98,11 +98,20 @@ const enSingular = (palabra) => {
 // guardan ya recortadas, para poder escribirlas aquí como se dicen.
 const PALABRAS_DEL_RAMO = new Set([
     'transporte', 'comercial', 'distribucion', 'suministro', 'taller', 'bar',
-    'cafe', 'cafeteria', 'restaurante', 'mueble', 'ferreteria', 'panaderia',
-    'carniceria', 'almacen', 'grupo', 'hermano', 'hermana', 'hijo',
-    'construccion', 'servicio', 'autoservicio', 'electricidad', 'fontaneria',
+    'cafe', 'restaurante', 'mueble', 'almacen', 'grupo', 'hermano', 'hermana',
+    'hijo', 'construccion', 'servicio', 'autoservicio', 'electricidad',
     'logistica', 'industrial', 'industria', 'empresa', 'compania', 'tienda',
+    'pintura', 'recambio', 'neumatico', 'obra', 'reforma', 'instalacion',
+    'material', 'asesoria', 'gestoria', 'clinica', 'hotel', 'supermercado',
+    'exclusiva', 'promocion', 'montaje', 'decoracion', 'climatizacion',
 ].map(enSingular));
+
+// Los oficios acabados en -ería son una familia entera —floristería,
+// ferretería, panadería, carnicería, peluquería, cristalería…— y no hay lista
+// que los tenga todos: se reconocen por la terminación. Cortas no, que ahí
+// caerían nombres como "Iberia".
+const esDelRamo = (palabra) => PALABRAS_DEL_RAMO.has(palabra)
+    || (palabra.length > 6 && palabra.endsWith('eria'));
 
 // Las palabras con las que se reconoce a una empresa, ya limpias. Se exporta
 // para poder probarla suelta.
@@ -146,12 +155,20 @@ const esUnaErrata = (unaPalabra, otraPalabra) => {
     return letrasDeDiferencia(unaPalabra, otraPalabra) <= (largo >= 8 ? 2 : 1);
 };
 
-// Lo que comparten, ¿dice quién es la empresa o sólo a qué se dedica? Con dos
-// palabras en común basta; con una sola tiene que ser un nombre propio.
-const identificaALaEmpresa = (compartidas) => compartidas.length >= 2
-    || (compartidas.length === 1 && !PALABRAS_DEL_RAMO.has(compartidas[0]));
+// Lo que comparten, ¿dice quién es la empresa, o sólo a qué se dedica y dónde
+// está? En un pueblo entero de fichas, el ramo y el nombre del pueblo los
+// comparte medio listado: "Floristeria de la Rambla" y "Floristeria Santa Maria
+// de la Rambla" son dos floristerías distintas de La Rambla, y lo único que
+// tienen en común es justo eso. Así que hace falta al menos una palabra que sea
+// de la empresa y de nadie más.
+const identificaALaEmpresa = (compartidas, delLugar = new Set()) => compartidas
+    .some(p => !esDelRamo(p) && !delLugar.has(p));
 
-export function nombresSeParecen(unNombre, otroNombre) {
+// `delLugar` son las palabras de la población de las fichas que se comparan (ver
+// algunNombreSeParece). Va aparte y no dentro de PALABRAS_DEL_RAMO porque
+// depende de quién se compare con quién: "Espejo" es el pueblo en una ficha de
+// Espejo y puede ser el apellido de la empresa en una de Córdoba.
+export function nombresSeParecen(unNombre, otroNombre, delLugar = new Set()) {
     const unas = clavesDelNombre(unNombre);
     const otras = clavesDelNombre(otroNombre);
     if (unas.size === 0 || otras.size === 0) return false;
@@ -166,7 +183,7 @@ export function nombresSeParecen(unNombre, otroNombre) {
     // A una le sobra algo: "Bar Manolo" y "Bar Manolo 2", "Muebles Lopez" y
     // "Muebles Lopez (Sevilla)".
     const laCorta = unas.size <= otras.size ? unas : otras;
-    if (compartidas.length === laCorta.size && identificaALaEmpresa(compartidas)) return true;
+    if (compartidas.length === laCorta.size && identificaALaEmpresa(compartidas, delLugar)) return true;
 
     // Todo igual menos una palabra, y esa por una errata: "Ferreteria Gomez" y
     // "Ferreteria Gomes". Aquí no se mira si lo compartido identifica a la
@@ -187,8 +204,19 @@ export function nombresSeParecen(unNombre, otroNombre) {
 const nombresDe = (client) => [client?.name, client?.legalName]
     .filter(v => String(v || '').trim() !== '');
 
-export const algunNombreSeParece = (unaFicha, otraFicha) => nombresDe(unaFicha)
-    .some(uno => nombresDe(otraFicha).some(otro => nombresSeParecen(uno, otro)));
+// El pueblo de las dos fichas, en palabras. Se juntan los dos: basta con que
+// "Rambla" sea el pueblo de una para que deje de valer como apellido de la otra,
+// y muchas fichas de albarán vienen sin población.
+const palabrasDelLugar = (unaFicha, otraFicha) => new Set([
+    ...clavesDelNombre(unaFicha?.city),
+    ...clavesDelNombre(otraFicha?.city),
+]);
+
+export const algunNombreSeParece = (unaFicha, otraFicha) => {
+    const delLugar = palabrasDelLugar(unaFicha, otraFicha);
+    return nombresDe(unaFicha)
+        .some(uno => nombresDe(otraFicha).some(otro => nombresSeParecen(uno, otro, delLugar)));
+};
 
 // El motivo flojo: avisa, pero no habilita nada que borre ni dé accesos.
 export const PARECIDO_DE_NOMBRE = 'un nombre casi igual';

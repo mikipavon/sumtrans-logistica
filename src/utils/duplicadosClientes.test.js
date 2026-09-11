@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, buscarSolicitudesParecidas, nombresSeParecen, loQueAportanLasGemelas, explicarAportacion } from './duplicadosClientes';
+import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, buscarSolicitudesParecidas, nombresSeParecen, algunNombreSeParece, loQueAportanLasGemelas, explicarAportacion } from './duplicadosClientes';
 
 const CARTERA = {
     id: 10,
@@ -265,5 +265,54 @@ describe('buscarSolicitudesParecidas', () => {
         const b = unaDeAlbaran(2, 'Bar Manolo 2');
         expect(buscarSolicitudesGemelas(a, [a, b])).toEqual([]);
         expect(buscarSolicitudesParecidas(a, [a, b]).map(p => p.id)).toEqual([2]);
+    });
+});
+
+describe('el pueblo no cuenta como apellido de la empresa', () => {
+    // Caso real de Validar Clientes: dos floristerías distintas de La Rambla.
+    // Lo único que comparten es el ramo y el nombre del pueblo.
+    const enLaRambla = (id, name) => ({ id, name, city: 'La Rambla', status: 'pending' });
+
+    it('deja de emparejar a dos floristerías del mismo pueblo', () => {
+        const una = enLaRambla(1, 'Floristeria de la rambla');
+        const otra = enLaRambla(2, 'Floristeria SANTA MARIA DE LA RAMBLA');
+        expect(algunNombreSeParece(una, otra)).toBe(false);
+    });
+
+    it('basta con que sea el pueblo de UNA de las dos', () => {
+        const conPueblo = { id: 1, name: 'Floristeria de la rambla', city: 'La Rambla' };
+        const sinPueblo = { id: 2, name: 'Floristeria SANTA MARIA DE LA RAMBLA' };
+        expect(algunNombreSeParece(conPueblo, sinPueblo)).toBe(false);
+    });
+
+    it('si ninguna dice de dónde es, «rambla» vuelve a ser un apellido', () => {
+        const una = { id: 1, name: 'Floristeria de la rambla' };
+        const otra = { id: 2, name: 'Floristeria SANTA MARIA DE LA RAMBLA' };
+        expect(algunNombreSeParece(una, otra)).toBe(true);
+    });
+
+    it('tampoco empareja dos bares de Sevilla por llamarse Sevilla', () => {
+        const uno = { id: 1, name: 'Bar Sevilla', city: 'Sevilla' };
+        const otro = { id: 2, name: 'Bar Nuevo Sevilla', city: 'Sevilla' };
+        expect(algunNombreSeParece(uno, otro)).toBe(false);
+    });
+
+    it('sigue avisando cuando lo que comparten es el nombre de la empresa', () => {
+        // El otro caso real de la misma pantalla: Jomar, de Santa Cruz.
+        const uno = { id: 1, name: 'Jomar', city: 'Santa Cruz' };
+        const otro = { id: 2, name: 'Talleres Jomar', city: 'Santa Cruz' };
+        expect(algunNombreSeParece(uno, otro)).toBe(true);
+    });
+
+    it('el pueblo no tapa un nombre que es el mismo entero', () => {
+        const uno = { id: 1, name: 'Floristeria la Rambla', city: 'La Rambla' };
+        const otro = { id: 2, name: 'Floristería de la Rambla, S.L.', city: 'La Rambla' };
+        expect(algunNombreSeParece(uno, otro)).toBe(true);
+    });
+
+    it('no se lo salta en el aviso de cartera', () => {
+        const cartera = { id: 50, name: 'Floristeria SANTA MARIA DE LA RAMBLA', city: 'La Rambla', status: 'active' };
+        const solicitud = pendiente({ name: 'Floristeria de la rambla', city: 'La Rambla' });
+        expect(buscarFichasParecidas(solicitud, [cartera])).toEqual([]);
     });
 });
