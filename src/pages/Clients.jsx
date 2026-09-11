@@ -5,6 +5,7 @@ import CreateClientModal from '../components/clients/CreateClientModal';
 import AgencyDatabasesPanel from '../components/clients/AgencyDatabasesPanel';
 import { getOwnerLabel } from '../utils/agencyOwnership';
 import { SIN_FILTRO, TIPOS_DE_CLIENTE, tipoDeFacturacion } from '../utils/filtrosEnvios';
+import { normalizarTexto } from '../utils/busqueda';
 import { planDeNumeracion } from '../utils/numeracionCliente';
 
 // Ordenar comparando las letras a pelo manda los acentos al final del listado:
@@ -50,19 +51,21 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
             // Facturación / Clientes Habituales / Presupuesto
             if (tipoFilter !== SIN_FILTRO && tipoDelCliente(c) !== tipoFilter) return false;
 
-            const search = (searchTerm || '').toLowerCase();
-            const mainMatch = (c.name || '').toLowerCase().includes(search) ||
-                   (c.legalName || '').toLowerCase().includes(search) ||
-                   (c.address || '').toLowerCase().includes(search) ||
-                   (c.city || '').toLowerCase().includes(search) ||
-                   (c.cif || '').toLowerCase().includes(search);
+            // Sin tildes por los dos lados: "Alvarez" encuentra a "Álvarez" y al
+            // revés, que es lo que pasa cuando la ficha se dio de alta a prisa.
+            const search = normalizarTexto(searchTerm);
+            const mainMatch = normalizarTexto(c.name).includes(search) ||
+                   normalizarTexto(c.legalName).includes(search) ||
+                   normalizarTexto(c.address).includes(search) ||
+                   normalizarTexto(c.city).includes(search) ||
+                   normalizarTexto(c.cif).includes(search);
             if (mainMatch) return true;
             // Also search in branches
             if (Array.isArray(c.branches) && c.branches.length > 0) {
-                return c.branches.some(b => 
-                    (b.name || '').toLowerCase().includes(search) ||
-                    (b.address || '').toLowerCase().includes(search) ||
-                    (b.city || '').toLowerCase().includes(search)
+                return c.branches.some(b =>
+                    normalizarTexto(b.name).includes(search) ||
+                    normalizarTexto(b.address).includes(search) ||
+                    normalizarTexto(b.city).includes(search)
                 );
             }
             return false;

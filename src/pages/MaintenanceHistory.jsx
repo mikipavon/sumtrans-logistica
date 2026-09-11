@@ -8,6 +8,7 @@ import BrandLogo from '../components/fleet/BrandLogo';
 import MaintenanceIcon, { getMaintenanceConfig } from '../components/fleet/MaintenanceIcon';
 import { compressImage, esImagenComprimible } from '../utils/imageCompression';
 import CameraCaptureModal from '../components/CameraCaptureModal';
+import { coincideEnCampos } from '../utils/busqueda';
 
 const MAINTENANCE_TYPES = [
     { value: 'Aceite',    label: 'Cambio de Aceite',        icon: Droplets,     color: 'text-amber-500 bg-amber-50 border-amber-200' },
@@ -72,13 +73,10 @@ export default function MaintenanceHistory({ vehicles = [], onUpdateVehicle, onN
         if (filterFrom)              rows = rows.filter(r => r.date >= filterFrom);
         if (filterTo)                rows = rows.filter(r => r.date <= filterTo);
         if (search) {
-            const q = search.toLowerCase();
-            rows = rows.filter(r =>
-                r.vehicleId.toLowerCase().includes(q) ||
-                (r.notes || '').toLowerCase().includes(q) ||
-                (r.workshop || '').toLowerCase().includes(q) ||
-                getTypeConfig(r.type).label.toLowerCase().includes(q)
-            );
+            rows = rows.filter(r => coincideEnCampos(
+                [r.vehicleId, r.notes, r.workshop, getTypeConfig(r.type).label],
+                search
+            ));
         }
         // Sort
         rows = [...rows].sort((a, b) => {

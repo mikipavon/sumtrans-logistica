@@ -3,6 +3,7 @@ import { X, Upload, Camera, CheckCircle, AlertTriangle, Loader2, FileText, Trash
 import jsQR from 'jsqr';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
+import { coincideEnCampos } from '../../utils/busqueda';
 import CameraCaptureModal from '../CameraCaptureModal';
 
 /**
@@ -33,14 +34,9 @@ export default function CodReceiptUploadModal({ isOpen, onClose, shipments = [],
     );
 
     // Apply search filter
-    const filteredPending = pendingShipments.filter(s => {
-        if (!searchFilter) return true;
-        const q = searchFilter.toLowerCase();
-        return (s.id || '').toLowerCase().includes(q) ||
-            (s.client || '').toLowerCase().includes(q) ||
-            (s.originName || '').toLowerCase().includes(q) ||
-            (s.destinationName || '').toLowerCase().includes(q);
-    });
+    const filteredPending = pendingShipments.filter(s =>
+        coincideEnCampos([s.id, s.client, s.originName, s.destinationName], searchFilter)
+    );
 
     // Read QR from an image data URL
     const readQRFromImage = useCallback((imageData) => {

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { normalizarTexto } from '../utils/busqueda';
 
 /**
  * Custom autocomplete for city/population names.
@@ -25,9 +26,11 @@ export default function CityAutocomplete({
       setFiltered([]);
       return;
     }
-    const search = value.toLowerCase();
+    // Sin tildes: "cordoba" tiene que ofrecer "Córdoba". Al repartidor y a la
+    // oficina les cuesta más teclear la tilde en el móvil que acertar el nombre.
+    const search = normalizarTexto(value);
     const matches = poblaciones
-      .filter(p => p.toLowerCase().includes(search))
+      .filter(p => normalizarTexto(p).includes(search))
       .slice(0, 15); // Limit to 15 suggestions
     setFiltered(matches);
   }, [value, poblaciones]);

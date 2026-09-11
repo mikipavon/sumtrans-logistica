@@ -4,6 +4,7 @@ import { Search, Plus, FileText, Trash2, Edit, Euro, Tag, Map as MapIcon, Upload
 import { read, utils, writeFile } from 'xlsx';
 
 import { BAREMO_1_PUEBLOS, BAREMO_2_PUEBLOS } from '../data/baremos';
+import { coincideEnCampos } from '../utils/busqueda';
 
 
 export default function Articles({ 
@@ -248,8 +249,7 @@ export default function Articles({
 
     const sortedArticles = useMemo(() => {
         let result = (articles || []).filter(article => {
-            const matchesSearch = (article.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
-                (article.description || '').toLowerCase().includes((searchTerm || '').toLowerCase());
+            const matchesSearch = coincideEnCampos([article.name, article.description], searchTerm);
             const matchesCategory = selectedCategory === 'all' || article.category === selectedCategory;
             return matchesSearch && matchesCategory;
         });
@@ -324,8 +324,7 @@ export default function Articles({
     };
 
     const filteredTariffs = (tariffs || []).filter(tariff =>
-        (tariff.name || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
-        (tariff.match || '').toLowerCase().includes((searchTerm || '').toLowerCase())
+        coincideEnCampos([tariff.name, tariff.match], searchTerm)
     );
 
 

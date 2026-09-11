@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, Truck, Save, ChevronDown, Search } from 'lucide-react';
+import { normalizarTexto } from '../../utils/busqueda';
 
 // Lista de marcas con sus logos (debe coincidir con los archivos en /logos/brands/)
 const BRANDS = [
@@ -48,8 +49,9 @@ function BrandDropdown({ value, onChange }) {
     }, [isOpen]);
 
     const selectedBrand = BRANDS.find(b => b.name === value);
+    // Sin tildes ni diéresis: escribiendo "citroen" tiene que salir "Citroën".
     const filtered = BRANDS.filter(b =>
-        b.name.toLowerCase().includes(search.toLowerCase())
+        normalizarTexto(b.name).includes(normalizarTexto(search))
     );
 
     return (

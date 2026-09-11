@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { LogOut, Package, Plus, MapPin, Truck, CheckCircle, Clock, FileText, Download, FileDown, Loader2, Printer, Settings as SettingsIcon, Upload, Trash2, Tag, Search } from 'lucide-react';
-import { coincideEnCampos, CAMPOS_BUSCABLES_ENVIO } from '../../utils/busqueda';
+import { coincideEnCampos, normalizarTexto, CAMPOS_BUSCABLES_ENVIO } from '../../utils/busqueda';
 import ShipmentDetailsModal from '../../components/shipments/ShipmentDetailsModal';
 import { printShipmentTicket } from '../../utils/printShipment';
 import { generateDeliveryPDF, generateDeliveryNotesPDF } from '../../utils/deliveryPdf';
@@ -231,14 +231,14 @@ export default function ClientDashboard({
 
     const filteredDestCities = useMemo(() => {
         if (!newDestinationCity || newDestinationCity.length < 2) return [];
-        const q = newDestinationCity.toLowerCase();
-        return uniquePoblaciones.filter(p => p.name.toLowerCase().includes(q)).slice(0, 8);
+        const q = normalizarTexto(newDestinationCity);
+        return uniquePoblaciones.filter(p => normalizarTexto(p.name).includes(q)).slice(0, 8);
     }, [uniquePoblaciones, newDestinationCity]);
 
     const filteredOriginCities = useMemo(() => {
         if (!newOriginCity || newOriginCity.length < 2) return [];
-        const q = newOriginCity.toLowerCase();
-        return uniquePoblaciones.filter(p => p.name.toLowerCase().includes(q)).slice(0, 8);
+        const q = normalizarTexto(newOriginCity);
+        return uniquePoblaciones.filter(p => normalizarTexto(p.name).includes(q)).slice(0, 8);
     }, [uniquePoblaciones, newOriginCity]);
 
     // Available articles for clients: los asignados en su ficha (allowedArticles);

@@ -5,7 +5,7 @@ import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { getPackagesCount, intervinoConductor, importeParaMostrar, poblacionYCalle } from '../utils/shipmentUtils';
-import { coincideBusqueda } from '../utils/busqueda';
+import { coincideBusqueda, coincideEnCampos } from '../utils/busqueda';
 import { SIN_FILTRO, BAREMO_1, BAREMO_2, TIPOS_DE_CLIENTE, coincideCliente, filtroPoblacion, filtroTipoDeCliente, opcionesDeClientes, opcionesDePoblaciones } from '../utils/filtrosEnvios';
 import FiltroClienteBuscable from '../components/shipments/FiltroClienteBuscable';
 import ImportExcelShipments from '../components/clients/ImportExcelShipments';
@@ -1050,10 +1050,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                 <div className="mt-2 max-h-[180px] overflow-y-auto bg-white rounded-lg border border-indigo-200 divide-y divide-slate-50 shadow-sm">
                                     {(clients || [])
                                         .filter(c => c.status === 'approved')
-                                        .filter(c => {
-                                            const q = importClientSearch.toLowerCase();
-                                            return (c.name || '').toLowerCase().includes(q) || String(c.clientNumber || '').toLowerCase().includes(q) || (c.legalName || '').toLowerCase().includes(q);
-                                        })
+                                        .filter(c => coincideEnCampos([c.name, c.clientNumber, c.legalName], importClientSearch))
                                         .sort((a,b) => a.name.localeCompare(b.name))
                                         .slice(0, 15)
                                         .map(c => (
@@ -1064,7 +1061,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             </button>
                                         ))
                                     }
-                                    {(clients || []).filter(c => c.status === 'approved').filter(c => { const q = importClientSearch.toLowerCase(); return (c.name||'').toLowerCase().includes(q)||String(c.clientNumber||'').toLowerCase().includes(q); }).length === 0 && (
+                                    {(clients || []).filter(c => c.status === 'approved').filter(c => coincideEnCampos([c.name, c.clientNumber, c.legalName], importClientSearch)).length === 0 && (
                                         <p className="text-xs text-slate-400 text-center py-3">No se encontraron clientes</p>
                                     )}
                                 </div>

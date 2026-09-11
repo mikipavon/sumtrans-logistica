@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 
 import { AlertTriangle, Calendar, Truck, MapPin, CheckCircle, Search, Filter, MessageSquare, Send, User, Package, Euro, Clock, Eye } from 'lucide-react';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
+import { normalizarTexto } from '../utils/busqueda';
 
 export default function Incidents({ shipments, onUpdateStatus, onResolve, onReply, onUpdateShipment, drivers, clients = [], allPoblaciones = [], articles = [], tariffs = null, coverageZones = [], familyOrder = [], driverNamePreference = 'both' }) {
     const [detalleId, setDetalleId] = useState(null);
@@ -20,7 +21,9 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
             const isIncident = s.incidentStatus === 'active' || s.status === 'Incidencia';
             const matchesDriver = filterDriver ? (
                 s.assignedDriverId?.toString() === filterDriver || 
-                (s.createdBy && (s.createdBy || '').toLowerCase().includes((drivers.find(d => d.id.toString() === filterDriver)?.name || '').toLowerCase()))
+                // Sin tildes: la incidencia guarda el nombre escrito, y si la ficha
+                // del conductor pone "Martín" y el texto "Martin" se perdía el filtro.
+                (s.createdBy && normalizarTexto(s.createdBy).includes(normalizarTexto(drivers.find(d => d.id.toString() === filterDriver)?.name)))
             ) : true;
             const matchesDate = filterDate ? (s.createdAt || '').startsWith(filterDate) : true;
             return isIncident && matchesDriver && matchesDate;
