@@ -1,6 +1,7 @@
-import { X, Truck, Phone, Smartphone, MapPin, Package, Clock, Euro, Wallet, Calendar, CheckCircle, AlertTriangle, Edit2, Save, Eye, EyeOff, Key, BarChart2, TrendingUp, Target, Activity, Printer, Sun, Moon, FileText, Trash2, Download } from 'lucide-react';
+import { X, Truck, Phone, Smartphone, MapPin, Package, Clock, Euro, Wallet, Calendar, CalendarDays, CheckCircle, AlertTriangle, Edit2, Save, Eye, EyeOff, Key, BarChart2, TrendingUp, Target, Activity, Printer, Sun, Moon, FileText, Trash2, Download } from 'lucide-react';
 import { useMemo, useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
+import { diasDeVacaciones, explicacionDeLosDias } from '../../utils/vacacionesDelAno';
 import { calculateDailyAccount, isToday } from '../../utils/accountLogic';
 import { generateCashReportPDF } from '../../utils/cashReportPdf';
 import ShipmentDetailsModal from '../shipments/ShipmentDetailsModal';
@@ -219,6 +220,18 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                             placeholder="Teléfono personal (Opcional)"
                                         />
                                     </div>
+                                    {/* Fecha de alta: de aquí salen los días de vacaciones del primer año */}
+                                    <div className="flex items-center gap-2 mt-2">
+                                        <CalendarDays size={14} className="text-slate-400" />
+                                        <input
+                                            type="date"
+                                            value={formData.hireDate || ''}
+                                            onChange={(e) => setFormData({ ...formData, hireDate: e.target.value })}
+                                            className="text-sm text-slate-600 border border-blue-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 w-full md:w-1/3"
+                                            title="Fecha de alta en la empresa"
+                                        />
+                                        <span className="text-xs text-slate-400 shrink-0">alta en la empresa</span>
+                                    </div>
                                 </div>
                             ) : (
                                 <>
@@ -232,6 +245,16 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                         <p className="text-sm text-slate-500 flex items-center gap-2 mt-1">
                                             <Smartphone size={14} /> {driver.personalPhone}
                                             <span className="text-xs text-slate-400">personal</span>
+                                        </p>
+                                    )}
+                                    {driver.hireDate && (
+                                        <p className="text-sm text-slate-500 flex items-center gap-2 mt-1">
+                                            <CalendarDays size={14} />
+                                            Alta: {driver.hireDate.split('-').reverse().join('/')}
+                                            <span className="text-xs text-slate-400">
+                                                · {diasDeVacaciones(driver.hireDate, new Date().getFullYear()).dias} días de vacaciones
+                                                ({explicacionDeLosDias(driver.hireDate, new Date().getFullYear())})
+                                            </span>
                                         </p>
                                     )}
                                     <div className="flex items-center gap-2 mt-2">

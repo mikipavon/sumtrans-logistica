@@ -31,6 +31,8 @@ import { printShipmentTicket } from '../../utils/printShipment';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { estilosDeHoja, scriptDeAjuste } from '../../utils/hojaDeImpresion';
 import { fechaSinHora } from '../../utils/fechaSinHora';
+import { laTablaLlevaParte, faltaElParte } from '../../utils/partesDeBaja';
+import { diasDeVacaciones, explicacionDeLosDias } from '../../utils/vacacionesDelAno';
 import ScannerModal from '../../components/delivery/ScannerModal';
 import VersionDeLaApp from '../../components/VersionDeLaApp';
 import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
@@ -894,7 +896,7 @@ const SortableItem = React.memo((props) => {
 
 
 // ─── DRIVER VACATIONS PANEL (Read-only, shown to driver) ───────────────────
-const DriverVacationsPanel = ({ currentDriverId, onClose }) => {
+const DriverVacationsPanel = ({ currentDriverId, hireDate, onClose }) => {
     const [absences, setAbsences]   = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const year = new Date().getFullYear();
@@ -925,7 +927,13 @@ const DriverVacationsPanel = ({ currentDriverId, onClose }) => {
     };
 
     const vacUsed      = absences.filter(a => a.type === 'Vacaciones').length;
-    const vacRemaining = 22 - vacUsed;
+    const vacTotal     = diasDeVacaciones(hireDate, year);
+    const vacRemaining = vacTotal.dias - vacUsed;
+
+    // Recordatorio del parte médico: sólo si la migración 24 está pasada (si no, la
+    // columna no viene y todas las bajas parecerían pendientes).
+    const llevaParte     = laTablaLlevaParte(absences);
+    const partePendiente = (a) => llevaParte && faltaElParte(a);
 
     // Group by month
     const byMonth = absences.reduce((acc, a) => {
@@ -959,10 +967,16 @@ const DriverVacationsPanel = ({ currentDriverId, onClose }) => {
                         <p className={`text-[10px] font-bold uppercase tracking-wide mt-1 ${vacRemaining >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>Días restantes</p>
                     </div>
                     <div className="bg-slate-50 rounded-2xl p-4 text-center border border-slate-100">
-                        <p className="text-3xl font-black text-slate-600">22</p>
+                        <p className="text-3xl font-black text-slate-600">{vacTotal.dias}</p>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mt-1">Total año</p>
                     </div>
                 </div>
+
+                {vacTotal.prorrateado && (
+                    <p className="text-[11px] text-slate-400 text-center -mt-1">
+                        Este año te tocan {vacTotal.dias} días: {explicacionDeLosDias(hireDate, year)}.
+                    </p>
+                )}
 
                 {isLoading ? (
                     <div className="text-center py-10 text-slate-400 animate-pulse font-bold">Cargando...</div>
@@ -985,10 +999,15 @@ const DriverVacationsPanel = ({ currentDriverId, onClose }) => {
                                         return (
                                             <div key={a.id} className={`flex items-center gap-3 px-4 py-3 rounded-2xl border ${info.color}`}>
                                                 <span className="text-xl">{info.emoji}</span>
-                                                <div>
+                                                <div className="min-w-0">
                                                     <p className="text-sm font-bold capitalize">{dLabel}</p>
                                                     <p className="text-[10px] opacity-60">{a.type}</p>
                                                 </div>
+                                                {partePendiente(a) && (
+                                                    <span className="ml-auto shrink-0 px-2 py-1 rounded-lg bg-amber-100 text-amber-700 border border-amber-200 text-[10px] font-bold">
+                                                        Falta el parte
+                                                    </span>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -6437,6 +6456,7 @@ ${scriptDeAjuste()}
                         {showVacationsPanel && (
                             <DriverVacationsPanel
                                 currentDriverId={currentDriverId}
+                                hireDate={currentDriver?.hireDate}
                                 onClose={() => setShowVacationsPanel(false)}
                             />
                         )}

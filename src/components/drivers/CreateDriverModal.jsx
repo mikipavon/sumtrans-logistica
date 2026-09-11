@@ -1,5 +1,6 @@
-import { X, User, Phone, Smartphone, Truck, Lock, BadgeCheck, Mail } from 'lucide-react';
+import { X, User, Phone, Smartphone, Truck, Lock, BadgeCheck, Mail, CalendarDays } from 'lucide-react';
 import { useState } from 'react';
+import { diasDeVacaciones, explicacionDeLosDias } from '../../utils/vacacionesDelAno';
 
 export default function CreateDriverModal({ isOpen, onClose, onSave }) {
     const [formData, setFormData] = useState({
@@ -9,6 +10,7 @@ export default function CreateDriverModal({ isOpen, onClose, onSave }) {
         personalPhone: '',
         email: '',
         vehicle: '',
+        hireDate: '',
         status: 'Disponible',
         username: '',
         password: '',
@@ -23,9 +25,12 @@ export default function CreateDriverModal({ isOpen, onClose, onSave }) {
             ...formData,
             id: Date.now(), // Simple ID generation
             rating: 5.0, // Default rating
-            since: new Date().getFullYear().toString()
+            // `since` es el año que se enseña en la tarjeta. Si han tecleado la fecha
+            // de alta manda esa, que es la buena: la ficha puede crearse años después
+            // de que el conductor empezara a trabajar aquí.
+            since: (formData.hireDate ? formData.hireDate.slice(0, 4) : new Date().getFullYear().toString())
         });
-        setFormData({ name: '', alias: '', phone: '', personalPhone: '', email: '', vehicle: '', status: 'Disponible', username: '', password: '', isTestMode: true });
+        setFormData({ name: '', alias: '', phone: '', personalPhone: '', email: '', vehicle: '', hireDate: '', status: 'Disponible', username: '', password: '', isTestMode: true });
         onClose();
     };
 
@@ -99,6 +104,26 @@ export default function CreateDriverModal({ isOpen, onClose, onSave }) {
                                 value={formData.email}
                                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                             />
+                        </div>
+
+                        {/* De aquí salen los días de vacaciones que le tocan el primer año */}
+                        <div>
+                            <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Fecha de alta en la empresa</label>
+                            <div className="relative">
+                                <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                <input
+                                    type="date"
+                                    className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm"
+                                    value={formData.hireDate}
+                                    onChange={(e) => setFormData({ ...formData, hireDate: e.target.value })}
+                                />
+                            </div>
+                            {formData.hireDate && (
+                                <p className="text-[11px] text-slate-500 mt-1">
+                                    Le tocan <strong>{diasDeVacaciones(formData.hireDate, new Date().getFullYear()).dias} días</strong> de vacaciones este año
+                                    ({explicacionDeLosDias(formData.hireDate, new Date().getFullYear())}).
+                                </p>
+                            )}
                         </div>
 
                         <div className="relative">

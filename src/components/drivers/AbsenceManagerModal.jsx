@@ -1,6 +1,19 @@
-import { X, Calendar, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { X, Calendar, ChevronLeft, ChevronRight, Trash2, FileWarning, FileCheck2, Upload, Eye, Loader2, Check } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
+import {
+    TIPO_BAJA,
+    CAMPO_PARTE,
+    CAMPO_PARTE_FECHA,
+    CAMPO_PARTE_FICHERO,
+    laTablaLlevaParte,
+    faltaElParte,
+    tieneParteEscaneado,
+    tramosSinParte,
+    textoDelTramo,
+} from '../../utils/partesDeBaja';
+import { uploadPrivateFile, getSignedUrlForPath, deletePrivateFile, MEDICAL_NOTES_BUCKET } from '../../utils/storage';
+import { diasDeVacaciones, explicacionDeLosDias, SEMANAS_DE_VACACIONES } from '../../utils/vacacionesDelAno';
 
 export const ABSENCE_TYPES = [
     { value: 'Vacaciones',      label: 'Vacaciones',      emoji: '🏖️', color: 'bg-blue-500',   light: 'bg-blue-100 text-blue-700 border-blue-200'    },
@@ -9,7 +22,8 @@ export const ABSENCE_TYPES = [
     { value: 'Asuntos Propios', label: 'Asuntos Propios', emoji: '📋',  color: 'bg-purple-500', light: 'bg-purple-100 text-purple-700 border-purple-200'},
 ];
 
-const VACATION_DAYS_PER_YEAR = 22;
+// Cuántos días le tocan sale de `utils/vacacionesDelAno`: cuatro semanas al año,
+// a prorrata en el año en que entró (si su ficha tiene fecha de alta).
 
 export default function AbsenceManagerModal({ isOpen, onClose, driver, drivers }) {
     const [absences, setAbsences]         = useState([]);
@@ -17,6 +31,9 @@ export default function AbsenceManagerModal({ isOpen, onClose, driver, drivers }
     const [selectedType, setSelectedType] = useState('Vacaciones');
     const [saving, setSaving]             = useState(false);
     const [selectedDriver, setSelectedDriver] = useState(null);
+    const [subiendo, setSubiendo]         = useState(null);   // ids del tramo que se está subiendo
+    const ficheroRef                      = useRef(null);
+    const tramoDelFichero                 = useRef(null);
     const [viewDate, setViewDate]         = useState(() => {
         const d = new Date();
         return { year: d.getFullYear(), month: d.getMonth() };
@@ -65,6 +82,10 @@ export default function AbsenceManagerModal({ isOpen, onClose, driver, drivers }
                 await supabase.from('driver_absences').delete().eq('id', existing.id);
                 setAbsences(prev => prev.filter(a => a.id !== existing.id));
             } else {
+                // Una Baja Médica nace PENDIENTE de parte, pero eso no se manda desde
+                // aquí: lo pone el DEFAULT false de la columna (migración 24). Así, si
+                // el script todavía no se ha pasado, marcar ausencias sigue funcionando
+                // igual que siempre en vez de reventar por una columna que no existe.
                 const { data, error } = await supabase
                     .from('driver_absences')
                     .insert([{
@@ -91,15 +112,121 @@ export default function AbsenceManagerModal({ isOpen, onClose, driver, drivers }
     const deleteAbsence = async (id) => {
         setSaving(true);
         try {
+            const borrada = absences.find(a => a.id === id);
             await supabase.from('driver_absences').delete().eq('id', id);
-            setAbsences(prev => prev.filter(a => a.id !== id));
+            const quedan = absences.filter(a => a.id !== id);
+            setAbsences(quedan);
+
+            // El parte escaneado lo comparten todos los días de la baja. Sólo se retira
+            // del almacén cuando se borra el ÚLTIMO día que lo usaba; si no, se estaría
+            // dejando sin papel a los días que siguen en pie.
+            const ruta = borrada?.[CAMPO_PARTE_FICHERO];
+            if (ruta && !quedan.some(a => a[CAMPO_PARTE_FICHERO] === ruta)) {
+                try { await deletePrivateFile(MEDICAL_NOTES_BUCKET, ruta); }
+                catch (err) { console.warn('No se pudo retirar el parte de una baja borrada:', err); }
+            }
         } finally {
             setSaving(false);
         }
     };
 
+    /**
+     * Apunta (o desapunta) el parte de una baja. Se le pasan los ids de TODO el tramo
+     * -una baja de dos semanas son catorce filas y un solo papel- y se marcan de una vez.
+     */
+    const marcarParte = async (ids, recibido) => {
+        if (!ids || ids.length === 0 || saving) return;
+        setSaving(true);
+        try {
+            const cambio = {
+                [CAMPO_PARTE]:       recibido,
+                [CAMPO_PARTE_FECHA]: recibido ? new Date().toISOString() : null,
+            };
+            const { error } = await supabase.from('driver_absences').update(cambio).in('id', ids);
+            if (error) throw error;
+            setAbsences(prev => prev.map(a => (ids.includes(a.id) ? { ...a, ...cambio } : a)));
+        } catch (e) {
+            console.error('Error marcando el parte:', e);
+            const msg = e?.message || e?.error_description || e?.code || JSON.stringify(e);
+            alert(`❌ No se ha podido apuntar el parte:\n\n${msg}`);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    /** Abre el selector de ficheros apuntando a este tramo. */
+    const pedirFichero = (tramo) => {
+        if (saving || subiendo) return;
+        tramoDelFichero.current = tramo;
+        if (ficheroRef.current) {
+            ficheroRef.current.value = '';   // así vuelve a disparar si eligen el mismo fichero
+            ficheroRef.current.click();
+        }
+    };
+
+    /**
+     * Guarda el parte escaneado. El fichero se sube UNA vez y su ruta se apunta en
+     * todos los días del tramo: un parte del 7 al 18 es un papel, no diez.
+     *
+     * Subirlo da la baja por justificada sin tener que pulsar además "Parte recibido":
+     * el papel está, que es de lo que se trataba.
+     */
+    const guardarParteEscaneado = async (e) => {
+        const fichero = e.target.files && e.target.files[0];
+        const tramo   = tramoDelFichero.current;
+        if (!fichero || !tramo || !selectedDriver) return;
+
+        setSubiendo(tramo.ids);
+        try {
+            const nombre = `${textoDelTramo(tramo).replace(/ /g, '_')}_${fichero.name}`;
+            const ruta   = await uploadPrivateFile(nombre, fichero, MEDICAL_NOTES_BUCKET, String(selectedDriver.id));
+
+            const cambio = {
+                [CAMPO_PARTE]:         true,
+                [CAMPO_PARTE_FECHA]:   new Date().toISOString(),
+                [CAMPO_PARTE_FICHERO]: ruta,
+            };
+            const { error } = await supabase.from('driver_absences').update(cambio).in('id', tramo.ids);
+            if (error) throw error;
+
+            setAbsences(prev => prev.map(a => (tramo.ids.includes(a.id) ? { ...a, ...cambio } : a)));
+
+            // Si había un parte anterior en estos mismos días, se retira del almacén:
+            // ya no hay forma de abrirlo desde la ficha y no se dejan papeles médicos
+            // sueltos por ahí. Si falla, no se le echa atrás el trabajo a nadie.
+            const anterior = absences.find(a => tramo.ids.includes(a.id) && a[CAMPO_PARTE_FICHERO]);
+            const rutaVieja = anterior?.[CAMPO_PARTE_FICHERO];
+            if (rutaVieja && rutaVieja !== ruta) {
+                try { await deletePrivateFile(MEDICAL_NOTES_BUCKET, rutaVieja); }
+                catch (errBorrado) { console.warn('No se pudo retirar el parte anterior:', errBorrado); }
+            }
+        } catch (err) {
+            console.error('Error subiendo el parte:', err);
+            alert(`❌ No se ha podido guardar el parte:\n\n${err?.message || err}`);
+        } finally {
+            setSubiendo(null);
+            tramoDelFichero.current = null;
+        }
+    };
+
+    /** Abre el parte en una pestaña con un enlace que caduca al minuto. */
+    const verParte = async (ruta) => {
+        try {
+            const url = await getSignedUrlForPath(MEDICAL_NOTES_BUCKET, ruta);
+            if (url) window.open(url, '_blank', 'noopener');
+        } catch (err) {
+            alert(`❌ ${err?.message || err}`);
+        }
+    };
+
     // ── Helpers ───────────────────────────────────────────────────────────────
     const getTypeConf = (type) => ABSENCE_TYPES.find(t => t.value === type) || ABSENCE_TYPES[0];
+
+    // El control del parte sólo se enciende si la migración 24 ya está pasada.
+    const llevaParte    = laTablaLlevaParte(absences);
+    const sinParte      = llevaParte ? tramosSinParte(absences) : [];
+    const diasSinParte  = sinParte.reduce((n, t) => n + t.dias.length, 0);
+    const partePendiente = (a) => llevaParte && faltaElParte(a);
 
     const monthAbsences = absences.filter(a => {
         const d = new Date(a.date + 'T12:00:00');
@@ -110,7 +237,8 @@ export default function AbsenceManagerModal({ isOpen, onClose, driver, drivers }
     monthAbsences.forEach(a => { absenceMap[a.date] = a; });
 
     const vacDaysUsed  = absences.filter(a => a.type === 'Vacaciones').length;
-    const vacRemaining = VACATION_DAYS_PER_YEAR - vacDaysUsed;
+    const vacTotal     = diasDeVacaciones(selectedDriver?.hireDate, viewDate.year);
+    const vacRemaining = vacTotal.dias - vacDaysUsed;
 
     // ── Calendar cells ────────────────────────────────────────────────────────
     const firstDay  = new Date(viewDate.year, viewDate.month, 1);
@@ -175,10 +303,75 @@ export default function AbsenceManagerModal({ isOpen, onClose, driver, drivers }
                             <p className={`text-[10px] font-bold uppercase tracking-wide mt-0.5 ${vacRemaining >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>Días restantes</p>
                         </div>
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-center">
-                            <p className="text-2xl font-black text-slate-600">{VACATION_DAYS_PER_YEAR}</p>
+                            <p className="text-2xl font-black text-slate-600">{vacTotal.dias}</p>
                             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mt-0.5">Total año {viewDate.year}</p>
                         </div>
                     </div>
+
+                    {/* De dónde sale ese total: cuatro semanas, o la parte que haya generado */}
+                    <p className="text-[11px] text-slate-400 -mt-2 text-center">
+                        {vacTotal.prorrateado
+                            ? <>Le tocan {vacTotal.dias} días: {explicacionDeLosDias(selectedDriver?.hireDate, viewDate.year)}.</>
+                            : <>{SEMANAS_DE_VACACIONES} semanas al año{!selectedDriver?.hireDate && ' · sin fecha de alta en su ficha'}.</>}
+                    </p>
+
+                    {/* Bajas pendientes de parte — de todo el año, no sólo del mes a la vista */}
+                    {sinParte.length > 0 && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                            <div className="flex items-center gap-2 mb-3">
+                                <FileWarning size={16} className="text-amber-600 shrink-0" />
+                                <p className="text-xs font-black text-amber-800 uppercase tracking-wide">
+                                    {diasSinParte === 1 ? '1 día de baja sin parte médico' : `${diasSinParte} días de baja sin parte médico`}
+                                </p>
+                            </div>
+                            <div className="space-y-1.5">
+                                {sinParte.map(tramo => (
+                                    <div key={tramo.desde} className="flex items-center justify-between gap-2 bg-white border border-amber-200 rounded-xl px-3 py-2">
+                                        <button
+                                            onClick={() => setViewDate({
+                                                year:  Number(tramo.desde.slice(0, 4)),
+                                                month: Number(tramo.desde.slice(5, 7)) - 1,
+                                            })}
+                                            className="text-left min-w-0 group"
+                                            title="Ver en el calendario"
+                                        >
+                                            <p className="text-xs font-bold text-slate-700 first-letter:uppercase truncate group-hover:text-amber-700 transition-colors">
+                                                {textoDelTramo(tramo)}
+                                            </p>
+                                            <p className="text-[10px] text-slate-400">
+                                                {tramo.dias.length === 1 ? '1 día' : `${tramo.dias.length} días`} · pendiente de papel
+                                            </p>
+                                        </button>
+                                        <div className="shrink-0 flex items-center gap-1">
+                                            <button
+                                                onClick={() => pedirFichero(tramo)}
+                                                disabled={saving || !!subiendo}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[11px] font-bold rounded-lg transition-colors"
+                                                title="Subir el parte escaneado o una foto del papel"
+                                            >
+                                                {subiendo && subiendo.includes(tramo.ids[0])
+                                                    ? <Loader2 size={13} className="animate-spin" />
+                                                    : <Upload size={13} />}
+                                                Subir parte
+                                            </button>
+                                            <button
+                                                onClick={() => marcarParte(tramo.ids, true)}
+                                                disabled={saving || !!subiendo}
+                                                className="p-1.5 bg-white border border-emerald-200 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 rounded-lg transition-colors"
+                                                title="El parte está en mano pero no se escanea: darlo por justificado sin fichero"
+                                            >
+                                                <Check size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="text-[10px] text-amber-700/70 mt-2.5 leading-relaxed">
+                                La baja bloquea el fichaje desde que se marca, con parte o sin él. Esto es sólo el recordatorio del papel.
+                                Subir el parte lo da por justificado; el <Check size={10} className="inline -mt-0.5" /> es para cuando lo tienes en mano pero no lo escaneas.
+                            </p>
+                        </div>
+                    )}
 
                     {/* Type selector */}
                     <div>
@@ -238,7 +431,9 @@ export default function AbsenceManagerModal({ isOpen, onClose, driver, drivers }
                                             key={day}
                                             onClick={() => toggleDay(dateStr)}
                                             disabled={saving}
-                                            title={absence ? `${absence.type} — pulsa para quitar` : `Marcar como ${selectedType}`}
+                                            title={absence
+                                                ? `${absence.type}${partePendiente(absence) ? ' (falta el parte)' : ''} — pulsa para quitar`
+                                                : `Marcar como ${selectedType}`}
                                             className={`relative aspect-square rounded-xl flex flex-col items-center justify-center text-sm font-bold transition-all select-none
                                                 ${absence
                                                     ? `${tc.color} text-white shadow-sm scale-95 hover:scale-100`
@@ -251,6 +446,12 @@ export default function AbsenceManagerModal({ isOpen, onClose, driver, drivers }
                                         >
                                             {day}
                                             {absence && <span className="text-[8px] leading-none mt-0.5 opacity-90">{tc.emoji}</span>}
+                                            {partePendiente(absence) && (
+                                                <span
+                                                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-400 border-2 border-white text-[8px] font-black text-amber-900 flex items-center justify-center leading-none"
+                                                    title="Falta el parte médico"
+                                                >!</span>
+                                            )}
                                         </button>
                                     );
                                 })}
@@ -272,20 +473,62 @@ export default function AbsenceManagerModal({ isOpen, onClose, driver, drivers }
                                     const label = new Date(a.date + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: '2-digit', month: 'long' });
                                     return (
                                         <div key={a.id} className={`flex items-center justify-between px-3 py-2 rounded-xl border ${conf.light}`}>
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-2 min-w-0">
                                                 <span className="text-base">{conf.emoji}</span>
-                                                <div>
+                                                <div className="min-w-0">
                                                     <p className="text-xs font-bold capitalize">{label}</p>
                                                     <p className="text-[10px] opacity-60">{a.type}</p>
                                                 </div>
                                             </div>
-                                            <button
-                                                onClick={() => deleteAbsence(a.id)}
-                                                className="p-1.5 hover:bg-red-100 rounded-lg text-current opacity-40 hover:opacity-100 hover:text-red-600 transition-all"
-                                                title="Eliminar ausencia"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                                {tieneParteEscaneado(a) && (
+                                                    <button
+                                                        onClick={() => verParte(a[CAMPO_PARTE_FICHERO])}
+                                                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 transition-all"
+                                                        title="Ver el parte escaneado"
+                                                    >
+                                                        <Eye size={12} />
+                                                        Ver parte
+                                                    </button>
+                                                )}
+                                                {llevaParte && a.type === TIPO_BAJA && faltaElParte(a) && (
+                                                    <button
+                                                        onClick={() => pedirFichero({ desde: a.date, hasta: a.date, dias: [a.date], ids: [a.id] })}
+                                                        disabled={saving || !!subiendo}
+                                                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-all"
+                                                        title="Subir el parte de este día"
+                                                    >
+                                                        {subiendo && subiendo.includes(a.id)
+                                                            ? <Loader2 size={12} className="animate-spin" />
+                                                            : <Upload size={12} />}
+                                                        Subir
+                                                    </button>
+                                                )}
+                                                {llevaParte && a.type === TIPO_BAJA && (
+                                                    <button
+                                                        onClick={() => marcarParte([a.id], faltaElParte(a))}
+                                                        disabled={saving}
+                                                        className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold transition-all disabled:opacity-50 ${
+                                                            faltaElParte(a)
+                                                                ? 'bg-amber-400 text-amber-900 hover:bg-amber-500'
+                                                                : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                                        }`}
+                                                        title={faltaElParte(a)
+                                                            ? 'Pulsa cuando llegue el parte de este día'
+                                                            : 'Parte en mano — pulsa si te lo tienes que volver a pedir'}
+                                                    >
+                                                        {faltaElParte(a) ? <FileWarning size={12} /> : <FileCheck2 size={12} />}
+                                                        {faltaElParte(a) ? 'Falta parte' : 'Parte OK'}
+                                                    </button>
+                                                )}
+                                                <button
+                                                    onClick={() => deleteAbsence(a.id)}
+                                                    className="p-1.5 hover:bg-red-100 rounded-lg text-current opacity-40 hover:opacity-100 hover:text-red-600 transition-all"
+                                                    title="Eliminar ausencia"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
                                         </div>
                                     );
                                 })}
@@ -302,6 +545,15 @@ export default function AbsenceManagerModal({ isOpen, onClose, driver, drivers }
                         </p>
                     </div>
                 </div>
+
+                {/* El selector de ficheros del parte: uno para todos los botones de subir */}
+                <input
+                    ref={ficheroRef}
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={guardarParteEscaneado}
+                    className="hidden"
+                />
 
                 {/* Footer */}
                 <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl flex justify-end shrink-0">

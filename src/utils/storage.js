@@ -132,6 +132,74 @@ export const uploadFileToBucket = async (fileName, file, bucketName) => {
 };
 
 /**
+ * Sube un fichero a un contenedor PRIVADO y devuelve su ruta, no una URL.
+ *
+ * La diferencia con `uploadFileToBucket` es justo esa: allí se guarda la URL pública
+ * y con ella cualquiera abre el fichero sin entrar en la aplicación. Aquí se guarda
+ * sólo la ruta, y para ver el fichero hay que pedir un enlace temporal con
+ * `getSignedUrlForPath`, cosa que el almacén únicamente concede a quien tiene
+ * permiso. Es lo que se usa para los partes médicos (ver supabase/25).
+ *
+ * `folder` agrupa los ficheros por carpetas dentro del contenedor (por ejemplo, un
+ * conductor), para que el día de mañana se puedan buscar sin abrirlos uno a uno.
+ */
+export const uploadPrivateFile = async (fileName, file, bucketName, folder = '') => {
+  if (!file) return null;
+
+  const safeName   = String(fileName).replace(/[^a-zA-Z0-9.\-_]/g, '_');
+  const safeFolder = String(folder || '').replace(/[^a-zA-Z0-9\-_]/g, '_');
+  const filePath   = safeFolder ? `${safeFolder}/${Date.now()}_${safeName}` : `${Date.now()}_${safeName}`;
+
+  const { error } = await supabase.storage
+    .from(bucketName)
+    .upload(filePath, file, {
+      cacheControl: '31536000',
+      upsert: false,
+      contentType: file.type || 'application/pdf',
+    });
+
+  if (error) {
+    console.error(`ERROR SUPABASE STORAGE (${bucketName}):`, error);
+    let mensaje = error.message;
+    if (error.message?.includes('not found')) {
+      mensaje = `El contenedor '${bucketName}' no existe. Falta ejecutar supabase/25_el_parte_escaneado.sql.`;
+    } else if (error.message?.includes('row-level security') || error.statusCode === '403') {
+      mensaje = `Permiso denegado en '${bucketName}': esto sólo puede hacerlo la oficina.`;
+    }
+    throw new Error(mensaje);
+  }
+
+  return filePath;
+};
+
+/**
+ * Un enlace de un minuto para abrir un fichero de un contenedor privado. Se pide en
+ * el momento de pulsar, nunca se guarda: caduca solo y no sirve de nada si se cuela
+ * en un historial o en una captura.
+ */
+export const getSignedUrlForPath = async (bucketName, filePath, segundos = 60) => {
+  if (!filePath) return null;
+  const { data, error } = await supabase.storage
+    .from(bucketName)
+    .createSignedUrl(filePath, segundos);
+  if (error) {
+    console.error(`ERROR firmando ${bucketName}/${filePath}:`, error);
+    throw new Error(`No se ha podido abrir el fichero: ${error.message}`);
+  }
+  return data?.signedUrl || null;
+};
+
+/** Borra un fichero de un contenedor privado. */
+export const deletePrivateFile = async (bucketName, filePath) => {
+  if (!filePath) return;
+  const { error } = await supabase.storage.from(bucketName).remove([filePath]);
+  if (error) {
+    console.error(`ERROR borrando ${bucketName}/${filePath}:`, error);
+    throw new Error(`No se ha podido borrar el fichero: ${error.message}`);
+  }
+};
+
+/**
  * Buckets que usa la aplicación. Se crean UNA VEZ desde el panel de Supabase,
  * no desde el navegador.
  *
@@ -146,7 +214,14 @@ export const uploadFileToBucket = async (fileName, file, bucketName) => {
  */
 // Ojo: 'incident_photos' no está en la lista a propósito. Nunca se creó en Supabase y
 // las fotos de incidencia se guardan en 'delivery_photos'.
+// 'medical_notes' es el único PRIVADO y el único que no se crea a mano: lo crea
+// supabase/25_el_parte_escaneado.sql con sus reglas de acceso. Sus ficheros no se
+// abren por URL pública, sino con `getSignedUrlForPath`.
 export const STORAGE_BUCKETS = [
   'signatures', 'delivery_photos', 'agency_logos',
   'merchandise_photos', 'cod_receipts', 'payrolls',
+  'medical_notes',
 ];
+
+/** Contenedor de los partes de baja escaneados (privado). */
+export const MEDICAL_NOTES_BUCKET = 'medical_notes';
