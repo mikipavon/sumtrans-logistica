@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
-import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2, AlertTriangle, KeyRound, Globe, Merge, Copy, List, LayoutGrid } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2, AlertTriangle, KeyRound, Globe, Merge, Copy, List, LayoutGrid, Truck, X } from 'lucide-react';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import { supabase } from '../lib/supabase';
 import { getOwnerLabel } from '../utils/agencyOwnership';
 import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, buscarSolicitudesParecidas, loQueAportanLasGemelas, explicarAportacion } from '../utils/duplicadosClientes';
 import { esRegistroWeb } from '../utils/altaClientes';
+import { indexarEnviosPorCliente, quienMandoLaMercancia } from '../utils/quienMandoLaMercancia';
 import { planDeAcceso, explicarElAcceso } from '../utils/accesoFichaExistente';
 import { emailDeAcceso } from '../utils/clientAccess';
 // Una ficha puede llevar varios correos separados por ';'. El enlace mailto los
@@ -263,9 +264,14 @@ function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, enTarjeta
 }
 
 // Dirección, teléfono, GPS y de dónde salió la ficha
-function DatosFicha({ client, clients }) {
+function DatosFicha({ client, clients, mando }) {
     return (
         <div className="p-4 space-y-3 text-sm">
+            {mando && (
+                <div className="flex items-start gap-2 text-xs bg-indigo-50/70 border border-indigo-100 rounded-lg px-3 py-2">
+                    <LineaQuienMando mando={mando} />
+                </div>
+            )}
             {client.address && (
                 <div className="flex items-start gap-2">
                     <MapPin size={14} className="text-slate-400 mt-0.5 shrink-0" />
@@ -327,6 +333,33 @@ function DatosFicha({ client, clients }) {
     );
 }
 
+// ── Quién le mandó la mercancía ──
+// La línea que dice de dónde venía el paquete que hizo nacer la ficha. Es lo
+// que identifica a un destinatario que sólo trae nombre y calle: con el
+// remitente delante se sabe si la ficha vale o a quién preguntarle. Cuando el
+// albarán ya no está cargado (más de 90 días) no se pinta nada, ver
+// utils/quienMandoLaMercancia.js.
+function LineaQuienMando({ mando, className = '' }) {
+    if (!mando) return null;
+    const etiqueta = mando.sentido === 'manda' ? 'Mercancía para' : 'Mercancía de';
+    const detalle = [mando.albaran, mando.fecha].filter(Boolean).join(' · ');
+    return (
+        <span
+            className={`inline-flex items-center gap-1 text-indigo-600 font-medium ${className}`}
+            title={detalle ? `${etiqueta}: ${mando.nombre} — albarán ${detalle}` : `${etiqueta}: ${mando.nombre}`}
+        >
+            <Truck size={12} className="text-indigo-400 shrink-0" />
+            <span className="break-words">{etiqueta}: <span className="font-bold">{mando.nombre}</span></span>
+            {mando.albaran && <span className="font-mono text-indigo-400">{mando.albaran}</span>}
+            {mando.otros > 0 && (
+                <span className="text-indigo-400">
+                    {mando.otros === 1 ? 'y 1 más' : `y ${mando.otros} más`}
+                </span>
+            )}
+        </span>
+    );
+}
+
 // Chapa Remitente / Destinatario
 function ChapaTipo({ client, className = '' }) {
     return (
@@ -349,7 +382,7 @@ function vistaGuardada() {
     }
 }
 
-export default function ClientValidation({ clients, onValidateClient, onUpdateClient, onDeleteClients, onGrantAccessToExisting, articles, tariffs, allPoblaciones }) {
+export default function ClientValidation({ clients, shipments = [], onValidateClient, onUpdateClient, onDeleteClients, onGrantAccessToExisting, articles, tariffs, allPoblaciones }) {
     // Filter only pending clients — exclude test-mode clients (isTest: true)
     // Los registros web van primero, y entre ellos el último de arriba: son los
     // únicos que tienen a alguien esperando al otro lado.
@@ -366,6 +399,20 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
 
     // Cuántos de los pendientes se han registrado ellos por la web.
     const registrosWeb = useMemo(() => pendingClients.filter(esRegistroWeb), [pendingClients]);
+
+    // ── De quién venía el paquete de cada ficha ──
+    // Los envíos se recorren una sola vez para montar el índice; buscar dentro
+    // de miles de albaranes por cada una de las 500 fichas dejaría la lista
+    // pegada al desplazarse.
+    const quienMandoPorCliente = useMemo(() => {
+        const indice = indexarEnviosPorCliente(shipments);
+        const mapa = new Map();
+        pendingClients.forEach(p => {
+            const mando = quienMandoLaMercancia(p, indice);
+            if (mando) mapa.set(p.id, mando);
+        });
+        return mapa;
+    }, [pendingClients, shipments]);
 
     // ── Fichas de cartera que se parecen a cada solicitud ──
     // El registro web nunca toca una ficha existente, así que la empresa que ya
@@ -580,9 +627,31 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
             ? pendingClients.filter(c => !esRegistroWeb(c))
             : pendingClients;
 
+    // Aviso activo: null | 'repetidos' | 'parecidos' | 'cartera'. Los avisos de
+    // arriba dicen cuántas fichas hay que mirar, pero luego había que buscarlas
+    // a mano entre las cuatrocientas y pico: pinchando uno se queda sólo eso.
+    const [aviso, setAviso] = useState(null);
+
+    // Los avisos se cuentan sobre TODOS los pendientes, así que al encender uno
+    // se abre también el origen: si no, se pincharía «2 repetidos» estando en la
+    // pestaña equivocada y saldría la lista vacía.
+    const alternarAviso = (cual) => {
+        const siguiente = aviso === cual ? null : cual;
+        setAviso(siguiente);
+        if (siguiente) setOrigen('todos');
+    };
+
+    const clientesPorAviso = aviso === 'repetidos'
+        ? clientesPorOrigen.filter(c => gemelasPorCliente.has(c.id))
+        : aviso === 'parecidos'
+            ? clientesPorOrigen.filter(c => parecidasEnLaLista.has(c.id))
+            : aviso === 'cartera'
+                ? clientesPorOrigen.filter(c => duplicadosPorCliente.has(c.id))
+                : clientesPorOrigen;
+
     const filteredClients = searchTerm.trim() === ''
-        ? clientesPorOrigen
-        : clientesPorOrigen.filter(c => {
+        ? clientesPorAviso
+        : clientesPorAviso.filter(c => {
             const term = normalize(searchTerm);
             // También por correo, CIF y persona de contacto: es lo que se tiene
             // a mano cuando llega el aviso de un registro y se quiere buscar.
@@ -651,10 +720,14 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
         }
         // Auto-approve after editing (billingType ya actualizado → número correcto)
         await onValidateClient(editingClient.id, true);
-        // Enviar email automático de confirmación de acceso
-        await sendAccessEmail(editingClient.id);
+        const aprobado = editingClient.id;
         setEditingClient(null);
         setIsEditModalOpen(false);
+        // El email de acceso, ya con el formulario cerrado y SIN esperarlo. Lo
+        // manda una Edge Function que tarda lo suyo en despertar, y esperarla
+        // dejaba el botón de guardar dando vueltas un par de segundos con la
+        // ficha ya aprobada. Si algo falla, sendAccessEmail avisa igual.
+        sendAccessEmail(aprobado);
     };
 
     const handleModalClose = () => {
@@ -665,8 +738,8 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
     const handleApprove = async (clientId) => {
         if (!confirmarSiEsDuplicado(clientId)) return;
         await onValidateClient(clientId, true);
-        // Enviar email automático de confirmación de acceso
-        await sendAccessEmail(clientId);
+        // El email de acceso va detrás y sin esperarlo: ver handleSaveAndApprove.
+        sendAccessEmail(clientId);
     };
 
     const handleReject = (clientId) => {
@@ -686,39 +759,84 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                         Empresas registradas en la web y fichas creadas solas al hacer albaranes
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
+                {/* Los avisos filtran: pinchar uno deja en la lista sólo esas fichas
+                    y volver a pincharlo las devuelve todas. */}
+                <div className="flex flex-wrap items-center gap-2">
                     {registrosWeb.length > 0 && (
-                        <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 rounded-xl">
-                            <Globe size={18} className="text-blue-600" />
-                            <span className="font-bold text-blue-700">{registrosWeb.length}</span>
-                            <span className="text-blue-600">registrados en la web</span>
-                        </div>
+                        <button
+                            type="button"
+                            onClick={() => { setAviso(null); setOrigen('web'); }}
+                            title="Ver sólo los que se han registrado por la web"
+                            className={`flex items-center gap-2 px-4 py-2 border rounded-xl transition-colors ${aviso === null && origenActivo === 'web'
+                                ? 'bg-blue-600 border-blue-600 text-white'
+                                : 'bg-blue-50 border-blue-200 hover:bg-blue-100'
+                                }`}
+                        >
+                            <Globe size={18} className={aviso === null && origenActivo === 'web' ? 'text-white' : 'text-blue-600'} />
+                            <span className={`font-bold ${aviso === null && origenActivo === 'web' ? 'text-white' : 'text-blue-700'}`}>{registrosWeb.length}</span>
+                            <span className={aviso === null && origenActivo === 'web' ? 'text-white' : 'text-blue-600'}>registrados en la web</span>
+                        </button>
                     )}
-                    <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl">
-                        <Clock size={18} className="text-amber-600" />
-                        <span className="font-bold text-amber-700">{pendingClients.length}</span>
-                        <span className="text-amber-600">pendientes</span>
-                    </div>
+                    <button
+                        type="button"
+                        onClick={() => { setAviso(null); setOrigen('todos'); }}
+                        title="Ver todos los pendientes, sin filtrar"
+                        className={`flex items-center gap-2 px-4 py-2 border rounded-xl transition-colors ${aviso === null && origenActivo === 'todos'
+                            ? 'bg-amber-600 border-amber-600 text-white'
+                            : 'bg-amber-50 border-amber-200 hover:bg-amber-100'
+                            }`}
+                    >
+                        <Clock size={18} className={aviso === null && origenActivo === 'todos' ? 'text-white' : 'text-amber-600'} />
+                        <span className={`font-bold ${aviso === null && origenActivo === 'todos' ? 'text-white' : 'text-amber-700'}`}>{pendingClients.length}</span>
+                        <span className={aviso === null && origenActivo === 'todos' ? 'text-white' : 'text-amber-600'}>pendientes</span>
+                    </button>
                     {cuantosRepetidos > 0 && (
-                        <div className="flex items-center gap-2 px-4 py-2 bg-orange-50 border border-orange-200 rounded-xl">
-                            <Copy size={18} className="text-orange-600" />
-                            <span className="font-bold text-orange-700">{cuantosRepetidos}</span>
-                            <span className="text-orange-600">repetidos en la lista</span>
-                        </div>
+                        <button
+                            type="button"
+                            onClick={() => alternarAviso('repetidos')}
+                            title={aviso === 'repetidos' ? 'Quitar el filtro y ver todos' : 'Ver sólo las fichas repetidas en la lista'}
+                            className={`flex items-center gap-2 px-4 py-2 border rounded-xl transition-colors ${aviso === 'repetidos'
+                                ? 'bg-orange-600 border-orange-600 text-white'
+                                : 'bg-orange-50 border-orange-200 hover:bg-orange-100'
+                                }`}
+                        >
+                            <Copy size={18} className={aviso === 'repetidos' ? 'text-white' : 'text-orange-600'} />
+                            <span className={`font-bold ${aviso === 'repetidos' ? 'text-white' : 'text-orange-700'}`}>{cuantosRepetidos}</span>
+                            <span className={aviso === 'repetidos' ? 'text-white' : 'text-orange-600'}>repetidos en la lista</span>
+                            {aviso === 'repetidos' && <X size={15} className="text-white/80" />}
+                        </button>
                     )}
                     {cuantosParecidos > 0 && (
-                        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl">
-                            <Copy size={18} className="text-amber-600" />
-                            <span className="font-bold text-amber-700">{cuantosParecidos}</span>
-                            <span className="text-amber-600">con nombre parecido</span>
-                        </div>
+                        <button
+                            type="button"
+                            onClick={() => alternarAviso('parecidos')}
+                            title={aviso === 'parecidos' ? 'Quitar el filtro y ver todos' : 'Ver sólo las fichas con un nombre parecido a otra'}
+                            className={`flex items-center gap-2 px-4 py-2 border rounded-xl transition-colors ${aviso === 'parecidos'
+                                ? 'bg-amber-600 border-amber-600 text-white'
+                                : 'bg-amber-50 border-amber-200 hover:bg-amber-100'
+                                }`}
+                        >
+                            <Copy size={18} className={aviso === 'parecidos' ? 'text-white' : 'text-amber-600'} />
+                            <span className={`font-bold ${aviso === 'parecidos' ? 'text-white' : 'text-amber-700'}`}>{cuantosParecidos}</span>
+                            <span className={aviso === 'parecidos' ? 'text-white' : 'text-amber-600'}>con nombre parecido</span>
+                            {aviso === 'parecidos' && <X size={15} className="text-white/80" />}
+                        </button>
                     )}
                     {duplicadosPorCliente.size > 0 && (
-                        <div className="flex items-center gap-2 px-4 py-2 bg-red-50 border border-red-200 rounded-xl">
-                            <AlertTriangle size={18} className="text-red-600" />
-                            <span className="font-bold text-red-700">{duplicadosPorCliente.size}</span>
-                            <span className="text-red-600">ya en cartera</span>
-                        </div>
+                        <button
+                            type="button"
+                            onClick={() => alternarAviso('cartera')}
+                            title={aviso === 'cartera' ? 'Quitar el filtro y ver todos' : 'Ver sólo las que ya parecen estar en la cartera'}
+                            className={`flex items-center gap-2 px-4 py-2 border rounded-xl transition-colors ${aviso === 'cartera'
+                                ? 'bg-red-600 border-red-600 text-white'
+                                : 'bg-red-50 border-red-200 hover:bg-red-100'
+                                }`}
+                        >
+                            <AlertTriangle size={18} className={aviso === 'cartera' ? 'text-white' : 'text-red-600'} />
+                            <span className={`font-bold ${aviso === 'cartera' ? 'text-white' : 'text-red-700'}`}>{duplicadosPorCliente.size}</span>
+                            <span className={aviso === 'cartera' ? 'text-white' : 'text-red-600'}>ya en cartera</span>
+                            {aviso === 'cartera' && <X size={15} className="text-white/80" />}
+                        </button>
                     )}
                 </div>
             </div>
@@ -733,7 +851,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                     ].map(({ clave, texto, cuantos, icono }) => (
                         <button
                             key={clave}
-                            onClick={() => setOrigen(clave)}
+                            onClick={() => { setOrigen(clave); setAviso(null); }}
                             className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-bold border transition-colors ${origenActivo === clave
                                 ? 'bg-blue-600 border-blue-600 text-white'
                                 : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
@@ -746,6 +864,29 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                             </span>
                         </button>
                     ))}
+                </div>
+            )}
+
+            {/* Qué se está viendo cuando hay un aviso encendido. Los avisos cuentan
+                grupos (dos fichas repetidas son UN repetido), así que a la vista
+                salen más fichas que el número del aviso y hay que decirlo. */}
+            {aviso && (
+                <div className="flex items-center justify-between gap-3 px-4 py-2 bg-slate-800 text-white rounded-xl text-sm">
+                    <span>
+                        Viendo <strong>{clientesPorAviso.length}</strong> ficha{clientesPorAviso.length === 1 ? '' : 's'}
+                        {aviso === 'repetidos' && (clientesPorAviso.length === 1 ? ' repetida en la lista' : ' repetidas en la lista')}
+                        {aviso === 'parecidos' && ' con un nombre parecido a otra'}
+                        {aviso === 'cartera' && (clientesPorAviso.length === 1 ? ' que ya parece estar en la cartera' : ' que ya parecen estar en la cartera')}
+                        .
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => setAviso(null)}
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 font-bold transition-colors"
+                    >
+                        <X size={14} />
+                        Ver todas
+                    </button>
                 </div>
             )}
 
@@ -885,6 +1026,13 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                             )}
                                         </div>
 
+                                        {/* De quién venía el paquete que creó la ficha */}
+                                        {quienMandoPorCliente.has(client.id) && (
+                                            <div className="text-xs">
+                                                <LineaQuienMando mando={quienMandoPorCliente.get(client.id)} />
+                                            </div>
+                                        )}
+
                                         {/* De dónde salió, quién la hizo y de quién es */}
                                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-400">
                                             <span className={`${dato} font-bold ${client.ownerAgencyId ? 'text-amber-600' : 'text-emerald-600'}`}>
@@ -1018,7 +1166,7 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                                 />
                             )}
 
-                            <DatosFicha client={client} clients={clients} />
+                            <DatosFicha client={client} clients={clients} mando={quienMandoPorCliente.get(client.id)} />
 
                             {/* Actions */}
                             <div className="px-4 pb-4 space-y-2">
@@ -1056,7 +1204,9 @@ export default function ClientValidation({ clients, onValidateClient, onUpdateCl
                     </div>
                     <h3 className="text-lg font-bold text-slate-800 mb-2">Sin resultados</h3>
                     <p className="text-slate-500">
-                        {searchTerm.trim() !== ''
+                        {aviso
+                            ? `Ninguna ficha de ese aviso queda a la vista${searchTerm.trim() !== '' ? ` buscando "${searchTerm}"` : ' en esta pestaña'}. Vuelve a pinchar el aviso para quitar el filtro.`
+                            : searchTerm.trim() !== ''
                             ? `Ningún cliente pendiente${origenActivo === 'web' ? ' registrado en la web' : ''} coincide con "${searchTerm}".`
                             : origenActivo === 'web'
                                 ? 'Nadie se ha registrado por la web todavía. En «Todos» tienes las fichas que crea la app sola al hacer albaranes.'

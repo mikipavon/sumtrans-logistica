@@ -275,3 +275,42 @@ describe('Validar Clientes — vista de lista', () => {
         expect(localStorage.getItem('validacion-vista')).toBe('tarjetas');
     });
 });
+
+// ── De quién venía el paquete ──
+//
+// Un destinatario que se apuntó solo al entregarle trae nombre y calle y poco
+// más: así no hay forma de decidir si la ficha vale. Lo que lo identifica es
+// quién le mandó la mercancía, y eso está en el albarán, no en la ficha.
+describe('Validar Clientes — quién le mandó la mercancía', () => {
+    const destinatario = { id: 20, name: 'José López', status: 'pending', type: 'Destinatario', createdFrom: 'Reparto (Driver)', city: 'Aguilar de la Frontera' };
+    const remitente = { id: 21, name: 'PROSERVICE', status: 'pending', type: 'Remitente', createdFrom: 'Albarán', city: 'Cordoba' };
+    const envio = {
+        id: 'SUM-518',
+        client: 'PROSERVICE',
+        originName: 'PROSERVICE',
+        destinationName: 'JOSE LOPEZ',
+        date: '10 sept 2026',
+        createdAt: '2026-09-10T07:00:00.000Z',
+    };
+
+    it('en la lista, la fila del destinatario dice de quién era el paquete', () => {
+        localStorage.setItem('validacion-vista', 'lista');
+        render(<ClientValidation clients={[destinatario]} shipments={[envio]} {...props} />);
+        expect(screen.getByText(/Mercancía de:/)).toBeInTheDocument();
+        expect(screen.getByText('PROSERVICE')).toBeInTheDocument();
+        expect(screen.getByText('SUM-518')).toBeInTheDocument();
+    });
+
+    it('en la tarjeta también, y a un remitente le dice a quién se la mandó', () => {
+        localStorage.setItem('validacion-vista', 'tarjetas');
+        render(<ClientValidation clients={[remitente]} shipments={[envio]} {...props} />);
+        expect(screen.getByText(/Mercancía para:/)).toBeInTheDocument();
+        expect(screen.getByText('JOSE LOPEZ')).toBeInTheDocument();
+    });
+
+    it('sin el albarán cargado no se enseña ninguna línea', () => {
+        localStorage.setItem('validacion-vista', 'lista');
+        render(<ClientValidation clients={[destinatario]} shipments={[]} {...props} />);
+        expect(screen.queryByText(/Mercancía de:/)).not.toBeInTheDocument();
+    });
+});
