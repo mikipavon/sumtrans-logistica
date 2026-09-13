@@ -205,6 +205,9 @@ describe('ClientDashboard · agenda con fichas', () => {
         fireEvent.focus(campoDestinatario());
 
         await waitFor(() => expect(screen.getByText('Agro Velasco S.L.')).toBeTruthy());
+        // Se pide la agenda de ESTA ficha: es lo que hace que funcione también
+        // desde la vista de administración (fase 27).
+        expect(cargarAgendaDelServidor).toHaveBeenCalledWith(42);
         expect(screen.getByText('Tecleado A Mano')).toBeTruthy();
         // Y también el de la sesión (de los envíos cargados), que el servidor no conocía.
         expect(screen.getByText('FERRETERIA PEPE')).toBeTruthy();

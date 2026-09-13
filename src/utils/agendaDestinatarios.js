@@ -32,6 +32,8 @@
  * tecleando a mano; ahí queda el emparejamiento por nombre del servidor (fase 22).
  */
 
+import { nombresSeParecen, clavesDelNombre } from './duplicadosClientes';
+
 /** Nombres de empresa para comparar: sin acentos, sin puntuación, sin dobles espacios. */
 export const normalizarNombreDestinatario = (valor) => String(valor || '')
     .normalize('NFD')
@@ -192,15 +194,80 @@ export const agendaDesdeServidor = (filas = []) => {
     return [...porNombre.values()].sort(ordenDeAgenda);
 };
 
+// ¿Están en sitios distintos A CIENCIA CIERTA? Sólo veta cuando los dos lados
+// lo dicen: primero por CP, y si falta alguno, por población (vale que una
+// esté contenida en la otra: "Puente Genil" y "Puente Genil (Córdoba)"). Si no
+// se sabe, no se sabe: no bloquea.
+const enSitiosDistintos = (una, otra) => {
+    const cpA = String(una.zip || '').trim();
+    const cpB = String(otra.zip || '').trim();
+    if (cpA && cpB) return cpA !== cpB;
+
+    const puebloA = clavesDelNombre(una.city);
+    const puebloB = clavesDelNombre(otra.city);
+    if (puebloA.size === 0 || puebloB.size === 0) return false;
+    const [chico, grande] = puebloA.size <= puebloB.size ? [puebloA, puebloB] : [puebloB, puebloA];
+    return ![...chico].every(p => grande.has(p));
+};
+
+/**
+ * Pliega en cada ficha las entradas sueltas que son la misma empresa escrita de
+ * otra manera: "AGRO. IND. VELASCO, S.L." tecleado en unos envíos y "AGRO
+ * INDUSTRIAS VELASCO" (la ficha) en otros salían como dos destinatarios, y el
+ * cliente elegía uno u otro según el día; eligiendo el suelto, el envío nacía
+ * sin enlace y la entrega volvía a crear la ficha.
+ *
+ * El parecido es el mismo que usa Validar Clientes (nombresSeParecen), pero aquí
+ * se aplica sólo DENTRO de la agenda de un cliente: las candidatas son las
+ * fichas a las que ese cliente ya envía, no toda la cartera. Que el mismo
+ * cliente mande a dos empresas de nombre casi igual en el mismo pueblo es lo
+ * bastante raro para que compense. Y una población o un CP distintos a las
+ * claras lo impiden.
+ *
+ * La entrada resultante es la de la ficha (su nombre, su dirección, su id); la
+ * suelta sólo le suma las veces, y le presta la dirección si a la ficha le
+ * faltaba.
+ */
+export const plegarParecidos = (agenda = []) => {
+    const lista = (agenda || []).filter(Boolean);
+    const fichas = lista.filter(c => hayId(c.destinatarioId)).map(c => ({ ...c }));
+    if (fichas.length === 0) return lista;
+
+    const sueltas = [];
+    for (const suelta of lista) {
+        if (hayId(suelta.destinatarioId)) continue;
+
+        const ficha = fichas.find(f => !enSitiosDistintos(f, suelta)
+            && nombresSeParecen(f.name, suelta.name,
+                new Set([...clavesDelNombre(f.city), ...clavesDelNombre(suelta.city)])));
+
+        if (!ficha) {
+            sueltas.push(suelta);
+            continue;
+        }
+
+        ficha.veces += suelta.veces;
+        ficha.ultimoEnvio = Math.max(ficha.ultimoEnvio, suelta.ultimoEnvio);
+        if (!ficha.address) ficha.address = suelta.address;
+        if (!ficha.zip) ficha.zip = suelta.zip;
+        if (!ficha.city) ficha.city = suelta.city;
+    }
+
+    return [...fichas, ...sueltas].sort(ordenDeAgenda);
+};
+
 /**
  * Junta la agenda del servidor con la local: la del servidor manda, y de la local
  * sólo entra lo que el servidor no conoce (lo recién creado en esta sesión). Si la
  * del servidor está vacía —no ha contestado aún, o ha fallado— queda la local.
+ *
+ * Y al final se pliegan los parecidos (plegarParecidos), venga cada uno de donde
+ * venga.
  */
 export const juntarAgendas = (servidor = [], local = []) => {
     const conocidas = new Set((servidor || []).map(c => c.clave));
     const nuevas = (local || []).filter(c => c && c.clave && !conocidas.has(c.clave));
-    return [...(servidor || []), ...nuevas].sort(ordenDeAgenda);
+    return plegarParecidos([...(servidor || []), ...nuevas]);
 };
 
 /**

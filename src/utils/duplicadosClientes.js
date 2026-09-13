@@ -156,6 +156,15 @@ const esUnaErrata = (unaPalabra, otraPalabra) => {
     return letrasDeDiferencia(unaPalabra, otraPalabra) <= (largo >= 8 ? 2 : 1);
 };
 
+// Una palabra recortada: "Ind." por "Industrias", "Transp." por "Transportes".
+// El punto se pierde al limpiar, así que se mira si una es el principio de la
+// otra. Con tres letras como mínimo: "S. Garcia" no dice qué es la S.
+const esUnaAbreviatura = (unaPalabra, otraPalabra) => {
+    const [corta, larga] = unaPalabra.length <= otraPalabra.length
+        ? [unaPalabra, otraPalabra] : [otraPalabra, unaPalabra];
+    return corta.length >= 3 && larga.length > corta.length && larga.startsWith(corta);
+};
+
 // Lo que comparten, ¿dice quién es la empresa, o sólo a qué se dedica y dónde
 // está? En un pueblo entero de fichas, el ramo y el nombre del pueblo los
 // comparte medio listado: "Floristeria de la Rambla" y "Floristeria Santa Maria
@@ -196,7 +205,12 @@ function clavesSeParecen(unas, otras, esDelLugar) {
         const sobraDeUna = [...unas].filter(p => !otras.has(p));
         const sobraDeOtra = [...otras].filter(p => !unas.has(p));
         if (sobraDeUna.length === 1 && sobraDeOtra.length === 1) {
-            return esUnaErrata(sobraDeUna[0], sobraDeOtra[0]);
+            if (esUnaErrata(sobraDeUna[0], sobraDeOtra[0])) return true;
+            // O esa palabra está abreviada: "Agro Industrias Velasco" y "AGRO. IND.
+            // VELASCO, S.L.". Aquí sí se exige que lo compartido diga quién es la
+            // empresa: "Bar Pepe" y "Bar Pepelu" sólo comparten el ramo.
+            return esUnaAbreviatura(sobraDeUna[0], sobraDeOtra[0])
+                && identificaALaEmpresa(compartidas, esDelLugar);
         }
     }
 

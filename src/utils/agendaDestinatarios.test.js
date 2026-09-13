@@ -4,7 +4,8 @@ import {
     filtrarAgendaDestinatarios,
     normalizarNombreDestinatario,
     agendaDesdeServidor,
-    juntarAgendas
+    juntarAgendas,
+    plegarParecidos
 } from './agendaDestinatarios';
 
 const envio = (destinationName, extras = {}) => ({
@@ -254,5 +255,94 @@ describe('juntarAgendas', () => {
     it('sin servidor (aún no ha contestado o ha fallado) queda la local tal cual', () => {
         expect(juntarAgendas(null, [entrada('Ferretería Luna')]).map(c => c.name)).toEqual(['Ferretería Luna']);
         expect(juntarAgendas([], [])).toEqual([]);
+    });
+});
+
+// ── La misma empresa escrita de dos maneras sale una sola vez ──
+//
+// Ibermangueras tenía "AGRO INDUSTRIAS VELASCO" (la ficha) y "AGRO. IND.
+// VELASCO, S.L." (tecleado en otros envíos, sin enlace) como dos destinatarios.
+// Se pliega el suelto en la ficha, con el mismo parecido que usa Validar
+// Clientes, y sólo entre lo que ese cliente ya envía.
+describe('plegarParecidos', () => {
+    const entrada = (name, extras = {}) => ({
+        clave: normalizarNombreDestinatario(name), name, address: '', zip: '', city: '',
+        veces: 1, ultimoEnvio: 0, destinatarioId: null, destinatarioSedeId: null, ...extras
+    });
+    const ficha = entrada('AGRO INDUSTRIAS VELASCO', {
+        destinatarioId: 101, address: 'C. Cta. del Molino, 30', city: 'PUENTE GENIL', veces: 6, ultimoEnvio: 100
+    });
+
+    it('pliega el nombre abreviado en la ficha y suma las veces', () => {
+        const agenda = plegarParecidos([
+            ficha,
+            entrada('AGRO. IND. VELASCO, S.L.', { address: 'C/CUESTA MOLINO, S/N', city: 'PUENTE GENIL (CORDOBA)', veces: 4, ultimoEnvio: 200 })
+        ]);
+        expect(agenda).toHaveLength(1);
+        expect(agenda[0]).toMatchObject({
+            name: 'AGRO INDUSTRIAS VELASCO', destinatarioId: 101, address: 'C. Cta. del Molino, 30', veces: 10, ultimoEnvio: 200
+        });
+    });
+
+    it('pliega también la forma jurídica de más y el orden cambiado', () => {
+        const agenda = plegarParecidos([
+            ficha,
+            entrada('Agro Industrias Velasco S.L.', { city: 'Puente Genil' }),
+            entrada('VELASCO AGRO INDUSTRIAS', { city: 'Puente Genil' })
+        ]);
+        expect(agenda).toHaveLength(1);
+        expect(agenda[0].veces).toBe(8);
+    });
+
+    it('no pliega lo que está en otro pueblo a las claras', () => {
+        const agenda = plegarParecidos([
+            ficha,
+            entrada('AGRO. IND. VELASCO, S.L.', { city: 'Lucena' })
+        ]);
+        expect(agenda).toHaveLength(2);
+    });
+
+    it('con CP en los dos lados manda el CP, aunque la población esté escrita distinta', () => {
+        const conCp = { ...ficha, zip: '14500' };
+        expect(plegarParecidos([conCp, entrada('AGRO. IND. VELASCO, S.L.', { zip: '14500', city: 'P. Genil' })])).toHaveLength(1);
+        expect(plegarParecidos([conCp, entrada('AGRO. IND. VELASCO, S.L.', { zip: '14900', city: 'Puente Genil' })])).toHaveLength(2);
+    });
+
+    it('sin población ni CP no bloquea: se fía del parecido del nombre', () => {
+        expect(plegarParecidos([ficha, entrada('AGRO. IND. VELASCO, S.L.')])).toHaveLength(1);
+    });
+
+    it('no pliega empresas distintas que sólo comparten una palabra', () => {
+        const agenda = plegarParecidos([
+            entrada('Bobinados Las Quemadas', { destinatarioId: 7, city: 'Córdoba' }),
+            entrada('SAFAMOTOR QUEMADAS', { city: 'Córdoba' }),
+            entrada('Rafael Millan', { destinatarioId: 8, city: 'Cabra' }),
+            entrada('Raul Millan', { city: 'Cabra' })
+        ]);
+        expect(agenda).toHaveLength(4);
+    });
+
+    it('lo suelto nunca se pliega en otro suelto: hace falta una ficha', () => {
+        const agenda = plegarParecidos([entrada('Agro Industrias Velasco'), entrada('AGRO. IND. VELASCO, S.L.')]);
+        expect(agenda).toHaveLength(2);
+    });
+
+    it('le presta a la ficha la dirección si no la tenía, y no toca la que tiene', () => {
+        const sinDireccion = { ...ficha, address: '', zip: '', city: '' };
+        const [una] = plegarParecidos([sinDireccion, entrada('AGRO. IND. VELASCO, S.L.', { address: 'C/ Nueva 1', zip: '14500', city: 'Puente Genil' })]);
+        expect(una).toMatchObject({ address: 'C/ Nueva 1', zip: '14500', city: 'Puente Genil' });
+    });
+
+    it('no toca las entradas que le llegan', () => {
+        const suelta = entrada('AGRO. IND. VELASCO, S.L.');
+        plegarParecidos([ficha, suelta]);
+        expect(ficha.veces).toBe(6);
+        expect(suelta.veces).toBe(1);
+    });
+
+    it('juntarAgendas pliega también, venga de donde venga', () => {
+        const agenda = juntarAgendas([ficha], [entrada('AGRO. IND. VELASCO, S.L.', { city: 'Puente Genil' })]);
+        expect(agenda).toHaveLength(1);
+        expect(agenda[0].veces).toBe(7);
     });
 });

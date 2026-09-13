@@ -280,7 +280,7 @@ export default function ClientDashboard({
     useEffect(() => {
         if (!client?.id) return undefined;
         let vivo = true;
-        cargarAgendaDelServidor()
+        cargarAgendaDelServidor(client.id)
             .then(filas => { if (vivo) setAgendaServidor(agendaDesdeServidor(filas)); })
             .catch(e => console.warn('[Agenda] No se ha podido cargar la agenda del servidor; se usa la local.', e));
         return () => { vivo = false; };

@@ -191,6 +191,8 @@ describe('nombresSeParecen', () => {
         ['Hnos. Perez', 'Hermanos Perez', 'la abreviatura'],
         ['Ferreteria Gomez', 'Ferreteria Gomes', 'una errata en el apellido'],
         ['Ferreteria Gomez', 'Ferreteria Gomez e Hijos', 'la coletilla del final'],
+        ['Agro Industrias Velasco', 'AGRO. IND. VELASCO, S.L.', 'una palabra abreviada'],
+        ['Transportes Garcia', 'Transp. Garcia', 'el ramo abreviado, con el apellido de por medio'],
     ];
 
     seParecen.forEach(([uno, otro, porque]) => {
@@ -207,6 +209,9 @@ describe('nombresSeParecen', () => {
         ['Bar Pepe', 'Bar', 'la corta no dice quién es'],
         ['Muebles Lopez', 'Comercial Ruiz', 'no tienen nada que ver'],
         ['Ruiz', 'Diaz', 'palabras cortas: una letra ya es otro apellido'],
+        ['Bar Pepe', 'Bar Pepelu', 'una empieza como la otra, pero lo compartido es sólo el ramo'],
+        ['Raul Millan', 'Rafael Millan', 'el nombre no es abreviatura del otro'],
+        ['S. Garcia', 'Sanchez Garcia', 'una letra sola no abrevia nada'],
     ];
 
     noSeParecen.forEach(([uno, otro, porque]) => {
