@@ -5,7 +5,8 @@ import SignatureCanvas from 'react-signature-canvas';
 import Shipment from '../../models/Shipment';
 import { compressImage } from '../../utils/imageCompression';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
-import { leerReceptores, normalizarNombreReceptor } from '../../utils/receptoresHabituales';
+import { leerReceptores, normalizarNombreReceptor, direccionPorNombre, direccionDeLaChuleta } from '../../utils/receptoresHabituales';
+import { fichaDelDestinatario } from '../../utils/shipmentUtils';
 import CameraCaptureModal from '../CameraCaptureModal';
 import {
     exigeJustificacionLegal,
@@ -96,23 +97,18 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
      * y aquí salen como chuleta: en gris, y sólo se escriben en los campos si el
      * conductor toca una. No se rellena solo a propósito — la prueba de entrega dice
      * quién ha recibido HOY, y un nombre que nadie ha mirado es peor que uno en blanco.
+     *
+     * La dirección se busca EXACTAMENTE igual que al guardarla (ver el mismo bloque en
+     * DriverDashboard): primero el enlace que hizo la base de datos al escribir el
+     * albarán, que aguanta que la oficina renombre la ficha al validarla, y si no lo
+     * hay, por nombre comercial, razón social o sede. Buscando aquí sólo por el nombre
+     * comercial, lo que se guardaba en una ficha renombrada no se volvía a ver nunca.
      */
     const receptoresHabituales = useMemo(() => {
         if (!shipment) return [];
-        const sinTildes = new RegExp('[\\u0300-\\u036f]', 'g');
-        const norm = (v) => String(v || '').trim().toLowerCase().normalize('NFD').replace(sinTildes, '');
-        const destNorm = norm(shipment.destinationName);
-        if (!destNorm) return [];
-
-        for (const c of (clients || [])) {
-            if (norm(c.name) === destNorm) return leerReceptores(c);
-            for (const b of (Array.isArray(c.branches) ? c.branches : [])) {
-                // La sede tiene su propia chuleta; si no la tiene, la de la casa madre
-                // no vale: quien firma en un almacén no es quien firma en otro.
-                if (norm(b.name) === destNorm) return leerReceptores(b);
-            }
-        }
-        return [];
+        const direccion = fichaDelDestinatario(shipment, clients)
+            || direccionPorNombre(shipment.destinationName, clients);
+        return leerReceptores(direccionDeLaChuleta(direccion));
     }, [shipment, clients]);
 
     // El último que recibió aquí: es el que se enseña en gris dentro de los campos

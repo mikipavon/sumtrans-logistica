@@ -3,6 +3,9 @@ import {
     agregarReceptor,
     leerReceptores,
     normalizarNombreReceptor,
+    direccionPorNombre,
+    direccionDeLaChuleta,
+    juntarReceptores,
     TOPE_RECEPTORES,
 } from './receptoresHabituales';
 
@@ -86,6 +89,70 @@ describe('agregarReceptor', () => {
         expect(lista).toHaveLength(TOPE_RECEPTORES);
         expect(lista[0].name).toBe(`Persona ${TOPE_RECEPTORES + 2}`);
         expect(lista.map(r => r.name)).not.toContain('Persona 1');
+    });
+});
+
+describe('direccionPorNombre', () => {
+    const cartera = [
+        {
+            id: 1,
+            name: 'ELYTEL TELECOMUNICACIONES SL',
+            legalName: 'Elytel',
+            receivers: [{ name: 'Marisa', dni: '111A' }],
+            branches: [{ id: 'b1', name: 'Elytel Almacén', receivers: [{ name: 'Paco', dni: '222B' }] }],
+        },
+        { id: 2, name: 'Otra Empresa', receivers: [{ name: 'Nadie', dni: '333C' }] },
+    ];
+
+    it('encuentra la ficha por su nombre comercial', () => {
+        expect(direccionPorNombre('elytel telecomunicaciones sl', cartera).client.id).toBe(1);
+    });
+
+    // Lo que le pasaba a Juan Carlos: el albarán lleva escrito el nombre de
+    // siempre, y al validar la ficha ese nombre se quedó de razón social.
+    it('encuentra la ficha por su razón social, como hace el guardado', () => {
+        const direccion = direccionPorNombre('ELYTEL', cartera);
+        expect(direccion.client.id).toBe(1);
+        expect(direccion.branch).toBeNull();
+        expect(leerReceptores(direccionDeLaChuleta(direccion))).toHaveLength(1);
+    });
+
+    it('una sede responde por su nombre y con su propia lista', () => {
+        const direccion = direccionPorNombre('elytel almacen', cartera);
+        expect(direccion.client.id).toBe(1);
+        expect(direccionDeLaChuleta(direccion).name).toBe('Elytel Almacén');
+        expect(leerReceptores(direccionDeLaChuleta(direccion))[0].name).toBe('Paco');
+    });
+
+    it('sin nombre, o con un nombre que no es de nadie, no devuelve ficha', () => {
+        expect(direccionPorNombre('   ', cartera)).toBeNull();
+        expect(direccionPorNombre('Ferretería Que No Existe', cartera)).toBeNull();
+        expect(direccionDeLaChuleta(null)).toBeNull();
+        expect(leerReceptores(direccionDeLaChuleta(null))).toEqual([]);
+    });
+});
+
+describe('juntarReceptores', () => {
+    it('la ficha que se queda hereda a los de la otra, sin repetir a nadie', () => {
+        const juntos = juntarReceptores(
+            [{ name: 'Marisa', dni: '111A', at: 'HOY' }],
+            [{ name: 'Paco', dni: '222B', at: 'AYER' }, { name: 'marisa', dni: '', at: 'ANTEAYER' }],
+        );
+        expect(juntos.map(r => r.name)).toEqual(['Marisa', 'Paco']);
+    });
+
+    it('el DNI de la que se queda manda, pero hereda el que a ella le falta', () => {
+        const juntos = juntarReceptores(
+            [{ name: 'Marisa', dni: '' }],
+            [{ name: 'Marisa', dni: '111A' }],
+        );
+        expect(juntos[0].dni).toBe('111A');
+    });
+
+    it('no se pasa del tope al juntar dos listas largas', () => {
+        const unos = Array.from({ length: 5 }, (_, i) => ({ name: `A${i}`, dni: `${i}` }));
+        const otros = Array.from({ length: 5 }, (_, i) => ({ name: `B${i}`, dni: `${i}` }));
+        expect(juntarReceptores(unos, otros)).toHaveLength(TOPE_RECEPTORES);
     });
 });
 

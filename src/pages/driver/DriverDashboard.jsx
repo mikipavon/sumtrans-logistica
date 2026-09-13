@@ -40,7 +40,7 @@ import { RUTAS_MAESTRAS, DEFAULT_RUTAS } from '../../data/rutas';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
-import { agregarReceptor, leerReceptores } from '../../utils/receptoresHabituales';
+import { agregarReceptor, leerReceptores, direccionPorNombre, direccionDeLaChuleta } from '../../utils/receptoresHabituales';
 import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
 import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, motivoSinJornada, puedeFicharAutomaticamente, textoSinJornada, MOTIVOS_BLOQUEO } from '../../utils/normasFichaje';
@@ -4538,29 +4538,24 @@ ${scriptDeAjuste()}
                 : {});
 
             if (clientName) {
-                const destClientObj = clientsMap.get(normalizeClientName(clientName));
-                if (destClientObj) {
-                    if (destClientObj._isBranch) {
-                        const branch = destClientObj._branch;
-                        const cambios = { ...apuntarReceptor(branch) };
-                        if (proof?.coordinates && !(branch.coordinates && String(branch.coordinates).trim().length > 0)) {
-                            cambios.coordinates = proof.coordinates;
-                        }
-                        if (Object.keys(cambios).length > 0) {
-                            onUpdateClient(destClientObj.id, cambios, branch.id);
-                            console.log(`[AutoAprendizaje] Destinatario (Sede) "${clientName}"`, cambios);
-                        }
-                    } else {
-                        const cambios = { ...apuntarReceptor(destClientObj) };
-                        if (proof?.coordinates && !(destClientObj.coordinates && String(destClientObj.coordinates).trim().length > 0)) {
-                            cambios.coordinates = proof.coordinates;
-                        }
-                        if (Object.keys(cambios).length > 0) {
-                            onUpdateClient(destClientObj.id, cambios);
-                            console.log(`[AutoAprendizaje] Destinatario "${clientName}"`, cambios);
-                        }
+                // La misma búsqueda que hace el modal para volver a enseñar la lista, y
+                // en el mismo orden: el enlace que hizo la base de datos al escribir el
+                // albarán manda sobre el texto, porque aguanta que la oficina renombre
+                // la ficha al validarla. En una recogida no vale: ahí la parada es el
+                // remitente, y `destinatarioId` apunta a la otra punta del viaje.
+                const direccion = (isPickupType ? null : fichaDelDestinatario(currentShip, clients))
+                    || direccionPorNombre(clientName, clients);
+                if (direccion) {
+                    const destino = direccionDeLaChuleta(direccion);
+                    const cambios = { ...apuntarReceptor(destino) };
+                    if (proof?.coordinates && !(destino.coordinates && String(destino.coordinates).trim().length > 0)) {
+                        cambios.coordinates = proof.coordinates;
                     }
-                } else if (!destClientObj && !isPickupType && onAddClient && proof?.coordinates) {
+                    if (Object.keys(cambios).length > 0) {
+                        onUpdateClient(direccion.client.id, cambios, direccion.branch ? direccion.branch.id : null);
+                        console.log(`[AutoAprendizaje] Destinatario${direccion.branch ? ' (Sede)' : ''} "${clientName}"`, cambios);
+                    }
+                } else if (!isPickupType && onAddClient && proof?.coordinates) {
                     // Destinatario no existe en BD → crear ficha pendiente de validar con GPS incluido
                     onAddClient({
                         name: currentShip.destinationName,
