@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta } from './shipmentUtils';
+import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -505,5 +505,50 @@ describe('fichaDelDestinatario / nombreDestinatarioEnRuta', () => {
     it('el portal sigue reconociendo al destinatario por el enlace', () => {
         const envio = { destinationName: 'Ferretería Pérez', client: 'Remitente S.A.', destinatarioId: 101, porteType: 'Pagado' };
         expect(papelDelClienteEnElEnvio(envio, cartera[0])).toBe('Destinatario');
+    });
+});
+
+// ── La ficha que se factura: primero por enlace, luego por nombre (fase 26) ──
+//
+// Un debido que el portal mandó a "AGRO VELASCO" y que la oficina tiene como
+// "Agro Velasco S.L." se facturaba a un cliente que no existe. Con el enlace
+// con la ficha, se factura a quien es.
+describe('fichaDelPagador', () => {
+    const agroVelasco = { id: 101, name: 'Agro Velasco S.L. (la del polígono)', legalName: 'Agroquímicos Velasco S.L.',
+        branches: [{ id: 'sede-2', name: 'Agro Velasco · almacén' }] };
+    const ibermangueras = { id: 202, name: 'Ibermangueras' };
+    const cartera = [agroVelasco, ibermangueras];
+
+    it('en un debido, la ficha enlazada del destinatario aunque el nombre esté escrito de otra forma', () => {
+        const envio = { porteType: 'Debido', client: 'Ibermangueras', destinationName: 'AGRO VELASCO', destinatarioId: 101 };
+        expect(fichaDelPagador(envio, cartera)).toBe(agroVelasco);
+    });
+
+    it('en un debido sin enlace, por nombre comercial, fiscal o de sede, sin tildes ni mayúsculas', () => {
+        expect(fichaDelPagador({ porteType: 'Debido', destinationName: 'agro velasco s.l. (la del polígono)' }, cartera)).toBe(agroVelasco);
+        expect(fichaDelPagador({ porteType: 'Debido', destinationName: 'AGROQUIMICOS VELASCO S.L.' }, cartera)).toBe(agroVelasco);
+        expect(fichaDelPagador({ porteType: 'Debido', destinationName: 'Agro Velasco · almacén' }, cartera)).toBe(agroVelasco);
+    });
+
+    it('en un debido, si el enlace apunta a una ficha que no está, cae al nombre', () => {
+        const envio = { porteType: 'Debido', destinationName: 'Ibermangueras', destinatarioId: 999 };
+        expect(fichaDelPagador(envio, cartera)).toBe(ibermangueras);
+    });
+
+    it('en un pagado, la ficha del remitente: por id si lo trae (portal), si no por nombre', () => {
+        expect(fichaDelPagador({ porteType: 'Pagado', client: 'lo que sea', clientId: 202 }, cartera)).toBe(ibermangueras);
+        expect(fichaDelPagador({ porteType: 'Pagado', client: 'IBERMANGUERAS' }, cartera)).toBe(ibermangueras);
+        expect(fichaDelPagador({ client: 'IBERMANGUERAS' }, cartera)).toBe(ibermangueras); // sin porteType = pagado
+    });
+
+    it('en un pagado no mira el destinatario aunque venga enlazado', () => {
+        const envio = { porteType: 'Pagado', client: 'Nadie Conocido', destinationName: 'AGRO VELASCO', destinatarioId: 101 };
+        expect(fichaDelPagador(envio, cartera)).toBeNull();
+    });
+
+    it('sin nombre ni enlace no se casa con nadie', () => {
+        expect(fichaDelPagador({ porteType: 'Debido' }, cartera)).toBeNull();
+        expect(fichaDelPagador(null, cartera)).toBeNull();
+        expect(fichaDelPagador({ porteType: 'Debido', destinationName: 'X' }, null)).toBeNull();
     });
 });

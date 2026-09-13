@@ -7,7 +7,8 @@ import { generateDeliveryPDF, generateDeliveryNotesPDF } from '../../utils/deliv
 import LabelPrintModal from '../../components/clients/LabelPrintModal';
 
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
-import { construirAgendaDestinatarios, filtrarAgendaDestinatarios } from '../../utils/agendaDestinatarios';
+import { construirAgendaDestinatarios, filtrarAgendaDestinatarios, agendaDesdeServidor, juntarAgendas } from '../../utils/agendaDestinatarios';
+import { cargarAgendaDelServidor } from '../../utils/agendaDestinatariosServidor';
 import { getPackagesCount, envioEsDelCliente, papelDelClienteEnElEnvio } from '../../utils/shipmentUtils';
 import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
@@ -202,6 +203,12 @@ export default function ClientDashboard({
     // Notificaciones de la oficina (ver getIrregularReasons en shipmentUtils).
     const [weightKg, setWeightKg] = useState('');
     const [showDestSuggestions, setShowDestSuggestions] = useState(false);
+    // La ficha nuestra a la que apunta el destinatario elegido en la agenda
+    // ({ id, sedeId }), o null si el cliente lo ha tecleado a mano. Ver fase 26.
+    const [destinatarioEnlazado, setDestinatarioEnlazado] = useState(null);
+    // La agenda calculada por el servidor (todos sus envíos, con ficha). null
+    // hasta que llega; si falla, se queda la local.
+    const [agendaServidor, setAgendaServidor] = useState(null);
     const [showDestCitySuggestions, setShowDestCitySuggestions] = useState(false);
     const [showOriginCitySuggestions, setShowOriginCitySuggestions] = useState(false);
 
@@ -265,7 +272,24 @@ export default function ClientDashboard({
     // de la tabla `clients`. Antes se intentaba filtrar `allClients` y salía siempre
     // vacía — un cliente sólo recibe su propia ficha (RLS, fase 04). Ver
     // agendaDestinatarios.js.
-    const agenda = useMemo(() => construirAgendaDestinatarios(enviosQueEnvia), [enviosQueEnvia]);
+    //
+    // La agenda buena la calcula el servidor (fase 26): mira TODOS sus envíos, no
+    // sólo los 90 días que carga el navegador, y trae el id de nuestra ficha
+    // cuando el envío estaba enlazado. La local se junta por si el servidor no
+    // contesta y para lo recién creado en esta sesión.
+    useEffect(() => {
+        if (!client?.id) return undefined;
+        let vivo = true;
+        cargarAgendaDelServidor()
+            .then(filas => { if (vivo) setAgendaServidor(agendaDesdeServidor(filas)); })
+            .catch(e => console.warn('[Agenda] No se ha podido cargar la agenda del servidor; se usa la local.', e));
+        return () => { vivo = false; };
+    }, [client?.id]);
+
+    const agenda = useMemo(
+        () => juntarAgendas(agendaServidor || [], construirAgendaDestinatarios(enviosQueEnvia)),
+        [agendaServidor, enviosQueEnvia]
+    );
 
     const filteredContacts = useMemo(
         () => filtrarAgendaDestinatarios(agenda, newDestinationName),
@@ -277,6 +301,13 @@ export default function ClientDashboard({
         setNewDestination(contact.address || '');
         setNewDestinationZip(contact.zip || '');
         setNewDestinationCity(contact.city || '');
+        // Si la entrada viene de una ficha nuestra, el envío nacerá apuntando a
+        // ella (fase 26). Si el cliente retoca el nombre después, se suelta.
+        setDestinatarioEnlazado(
+            contact.destinatarioId !== null && contact.destinatarioId !== undefined && String(contact.destinatarioId) !== ''
+                ? { id: contact.destinatarioId, sedeId: contact.destinatarioSedeId ?? null }
+                : null
+        );
         setShowDestSuggestions(false);
     };
 
@@ -385,6 +416,14 @@ export default function ClientDashboard({
             destinationCity: newDestinationCity,
             origin: `${newOriginZip} ${newOriginCity}, ES`.trim(),
             destination: `${newDestinationZip} ${newDestinationCity}, ES`.trim(),
+            // El enlace con nuestra ficha cuando el destinatario salió de la agenda
+            // (fase 26). El servidor lo respeta sólo si este cliente ya le ha
+            // enviado antes; si no, lo quita y empareja por nombre como siempre.
+            ...(destinatarioEnlazado ? {
+                destinatarioId: destinatarioEnlazado.id,
+                destinatarioSedeId: destinatarioEnlazado.sedeId ?? null,
+                destinatarioEmparejadoPor: 'agenda'
+            } : {}),
             date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
             createdAt: new Date().toISOString(),
             status: 'Pendiente de asignar',
@@ -415,6 +454,7 @@ export default function ClientDashboard({
         setNewDestinationZip('');
         setNewDestinationCity('');
         setNewDestinationName('');
+        setDestinatarioEnlazado(null);
         setNewOrigin(client.address || '');
         setNewOriginZip(client.zip || '');
         setNewOriginCity(client.city || '');
@@ -970,7 +1010,7 @@ export default function ClientDashboard({
                                         <input 
                                             required type="text" 
                                             value={newDestinationName} 
-                                            onChange={e => { setNewDestinationName(e.target.value); setShowDestSuggestions(true); }}
+                                            onChange={e => { setNewDestinationName(e.target.value); setDestinatarioEnlazado(null); setShowDestSuggestions(true); }}
                                             onFocus={() => setShowDestSuggestions(true)}
                                             onBlur={() => setTimeout(() => setShowDestSuggestions(false), 200)}
                                             className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
@@ -985,7 +1025,15 @@ export default function ClientDashboard({
                                                         onMouseDown={() => handleSelectContact(c)}
                                                         className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors flex flex-col border-b border-slate-50 last:border-0"
                                                     >
-                                                        <span className="font-bold text-slate-800 text-sm">{c.name}</span>
+                                                        <span className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                                                            {c.name}
+                                                            {c.destinatarioId !== null && c.destinatarioId !== undefined && String(c.destinatarioId) !== '' && (
+                                                                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"
+                                                                      title="Ya le hemos entregado antes: el envío irá a esta misma dirección">
+                                                                    En cartera
+                                                                </span>
+                                                            )}
+                                                        </span>
                                                         <span className="text-xs text-slate-400">{c.address}{c.city ? `, ${c.city}` : ''}</span>
                                                     </button>
                                                 ))}

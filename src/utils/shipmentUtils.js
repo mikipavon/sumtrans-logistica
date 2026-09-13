@@ -255,6 +255,38 @@ export const nombreDestinatarioEnRuta = (shipment, clients = []) => {
 };
 
 /**
+ * NUESTRA ficha de quien PAGA el porte de este envío: la que se factura.
+ *
+ * Primero por enlace, que es lo que no falla: en un porte debido, la ficha del
+ * destinatario (destinatarioId, fase 21); en un pagado, la del remitente
+ * (clientId, que sólo escribe el portal). Sin enlace, por nombre —comercial,
+ * fiscal o de sede, sin tildes ni mayúsculas—, que es como se buscaba hasta
+ * ahora en la exportación de facturas.
+ *
+ * Sin el enlace, un debido que el portal mandó a "AGRO VELASCO" y que la oficina
+ * tiene como "Agro Velasco S.L." se facturaba a un cliente que no existe.
+ */
+export const fichaDelPagador = (shipment, clients = []) => {
+    if (!shipment) return null;
+    const lista = (clients || []).filter(Boolean);
+
+    let nombre;
+    if (quienPagaElPorte(shipment) === 'Destinatario') {
+        const enlazada = fichaDelDestinatario(shipment, lista);
+        if (enlazada) return enlazada.client;
+        nombre = shipment.destinationName || shipment.destination;
+    } else {
+        const porId = lista.find(c => mismoId(shipment.clientId, c.id));
+        if (porId) return porId;
+        nombre = shipment.client;
+    }
+
+    const buscado = normalizarNombre(nombre);
+    if (!buscado) return null;
+    return lista.find(c => nombresDelCliente(c).includes(buscado)) || null;
+};
+
+/**
  * Qué pinta este cliente en este albarán: 'Remitente', 'Destinatario' o null si
  * no es ni una cosa ni la otra.
  *

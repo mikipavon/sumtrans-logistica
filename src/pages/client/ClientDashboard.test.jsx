@@ -6,7 +6,7 @@
 // otro, y los recibidos se marcan para que no vea su propio nombre en la
 // columna de destinatario sin saber por qué.
 
-import { render, screen, within, fireEvent } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import ClientDashboard from './ClientDashboard';
 
@@ -18,6 +18,12 @@ vi.mock('../../utils/deliveryPdf', () => ({ generateDeliveryPDF: vi.fn(), genera
 vi.mock('../../utils/printShipment', () => ({ printShipmentTicket: vi.fn() }));
 vi.mock('../../utils/numeracionAlbaran', () => ({ reservarNumerosAlbaran: vi.fn() }));
 vi.mock('../../utils/ventanaPadre', () => ({ avisarAlPadre: vi.fn(), estamosEmbebidos: () => false }));
+// La agenda del servidor (fase 26): por defecto no contesta nada, y cada test
+// que la necesite le pone sus filas.
+vi.mock('../../utils/agendaDestinatariosServidor', () => ({ cargarAgendaDelServidor: vi.fn(async () => []) }));
+
+import { cargarAgendaDelServidor } from '../../utils/agendaDestinatariosServidor';
+import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 
 const ESMEBRA = { id: 42, name: 'ESMEBRA', address: 'C/ Real 1', zip: '14940', city: 'Cabra' };
 
@@ -174,5 +180,109 @@ describe('ClientDashboard · etiqueta del reembolso', () => {
         pintarCon(conReembolso({ codPaid: true, codReceiptPhoto: 'https://x/justificante.jpg' }));
         const marca = screen.getByText('REEMBOLSO PAGADO');
         expect(marca.closest('span[title]').className).toContain('emerald');
+    });
+});
+
+// ── La agenda de destinatarios apunta a nuestras fichas (fase 26) ──
+//
+// Ibermangueras manda a Agro Velasco, que ya está en cartera. Antes el portal
+// sólo sabía el texto que se tecleó en envíos anteriores; ahora el servidor le
+// da la agenda entera con el id de la ficha, y el envío nuevo nace enlazado.
+describe('ClientDashboard · agenda con fichas', () => {
+
+    const abrirCrear = () => fireEvent.click(screen.getByText('Crear Nuevo Envío'));
+    const campoDestinatario = () => screen.getByPlaceholderText('Empieza a escribir para ver sugerencias...');
+
+    it('las sugerencias salen de la agenda del servidor, con la marca de los que están en cartera', async () => {
+        cargarAgendaDelServidor.mockResolvedValueOnce([
+            { nombre: 'Agro Velasco S.L.', direccion: 'Pol. Ind. 4', cp: '14900', poblacion: 'Lucena',
+              ficha_id: 101, sede_id: null, veces: 12, ultimo_envio: '2026-08-01T10:00:00.000Z' },
+            { nombre: 'Tecleado A Mano', direccion: 'C/ Sin Ficha 1', cp: '', poblacion: 'Cabra',
+              ficha_id: null, sede_id: null, veces: 1, ultimo_envio: '2026-07-01T10:00:00.000Z' },
+        ]);
+        pintar();
+        abrirCrear();
+        fireEvent.focus(campoDestinatario());
+
+        await waitFor(() => expect(screen.getByText('Agro Velasco S.L.')).toBeTruthy());
+        expect(screen.getByText('Tecleado A Mano')).toBeTruthy();
+        // Y también el de la sesión (de los envíos cargados), que el servidor no conocía.
+        expect(screen.getByText('FERRETERIA PEPE')).toBeTruthy();
+
+        const enCartera = screen.getAllByText('En cartera');
+        expect(enCartera).toHaveLength(1);
+        expect(enCartera[0].closest('button').textContent).toContain('Agro Velasco S.L.');
+    });
+
+    it('al elegir uno en cartera, el envío nace apuntando a la ficha', async () => {
+        cargarAgendaDelServidor.mockResolvedValueOnce([
+            { nombre: 'Agro Velasco S.L.', direccion: 'Pol. Ind. 4', cp: '14900', poblacion: 'Lucena',
+              ficha_id: 101, sede_id: 'sede-2', veces: 12, ultimo_envio: '2026-08-01T10:00:00.000Z' },
+        ]);
+        reservarNumerosAlbaran.mockResolvedValueOnce({ primero: 500 });
+        const onCreateShipment = vi.fn();
+        render(
+            <ClientDashboard client={ESMEBRA} onLogout={() => {}} allShipments={[enviado]} drivers={[]}
+                allClients={[ESMEBRA]} articles={[]} tariffs={[]} coverageZones={[]}
+                onCreateShipment={onCreateShipment} onUpdateClient={vi.fn()} onDeleteShipment={vi.fn()} />
+        );
+        abrirCrear();
+        fireEvent.focus(campoDestinatario());
+        await waitFor(() => expect(screen.getByText('Agro Velasco S.L.')).toBeTruthy());
+
+        fireEvent.mouseDown(screen.getByText('Agro Velasco S.L.').closest('button'));
+        expect(campoDestinatario().value).toBe('Agro Velasco S.L.');
+
+        fireEvent.click(document.querySelector('input[name="porteType"][value="Pagado"]'));
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalled());
+        expect(onCreateShipment.mock.calls[0][0]).toMatchObject({
+            destinationName: 'Agro Velasco S.L.',
+            destinationAddress: 'Pol. Ind. 4',
+            destinationZip: '14900',
+            destinationCity: 'Lucena',
+            destinatarioId: 101,
+            destinatarioSedeId: 'sede-2',
+            destinatarioEmparejadoPor: 'agenda',
+        });
+    });
+
+    it('si retoca el nombre después de elegir, el enlace se suelta', async () => {
+        cargarAgendaDelServidor.mockResolvedValueOnce([
+            { nombre: 'Agro Velasco S.L.', direccion: 'Pol. Ind. 4', cp: '14900', poblacion: 'Lucena',
+              ficha_id: 101, sede_id: null, veces: 12, ultimo_envio: '2026-08-01T10:00:00.000Z' },
+        ]);
+        reservarNumerosAlbaran.mockResolvedValueOnce({ primero: 501 });
+        const onCreateShipment = vi.fn();
+        render(
+            <ClientDashboard client={ESMEBRA} onLogout={() => {}} allShipments={[enviado]} drivers={[]}
+                allClients={[ESMEBRA]} articles={[]} tariffs={[]} coverageZones={[]}
+                onCreateShipment={onCreateShipment} onUpdateClient={vi.fn()} onDeleteShipment={vi.fn()} />
+        );
+        abrirCrear();
+        fireEvent.focus(campoDestinatario());
+        await waitFor(() => expect(screen.getByText('Agro Velasco S.L.')).toBeTruthy());
+        fireEvent.mouseDown(screen.getByText('Agro Velasco S.L.').closest('button'));
+        fireEvent.change(campoDestinatario(), { target: { value: 'Otra Empresa' } });
+
+        fireEvent.click(document.querySelector('input[name="porteType"][value="Debido"]'));
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalled());
+        const envio = onCreateShipment.mock.calls[0][0];
+        expect(envio.destinationName).toBe('Otra Empresa');
+        expect(envio).not.toHaveProperty('destinatarioId');
+    });
+
+    it('si el servidor falla, queda la agenda de los envíos cargados', async () => {
+        cargarAgendaDelServidor.mockRejectedValueOnce(new Error('sin red'));
+        const aviso = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        pintar();
+        abrirCrear();
+        fireEvent.focus(campoDestinatario());
+        await waitFor(() => expect(aviso).toHaveBeenCalled());
+        expect(screen.getByText('FERRETERIA PEPE')).toBeTruthy();
+        aviso.mockRestore();
     });
 });

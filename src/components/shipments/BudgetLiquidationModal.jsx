@@ -5,6 +5,7 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { generateDeliveryPDFBlob } from '../../utils/deliveryPdf';
 import { printBudgetSummary } from '../../utils/printBudgetSummary';
+import { fichaDelPagador } from '../../utils/shipmentUtils';
 
 export default function BudgetLiquidationModal({ isOpen, onClose, shipments, clients, drivers, onCreateShipment, onUpdateMultipleShipments }) {
     const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
@@ -30,13 +31,10 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             let clientId = s.clientId;
 
             if (!billingType) {
-                // Lógica similar a getClientInfo
+                // Misma regla que getClientInfo en Shipments.jsx: primero por el
+                // enlace con la ficha, luego por nombre (fichaDelPagador).
                 const payingClientName = String(s.porteType === 'Debido' ? (s.destinationName || s.destination) : s.client).trim();
-                const cInfo = clients?.find(cl => 
-                    (payingClientName && (cl.name || '').toLowerCase().trim() === payingClientName.toLowerCase()) || 
-                    (payingClientName && (cl.legalName || '').toLowerCase().trim() === payingClientName.toLowerCase()) ||
-                    (s.porteType !== 'Debido' && s.clientId && String(cl.id) === String(s.clientId))
-                ) || {};
+                const cInfo = fichaDelPagador(s, clients) || {};
                 billingType = cInfo.billingType || 'Clientes Habituales';
                 clientName = cInfo.name || payingClientName;
                 clientId = cInfo.id || s.clientId;

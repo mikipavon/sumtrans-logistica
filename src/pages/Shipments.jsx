@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
-import { getPackagesCount, intervinoConductor, importeParaMostrar, poblacionYCalle } from '../utils/shipmentUtils';
+import { getPackagesCount, intervinoConductor, importeParaMostrar, poblacionYCalle, fichaDelPagador } from '../utils/shipmentUtils';
 import { coincideBusqueda, coincideEnCampos } from '../utils/busqueda';
 import { SIN_FILTRO, BAREMO_1, BAREMO_2, TIPOS_DE_CLIENTE, coincideCliente, filtroPoblacion, filtroTipoDeCliente, opcionesDeClientes, opcionesDePoblaciones } from '../utils/filtrosEnvios';
 import FiltroClienteBuscable from '../components/shipments/FiltroClienteBuscable';
@@ -1192,24 +1192,10 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                         const formattedDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
                                         const getClientInfo = (s) => {
-                                            const payingClientName = String(s.porteType === 'Debido' ? (s.destinationName || s.destination) : s.client).trim();
-                                            
-                                            let foundClient = (clients || []).find(cl => 
-                                                (payingClientName && (cl.name || '').toLowerCase().trim() === payingClientName.toLowerCase()) || 
-                                                (payingClientName && (cl.legalName || '').toLowerCase().trim() === payingClientName.toLowerCase()) ||
-                                                (s.porteType !== 'Debido' && s.clientId && String(cl.id) === String(s.clientId))
-                                            );
-
-                                            // If not found by direct name, check if it's a branch name
-                                            if (!foundClient && payingClientName) {
-                                                const pName = payingClientName.toLowerCase();
-                                                for (const cl of (clients || [])) {
-                                                    if (Array.isArray(cl.branches) && cl.branches.some(b => (b.name || '').toLowerCase().trim() === pName)) {
-                                                        foundClient = cl;
-                                                        break;
-                                                    }
-                                                }
-                                            }
+                                            // Primero por el enlace con la ficha (fase 21/26) y, si no
+                                            // lo hay, por nombre comercial, fiscal o de sede. Ver
+                                            // fichaDelPagador en shipmentUtils.js.
+                                            const foundClient = fichaDelPagador(s, clients);
 
                                             if (foundClient) {
                                                 const rawNum = foundClient.clientNumber || '';
