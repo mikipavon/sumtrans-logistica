@@ -53,6 +53,33 @@ describe('huecosQueRellena', () => {
         expect(huecos).toEqual({});
     });
 
+    // Una ficha que se fusiona con otra no puede llevarse por delante a quienes
+    // recibieron allí: el repartidor tendría que volver a pedirles el DNI.
+    it('junta las dos listas de quién recibe, la de hoy delante', () => {
+        const huecos = huecosQueRellena(
+            { receivers: [{ name: 'Paco', dni: '222B', at: 'AYER' }] },
+            { receivers: [{ name: 'Marisa', dni: '111A', at: 'HOY' }] }
+        );
+        expect(huecos.receivers.map(r => r.name)).toEqual(['Marisa', 'Paco']);
+        expect(huecos.lastReceiver).toBeNull();
+    });
+
+    it('entiende el lastReceiver antiguo de la ficha que se queda', () => {
+        const huecos = huecosQueRellena(
+            { lastReceiver: { name: 'Paco', dni: '222B' } },
+            { receivers: [{ name: 'Marisa', dni: '111A' }] }
+        );
+        expect(huecos.receivers.map(r => r.name)).toEqual(['Marisa', 'Paco']);
+    });
+
+    it('no marca guardado si el alta no trae a nadie nuevo', () => {
+        const huecos = huecosQueRellena(
+            { receivers: [{ name: 'Marisa', dni: '111A', at: 'AYER' }] },
+            { receivers: [{ name: 'MARISA', dni: '111A', at: 'HOY' }] }
+        );
+        expect(huecos.receivers).toBeUndefined();
+    });
+
     it('sustituye el "Conductor" genérico por el nombre real', () => {
         const huecos = huecosQueRellena(
             { createdBy: 'Conductor' },

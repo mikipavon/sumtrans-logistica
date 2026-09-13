@@ -30,6 +30,25 @@ describe('planDeAcceso', () => {
         expect(Object.keys(cambios).sort()).toEqual(['accessEmail', 'tieneAccesoPortal']);
     });
 
+    // La solicitud se borra después de esto. Los datos son los de la oficina y no
+    // se traen, pero quién ha recibido allí lo apuntó el repartidor entregando y
+    // no está en ningún otro sitio.
+    it('se trae a quienes recibieron en la solicitud que se borra', () => {
+        const ficha = { id: 10, name: 'ACTIVA', receivers: [{ name: 'Paco', dni: '222B' }] };
+        const { cambios } = planDeAcceso(solicitud({ receivers: [{ name: 'Marisa', dni: '111A' }] }), ficha);
+
+        expect(cambios.receivers.map(r => r.name)).toEqual(['Marisa', 'Paco']);
+        expect(cambios.lastReceiver).toBeNull();
+    });
+
+    it('una solicitud sin nadie apuntado no añade nada a la ficha', () => {
+        const ficha = { id: 10, name: 'ACTIVA', receivers: [{ name: 'Paco', dni: '222B' }] };
+        const { cambios } = planDeAcceso(solicitud(), ficha);
+
+        expect(cambios.receivers).toBeUndefined();
+        expect(Object.keys(cambios)).not.toContain('lastReceiver');
+    });
+
     it('la ficha ya entra con otro correo: se le añade el nuevo, no se le quita el suyo', () => {
         const ficha = {
             id: 10,

@@ -14,6 +14,8 @@
 // Aquí vive lo que hace falta para que quede una sola ficha: cómo se comparan
 // los nombres y qué huecos rellena el alta que llega la segunda.
 
+import { leerReceptores, juntarReceptores, normalizarNombreReceptor } from './receptoresHabituales';
+
 // Mismo criterio que normalizeClientName en App.jsx y DriverDashboard.jsx: sin
 // acentos, sin mayúsculas y sin espacios de más. El guardia anterior no quitaba
 // acentos, y por eso "Rafa Martínez" y "Rafa Martinez" pasaban por dos empresas.
@@ -57,6 +59,14 @@ export function esCreadorGenerico(valor) {
 
 const estaVacio = (valor) => String(valor ?? '').trim() === '';
 
+// Dos listas de receptores son la misma si tienen a las mismas personas con el
+// mismo documento y en el mismo orden. Ni la fecha ni cómo se escribió el nombre
+// cuentan: que hoy haya recibido otra vez el mismo, o que el conductor lo haya
+// tecleado en mayúsculas, no es un dato nuevo que merezca un guardado.
+const comoTexto = (receptores) => receptores
+    .map((r) => `${normalizarNombreReceptor(r.name)}|${r.dni}`)
+    .join('\n');
+
 // Datos de contacto y ubicación que un alta automática puede traer. Ni el
 // nombre, ni el tipo, ni el estado, ni la facturación: eso lo decide quien
 // valida, no el albarán siguiente.
@@ -82,6 +92,24 @@ export function huecosQueRellena(existente, nuevo) {
         huecos.createdBy = nuevo.createdBy;
         if (nuevo.createdById != null) huecos.createdById = nuevo.createdById;
         if (nuevo.creatorId != null) huecos.creatorId = nuevo.creatorId;
+    }
+
+    // Quién ha recibido en esa dirección no es un hueco que se rellene: es una
+    // lista que se suma. El alta que llega trae al de hoy —el repartidor acaba de
+    // apuntarle el DNI— y la ficha que se queda trae a los de antes; si aquí se
+    // descartara, el conductor volvería a pedir el documento de la misma persona
+    // en cada entrega. Los de hoy van delante, que son los de la última visita.
+    const queLlegan = leerReceptores(nuevo);
+    if (queLlegan.length > 0) {
+        const juntos = juntarReceptores(queLlegan, leerReceptores(existente));
+        // Si no cambia nada no se apunta: este objeto decide si hay que guardar,
+        // y un guardado de más despierta el Realtime de todo el mundo.
+        if (comoTexto(juntos) !== comoTexto(leerReceptores(existente))) {
+            huecos.receivers = juntos;
+            // Ya está dentro de la lista; dejarlo suelto sería el mismo dato en
+            // dos sitios (ver receptoresHabituales.js).
+            huecos.lastReceiver = null;
+        }
     }
 
     return huecos;

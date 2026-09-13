@@ -16,6 +16,23 @@
 // de esa empresa (ver duplicadosClientes.js).
 
 import { emailDeAcceso, accesosAdicionales, tieneAccesoAlPortal } from './clientAccess';
+import { leerReceptores, juntarReceptores } from './receptoresHabituales';
+
+// ── Lo único que sí se trae de la solicitud ──
+//
+// La solicitud se borra después de esto, así que lo que sepa y la ficha no sepa
+// se pierde con ella. De los datos no se trae nada a propósito (los de la
+// oficina mandan), pero quién ha recibido allí no es un dato de la oficina: lo
+// apuntó el repartidor entregando, y si se borra vuelve a pedirle el DNI a la
+// misma persona. Los de la solicitud van delante, que son de las últimas
+// entregas.
+const receptoresQueHereda = (solicitud, ficha) => {
+    const deLaSolicitud = leerReceptores(solicitud);
+    if (deLaSolicitud.length === 0) return {};
+
+    const juntos = juntarReceptores(deLaSolicitud, leerReceptores(ficha));
+    return { receivers: juntos, lastReceiver: null };
+};
 
 // Qué hay que hacer para que el acceso caiga en la ficha buena.
 //
@@ -38,18 +55,19 @@ export function planDeAcceso(solicitud, ficha) {
 
     const principal = emailDeAcceso(ficha);
     const extras = accesosAdicionales(ficha);
+    const heredado = receptoresQueHereda(solicitud, ficha);
 
     // Ya es el correo principal de la ficha: no hay nada que añadir, sólo dejar
     // constancia de que a partir de ahora entra en el portal. La cuenta de Auth
     // sí hay que moverla, que sigue apuntando a la solicitud.
     if (correo === principal) {
-        return { posible: true, correo, adicional: false, cambios: { tieneAccesoPortal: true } };
+        return { posible: true, correo, adicional: false, cambios: { tieneAccesoPortal: true, ...heredado } };
     }
 
     // Ya figuraba como acceso adicional (se registró dos veces, o se le apuntó a
     // mano y nunca se le creó la cuenta): tampoco se toca la lista.
     if (extras.some(a => a.email === correo)) {
-        return { posible: true, correo, adicional: true, cambios: { tieneAccesoPortal: true } };
+        return { posible: true, correo, adicional: true, cambios: { tieneAccesoPortal: true, ...heredado } };
     }
 
     // La ficha no entraba en el portal todavía: este correo pasa a ser el suyo.
@@ -60,7 +78,7 @@ export function planDeAcceso(solicitud, ficha) {
             posible: true,
             correo,
             adicional: false,
-            cambios: { accessEmail: correo, tieneAccesoPortal: true },
+            cambios: { accessEmail: correo, tieneAccesoPortal: true, ...heredado },
         };
     }
 
@@ -74,6 +92,7 @@ export function planDeAcceso(solicitud, ficha) {
         cambios: {
             accessEmailsExtra: [...extras.map(({ email }) => ({ email })), { email: correo }],
             tieneAccesoPortal: true,
+            ...heredado,
         },
     };
 }
