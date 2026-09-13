@@ -19,6 +19,7 @@
 // formulario puede no ser de esa empresa.
 
 import { correosDeAcceso, tieneAccesoAlPortal } from './clientAccess';
+import { leerReceptores, juntarReceptores, normalizarNombreReceptor } from './receptoresHabituales';
 import { correosDeFicha } from './correosDeFicha';
 
 const normalizarTexto = (valor) => String(valor || '')
@@ -161,16 +162,18 @@ const esUnaErrata = (unaPalabra, otraPalabra) => {
 // de la Rambla" son dos floristerías distintas de La Rambla, y lo único que
 // tienen en común es justo eso. Así que hace falta al menos una palabra que sea
 // de la empresa y de nadie más.
-const identificaALaEmpresa = (compartidas, delLugar = new Set()) => compartidas
-    .some(p => !esDelRamo(p) && !delLugar.has(p));
+const identificaALaEmpresa = (compartidas, esDelLugar) => compartidas
+    .some(p => !esDelRamo(p) && !esDelLugar(p));
 
-// `delLugar` son las palabras de la población de las fichas que se comparan (ver
-// algunNombreSeParece). Va aparte y no dentro de PALABRAS_DEL_RAMO porque
-// depende de quién se compare con quién: "Espejo" es el pueblo en una ficha de
-// Espejo y puede ser el apellido de la empresa en una de Córdoba.
-export function nombresSeParecen(unNombre, otroNombre, delLugar = new Set()) {
-    const unas = clavesDelNombre(unNombre);
-    const otras = clavesDelNombre(otroNombre);
+// La comparación de verdad, ya con las palabras sacadas. Va aparte de
+// nombresSeParecen porque sacarlas es lo caro —quitar acentos, partir, recortar
+// plurales— y en esta pantalla cada nombre se compara con cientos: se limpia una
+// vez por ficha (ver prepararFicha) y aquí ya sólo se cruzan las listas.
+//
+// `esDelLugar` dice si una palabra es el pueblo de alguna de las dos fichas. Es
+// una función y no un conjunto para no tener que fundir los dos pueblos en uno
+// nuevo por cada pareja.
+function clavesSeParecen(unas, otras, esDelLugar) {
     if (unas.size === 0 || otras.size === 0) return false;
 
     const compartidas = [...unas].filter(p => otras.has(p));
@@ -183,7 +186,7 @@ export function nombresSeParecen(unNombre, otroNombre, delLugar = new Set()) {
     // A una le sobra algo: "Bar Manolo" y "Bar Manolo 2", "Muebles Lopez" y
     // "Muebles Lopez (Sevilla)".
     const laCorta = unas.size <= otras.size ? unas : otras;
-    if (compartidas.length === laCorta.size && identificaALaEmpresa(compartidas, delLugar)) return true;
+    if (compartidas.length === laCorta.size && identificaALaEmpresa(compartidas, esDelLugar)) return true;
 
     // Todo igual menos una palabra, y esa por una errata: "Ferreteria Gomez" y
     // "Ferreteria Gomes". Aquí no se mira si lo compartido identifica a la
@@ -200,23 +203,77 @@ export function nombresSeParecen(unNombre, otroNombre, delLugar = new Set()) {
     return false;
 }
 
+// `delLugar` son las palabras de la población de las fichas que se comparan (ver
+// algunNombreSeParece). Va aparte y no dentro de PALABRAS_DEL_RAMO porque
+// depende de quién se compare con quién: "Espejo" es el pueblo en una ficha de
+// Espejo y puede ser el apellido de la empresa en una de Córdoba.
+export function nombresSeParecen(unNombre, otroNombre, delLugar = new Set()) {
+    return clavesSeParecen(
+        clavesDelNombre(unNombre),
+        clavesDelNombre(otroNombre),
+        (palabra) => delLugar.has(palabra),
+    );
+}
+
 // La ficha puede llamarse de una manera y facturar con otra: se cruzan las dos.
 const nombresDe = (client) => [client?.name, client?.legalName]
     .filter(v => String(v || '').trim() !== '');
 
-// El pueblo de las dos fichas, en palabras. Se juntan los dos: basta con que
-// "Rambla" sea el pueblo de una para que deje de valer como apellido de la otra,
-// y muchas fichas de albarán vienen sin población.
-const palabrasDelLugar = (unaFicha, otraFicha) => new Set([
-    ...clavesDelNombre(unaFicha?.city),
-    ...clavesDelNombre(otraFicha?.city),
-]);
+// ── Lo que cuesta caro de una ficha, hecho una sola vez ──
+//
+// Buscar duplicados es comparar cada solicitud con cada ficha: con 100
+// pendientes y 1.500 clientes son 150.000 parejas. Lo caro no era la
+// comparación, era lo que se repetía ANTES de cada una —quitarle los acentos al
+// nombre, partirlo en palabras, recortar los plurales, separar los correos del
+// campo E-mail—, que salía casi un millón de veces para dar siempre lo mismo.
+// La pantalla se quedaba parada segundo y medio al entrar, y otro tanto cada vez
+// que se guardaba un cliente.
+//
+// Aquí cada ficha se limpia UNA vez y se compara ya limpia.
+function prepararFicha(client) {
+    return {
+        client,
+        cif: normalizarCif(client?.cif),
+        correos: correosDe(client),
+        nombre: normalizarTexto(client?.name),
+        legal: normalizarTexto(client?.legalName),
+        // Las palabras del nombre y las de la razón social, para cruzarlas.
+        nombres: nombresDe(client).map(n => clavesDelNombre(n)),
+        // El pueblo, en palabras: basta con que "Rambla" sea el pueblo de una
+        // para que deje de valer como apellido de la otra, y muchas fichas de
+        // albarán vienen sin población.
+        ciudad: clavesDelNombre(client?.city),
+    };
+}
 
-export const algunNombreSeParece = (unaFicha, otraFicha) => {
-    const delLugar = palabrasDelLugar(unaFicha, otraFicha);
-    return nombresDe(unaFicha)
-        .some(uno => nombresDe(otraFicha).some(otro => nombresSeParecen(uno, otro, delLugar)));
+// La lista entera preparada, guardada del propio array que llega. Es el array de
+// clientes que tiene React en la mano: mientras no cambie —y sólo cambia al
+// guardar algo— las tres búsquedas de la pantalla se lo encuentran ya hecho en
+// vez de rehacerlo cada una por su cuenta.
+//
+// Ojo: lo que se guarda es el resultado de mirar esas fichas TAL COMO ESTABAN.
+// Si algún día alguien le cambiara el nombre o el correo a un cliente sin
+// rehacer el array, aquí se seguiría viendo el de antes. La aplicación nunca
+// toca una ficha por dentro —siempre crea un array nuevo—, y de eso depende.
+const listasPreparadas = new WeakMap();
+
+function prepararLista(clients) {
+    if (!Array.isArray(clients)) return [];
+    const guardada = listasPreparadas.get(clients);
+    if (guardada) return guardada;
+    const preparada = clients.map(c => prepararFicha(c));
+    listasPreparadas.set(clients, preparada);
+    return preparada;
+}
+
+// ¿Se parecen los nombres de dos fichas ya preparadas?
+const fichasSeParecen = (una, otra) => {
+    const esDelLugar = (palabra) => una.ciudad.has(palabra) || otra.ciudad.has(palabra);
+    return una.nombres.some(unas => otra.nombres.some(otras => clavesSeParecen(unas, otras, esDelLugar)));
 };
+
+export const algunNombreSeParece = (unaFicha, otraFicha) =>
+    fichasSeParecen(prepararFicha(unaFicha), prepararFicha(otraFicha));
 
 // El motivo flojo: avisa, pero no habilita nada que borre ni dé accesos.
 export const PARECIDO_DE_NOMBRE = 'un nombre casi igual';
@@ -226,14 +283,13 @@ export const PARECIDO_DE_NOMBRE = 'un nombre casi igual';
 export function buscarFichasParecidas(pendiente, clients = []) {
     if (!pendiente) return [];
 
-    const cifPendiente = normalizarCif(pendiente.cif);
-    const correosPendiente = correosDe(pendiente);
-    const nombrePendiente = normalizarTexto(pendiente.name);
+    const laPendiente = prepararFicha(pendiente);
     const avisoDelRegistro = pendiente.possibleDuplicateOf;
 
     const encontradas = [];
 
-    for (const client of clients) {
+    for (const laOtra of prepararLista(clients)) {
+        const client = laOtra.client;
         if (!client || client.id === pendiente.id) continue;
         // Otra solicitud pendiente no es "estar en cartera": lo que interesa es
         // avisar de la ficha real con la que chocaría al aprobarla.
@@ -241,18 +297,17 @@ export function buscarFichasParecidas(pendiente, clients = []) {
 
         const motivos = [];
 
-        if (cifPendiente && normalizarCif(client.cif) === cifPendiente) {
+        if (laPendiente.cif && laOtra.cif === laPendiente.cif) {
             motivos.push('el mismo CIF');
         }
 
-        const correosClient = correosDe(client);
-        if (correosPendiente.some(c => correosClient.includes(c))) {
+        if (laPendiente.correos.some(c => laOtra.correos.includes(c))) {
             motivos.push('el mismo correo');
         }
 
-        if (nombrePendiente && normalizarTexto(client.name) === nombrePendiente) {
+        if (laPendiente.nombre && laOtra.nombre === laPendiente.nombre) {
             motivos.push('el mismo nombre');
-        } else if (algunNombreSeParece(pendiente, client)) {
+        } else if (fichasSeParecen(laPendiente, laOtra)) {
             motivos.push(PARECIDO_DE_NOMBRE);
         }
 
@@ -306,28 +361,25 @@ export function explicarMotivos(motivos = []) {
 export function buscarSolicitudesGemelas(pendiente, pendientes = []) {
     if (!pendiente) return [];
 
-    const nombre = normalizarTexto(pendiente.name);
-    const legal = normalizarTexto(pendiente.legalName);
-    const cif = normalizarCif(pendiente.cif);
-    const correos = correosDe(pendiente);
+    const { nombre, legal, cif, correos } = prepararFicha(pendiente);
 
-    return pendientes.filter(otra => {
-        if (!otra || otra.id === pendiente.id || otra.isTest) return false;
+    return prepararLista(pendientes)
+        .filter(laOtra => {
+            const otra = laOtra.client;
+            if (!otra || otra.id === pendiente.id || otra.isTest) return false;
 
-        // Por nombre o razón social: es lo único que traen las fichas que nacen
-        // de un albarán, que no tienen ni CIF ni correo.
-        const nombreOtra = normalizarTexto(otra.name);
-        const legalOtra = normalizarTexto(otra.legalName);
-        if (nombre && (nombreOtra === nombre || legalOtra === nombre)) return true;
-        if (legal && (nombreOtra === legal || legalOtra === legal)) return true;
+            // Por nombre o razón social: es lo único que traen las fichas que
+            // nacen de un albarán, que no tienen ni CIF ni correo.
+            if (nombre && (laOtra.nombre === nombre || laOtra.legal === nombre)) return true;
+            if (legal && (laOtra.nombre === legal || laOtra.legal === legal)) return true;
 
-        if (cif && normalizarCif(otra.cif) === cif) return true;
+            if (cif && laOtra.cif === cif) return true;
 
-        const correosOtra = correosDe(otra);
-        if (correos.some(c => correosOtra.includes(c))) return true;
+            if (correos.some(c => laOtra.correos.includes(c))) return true;
 
-        return false;
-    });
+            return false;
+        })
+        .map(laOtra => laOtra.client);
 }
 
 // ── Solicitudes pendientes que sólo se PARECEN ──
@@ -343,12 +395,16 @@ export function buscarSolicitudesParecidas(pendiente, pendientes = []) {
     // Lo que ya salta como gemela no se repite aquí: sería el mismo aviso dos
     // veces, uno con botón de unir y otro sin él.
     const gemelas = new Set(buscarSolicitudesGemelas(pendiente, pendientes).map(g => g.id));
+    const laPendiente = prepararFicha(pendiente);
 
-    return pendientes.filter(otra => {
-        if (!otra || otra.id === pendiente.id || otra.isTest) return false;
-        if (gemelas.has(otra.id)) return false;
-        return algunNombreSeParece(pendiente, otra);
-    });
+    return prepararLista(pendientes)
+        .filter(laOtra => {
+            const otra = laOtra.client;
+            if (!otra || otra.id === pendiente.id || otra.isTest) return false;
+            if (gemelas.has(otra.id)) return false;
+            return fichasSeParecen(laPendiente, laOtra);
+        })
+        .map(laOtra => laOtra.client);
 }
 
 // Qué aporta cada gemela que la principal no tenga. Sirve para dos cosas: para
@@ -358,9 +414,24 @@ const CAMPOS_A_JUNTAR = ['address', 'city', 'zip', 'phone', 'mobile', 'email', '
 
 const vacio = (valor) => String(valor ?? '').trim() === '';
 
+// Dos listas de receptores son la misma si tienen a las mismas personas, con el
+// mismo documento y en el mismo orden. Ni la fecha ni cómo se tecleó el nombre
+// cuentan como novedad.
+const comoTexto = (receptores) => receptores
+    .map((r) => `${normalizarNombreReceptor(r.name)}|${r.dni}`)
+    .join('\n');
+
 export function loQueAportanLasGemelas(principal, gemelas = []) {
     const aportado = {};
     if (!principal) return aportado;
+
+    // Quién ha recibido allí no es un hueco que se rellene, es una lista que se
+    // suma. Las gemelas se borran a continuación, y con ellas se irían los
+    // nombres y DNI que el repartidor apuntó entregando en esa dirección: el
+    // conductor volvería a pedirle el documento a la misma persona. La principal
+    // manda en el orden y en el DNI, como en todo lo demás de aquí.
+    const deLaPrincipal = leerReceptores(principal);
+    let receptores = deLaPrincipal;
 
     for (const gemela of gemelas) {
         if (!gemela) continue;
@@ -371,7 +442,18 @@ export function loQueAportanLasGemelas(principal, gemelas = []) {
                 aportado[campo] = String(gemela[campo]).trim();
             }
         }
+        receptores = juntarReceptores(receptores, leerReceptores(gemela));
     }
+
+    // Se apunta sólo si las gemelas traen a alguien que la principal no tenía, o
+    // el documento de alguien que ella tenía sin él: este objeto decide si hay
+    // que guardar y además es lo que se le promete en pantalla al administrativo.
+    if (comoTexto(receptores) !== comoTexto(deLaPrincipal)) {
+        aportado.receivers = receptores;
+        // Ya está dentro de la lista (ver receptoresHabituales.js).
+        aportado.lastReceiver = null;
+    }
+
     return aportado;
 }
 
@@ -387,10 +469,15 @@ const NOMBRE_DEL_CAMPO = {
     coordinates: 'las coordenadas',
     contactPerson: 'la persona de contacto',
     legalName: 'la razón social',
+    receivers: 'quién recibe allí',
 };
 
 export function explicarAportacion(aportado = {}) {
-    const partes = Object.keys(aportado).map(c => NOMBRE_DEL_CAMPO[c] || c);
+    // `lastReceiver` no se nombra: no es nada que aporte la gemela, es la forma
+    // antigua de guardar lo mismo, que se limpia al escribir la lista.
+    const partes = Object.keys(aportado)
+        .filter(c => c !== 'lastReceiver')
+        .map(c => NOMBRE_DEL_CAMPO[c] || c);
     if (partes.length === 0) return '';
     if (partes.length === 1) return partes[0];
     return `${partes.slice(0, -1).join(', ')} y ${partes[partes.length - 1]}`;

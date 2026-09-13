@@ -7,6 +7,7 @@ import { getAgencies } from '../../utils/agencyOwnership';
 import { esRegistroWeb } from '../../utils/altaClientes';
 import { primerCorreoDeFicha } from '../../utils/correosDeFicha';
 import { calcularComisionReembolso, COMISION_FIJA, COMISION_PORCENTAJE } from '../../utils/comisionReembolso';
+import { coincideEnCampos } from '../../utils/busqueda';
 
 const TABS = [
     { id: 'general', label: 'General', icon: FileCode },
@@ -135,10 +136,6 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         requireLegalProof: false,
     };
 
-    // Agencias disponibles para asignar la ficha, excluyendo la que se está editando
-    // (una agencia no puede pertenecerse a sí misma).
-    const agencyOptions = getAgencies(allClients).filter(a => String(a.id) !== String(initialData?.id));
-
     const fileInputRef = useRef(null);
     const [isUploading, setIsUploading] = useState(false);
     const [clientNumberError, setClientNumberError] = useState('');
@@ -167,26 +164,6 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         setSortConfig({ key, direction });
     };
 
-    const sortedArticles = [...(articles || [])].sort((a, b) => {
-        if (!sortConfig.key) return 0;
-
-        if (sortConfig.key === 'category') {
-            const catA = String(a.category || 'zzzz').toLowerCase();
-            const catB = String(b.category || 'zzzz').toLowerCase();
-            if (catA !== catB) {
-                return sortConfig.direction === 'asc' ? catA.localeCompare(catB) : catB.localeCompare(catA);
-            }
-            // Secondary sort by name
-            return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
-        }
-
-        const aVal = sortConfig.key === 'price' ? parseFloat(a[sortConfig.key] || 0) : String(a[sortConfig.key] || '').toLowerCase();
-        const bVal = sortConfig.key === 'price' ? parseFloat(b[sortConfig.key] || 0) : String(b[sortConfig.key] || '').toLowerCase();
-        if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
-        if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
-        return 0;
-    });
-
     const SortIcon = ({ column }) => {
         if (sortConfig.key !== column) return <span className="opacity-30 text-[10px]">↕</span>;
         return sortConfig.direction === 'asc' ? <span className="text-blue-500 text-[10px]">↑</span> : <span className="text-blue-500 text-[10px]">↓</span>;
@@ -208,6 +185,36 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
     }, [isOpen, initialData]);
 
     if (!isOpen) return null;
+
+    // ── De aquí abajo, sólo cuando el formulario está abierto ──
+    // Ordenar los artículos y sacar la lista de agencias estaba más arriba, y
+    // eso se hacía TAMBIÉN con el formulario cerrado: este componente vive
+    // siempre montado dentro de Validar Clientes y de Clientes, así que cada vez
+    // que se guardaba una ficha volvía a ordenar los 160 artículos para nada.
+
+    // Agencias disponibles para asignar la ficha, excluyendo la que se está editando
+    // (una agencia no puede pertenecerse a sí misma).
+    const agencyOptions = getAgencies(allClients).filter(a => String(a.id) !== String(initialData?.id));
+
+    const sortedArticles = [...(articles || [])].sort((a, b) => {
+        if (!sortConfig.key) return 0;
+
+        if (sortConfig.key === 'category') {
+            const catA = String(a.category || 'zzzz').toLowerCase();
+            const catB = String(b.category || 'zzzz').toLowerCase();
+            if (catA !== catB) {
+                return sortConfig.direction === 'asc' ? catA.localeCompare(catB) : catB.localeCompare(catA);
+            }
+            // Secondary sort by name
+            return String(a.name || '').localeCompare(String(b.name || ''), undefined, { numeric: true, sensitivity: 'base' });
+        }
+
+        const aVal = sortConfig.key === 'price' ? parseFloat(a[sortConfig.key] || 0) : String(a[sortConfig.key] || '').toLowerCase();
+        const bVal = sortConfig.key === 'price' ? parseFloat(b[sortConfig.key] || 0) : String(b[sortConfig.key] || '').toLowerCase();
+        if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+    });
 
     // ── Las credenciales recién creadas, para dictarlas o pegarlas ──
     //
@@ -1239,7 +1246,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                     <div className="divide-y divide-slate-100 max-h-60 overflow-y-auto">
                                         {Object.entries((articles || [])
                                             .filter(a => !formData.allowedArticles?.includes(a.id))
-                                            .filter(a => a.name.toLowerCase().includes(searchArticle.toLowerCase()) || (a.category && a.category.toLowerCase().includes(searchArticle.toLowerCase())))
+                                            .filter(a => coincideEnCampos([a.name, a.category], searchArticle))
                                             .reduce((acc, article) => {
                                                 const cat = article.category || 'Sin Familia';
                                                 if (!acc[cat]) acc[cat] = [];
@@ -1261,7 +1268,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                                 ))}
                                             </div>
                                         ))}
-                                        {articles && articles.filter(a => !formData.allowedArticles?.includes(a.id)).filter(a => a.name.toLowerCase().includes(searchArticle.toLowerCase()) || (a.category && a.category.toLowerCase().includes(searchArticle.toLowerCase()))).length === 0 && (
+                                        {articles && articles.filter(a => !formData.allowedArticles?.includes(a.id)).filter(a => coincideEnCampos([a.name, a.category], searchArticle)).length === 0 && (
                                             <div className="p-4 text-center text-sm text-slate-400 italic">No se encontraron artículos.</div>
                                         )}
                                     </div>

@@ -143,9 +143,38 @@ describe('loQueAportanLasGemelas', () => {
         expect(aportado.phone).toBe('957111111');
     });
 
+    // Las gemelas se borran justo después de esto: si la lista no se copia, el
+    // repartidor vuelve a pedirle el DNI a quien ya se lo había dado.
+    it('se trae a quienes recibieron en las que se borran', () => {
+        const principal = { id: 1, receivers: [{ name: 'Marisa', dni: '111A', at: 'HOY' }] };
+        const gemelas = [{ id: 2, receivers: [{ name: 'Paco', dni: '222B', at: 'AYER' }] }];
+
+        const aportado = loQueAportanLasGemelas(principal, gemelas);
+        expect(aportado.receivers.map(r => r.name)).toEqual(['Marisa', 'Paco']);
+        expect(aportado.lastReceiver).toBeNull();
+    });
+
+    it('completa el DNI que a la principal le faltaba de alguien que ya tenía', () => {
+        const principal = { id: 1, receivers: [{ name: 'Marisa Ortega', dni: '' }] };
+        const gemelas = [{ id: 2, receivers: [{ name: 'marisa ortega', dni: '111A' }] }];
+
+        const aportado = loQueAportanLasGemelas(principal, gemelas);
+        expect(aportado.receivers).toHaveLength(1);
+        expect(aportado.receivers[0].dni).toBe('111A');
+    });
+
+    it('si las gemelas no traen a nadie nuevo, no se apunta nada que guardar', () => {
+        const principal = { id: 1, receivers: [{ name: 'Marisa', dni: '111A' }] };
+        const gemelas = [{ id: 2, receivers: [{ name: 'MARISA', dni: '111A' }] }, { id: 3 }];
+
+        expect(loQueAportanLasGemelas(principal, gemelas)).toEqual({});
+    });
+
     it('lo cuenta en castellano', () => {
         expect(explicarAportacion({ coordinates: 'x', phone: 'y' })).toBe('las coordenadas y el teléfono');
         expect(explicarAportacion({})).toBe('');
+        // `lastReceiver` viaja con la lista pero no se le nombra al administrativo.
+        expect(explicarAportacion({ receivers: [], lastReceiver: null })).toBe('quién recibe allí');
     });
 });
 
