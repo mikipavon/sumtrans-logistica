@@ -103,7 +103,11 @@ export const uploadFileToBucket = async (fileName, file, bucketName) => {
         // Mismo caso que en uploadProof: filePath empieza por Date.now(), así
         // que la URL es única por subida y puede cachearse un año.
         cacheControl: '31536000',
-        upsert: true,
+        // Sin upsert: la ruta ya es única, y upsert obliga a Supabase a pedir
+        // además permiso de LEER el contenedor. La fase 15 quitó ese permiso en
+        // payrolls y vehicle_docs (para que no se pudieran listar) y desde
+        // entonces toda subida daba "Permiso denegado (RLS)".
+        upsert: false,
         contentType: file.type || 'application/pdf'
       });
 

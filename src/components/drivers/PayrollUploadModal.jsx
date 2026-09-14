@@ -1,21 +1,11 @@
 import React, { useState } from 'react';
 import { X, Upload, CheckCircle, AlertTriangle, Loader2, FileText, FolderOpen, User } from 'lucide-react';
 import { uploadFileToBucket } from '../../utils/storage';
+import { buscarConductor, detectarMes } from '../../utils/emparejarNomina';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
-
-const normalizeName = (name) => {
-    if (!name) return '';
-    return String(name)
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, ' ')
-        .replace(/\s+/g, " ")
-        .trim();
-};
 
 const extractTextFromPDF = async (file) => {
     try {
@@ -33,66 +23,6 @@ const extractTextFromPDF = async (file) => {
         console.error("Error leyendo PDF:", e);
         return '';
     }
-};
-
-const SPANISH_MONTHS = [
-    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
-];
-
-const detectMonth = (text) => {
-    if (!text) return null;
-    const lowerText = String(text).toLowerCase();
-    
-    // Buscar mención explícita del mes
-    for (let i = 0; i < SPANISH_MONTHS.length; i++) {
-        if (lowerText.includes(SPANISH_MONTHS[i])) {
-            const yearMatch = lowerText.match(/\b(202[0-9])\b/);
-            const year = yearMatch ? yearMatch[1] : new Date().getFullYear();
-            const capitalizedMonth = SPANISH_MONTHS[i].charAt(0).toUpperCase() + SPANISH_MONTHS[i].slice(1);
-            return `Nómina ${capitalizedMonth} ${year}`;
-        }
-    }
-    
-    // Buscar formato dd/mm/yyyy
-    const dateRegex = /\b\d{1,2}\/(\d{2})\/(202[0-9])\b/;
-    const dateMatch = lowerText.match(dateRegex);
-    if (dateMatch) {
-        const monthIndex = parseInt(dateMatch[1], 10) - 1;
-        const year = dateMatch[2];
-        if (monthIndex >= 0 && monthIndex < 12) {
-            const capitalizedMonth = SPANISH_MONTHS[monthIndex].charAt(0).toUpperCase() + SPANISH_MONTHS[monthIndex].slice(1);
-            return `Nómina ${capitalizedMonth} ${year}`;
-        }
-    }
-    
-    return null;
-};
-
-const matchNameInText = (name, text) => {
-    if (!name || name.length < 4) return -1;
-    
-    // Intento de coincidencia exacta primero
-    const exactIdx = text.indexOf(name);
-    if (exactIdx !== -1) return exactIdx;
-    
-    // Búsqueda independiente del orden (para casos de "Apellidos, Nombre")
-    const parts = name.split(' ').filter(p => p.length > 2);
-    if (parts.length < 2) return -1;
-    
-    const indices = parts.map(part => text.indexOf(part));
-    if (indices.includes(-1)) return -1; // Falta alguna parte del nombre
-    
-    const minIdx = Math.min(...indices);
-    const maxIdx = Math.max(...indices);
-    
-    // Si todas las partes del nombre están a menos de 150 caracteres de distancia entre sí,
-    // asumimos que es la misma persona escrita en otro orden.
-    if (maxIdx - minIdx < 150) {
-        return minIdx;
-    }
-    
-    return -1;
 };
 
 export default function PayrollUploadModal({ isOpen, onClose, drivers = [], onUpdateDriver }) {
@@ -116,57 +46,17 @@ export default function PayrollUploadModal({ isOpen, onClose, drivers = [], onUp
                 if (!entry.name.toLowerCase().match(/\.(pdf|jpe?g|png)$/)) continue;
                 
                 const file = await entry.getFile();
-                const normalizedFileName = normalizeName(file.name);
 
-                // Try to find a matching driver by filename
-                let matchedDriver = null;
-                for (const driver of drivers) {
-                    const normName = normalizeName(driver.name);
-                    const normAlias = normalizeName(driver.alias);
-                    
-                    if ((normName && normName.length > 3 && normalizedFileName.includes(normName)) || 
-                        (normAlias && normAlias.length > 3 && normalizedFileName.includes(normAlias))) {
-                        matchedDriver = driver;
-                        break;
-                    }
-                }
+                // Primero el nombre del fichero; el PDF sólo se abre si ahí no está
+                // el conductor o el mes (ver utils/emparejarNomina.js).
+                let matchedDriver = buscarConductor(file.name, drivers);
+                let detectedMonth = detectarMes(file.name);
 
-                // If not matched by filename and is a PDF, read the PDF content
-                let pdfText = '';
-                if (file.name.toLowerCase().endsWith('.pdf')) {
-                    pdfText = await extractTextFromPDF(file);
-                    
-                    if (!matchedDriver) {
-                        const normalizedPdfText = normalizeName(pdfText);
-                        let bestMatch = null;
-                        let bestMatchIndex = Infinity;
-                        
-                        for (const driver of drivers) {
-                            const normName = normalizeName(driver.name);
-                            const normAlias = normalizeName(driver.alias);
-                            
-                            // Comprobamos si el nombre está en el PDF (soportando orden inverso)
-                            const idxName = matchNameInText(normName, normalizedPdfText);
-                            if (idxName !== -1 && idxName < bestMatchIndex) {
-                                bestMatchIndex = idxName;
-                                bestMatch = driver;
-                            }
-                            
-                            // Hacemos lo mismo con el alias
-                            const idxAlias = matchNameInText(normAlias, normalizedPdfText);
-                            if (idxAlias !== -1 && idxAlias < bestMatchIndex) {
-                                bestMatchIndex = idxAlias;
-                                bestMatch = driver;
-                            }
-                        }
-                        
-                        matchedDriver = bestMatch;
-                    }
+                if ((!matchedDriver || !detectedMonth) && file.name.toLowerCase().endsWith('.pdf')) {
+                    const pdfText = await extractTextFromPDF(file);
+                    if (!matchedDriver) matchedDriver = buscarConductor(pdfText, drivers);
+                    if (!detectedMonth) detectedMonth = detectarMes('', pdfText);
                 }
-                
-                // Detectar el mes (ya sea por el nombre del archivo o el texto del PDF)
-                const textToAnalyzeForMonth = `${file.name} ${pdfText}`;
-                const detectedMonth = detectMonth(textToAnalyzeForMonth);
 
                 if (matchedDriver) {
                     newMatched.push({
