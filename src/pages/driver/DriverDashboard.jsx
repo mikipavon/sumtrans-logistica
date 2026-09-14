@@ -3350,8 +3350,8 @@ ${estilosDeHoja({ ancho: '105mm', relleno: '5mm' })}
                 <body>
                   <div id="hoja"><div id="contenido">
                     <div class="header">
-                        <h1 class="title">SUMTRANS LOGISTICA</h1>
-                        <p class="subtitle">Resumen de Porte (Solo Clientes Habituales)</p>
+                        <h1 class="title">Resumen de Porte</h1>
+                        <p class="subtitle">Solo Clientes Habituales</p>
                     </div>
                     
                     <div class="info">
