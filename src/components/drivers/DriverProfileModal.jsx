@@ -77,7 +77,9 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
         if (!window.confirm(`¿Estás seguro de que deseas desasignar y ocultar "${payrollToDelete.fileName}"?`)) return;
         const newPayrolls = (driver.payrolls || []).filter(p => p.url !== payrollToDelete.url);
         if (onUpdateDriver) {
-            await onUpdateDriver(driver.id, { ...driver, payrolls: newPayrolls });
+            // Sólo las nóminas: la ficha entera arrastra lo que se haya quedado dentro
+            // (una contraseña antigua) y el guardado intentaría rehacer la cuenta.
+            await onUpdateDriver(driver.id, { payrolls: newPayrolls });
         }
     };
 

@@ -117,6 +117,10 @@ export default function PayrollUploadModal({ isOpen, onClose, drivers = [], onUp
         let successCount = 0;
         let errorCount = 0;
         let lastErrorMessage = '';
+        // Lo subido en esta tanda por conductor: la ficha que llega por props no se
+        // refresca entre una nómina y la siguiente, y la segunda del mismo conductor
+        // pisaba a la primera.
+        const nominasDeLaTanda = new Map();
 
         const updateStatus = (id, isMatched, newStatus) => {
             if (isMatched) {
@@ -139,17 +143,20 @@ export default function PayrollUploadModal({ isOpen, onClose, drivers = [], onUp
                     const driver = drivers.find(d => d.id === targetDriverId);
                     
                     if (driver) {
-                        const existingPayrolls = Array.isArray(driver.payrolls) ? driver.payrolls : [];
+                        const existingPayrolls = nominasDeLaTanda.get(driver.id)
+                            || (Array.isArray(driver.payrolls) ? driver.payrolls : []);
                         const newPayroll = {
                             date: new Date().toISOString(),
                             url: url,
                             fileName: item.detectedMonth ? item.detectedMonth : item.file.name
                         };
                         
-                        await onUpdateDriver(driver.id, {
-                            ...driver, // <- Mantener el resto de propiedades
-                            payrolls: [...existingPayrolls, newPayroll]
-                        });
+                        // Sólo las nóminas, no la ficha entera: con ella viajaba lo que se hubiera
+                        // quedado dentro (una contraseña antigua) y el guardado lo tomaba por
+                        // una contraseña nueva e intentaba rehacer la cuenta de acceso.
+                        const payrolls = [...existingPayrolls, newPayroll];
+                        await onUpdateDriver(driver.id, { payrolls });
+                        nominasDeLaTanda.set(driver.id, payrolls);
                         
                         updateStatus(item.id, isMatched, 'done');
                         successCount++;

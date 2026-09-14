@@ -2812,7 +2812,9 @@ function App() {
     }
 
     const wasTestMode = previousDriver?.isTestMode || false;
-    const isNowTestMode = updatedData.isTestMode || false;
+    // Quien sólo manda un trozo de la ficha (las nóminas) no trae isTestMode, y eso
+    // no es apagar el modo pruebas: sin esta comprobación se borrarían sus envíos de prueba.
+    const isNowTestMode = ('isTestMode' in updatedData ? updatedData.isTestMode : wasTestMode) || false;
     const isDeactivating = wasTestMode && !isNowTestMode;
 
     // ⚠️ Merge con datos previos para NO perder campos no incluidos en el formulario
