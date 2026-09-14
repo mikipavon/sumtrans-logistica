@@ -52,6 +52,36 @@ describe('coincideBusqueda (envíos)', () => {
         expect(coincideBusqueda(sum141, 'pecomark espejo')).toBe(false);
     });
 
+    // SUM-610 y SUM-985 del listado real: buscar "el llano" (la farmacia de
+    // Aguilar) sacaba también los de HIJOS DE MANUEL PINO, porque "el" cabía en
+    // el "DEL" de "C/ LLANO DEL CALVARIO".
+    it('una palabra corta no vale por el trozo de otra palabra', () => {
+        const sum610 = {
+            id: 'SUM-610',
+            client: 'TSB',
+            destinationName: 'HIJOS DE MANUEL PINO',
+            destination: 'C/ LLANO DEL CALVARIO, 6, Montalbán de Córdoba',
+            destinationCity: 'Montalbán de Córdoba'
+        };
+        const sum812 = {
+            id: 'SUM-812',
+            client: 'TSB',
+            destinationName: 'Farmacia ortopedia El Llano',
+            destinationCity: 'Aguilar de la Frontera'
+        };
+        expect(coincideBusqueda(sum610, 'el llano')).toBe(false);
+        expect(coincideBusqueda(sum812, 'el llano')).toBe(true);
+        expect(coincideBusqueda(sum610, 'llano')).toBe(true);
+        expect(coincideBusqueda(sum610, 'manuel pino')).toBe(true);
+        expect(coincideBusqueda(sum812, 'de la frontera')).toBe(true);
+    });
+
+    it('lo tecleado seguido vale aunque empiece a mitad de palabra', () => {
+        expect(coincideBusqueda({ id: 'SUM-141', clientNif: 'B56131717' }, '56131717')).toBe(true);
+        expect(coincideBusqueda({ id: 'SUM-141', clientPhone: '957123456' }, '123456')).toBe(true);
+        expect(coincideBusqueda({ id: 'SUM-141' }, '141')).toBe(true);
+    });
+
     it('no mezcla el final de un campo con el principio del siguiente', () => {
         expect(coincideBusqueda(sum141, 'S.A.David')).toBe(false);
     });
