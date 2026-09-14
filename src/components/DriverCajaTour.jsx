@@ -199,9 +199,14 @@ function JustificantePreview() {
         padding: '14px 16px', maxWidth: 260, margin: '0 auto',
         boxShadow: '0 2px 12px rgba(0,0,0,0.08)',
       }}>
-        <div style={{ borderBottom: '2px solid #1e293b', paddingBottom: 8, marginBottom: 12, textAlign: 'center' }}>
-          <p style={{ fontWeight: 900, fontSize: 13, color: '#0f172a', margin: 0 }}>SUMTRANS LOGISTICA</p>
-          <p style={{ fontSize: 10, color: '#64748b', margin: '2px 0 0' }}>Justificante de Reembolso</p>
+        <div style={{ borderBottom: '2px solid #1e293b', paddingBottom: 8, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <p style={{ fontWeight: 900, fontSize: 13, color: '#0f172a', margin: 0 }}>SUMTRANS LOGISTICA</p>
+            <p style={{ fontSize: 10, color: '#64748b', margin: '2px 0 0' }}>Justificante de Reembolso</p>
+          </div>
+          <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>
+            ▦
+          </div>
         </div>
         {[
           ['Fecha:', '09/06/2026'],
@@ -218,13 +223,8 @@ function JustificantePreview() {
         <div style={{ borderTop: '1px dashed #cbd5e1', marginTop: 8, paddingTop: 8, textAlign: 'right', fontWeight: 900, fontSize: 14, color: '#0f172a' }}>
           TOTAL: €45.00
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 12 }}>
-          <div style={{ borderTop: '1px solid #0f172a', paddingTop: 4, fontSize: 8, color: '#64748b', flex: 1, marginRight: 12, textAlign: 'center' }}>
-            Firma y Sello Cliente
-          </div>
-          <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
-            ▦
-          </div>
+        <div style={{ borderTop: '1px solid #0f172a', paddingTop: 4, marginTop: 40, fontSize: 8, color: '#64748b', textAlign: 'center' }}>
+          Firma y Sello Cliente
         </div>
         <p style={{ fontSize: 7, color: '#94a3b8', textAlign: 'center', marginTop: 8 }}>
           Justifica la entrega del importe recaudado al remitente.

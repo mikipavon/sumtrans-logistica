@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { X, Upload, Camera, CheckCircle, AlertTriangle, Loader2, FileText, Trash2, FolderOpen, Image as ImageIcon, Search, Euro } from 'lucide-react';
-import jsQR from 'jsqr';
+import { leerQrJustificante } from '../../utils/leerQrJustificante';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import { coincideEnCampos } from '../../utils/busqueda';
@@ -56,13 +56,9 @@ export default function CodReceiptUploadModal({ isOpen, onClose, shipments = [],
                 canvas.height = h;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, w, h);
-                const imgData = ctx.getImageData(0, 0, w, h);
-                const code = jsQR(imgData.data, imgData.width, imgData.height);
-                if (code && code.data && code.data.startsWith('COD:')) {
-                    resolve(code.data.replace('COD:', ''));
-                } else {
-                    resolve(null);
-                }
+                // Si a la primera no sale, prueba enderezando y con más contraste:
+                // un pliegue o una firma encima del QR no lo dejaban leer.
+                resolve(leerQrJustificante(ctx.getImageData(0, 0, w, h)));
             };
             img.onerror = () => resolve(null);
             img.src = imageData;

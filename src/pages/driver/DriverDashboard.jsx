@@ -3058,7 +3058,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
                     <style>
                         body { font-family: 'Arial', sans-serif; margin: 0 auto; }
 ${estilosDeHoja()}
-                        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 6px; margin-bottom: 10px; }
+                        /* El QR va arriba, lejos de la firma: abajo el cliente firmaba y sellaba
+                           encima y el escáner de la oficina ya no lo leía (HAB-76, septiembre 2026). */
+                        .header { display: flex; align-items: center; gap: 10px; border-bottom: 2px solid #333; padding-bottom: 6px; margin-bottom: 10px; }
+                        .header-text { flex: 1; min-width: 0; }
                         .title { font-size: 16px; font-weight: bold; margin: 0; }
                         .subtitle { font-size: 12px; color: #666; }
                         .details { margin-bottom: 10px; }
@@ -3066,10 +3069,10 @@ ${estilosDeHoja()}
                         .row span:last-child { text-align: right; word-break: break-word; }
                         .label { font-weight: bold; flex-shrink: 0; }
                         .amount { font-size: 18px; font-weight: bold; text-align: right; margin-top: 8px; border-top: 1px dashed #ccc; padding-top: 8px; }
-                        .qr-section { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 12px; }
-                        .signature-box { flex: 1; border-top: 1px solid #000; padding-top: 4px; text-align: center; font-size: 10px; margin-right: 15px; }
-                        .qr-box { text-align: center; }
-                        .qr-box p { font-size: 7px; color: #999; margin: 2px 0 0 0; }
+                        .signature-box { margin-top: 56px; border-top: 1px solid #000; padding-top: 4px; text-align: center; font-size: 10px; }
+                        .qr-box { flex-shrink: 0; text-align: center; }
+                        .qr-box img { display: block; }
+                        .qr-box p { font-size: 8px; color: #999; margin: 2px 0 0 0; }
                         .footer { margin-top: 10px; font-size: 8px; text-align: center; color: #888; }
                         @media print {
                             body { width: 80mm; }
@@ -3081,8 +3084,14 @@ ${estilosDeHoja()}
                 <body>
                   <div id="hoja"><div id="contenido">
                     <div class="header">
-                        <h1 class="title">SUMTRANS LOGISTICA</h1>
-                        <p class="subtitle">Justificante de Reembolso</p>
+                        <div class="header-text">
+                            <h1 class="title">SUMTRANS LOGISTICA</h1>
+                            <p class="subtitle">Justificante de Reembolso</p>
+                        </div>
+                        <div class="qr-box">
+                            <div id="qrcode"></div>
+                            <p>${shipmentId}</p>
+                        </div>
                     </div>
                     
                     <div class="details">
@@ -3112,15 +3121,8 @@ ${estilosDeHoja()}
                         </div>
                     </div>
 
-                    <div class="qr-section">
-                        <div class="signature-box">
-                            Firma y Sello del Cliente (Remitente)
-                            <br/><br/>
-                        </div>
-                        <div class="qr-box">
-                            <div id="qrcode"></div>
-                            <p>${shipmentId}</p>
-                        </div>
+                    <div class="signature-box">
+                        Firma y Sello del Cliente (Remitente)
                     </div>
                     
                     <div class="footer">
@@ -3137,10 +3139,12 @@ ${estilosDeHoja()}
                     <script>
 ${scriptDeAjuste()}
                         window.onload = function() { 
-                            var qr = qrcode(0, 'M');
+                            // 'H' aguanta un 30% del QR estropeado (arruga, tinta) y los
+                            // cuadraditos de 4px siguen siendo legibles en un escaneo pequeño.
+                            var qr = qrcode(0, 'H');
                             qr.addData('${qrData}');
                             qr.make();
-                            document.getElementById('qrcode').innerHTML = qr.createImgTag(3, 4);
+                            document.getElementById('qrcode').innerHTML = qr.createImgTag(4, 2);
                             setTimeout(() => {
                                 ajustarAlFolio();
                                 window.print();
@@ -3175,8 +3179,11 @@ ${scriptDeAjuste()}
                 <div class="page">
                     <div class="receipt-card">
                         <div class="card-header">
-                            <h2>SUMTRANS LOGISTICA</h2>
-                            <p>Justificante de Reembolso</p>
+                            <div class="card-header-text">
+                                <h2>SUMTRANS LOGISTICA</h2>
+                                <p>Justificante de Reembolso</p>
+                            </div>
+                            <div class="card-qr" data-qr="${qrData}" data-label="${shipmentId}"></div>
                         </div>
                         <div class="card-details">
                             <div class="card-row"><span class="lbl">Fecha del envío:</span><span>${fechaDelEnvio}</span></div>
@@ -3190,7 +3197,6 @@ ${scriptDeAjuste()}
                                 <div class="sig-line"></div>
                                 <span>Firma y Sello</span>
                             </div>
-                            <div class="card-qr" data-qr="${qrData}" data-label="${shipmentId}"></div>
                         </div>
                         <p class="card-footer">Justifica la entrega del importe recaudado al remitente.</p>
                     </div>
@@ -3230,7 +3236,9 @@ ${scriptDeAjuste()}
                         display: flex; flex-direction: column;
                         justify-content: space-between;
                     }
-                    .card-header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 8px; margin-bottom: 12px; }
+                    /* QR arriba, como en el justificante suelto: abajo la firma y el sello lo tapaban. */
+                    .card-header { display: flex; align-items: center; gap: 10px; border-bottom: 2px solid #333; padding-bottom: 8px; margin-bottom: 12px; }
+                    .card-header-text { flex: 1; min-width: 0; }
                     .card-header h2 { font-size: 18px; margin: 0; font-weight: bold; }
                     .card-header p { font-size: 12px; color: #666; margin: 4px 0 0; }
                     .card-details { margin-bottom: 10px; }
@@ -3239,12 +3247,13 @@ ${scriptDeAjuste()}
                     .lbl { font-weight: bold; flex-shrink: 0; }
                     .mono { font-family: monospace; font-weight: bold; font-size: 14px; }
                     .card-amount { font-size: 24px; font-weight: bold; text-align: right; border-top: 1px dashed #aaa; padding-top: 10px; margin-bottom: 12px; }
-                    .card-bottom { display: flex; justify-content: space-between; align-items: flex-end; margin-top: auto; }
-                    .card-signature { flex: 1; margin-right: 15px; text-align: center; }
+                    .card-bottom { margin-top: auto; }
+                    .card-signature { text-align: center; }
                     .sig-line { border-top: 1px solid #000; margin-bottom: 4px; margin-top: 40px; }
                     .card-signature span { font-size: 10px; }
-                    .card-qr { text-align: center; }
-                    .card-qr p { font-size: 10px; color: #999; margin-top: 4px; }
+                    .card-qr { flex-shrink: 0; text-align: center; }
+                    .card-qr img { display: block; }
+                    .card-qr p { font-size: 10px; color: #999; margin-top: 2px; }
                     .card-footer { font-size: 10px; color: #999; text-align: center; margin-top: 12px; }
                     .no-print { text-align: center; padding: 20px; }
                     
@@ -3277,10 +3286,11 @@ ${scriptDeAjuste({ hoja: '.page', contenido: '.receipt-card', fijarAlto: false }
                             var data = el.getAttribute('data-qr');
                             var label = el.getAttribute('data-label');
                             if (data) {
-                                var qr = qrcode(0, 'M');
+                                // Igual que el suelto: 'H' aguanta arrugas y tinta encima.
+                                var qr = qrcode(0, 'H');
                                 qr.addData(data);
                                 qr.make();
-                                el.innerHTML = qr.createImgTag(3, 4) + '<p>' + label + '</p>';
+                                el.innerHTML = qr.createImgTag(4, 2) + '<p>' + label + '</p>';
                             }
                         });
                         ajustarAlFolio();
