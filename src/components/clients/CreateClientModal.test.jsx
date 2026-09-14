@@ -132,3 +132,75 @@ describe('CreateClientModal — credenciales recién creadas', () => {
         expect(screen.queryByText('Acceso creado')).not.toBeInTheDocument();
     });
 });
+
+// ── Una sede rellena su C.P. al escribir la población ──
+//
+// En la pestaña Sedes la población se guardaba tal cual y el C.P. había que
+// teclearlo aparte, cuando el alta de envíos ya lo sacaba del listado de pueblos.
+describe('CreateClientModal — sedes', () => {
+    it('al poner la población de la sede se rellenan el C.P. y la provincia', () => {
+        abrirFicha({ onSave: vi.fn() });
+
+        fireEvent.click(screen.getByRole('button', { name: /Sedes/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Añadir Sede/i }));
+        fireEvent.change(screen.getByPlaceholderText('Baena'), { target: { value: 'Lucena' } });
+
+        expect(screen.getByPlaceholderText('14850').value).toBe('14900');
+        expect(screen.getByPlaceholderText('Córdoba').value).toMatch(/C[oó]rdoba/i);
+    });
+
+    it('un pueblo que no está en el listado deja el C.P. como estaba', () => {
+        abrirFicha({ onSave: vi.fn() });
+
+        fireEvent.click(screen.getByRole('button', { name: /Sedes/i }));
+        fireEvent.click(screen.getByRole('button', { name: /Añadir Sede/i }));
+        fireEvent.change(screen.getByPlaceholderText('14850'), { target: { value: '14999' } });
+        fireEvent.change(screen.getByPlaceholderText('Baena'), { target: { value: 'Pueblo Inventado' } });
+
+        expect(screen.getByPlaceholderText('14850').value).toBe('14999');
+    });
+});
+
+// ── La pestaña Dirección, igual que las sedes ──
+//
+// La población principal sólo miraba las tarifas por zona, que guardan el
+// principio del C.P. ("14"): o no rellenaba nada o dejaba el C.P. a medias.
+// La operativa no rellenaba nada.
+// Población y Provincia llevan el mismo marcador (Madrid); la población es la del desplegable.
+const poblacionPrincipal = () => screen.getAllByPlaceholderText('Madrid').find(el => el.getAttribute('list'));
+
+describe('CreateClientModal — pestaña Dirección', () => {
+    it('la población rellena el C.P. completo, la provincia y el país', () => {
+        abrirFicha({ onSave: vi.fn() });
+
+        fireEvent.click(screen.getByRole('button', { name: /Dir\./i }));
+        fireEvent.change(poblacionPrincipal(), { target: { value: 'Lucena' } });
+
+        expect(screen.getByPlaceholderText('28001').value).toBe('14900');
+        expect(screen.getByPlaceholderText('España').value).toBe('España');
+        const provincia = screen.getAllByPlaceholderText('Madrid').find(el => !el.getAttribute('list'));
+        expect(provincia.value).toMatch(/C[oó]rdoba/i);
+    });
+
+    it('con una tarifa de zona para el pueblo no escribe el prefijo como C.P.', () => {
+        render(
+            <CreateClientModal isOpen onClose={vi.fn()} onSave={vi.fn()} initialData={fichaExistente}
+                articles={[]} allPoblaciones={[]} allClients={[fichaExistente]}
+                tariffs={[{ id: 't1', match: 'Lucena', zipPrefix: '14', province: 'Córdoba' }]} />
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: /Dir\./i }));
+        fireEvent.change(poblacionPrincipal(), { target: { value: 'Lucena' } });
+
+        expect(screen.getByPlaceholderText('28001').value).toBe('14900');
+    });
+
+    it('la población operativa rellena el C.P. operativo', () => {
+        abrirFicha({ onSave: vi.fn() });
+
+        fireEvent.click(screen.getByRole('button', { name: /Dir\./i }));
+        fireEvent.change(screen.getByPlaceholderText('Córdoba'), { target: { value: 'Cabra' } });
+
+        expect(screen.getByPlaceholderText('14001').value).toBe('14940');
+    });
+});

@@ -8,6 +8,8 @@ import { esRegistroWeb } from '../../utils/altaClientes';
 import { primerCorreoDeFicha } from '../../utils/correosDeFicha';
 import { calcularComisionReembolso, COMISION_FIJA, COMISION_PORCENTAJE } from '../../utils/comisionReembolso';
 import { coincideEnCampos } from '../../utils/busqueda';
+import { pueblosQueCasan } from '../../utils/precioArticulo';
+import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 
 const TABS = [
     { id: 'general', label: 'General', icon: FileCode },
@@ -334,28 +336,24 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         });
     };
 
-    const handleCityChange = (val) => {
-        set('city', val);
-        if (!val) return;
+    // C.P. completo de un pueblo, sacado del listado de pueblos con la misma regla
+    // que el alta de envíos: nombre exacto. Las tarifas por zona no sirven para
+    // esto, lo que guardan es el principio del C.P. ("14"), no el código entero.
+    const cpDelPueblo = (poblacion) => pueblosQueCasan(poblacion, '', ALL_BAREMO_PUEBLOS).find(p => p.zip)?.zip || null;
 
-        const normalizedCity = val.trim().toLowerCase();
-        const matchingTariff = (tariffs || []).find(t => (t.match || '').toLowerCase() === normalizedCity);
-        
-        if (matchingTariff) {
-            setFormData(prev => {
-                const updates = { ...prev, city: val };
-                if (matchingTariff.zipPrefix && (!prev.zip || prev.zip === '')) {
-                    updates.zip = matchingTariff.zipPrefix;
-                    // Auto-fill province/country if found in tariff OR mapping
-                    const province = matchingTariff.province || SPAIN_PROVINCES[matchingTariff.zipPrefix];
-                    if (province && (!prev.province || prev.province === '')) {
-                        updates.province = province;
-                        updates.country = matchingTariff.country || 'España';
-                    }
-                }
-                return updates;
-            });
-        }
+    const handleCityChange = (val) => {
+        const cp = cpDelPueblo(val);
+        const normalizedCity = (val || '').trim().toLowerCase();
+        const matchingTariff = normalizedCity ? (tariffs || []).find(t => (t.match || '').toLowerCase() === normalizedCity) : null;
+
+        setFormData(prev => {
+            const updates = { ...prev, city: val };
+            if (cp) updates.zip = cp;
+            const province = (cp && SPAIN_PROVINCES[cp.substring(0, 2)]) || matchingTariff?.province;
+            if (province && !prev.province) updates.province = province;
+            if ((cp || matchingTariff) && !prev.country) updates.country = matchingTariff?.country || 'España';
+            return updates;
+        });
     };
 
     const handleFileChange = async (e) => {
@@ -748,7 +746,12 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                         </div>
                                         <Field label="Población Operativa">
                                             <input type="text" className={inputCls} placeholder="Córdoba"
-                                                value={formData.opCity || ''} onChange={e => set('opCity', e.target.value)} />
+                                                value={formData.opCity || ''} list="poblaciones-list"
+                                                onChange={e => {
+                                                    const val = e.target.value;
+                                                    const cp = cpDelPueblo(val);
+                                                    setFormData(prev => ({ ...prev, opCity: val, ...(cp ? { opZip: cp } : {}) }));
+                                                }} />
                                         </Field>
                                         <Field label="C.P. Operativo">
                                             <input type="text" className={inputCls} placeholder="14001"
@@ -1399,7 +1402,15 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                                         <input type="text" className={inputCls} placeholder="Baena" list="poblaciones-list"
                                                             value={branch.city || ''}
                                                             onChange={e => {
-                                                                const updated = formData.branches.map(b => b.id === branch.id ? { ...b, city: e.target.value } : b);
+                                                                const val = e.target.value;
+                                                                const updates = { city: val };
+                                                                const cp = cpDelPueblo(val);
+                                                                if (cp) {
+                                                                    updates.zip = cp;
+                                                                    const prov = SPAIN_PROVINCES[cp.substring(0, 2)];
+                                                                    if (prov && !branch.province) updates.province = prov;
+                                                                }
+                                                                const updated = formData.branches.map(b => b.id === branch.id ? { ...b, ...updates } : b);
                                                                 set('branches', updated);
                                                             }} />
                                                     </Field>
