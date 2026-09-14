@@ -144,8 +144,9 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                         packages: bultos,
                         observations: notas,
                         articles: article ? [{ ...article, uniqueId: Date.now() + numero, quantity: 1, unitPrice, totalPrice: unitPrice }] : [],
-                        amount: unitPrice > 0 ? unitPrice.toFixed(2) : 'Pendiente',
-                        customAmount: unitPrice > 0 ? unitPrice : null,
+                        // La comisión del reembolso va dentro del porte, como en el alta de la oficina.
+                        amount: unitPrice > 0 ? (unitPrice + codFee).toFixed(2) : 'Pendiente',
+                        customAmount: unitPrice > 0 ? Math.round((unitPrice + codFee) * 100) / 100 : null,
                         billingType: client.billingType || 'Clientes Habituales',
                         paymentStatus: 'Pending',
                         porteType: c.porte,

@@ -399,7 +399,12 @@ export default function ClientDashboard({
         }
 
         const amountNum = parseFloat(codAmount) || 0;
-        const finalAmount = unitPrice; // No sumamos comisión de COD aquí según petición
+        // La comisión va DENTRO del precio del porte, igual que en el alta de la
+        // oficina (la ficha la enseña como "Comisión (Incluida)"). Aquí no se
+        // sumaba y SUM-1003 salió a 7 € con 3 € de comisión que nadie cobraba.
+        // Sin precio de tarifa se queda en "Pendiente" para que la oficina lo vea.
+        const codFee = calcularComisionReembolso(client, amountNum);
+        const finalAmount = unitPrice > 0 ? unitPrice + codFee : 0;
 
         const shipmentData = {
             id: `${clientPrefix}-${numeroAlbaran}`,
@@ -443,7 +448,7 @@ export default function ClientDashboard({
             porteType: porteType,
             hasCod: amountNum > 0,
             codAmount: amountNum,
-            codCommission: calcularComisionReembolso(client, amountNum)
+            codCommission: codFee
         };
 
         onCreateShipment(shipmentData);
