@@ -262,6 +262,18 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     finalFormData.porteCollectedById = null;
                     finalFormData.portePaidAt = null; // Ya no hay cobro que fechar
                     finalFormData.isPaid = false; // Compatibilidad
+                    // HAB-274, 15 de septiembre de 2026: Juan Carlos entregó y marcó por
+                    // error "cobrado con factura simplificada". La oficina quitó el cobro
+                    // desde la ficha, pero la factura simplificada es una forma de ese
+                    // mismo cobro (el porte +21 % de IVA, "cobrado") y se quedaba puesta:
+                    // el albarán seguía en su Cuenta bajo "Facturas Simplificadas" y, por
+                    // llevarla, la caja normal lo ignoraba aunque se cobrase después.
+                    // Sin cobro no hay factura simplificada que cobrar: se quita entera.
+                    if (finalFormData.hasSimplifiedInvoice || finalFormData.simplifiedInvoicePaid) {
+                        finalFormData.hasSimplifiedInvoice = false;
+                        finalFormData.simplifiedInvoiceAmount = null;
+                        finalFormData.simplifiedInvoicePaid = false;
+                    }
                 }
                 if (shipment.hasCod && shipment.codPaid && !finalFormData.codPaid) {
                     finalFormData.codCollectedById = null;
@@ -533,7 +545,10 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        {!isEditing && !isReadOnly && (
+                        {/* Sin onUpdate no hay con qué guardar: el lápiz sacaba los controles
+                            y "Guardar Cambios" no hacía nada (la ficha del conductor abría
+                            así el albarán). Sin función de guardar, sólo lectura. */}
+                        {!isEditing && !isReadOnly && onUpdate && (
                             <button
                                 id="tour-edit-btn"
                                 onClick={() => setIsEditing(true)}
@@ -1660,6 +1675,11 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                                 <span className="text-[10px] text-slate-500 uppercase leading-none block">Marca o desmarca saldo a tu favor</span>
                                             </div>
                                         </label>
+                                        {shipment.portePaid && shipment.hasSimplifiedInvoice && !(formData.portePaid || formData.isPaid) && (
+                                            <p className="text-[10px] font-bold text-amber-700 mt-2 leading-tight">
+                                                ⚠️ Al quitar el cobro se quita también la Factura Simplificada: el porte vuelve a estar pendiente sin IVA.
+                                            </p>
+                                        )}
                                     </div>
                                     {formData.hasCod && (
                                         <div className="bg-white p-3 rounded-xl border border-orange-100 shadow-sm hover:border-orange-300 transition-colors">

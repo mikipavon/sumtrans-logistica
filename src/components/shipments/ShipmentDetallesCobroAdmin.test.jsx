@@ -80,3 +80,81 @@ describe('ShipmentDetailsModal: marcar Porte Cobrado desde administración', () 
         expect(guardado.porteCollectedById).toBe(3);
     });
 });
+
+// ── Quitar un cobro marcado por error con factura simplificada ──
+//
+// HAB-274, 15 de septiembre de 2026: Juan Carlos entregó y marcó "cobrado con
+// factura simplificada" sin querer. La oficina lo abrió desde su Cuenta, quitó el
+// check "Porte Cobrado" y pulsó Guardar: el botón no hacía nada porque la ficha
+// del conductor no le pasaba función de guardar al modal. Y aunque hubiera
+// guardado, la factura simplificada se quedaba puesta y el albarán seguía
+// sumando en su Cuenta bajo "Facturas Simplificadas".
+
+const JUAN_CARLOS = { id: 5, name: 'JUAN CARLOS', isActive: true };
+
+const hab274 = {
+    ...sum1204,
+    id: 'HAB-274',
+    assignedDriverId: 5,
+    porteCollectedById: 5,
+    portePaid: true,
+    isPaid: true,
+    paymentStatus: 'Paid',
+    portePaidAt: new Date().toISOString(),
+    hasSimplifiedInvoice: true,
+    simplifiedInvoiceAmount: '14.52',
+    simplifiedInvoicePaid: true,
+};
+
+const cuentaDeJuanCarlos = (albaran) => calculateDailyAccount({
+    allShipments: [albaran],
+    driverId: 5,
+    clients: [],
+    collectedCollections: [],
+});
+
+describe('ShipmentDetailsModal: quitar un cobro con factura simplificada', () => {
+    it('antes de tocarlo, el albarán suma en la Cuenta como factura simplificada', () => {
+        expect(cuentaDeJuanCarlos(hab274).collectedSimplifiedInvoices).toBe(14.52);
+    });
+
+    it('desmarcar Porte Cobrado quita también la factura simplificada y lo deja pendiente', async () => {
+        const onUpdate = vi.fn();
+        render(
+            <ShipmentDetailsModal
+                isOpen={true} onClose={() => {}} shipment={hab274} onUpdate={onUpdate}
+                drivers={[JUAN_CARLOS]} allPoblaciones={[]} clients={[]} articles={[]} tariffs={null} coverageZones={[]}
+            />
+        );
+        fireEvent.click(screen.getByTitle('Editar'));
+        const casilla = screen.getByRole('checkbox', { name: /Porte Cobrado/ });
+        expect(casilla.checked).toBe(true);
+        fireEvent.click(casilla);
+        expect(screen.getByText(/se quita también la Factura Simplificada/)).toBeInTheDocument();
+        fireEvent.click(screen.getByText('Guardar Cambios'));
+        await vi.waitFor(() => expect(onUpdate).toHaveBeenCalled());
+        const guardado = onUpdate.mock.calls[0][1];
+
+        expect(guardado.portePaid).toBe(false);
+        expect(guardado.isPaid).toBe(false);
+        expect(guardado.portePaidAt).toBeNull();
+        expect(guardado.porteCollectedById).toBeNull();
+        expect(guardado.hasSimplifiedInvoice).toBe(false);
+        expect(guardado.simplifiedInvoicePaid).toBe(false);
+        expect(guardado.simplifiedInvoiceAmount).toBeNull();
+
+        const cuenta = cuentaDeJuanCarlos({ ...hab274, ...guardado });
+        expect(cuenta.collectedSimplifiedInvoices).toBe(0);
+        expect(cuenta.collectedPorte).toBe(0);
+    });
+
+    it('sin función de guardar el modal no ofrece el lápiz de editar', () => {
+        render(
+            <ShipmentDetailsModal
+                isOpen={true} onClose={() => {}} shipment={hab274}
+                drivers={[JUAN_CARLOS]} allPoblaciones={[]} clients={[]} articles={[]} tariffs={null} coverageZones={[]}
+            />
+        );
+        expect(screen.queryByTitle('Editar')).not.toBeInTheDocument();
+    });
+});

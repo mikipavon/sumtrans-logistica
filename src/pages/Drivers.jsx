@@ -40,7 +40,7 @@ function SortableDriverCard({ id, children, isManualSort }) {
     );
 }
 
-export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDeleteDriver, shipments, clients, onImpersonate, onNavigate, isGhostModeUnlocked, routes = [], onUpdateRoutes, horarioReparto, onUpdateHorarioReparto, routeKnowledge = {}, onUpdateRouteKnowledge, driverOrder = [], onUpdateDriverOrder, gpsIntervalMinutes, setGpsIntervalMinutes, driverAlerts, setDriverAlerts, driverNamePreference = 'both', onUpdateDriverNamePreference }) {
+export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDeleteDriver, onUpdateShipment, shipments, clients, onImpersonate, onNavigate, isGhostModeUnlocked, routes = [], onUpdateRoutes, horarioReparto, onUpdateHorarioReparto, routeKnowledge = {}, onUpdateRouteKnowledge, driverOrder = [], onUpdateDriverOrder, gpsIntervalMinutes, setGpsIntervalMinutes, driverAlerts, setDriverAlerts, driverNamePreference = 'both', onUpdateDriverNamePreference }) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isRoutesModalOpen, setIsRoutesModalOpen] = useState(false);
     const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
@@ -371,7 +371,9 @@ export default function Drivers({ drivers, onAddDriver, onUpdateDriver, onDelete
                 driver={selectedDriver}
                 shipments={shipments}
                 clients={clients}
+                drivers={drivers}
                 onUpdateDriver={onUpdateDriver}
+                onUpdateShipment={onUpdateShipment}
                 isGhostModeUnlocked={isGhostModeUnlocked}
             />
 
