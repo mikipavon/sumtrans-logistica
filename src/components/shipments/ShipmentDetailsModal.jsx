@@ -269,6 +269,35 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     finalFormData.isCodPaid = false; // Compatibilidad
                 }
 
+                // COBRO MARCADO A MANO POR ADMINISTRADOR
+                //
+                // SUM-1204, 15 de septiembre de 2026: la oficina cerró a mano un albarán
+                // que había caído en incidencia por entrega parcial (el cliente etiquetó
+                // un bulto de dos) y marcó aquí "Porte Cobrado". El check sólo escribía
+                // portePaid: ni la fecha del cobro ni quién lo cobró. La Cuenta del
+                // repartidor fecha cada cobro por portePaidAt/codPaidAt (y para un Debido
+                // no tiene ningún respaldo), así que los 12 € no le salían a Antonio ni
+                // ese día ni ninguno. Se sella igual que cuando lo marca el móvil: la fecha
+                // de ahora y, si no consta otro cobrador, el conductor asignado en esta
+                // misma ficha. Sólo al PASAR de no cobrado a cobrado, para no volver a
+                // fechar hoy un cobro de otro día en cada retoque de la oficina.
+                const ahora = new Date().toISOString();
+                const conductorDeLaFicha = Number.isFinite(Number(finalFormData.assignedDriverId)) && finalFormData.assignedDriverId !== '' && finalFormData.assignedDriverId !== null
+                    ? Number(finalFormData.assignedDriverId)
+                    : null;
+                if (!(shipment.portePaid || shipment.isPaid) && finalFormData.portePaid) {
+                    finalFormData.portePaidAt = ahora;
+                    if (!finalFormData.porteCollectedById && conductorDeLaFicha) {
+                        finalFormData.porteCollectedById = conductorDeLaFicha;
+                    }
+                }
+                if (finalFormData.hasCod && !(shipment.codPaid || shipment.isCodPaid) && finalFormData.codPaid) {
+                    finalFormData.codPaidAt = ahora;
+                    if (!finalFormData.codCollectedById && conductorDeLaFicha) {
+                        finalFormData.codCollectedById = conductorDeLaFicha;
+                    }
+                }
+
                 // Sincronizar portePaid e isPaid (ya que son equivalentes)
                 if (finalFormData.portePaid) finalFormData.isPaid = true;
                 if (finalFormData.codPaid) finalFormData.isCodPaid = true;
