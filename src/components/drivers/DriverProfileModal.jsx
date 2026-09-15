@@ -4,14 +4,31 @@ import { supabase } from '../../lib/supabase';
 import { diasDeVacaciones, explicacionDeLosDias } from '../../utils/vacacionesDelAno';
 import { calculateDailyAccount, isToday } from '../../utils/accountLogic';
 import { generateCashReportPDF } from '../../utils/cashReportPdf';
+import { abrirResumenPorte } from '../../utils/resumenDePorte';
+import { abrirJustificantes } from '../../utils/justificanteReembolso';
+import { fechaSinHora } from '../../utils/fechaSinHora';
 import ShipmentDetailsModal from '../shipments/ShipmentDetailsModal';
+
+// El día de hoy como 'AAAA-MM-DD' en hora local. toISOString() lo daba en UTC,
+// así que de madrugada la ficha abría con la caja de ayer.
+const hoyISO = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// Un día antes o después de una fecha 'AAAA-MM-DD', sin pasar por la zona horaria.
+const diaVecino = (iso, delta) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    const f = new Date(y, m - 1, d + delta);
+    return `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}-${String(f.getDate()).padStart(2, '0')}`;
+};
 import { RUTAS_MAESTRAS } from '../../data/rutas';
 
-export default function DriverProfileModal({ isOpen, onClose, driver, shipments, clients, onUpdateDriver, isGhostModeUnlocked, routes, onUpdateRoutes }) {
+export default function DriverProfileModal({ isOpen, onClose, driver, shipments, clients, drivers = [], onUpdateDriver, onUpdateShipment, isGhostModeUnlocked, routes, onUpdateRoutes }) {
     const [isEditing, setIsEditing] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [formData, setFormData] = useState({});
-    const [selectedDateStr, setSelectedDateStr] = useState(new Date().toISOString().split('T')[0]);
+    const [selectedDateStr, setSelectedDateStr] = useState(hoyISO());
     const [activeTab, setActiveTab] = useState('actividad'); // 'actividad' | 'estadisticas'
     const [selectedShipment, setSelectedShipment] = useState(null);
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
@@ -44,21 +61,33 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
             });
             setIsEditing(false);
             setShowPassword(false);
-            setSelectedDateStr(new Date().toISOString().split('T')[0]);
+            setSelectedDateStr(hoyISO());
             setActiveTab('actividad');
-            // Cargar collectedCollections del conductor desde Supabase
-            setDriverCollections([]);
-            // Se usa el cliente de siempre (`lib/supabase`). Abrir aquí uno nuevo
-            // levantaba una segunda sesión con el mismo cerrojo y el mismo temporizador
-            // de renovación dentro de la misma pestaña: las dos se lo quitaban entre
-            // ellas y el forcejeo acababa en la pantalla roja de error crítico.
-            const todayStr = new Date().toISOString().split('T')[0];
-            supabase.from('drivers').select('data').eq('id', driver.id).single().then(({ data: drvRow }) => {
-                const cloud = drvRow?.data?.[`collectedCollections_${todayStr}`];
-                if (cloud && Array.isArray(cloud)) setDriverCollections(cloud);
-            });
         }
     }, [driver, isOpen]);
+
+    // Los cobros que el repartidor apuntó desde el móvil (Cobros Pendientes,
+    // portes en mano) viven en la fila del conductor, una lista por día:
+    // `collectedCollections_AAAA-MM-DD`. Se cargan los del DÍA SELECCIONADO,
+    // no los de hoy: antes la ficha sólo traía los de hoy y, al mirar la caja de
+    // otro día, esos cobros faltaban y la cuenta no cuadraba con la del móvil.
+    //
+    // Se usa el cliente de siempre (`lib/supabase`). Abrir aquí uno nuevo
+    // levantaba una segunda sesión con el mismo cerrojo y el mismo temporizador
+    // de renovación dentro de la misma pestaña: las dos se lo quitaban entre
+    // ellas y el forcejeo acababa en la pantalla roja de error crítico.
+    useEffect(() => {
+        if (!driver || !isOpen) return;
+        let vigente = true;
+        setDriverCollections([]);
+        supabase.from('drivers').select('data').eq('id', driver.id).single().then(({ data: drvRow }) => {
+            if (!vigente) return;
+            const cloud = drvRow?.data?.[`collectedCollections_${selectedDateStr}`];
+            if (cloud && Array.isArray(cloud)) setDriverCollections(cloud);
+        });
+        // Si se cambia de día antes de que responda, la respuesta vieja se descarta.
+        return () => { vigente = false; };
+    }, [driver, isOpen, selectedDateStr]);
 
     const handleSave = () => {
         // Supabase Auth exige 6 caracteres. Con menos, la cuenta de acceso no
@@ -115,7 +144,10 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
             route: targetDateShipments,
             account: accountResult
         };
-    }, [driver, shipments, clients, selectedDateStr]);
+    // driverCollections va en las dependencias a propósito: llega de Supabase
+    // después del primer cálculo y sin él la cuenta se quedaba sin los cobros
+    // apuntados desde el móvil hasta que algo más cambiaba.
+    }, [driver, shipments, clients, selectedDateStr, driverCollections]);
 
     // --- ALL-TIME GLOBAL STATS ---
     const globalStats = useMemo(() => {
@@ -475,17 +507,40 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                 <>
                                     <button
                                         onClick={() => generateCashReportPDF(driver, new Date(selectedDateStr), driverStats.account)}
-                                        title="Imprimir Liquidación PDF"
+                                        title={`Descargar la liquidación del ${fechaSinHora(selectedDateStr)} en PDF`}
                                         className="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 p-2 rounded-lg transition-colors border border-emerald-200 shadow-sm flex items-center gap-2 text-sm font-bold"
                                     >
                                         <Printer size={16} /> <span className="hidden sm:inline">Cierre PDF</span>
                                     </button>
-                                    <input 
-                                        type="date" 
-                                        className="text-sm font-bold text-slate-700 bg-white border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-                                        value={selectedDateStr}
-                                        onChange={(e) => setSelectedDateStr(e.target.value)}
-                                    />
+                                    {/* El día que se está mirando. Las flechas van día a día y
+                                        "Hoy" vuelve al de hoy; el calendario sirve para saltar lejos. */}
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedDateStr(diaVecino(selectedDateStr, -1))}
+                                            title="Día anterior"
+                                            className="px-2 py-1.5 text-slate-500 hover:bg-slate-100 rounded-lg border border-slate-200 text-sm font-bold"
+                                        >‹</button>
+                                        <input
+                                            type="date"
+                                            className="text-sm font-bold text-slate-700 bg-white border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                                            value={selectedDateStr}
+                                            onChange={(e) => e.target.value && setSelectedDateStr(e.target.value)}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedDateStr(diaVecino(selectedDateStr, 1))}
+                                            title="Día siguiente"
+                                            className="px-2 py-1.5 text-slate-500 hover:bg-slate-100 rounded-lg border border-slate-200 text-sm font-bold"
+                                        >›</button>
+                                        {selectedDateStr !== hoyISO() && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedDateStr(hoyISO())}
+                                                className="px-2 py-1.5 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg"
+                                            >Hoy</button>
+                                        )}
+                                    </div>
                                 </>
                             )}
                         </div>
@@ -498,12 +553,12 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                 <span className="text-xs font-bold uppercase">Caja (Recaudado)</span>
                             </div>
                             <p className="text-2xl font-bold text-slate-800">€{driverStats.cash.toFixed(2)}</p>
-                            <p className="text-xs text-slate-500">Efectivo en mano hoy</p>
+                            <p className="text-xs text-slate-500">Efectivo en mano el {fechaSinHora(selectedDateStr)}</p>
                         </div>
                         <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
                             <div className="flex items-center gap-2 text-blue-400 mb-2">
                                 <Package size={16} />
-                                <span className="text-xs font-bold uppercase">Envíos Hoy</span>
+                                <span className="text-xs font-bold uppercase">Envíos del día</span>
                             </div>
                             <p className="text-2xl font-bold text-blue-700">{driverStats.todayCount}</p>
                             <p className="text-xs text-blue-600/70">{driverStats.pending} pendientes</p>
@@ -534,7 +589,7 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                             {driverStats.route.length === 0 ? (
                                 <div className="text-center py-8 text-slate-400 border-2 border-dashed border-slate-100 rounded-xl">
                                     <Truck className="mx-auto mb-2 opacity-50" size={24} />
-                                    <p>No tiene envíos asignados hoy.</p>
+                                    <p>No tiene envíos el {fechaSinHora(selectedDateStr)}.</p>
                                 </div>
                             ) : (
                                 driverStats.route.map((shipment, index) => (
@@ -577,10 +632,30 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                     {/* Caja Details (Admin Account View) - PROTEGIDO POR MODO PRIVACIDAD */}
                     {isGhostModeUnlocked && (
                         <div className="mt-8 pt-8 border-t border-slate-100">
-                            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-6 flex items-center gap-2">
-                                <Wallet size={16} />
-                                Desglose de Caja del Día
-                            </h3>
+                            <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
+                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                                    <Wallet size={16} />
+                                    Desglose de Caja del {fechaSinHora(selectedDateStr)}
+                                </h3>
+                                {/* Imprime la Cuenta del día como el ticket "Resumen de Porte"
+                                    que saca el repartidor desde su móvil, para que el papel de la
+                                    oficina y el suyo sean el mismo. Antes sacaba todos los
+                                    justificantes de reembolso, que ya tienen cada uno su impresora. */}
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const cuenta = driverStats.account || {};
+                                        if (!abrirResumenPorte(cuenta.allPorteDetail || [], { driver, fecha: new Date(selectedDateStr), clients, total: cuenta.collectedPorte, facturasSimplificadas: cuenta.allSimplifiedInvoiceDetail, totalFacturas: cuenta.collectedSimplifiedInvoices })) {
+                                            alert('El navegador ha bloqueado la ventana de impresión. Permite las ventanas emergentes para esta página.');
+                                        }
+                                    }}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors"
+                                    title={`Imprimir la Cuenta del ${fechaSinHora(selectedDateStr)}`}
+                                >
+                                    <Printer size={12} />
+                                    Imprimir Cuenta
+                                </button>
+                            </div>
                             
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {/* Reembolsos */}
@@ -616,8 +691,21 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                                         <span className="font-bold text-slate-700">{item.client || item.destinationName}</span>
                                                         <span className="font-bold text-blue-600">{item.amountDisplay || `€${item.amount}`}</span>
                                                     </div>
-                                                    <div className="text-xs text-slate-500">
-                                                        Albarán: {item.id}
+                                                    <div className="flex justify-between items-center text-xs text-slate-500">
+                                                        <span>Albarán: {item.id}</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                if (!abrirJustificantes([item], { titulo: 'Justificante de Entrega de Fondos', clients, allShipments: shipments })) {
+                                                                    alert('El navegador ha bloqueado la ventana de impresión. Permite las ventanas emergentes para esta página.');
+                                                                }
+                                                            }}
+                                                            className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors"
+                                                            title="Imprimir el justificante de este reembolso"
+                                                        >
+                                                            <Printer size={14} />
+                                                        </button>
                                                     </div>
                                                 </div>
                                             ))}
@@ -672,6 +760,51 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                         </div>
                                     )}
                                 </div>
+
+                                {/* Facturas simplificadas: el cálculo saca del apartado de portes
+                                    los albaranes con factura simplificada y los lista aparte, con
+                                    su IVA, igual que en la Cuenta del móvil. La ficha no los
+                                    pintaba, así que ese cobro faltaba en el desglose aunque sí
+                                    sumaba en el total (Juan Carlos, 14/09/2026). */}
+                                {driverStats.account?.allSimplifiedInvoiceDetail?.length > 0 && (
+                                    <div className="md:col-span-2">
+                                        <h4 className="font-bold text-slate-800 text-sm mb-3 flex items-center gap-2">
+                                            <FileText size={14} className="text-orange-500" />
+                                            Facturas Simplificadas (con IVA)
+                                            <span className="text-xs bg-orange-50 text-orange-700 px-2 py-0.5 rounded-full ml-auto">
+                                                €{(driverStats.account?.collectedSimplifiedInvoices || 0).toFixed(2)}
+                                            </span>
+                                        </h4>
+                                        <div className="space-y-2">
+                                            {driverStats.account.allSimplifiedInvoiceDetail.map(item => (
+                                                <div
+                                                    key={item.key}
+                                                    className="bg-orange-50/50 border border-orange-100 rounded-lg p-3 text-sm flex gap-2 items-start cursor-pointer hover:bg-orange-100 transition-colors"
+                                                    onClick={() => {
+                                                        const ship = item.original || (shipments || []).find(s => s.id === item.id);
+                                                        if (ship) {
+                                                            setSelectedShipment(ship);
+                                                            setIsReadOnlyModal(true);
+                                                            setIsDetailsModalOpen(true);
+                                                        }
+                                                    }}
+                                                >
+                                                    <div className="mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 bg-orange-400"></div>
+                                                    <div className="flex-1">
+                                                        <div className="flex justify-between items-start mb-1">
+                                                            <span className="font-bold text-slate-700 leading-tight">{item.client || 'Porte'}</span>
+                                                            <span className="font-bold text-orange-600 shrink-0 ml-2">{item.amountDisplay || `€${item.amount}`}</span>
+                                                        </div>
+                                                        {item.id && <div className="text-[10px] text-slate-400 font-mono">ID: {item.id}</div>}
+                                                        <div className="text-[10px] text-slate-500 mt-1 uppercase tracking-wider font-semibold">
+                                                            Base €{item.base} + IVA €{item.iva}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
@@ -823,7 +956,13 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                 </div>
             </div>
 
-            {/* Shipment Details Modal */}
+            {/* Shipment Details Modal.
+                HAB-274, 15 de septiembre de 2026: la ficha abría el albarán sin función
+                de guardar (y con la prop mal escrita, `readOnly`, que el modal no conoce).
+                Se veía el lápiz y todos los controles, pero "Guardar Cambios" no hacía
+                nada: la oficina no podía quitar un cobro marcado por error desde la
+                Cuenta del repartidor, que es justo donde lo ve. Editable si hay con qué
+                guardar; si no, sólo lectura. */}
             {isDetailsModalOpen && selectedShipment && (
                 <ShipmentDetailsModal
                     isOpen={isDetailsModalOpen}
@@ -833,7 +972,10 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                         setIsReadOnlyModal(false);
                     }}
                     shipment={selectedShipment}
-                    readOnly={isReadOnlyModal}
+                    drivers={drivers}
+                    clients={clients}
+                    onUpdate={onUpdateShipment}
+                    isReadOnly={!onUpdateShipment}
                 />
             )}
         </div>

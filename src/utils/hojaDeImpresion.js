@@ -20,9 +20,12 @@ export const PROPORCION_FOLIO = 1.40;
 
 /**
  * CSS de la hoja. `ancho` es el ancho del ticket y `relleno` su margen interior.
+ * `selector` es el de la hoja: `#hoja` cuando la ventana lleva una sola y una
+ * clase (`.hoja`) cuando lleva varias, una por página (los justificantes de
+ * "Imprimir Todos").
  */
-export const estilosDeHoja = ({ ancho = '80mm', relleno = '4px' } = {}) => `
-                    #hoja {
+export const estilosDeHoja = ({ ancho = '80mm', relleno = '4px', selector = '#hoja' } = {}) => `
+                    ${selector} {
                         width: ${ancho};
                         margin: 0 auto;
                         padding: ${relleno};

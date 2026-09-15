@@ -30,6 +30,7 @@ import { generateCashReportPDF } from '../../utils/cashReportPdf';
 import { printShipmentTicket } from '../../utils/printShipment';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { estilosDeHoja, scriptDeAjuste } from '../../utils/hojaDeImpresion';
+import { abrirResumenPorte } from '../../utils/resumenDePorte';
 import { fechaSinHora } from '../../utils/fechaSinHora';
 import { laTablaLlevaParte, faltaElParte } from '../../utils/partesDeBaja';
 import { diasDeVacaciones, explicacionDeLosDias } from '../../utils/vacacionesDelAno';
@@ -3038,26 +3039,90 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         return `${legal.name}${legal.cif}`;
     };
 
-    // Print Receipt Function (with QR code for scanning)
-    const handlePrintReceipt = (collection) => {
+    // Una hoja de justificante de reembolso, con QR para el escáner de la oficina.
+    // Es la misma tanto si se imprime suelto como en "Imprimir Todos".
+    const hojaDelJustificante = (collection) => {
         const legalInfo = getClientCommercialInfo(collection.client);
-        // Extract the shipment ID from collection
         const shipmentId = collection.original?.shipmentId || collection.id?.replace('-reembolso', '') || collection.id || 'N/A';
         // La fecha del albarán, sin hora. Antes salía el reloj del móvil, así que
         // una reimpresión le ponía al papel una fecha distinta a la del envío.
         const fechaDelEnvio = fechaSinHora(collection.date || collection.original?.date);
-        const qrData = `COD:${shipmentId}`;
+        const importe = collection.amount || collection.amountDisplay?.replace('€', '').trim();
+        return `
+                  <div class="hoja"><div class="contenido">
+                    <div class="header">
+                        <div class="header-text">
+                            <h1 class="title">SUMTRANS LOGISTICA</h1>
+                            <p class="subtitle">Justificante de Reembolso</p>
+                        </div>
+                        <div class="qr-box">
+                            <div class="qrcode" data-qr="COD:${shipmentId}"></div>
+                            <p>${shipmentId}</p>
+                        </div>
+                    </div>
+
+                    <div class="details">
+                        <div class="row">
+                            <span class="label">Fecha del envío:</span>
+                            <span>${fechaDelEnvio}</span>
+                        </div>
+                         <div class="row">
+                            <span class="label">ID Envío:</span>
+                            <span>${shipmentId}</span>
+                        </div>
+                        <div class="row">
+                            <span class="label">Cliente:</span>
+                            <span>${legalInfo.name}${legalInfo.cif}</span>
+                        </div>
+                        <div class="row">
+                            <span class="label">Recibe (Remitente):</span>
+                            <span>${getReceiptSenderName(collection)}</span>
+                        </div>
+                         <div class="row">
+                            <span class="label">Concepto:</span>
+                            <span>${collection.type}</span>
+                        </div>
+
+                        <div class="amount">
+                            TOTAL: €${importe}
+                        </div>
+                    </div>
+
+                    <div class="signature-box">
+                        Firma y Sello del Cliente (Remitente)
+                    </div>
+
+                    <div class="footer">
+                        Este documento justifica la entrega del importe recaudado al remitente.
+                    </div>
+                  </div></div>`;
+    };
+
+    // Abre la ventana de impresión con un justificante por hoja.
+    //
+    // "Imprimir Todos" tenía su propia plantilla: una tarjeta rígida de 105x148 mm
+    // impresa a sangre (@page margin 0). Eso sólo cuadra si la impresora imprime
+    // sin márgenes; en cuanto se reserva los suyos, el papel salía descuadrado y
+    // cortado por la izquierda (septiembre 2026), mientras que el justificante
+    // suelto, que se dibuja en una hoja de 80 mm con márgenes y sin tamaño de
+    // papel fijo, se acomodaba al A6 sin problema. Ahora las dos opciones abren
+    // esta misma hoja: el lote es el suelto repetido, con un salto de página entre
+    // uno y otro.
+    const abrirJustificantes = (items, titulo) => {
         const receiptWindow = window.open('', '_blank');
         receiptWindow.document.write(`
             <html>
                 <head>
                     <meta charset="UTF-8" />
                     <meta name="viewport" content="width=device-width, initial-scale=1" />
-                    <title>Justificante de Entrega de Fondos</title>
+                    <title>${titulo}</title>
                     <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"><\/script>
                     <style>
                         body { font-family: 'Arial', sans-serif; margin: 0 auto; }
-${estilosDeHoja()}
+${estilosDeHoja({ selector: '.hoja' })}
+                        /* Cada justificante en su hoja: el salto va delante del segundo en
+                           adelante, así el último no arrastra una página en blanco. */
+                        .hoja + .hoja { page-break-before: always; break-before: page; }
                         /* El QR va arriba, lejos de la firma: abajo el cliente firmaba y sellaba
                            encima y el escáner de la oficina ya no lo leía (HAB-76, septiembre 2026). */
                         .header { display: flex; align-items: center; gap: 10px; border-bottom: 2px solid #333; padding-bottom: 6px; margin-bottom: 10px; }
@@ -3082,53 +3147,7 @@ ${estilosDeHoja()}
                     </style>
                 </head>
                 <body>
-                  <div id="hoja"><div id="contenido">
-                    <div class="header">
-                        <div class="header-text">
-                            <h1 class="title">SUMTRANS LOGISTICA</h1>
-                            <p class="subtitle">Justificante de Reembolso</p>
-                        </div>
-                        <div class="qr-box">
-                            <div id="qrcode"></div>
-                            <p>${shipmentId}</p>
-                        </div>
-                    </div>
-                    
-                    <div class="details">
-                        <div class="row">
-                            <span class="label">Fecha del envío:</span>
-                            <span>${fechaDelEnvio}</span>
-                        </div>
-                         <div class="row">
-                            <span class="label">ID Envío:</span>
-                            <span>${shipmentId}</span>
-                        </div>
-                        <div class="row">
-                            <span class="label">Cliente:</span>
-                            <span>${legalInfo.name}${legalInfo.cif}</span>
-                        </div>
-                        <div class="row">
-                            <span class="label">Recibe (Remitente):</span>
-                            <span>${getReceiptSenderName(collection)}</span>
-                        </div>
-                         <div class="row">
-                            <span class="label">Concepto:</span>
-                            <span>${collection.type}</span>
-                        </div>
-                        
-                        <div class="amount">
-                            TOTAL: €${collection.amount}
-                        </div>
-                    </div>
-
-                    <div class="signature-box">
-                        Firma y Sello del Cliente (Remitente)
-                    </div>
-                    
-                    <div class="footer">
-                        Este documento justifica la entrega del importe recaudado al remitente.
-                    </div>
-                  </div></div>
+${items.map(hojaDelJustificante).join('\n')}
 
                     <div id="no-print-actions" style="margin-top: 30px; text-align: center;">
                         <button onclick="window.close()" style="background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer; width: 100%;">
@@ -3137,14 +3156,16 @@ ${estilosDeHoja()}
                     </div>
 
                     <script>
-${scriptDeAjuste()}
-                        window.onload = function() { 
-                            // 'H' aguanta un 30% del QR estropeado (arruga, tinta) y los
-                            // cuadraditos de 4px siguen siendo legibles en un escaneo pequeño.
-                            var qr = qrcode(0, 'H');
-                            qr.addData('${qrData}');
-                            qr.make();
-                            document.getElementById('qrcode').innerHTML = qr.createImgTag(4, 2);
+${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
+                        window.onload = function() {
+                            document.querySelectorAll('.qrcode').forEach(function(el) {
+                                // 'H' aguanta un 30% del QR estropeado (arruga, tinta) y los
+                                // cuadraditos de 4px siguen siendo legibles en un escaneo pequeño.
+                                var qr = qrcode(0, 'H');
+                                qr.addData(el.getAttribute('data-qr'));
+                                qr.make();
+                                el.innerHTML = qr.createImgTag(4, 2);
+                            });
                             setTimeout(() => {
                                 ajustarAlFolio();
                                 window.print();
@@ -3160,246 +3181,33 @@ ${scriptDeAjuste()}
         receiptWindow.document.close();
     };
 
-    // Print ALL receipts in A6 format (one per page)
+    // Print Receipt Function (with QR code for scanning)
+    const handlePrintReceipt = (collection) => {
+        abrirJustificantes([collection], 'Justificante de Entrega de Fondos');
+    };
+
+    // Todos los justificantes del día de golpe, uno por hoja.
     const handlePrintAllReceipts = (items) => {
         if (!items || items.length === 0) {
             alert('No hay justificantes de reembolso para imprimir.');
             return;
         }
-
-        // Build receipt cards HTML
-        const buildReceiptCard = (item) => {
-            const legalInfo = getClientCommercialInfo(item.client);
-            const shipmentId = item.original?.shipmentId || item.id?.replace('-reembolso', '') || item.id || 'N/A';
-            const qrData = `COD:${shipmentId}`;
-            // La del albarán, como en el justificante suelto: aquí se imprimen de
-            // golpe todos los del día y cada uno lleva la suya, no la de hoy.
-            const fechaDelEnvio = fechaSinHora(item.date || item.original?.date);
-            return `
-                <div class="page">
-                    <div class="receipt-card">
-                        <div class="card-header">
-                            <div class="card-header-text">
-                                <h2>SUMTRANS LOGISTICA</h2>
-                                <p>Justificante de Reembolso</p>
-                            </div>
-                            <div class="card-qr" data-qr="${qrData}" data-label="${shipmentId}"></div>
-                        </div>
-                        <div class="card-details">
-                            <div class="card-row"><span class="lbl">Fecha del envío:</span><span>${fechaDelEnvio}</span></div>
-                            <div class="card-row"><span class="lbl">ID Envío:</span><span class="mono">${shipmentId}</span></div>
-                            <div class="card-row"><span class="lbl">Cliente:</span><span>${legalInfo.name}${legalInfo.cif}</span></div>
-                            <div class="card-row"><span class="lbl">Recibe (Remitente):</span><span>${getReceiptSenderName(item)}</span></div>
-                        </div>
-                        <div class="card-amount">TOTAL: €${item.amount || item.amountDisplay?.replace('€', '').trim()}</div>
-                        <div class="card-bottom">
-                            <div class="card-signature">
-                                <div class="sig-line"></div>
-                                <span>Firma y Sello</span>
-                            </div>
-                        </div>
-                        <p class="card-footer">Justifica la entrega del importe recaudado al remitente.</p>
-                    </div>
-                </div>
-            `;
-        };
-
-        const pagesHtml = items.map(item => buildReceiptCard(item)).join('');
-
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(`
-            <html>
-            <head>
-                <meta charset="UTF-8" />
-                <meta name="viewport" content="width=device-width, initial-scale=1" />
-                <title>Justificantes de Reembolso (A6)</title>
-                <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"><\/script>
-                <style>
-                    * { margin: 0; padding: 0; box-sizing: border-box; }
-                    body { font-family: Arial, sans-serif; background: #f0f0f0; }
-                    .page {
-                        width: 105mm; height: 148mm; /* A6 Size */
-                        background: white;
-                        margin: 0 auto 10mm auto;
-                        padding: 4mm;
-                        display: flex;
-                        flex-direction: column;
-                        page-break-after: always;
-                        box-shadow: 0 0 5px rgba(0,0,0,0.1);
-                        overflow: hidden;
-                    }
-                    .page:last-child { page-break-after: auto; }
-                    .receipt-card {
-                        flex: 1;
-                        border: 2px dashed #ccc;
-                        padding: 6mm;
-                        display: flex; flex-direction: column;
-                        justify-content: space-between;
-                    }
-                    /* QR arriba, como en el justificante suelto: abajo la firma y el sello lo tapaban. */
-                    .card-header { display: flex; align-items: center; gap: 10px; border-bottom: 2px solid #333; padding-bottom: 8px; margin-bottom: 12px; }
-                    .card-header-text { flex: 1; min-width: 0; }
-                    .card-header h2 { font-size: 18px; margin: 0; font-weight: bold; }
-                    .card-header p { font-size: 12px; color: #666; margin: 4px 0 0; }
-                    .card-details { margin-bottom: 10px; }
-                    .card-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 8px; }
-                    .card-row span:last-child { text-align: right; word-break: break-word; }
-                    .lbl { font-weight: bold; flex-shrink: 0; }
-                    .mono { font-family: monospace; font-weight: bold; font-size: 14px; }
-                    .card-amount { font-size: 24px; font-weight: bold; text-align: right; border-top: 1px dashed #aaa; padding-top: 10px; margin-bottom: 12px; }
-                    .card-bottom { margin-top: auto; }
-                    .card-signature { text-align: center; }
-                    .sig-line { border-top: 1px solid #000; margin-bottom: 4px; margin-top: 40px; }
-                    .card-signature span { font-size: 10px; }
-                    .card-qr { flex-shrink: 0; text-align: center; }
-                    .card-qr img { display: block; }
-                    .card-qr p { font-size: 10px; color: #999; margin-top: 2px; }
-                    .card-footer { font-size: 10px; color: #999; text-align: center; margin-top: 12px; }
-                    .no-print { text-align: center; padding: 20px; }
-                    
-                    @page { margin: 0; }
-                    @media print {
-                        body { background: white; margin: 0; padding: 0; }
-                        .page { 
-                            margin: 0; 
-                            padding: 4mm;
-                            box-shadow: none; 
-                            width: 105mm; 
-                            height: 148mm; 
-                            page-break-after: always;
-                        }
-                        .no-print { display: none !important; }
-                    }
-                </style>
-            </head>
-            <body>
-                ${pagesHtml}
-                <div class="no-print">
-                    <button onclick="window.close()" style="background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer;">
-                        VOLVER A LA APP
-                    </button>
-                </div>
-                <script>
-${scriptDeAjuste({ hoja: '.page', contenido: '.receipt-card', fijarAlto: false })}
-                    window.onload = function() {
-                        document.querySelectorAll('.card-qr').forEach(function(el) {
-                            var data = el.getAttribute('data-qr');
-                            var label = el.getAttribute('data-label');
-                            if (data) {
-                                // Igual que el suelto: 'H' aguanta arrugas y tinta encima.
-                                var qr = qrcode(0, 'H');
-                                qr.addData(data);
-                                qr.make();
-                                el.innerHTML = qr.createImgTag(4, 2) + '<p>' + label + '</p>';
-                            }
-                        });
-                        ajustarAlFolio();
-                        setTimeout(function() { window.print(); }, 600);
-                    };
-                    window.onafterprint = function() { setTimeout(function() { window.close(); }, 300); };
-                <\/script>
-            </body>
-            </html>
-        `);
-        printWindow.document.close();
+        abrirJustificantes(items, 'Justificantes de Reembolso');
     };
-    // Print Porte (Shipping Fees) Report - Only cash collections (Clientes Habituales / new clients)
+    // El ticket "Resumen de Porte" del día. La plantilla vive en
+    // utils/resumenDePorte.js porque la oficina imprime el mismo ticket desde
+    // la ficha del conductor: así los dos papeles salen iguales.
     const handlePrintPorte = () => {
-        const porteRows = allPorteDetail.map(item => {
-            const senderLegal = getClientLegalInfo(item.sender).name;
-            const receiverLegal = getClientLegalInfo(item.receiver).name;
-            
-            const displaySender = item.payer === 'sender' ? `<u><b>${senderLegal}</b></u>` : senderLegal;
-            const displayReceiver = item.payer === 'receiver' ? `<u><b>${receiverLegal}</b></u>` : receiverLegal;
-
-            return `
-            <tr>
-                <td>${fechaSinHora(item.date)} ${displaySender} - ${displayReceiver}</td>
-                <td>${item.sourceTitle}</td>
-                <td style="text-align:right">€${parseAmount(item.amount).toFixed(2)}</td>
-            </tr>
-        `;
-        }).join('');
-
-        const porteWindow = window.open('', '_blank');
-        porteWindow.document.write(`
-                <html>
-                <head>
-                    <meta charset="UTF-8" />
-                    <meta name="viewport" content="width=device-width, initial-scale=1" />
-                    <title>Resumen Porte del Día</title>
-                    <style>
-                        body { font-family: 'Arial', sans-serif; margin: 0 auto; }
-${estilosDeHoja({ ancho: '105mm', relleno: '5mm' })}
-                        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 8px; margin-bottom: 10px; }
-                        .title { font-size: 14px; font-weight: bold; margin: 0; }
-                        .subtitle { font-size: 10px; color: #666; }
-                        .info { font-size: 11px; margin-bottom: 6px; }
-                        table { width: 100%; font-size: 10px; border-collapse: collapse; }
-                        th { text-align: left; border-bottom: 1px solid #ccc; padding: 2px 0; }
-                        td { padding: 1px 0; border-bottom: 1px dashed #eee; line-height: 1.15; }
-                        .total { font-size: 14px; font-weight: bold; text-align: right; margin-top: 6px; border-top: 2px solid #333; padding-top: 6px; }
-                        .footer { margin-top: 8px; font-size: 8px; text-align: center; color: #888; }
-                        @media print {
-                            body { width: 105mm; }
-                            @page { margin: 0; }
-                            button, #no-print-actions { display: none !important; }
-                        }
-                    </style>
-                </head>
-                <body>
-                  <div id="hoja"><div id="contenido">
-                    <div class="header">
-                        <h1 class="title">Resumen de Porte</h1>
-                        <p class="subtitle">Solo Clientes Habituales</p>
-                    </div>
-                    
-                    <div class="info">
-                        <strong>Conductor:</strong> ${(() => { const d = (drivers || []).find(d => Number(d.id) === Number(currentDriverId)); return d ? d.name : 'Conductor'; })()} (DRV-${currentDriverId})<br/>
-                        <strong>Fecha:</strong> ${new Date().toLocaleDateString()}
-                    </div>
-
-                    <table>
-                        <thead>
-                            <tr><th>Cliente</th><th>Concepto</th><th>Importe</th></tr>
-                        </thead>
-                        <tbody>
-                            ${porteRows || '<tr><td colspan="3" style="text-align:center">Sin cobros de porte hoy</td></tr>'}
-                        </tbody>
-                    </table>
-                    
-                    <div class="total">
-                        TOTAL PORTE: €${collectedPorte.toFixed(2)}
-                    </div>
-                    
-                    <div class="footer">
-                        * Solo incluye clientes cliente habitual / contado<br/>
-                        Generado: ${new Date().toLocaleString()}
-                    </div>
-                  </div></div>
-
-                    <div id="no-print-actions" style="margin-top: 30px; text-align: center;">
-                        <button onclick="window.close()" style="background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; font-size: 16px; cursor: pointer; width: 100%;">
-                            VOLVER A LA APP
-                        </button>
-                    </div>
-
-                    <script>
-${scriptDeAjuste()}
-                        window.onload = function() { 
-                            setTimeout(() => {
-                                ajustarAlFolio();
-                                window.print();
-                            }, 500);
-                        }
-                        window.onafterprint = function() {
-                            setTimeout(() => window.close(), 300);
-                        };
-                    </script>
-                </body>
-                </html>
-        `);
-        porteWindow.document.close();
+        const d = (drivers || []).find(d => Number(d.id) === Number(currentDriverId));
+        const abierto = abrirResumenPorte(allPorteDetail, {
+            driver: { name: d ? d.name : 'Conductor', id: currentDriverId },
+            fecha: new Date(),
+            clients,
+            total: collectedPorte,
+            facturasSimplificadas: allSimplifiedInvoiceDetail,
+            totalFacturas: collectedSimplifiedInvoices
+        });
+        if (!abierto) alert('El navegador ha bloqueado la ventana de impresión. Permite las ventanas emergentes para esta página.');
     };
 
     // --- OFFLINE PERSISTENCE & SYNC LOGIC ---
@@ -6229,7 +6037,7 @@ ${scriptDeAjuste()}
                                             <button
                                                 onClick={() => handlePrintAllReceipts(allReimbursementsDetail)}
                                                 className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-bold uppercase hover:bg-indigo-100 transition-colors"
-                                                title="Imprimir todos los justificantes (4 por folio)"
+                                                title="Imprimir todos los justificantes (uno por hoja)"
                                             >
                                                 <Printer size={12} />
                                                 Imprimir Todos ({allReimbursementsDetail.length})
