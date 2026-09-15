@@ -2,10 +2,14 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 
 const rpc = vi.fn();
 const insert = vi.fn(); // recibe las filas; devuelve { data, error } como PostgREST
+const leer = vi.fn();   // la fila que ya hay con ese id: { data, error } de maybeSingle
 vi.mock('../lib/supabase', () => ({
     supabase: {
         rpc: (...args) => rpc(...args),
-        from: () => ({ insert: (filas) => ({ select: () => insert(filas) }) })
+        from: () => ({
+            insert: (filas) => ({ select: () => insert(filas) }),
+            select: () => ({ eq: (columna, valor) => ({ maybeSingle: () => leer(columna, valor) }) })
+        })
     }
 }));
 
@@ -22,6 +26,8 @@ beforeAll(async () => {
 beforeEach(() => {
     rpc.mockReset();
     insert.mockReset();
+    leer.mockReset();
+    leer.mockResolvedValue({ data: null, error: null });
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
@@ -188,5 +194,83 @@ describe('darDeAltaSinPisar', () => {
         expect(r.error).toBe(REPETIDO);
         expect(r.data).toBeNull();
         expect(insert).toHaveBeenCalledTimes(2);
+    });
+
+    // ── La fila que choca es la suya ──
+    //
+    // 15/09/2026: una recogida hecha por el repartidor salió como SUM-1314 y
+    // SUM-1315, gemelos. Cuando el alta llega a la base de datos pero la
+    // respuesta se pierde por el camino, la app la da por fallida y la encola;
+    // al sincronizar, el insert choca con la fila que ya había (la suya) y
+    // hasta ahora se pedía otro número y se grababa el gemelo.
+    const MIA = { ...FILA, data: { ...FILA.data, createdAt: '2026-09-15T09:12:33.418Z', createdById: 7 } };
+
+    it('si la fila que ya hay es esta misma (mismo alta, mismo creador), la da por guardada sin pedir otro número', async () => {
+        insert.mockResolvedValue({ data: null, error: REPETIDO });
+        leer.mockResolvedValue({ data: { id: 'SUM-518', status: 'Pendiente de asignar', data: { ...MIA.data } }, error: null });
+
+        const r = await darDeAltaSinPisar(MIA);
+
+        expect(r.error).toBeNull();
+        expect(r.id).toBe('SUM-518');
+        expect(r.renumerado).toBe(false);
+        expect(r.yaEstaba).toBe(true);
+        expect(r.data[0].data.client).toBe('Hijos de Lastre');
+        expect(insert).toHaveBeenCalledTimes(1);
+        expect(rpc).not.toHaveBeenCalled();
+        expect(leer).toHaveBeenCalledWith('id', 'SUM-518');
+    });
+
+    it('si la fila que hay es de otro alta (otro createdAt), sigue pidiendo otro número', async () => {
+        insert
+            .mockResolvedValueOnce({ data: null, error: REPETIDO })
+            .mockResolvedValueOnce({ data: [{ id: 'SUM-556' }], error: null });
+        leer.mockResolvedValue({ data: { id: 'SUM-518', data: { ...MIA.data, createdAt: '2026-09-15T09:12:34.000Z' } }, error: null });
+        rpc.mockResolvedValue({ data: 556, error: null });
+
+        const r = await darDeAltaSinPisar(MIA);
+
+        expect(r.id).toBe('SUM-556');
+        expect(r.renumerado).toBe(true);
+        expect(r.yaEstaba).toBeUndefined();
+    });
+
+    it('mismo createdAt pero otro creador tampoco vale: se renumera', async () => {
+        insert
+            .mockResolvedValueOnce({ data: null, error: REPETIDO })
+            .mockResolvedValueOnce({ data: [{ id: 'SUM-556' }], error: null });
+        leer.mockResolvedValue({ data: { id: 'SUM-518', data: { ...MIA.data, createdById: 9 } }, error: null });
+        rpc.mockResolvedValue({ data: 556, error: null });
+
+        const r = await darDeAltaSinPisar(MIA);
+
+        expect(r.id).toBe('SUM-556');
+        expect(r.renumerado).toBe(true);
+    });
+
+    it('sin createdAt no hay forma de reconocerla: ni se consulta, se renumera como siempre', async () => {
+        insert
+            .mockResolvedValueOnce({ data: null, error: REPETIDO })
+            .mockResolvedValueOnce({ data: [{ id: 'SUM-556' }], error: null });
+        rpc.mockResolvedValue({ data: 556, error: null });
+
+        const r = await darDeAltaSinPisar(FILA);
+
+        expect(r.id).toBe('SUM-556');
+        expect(leer).not.toHaveBeenCalled();
+    });
+
+    it('si no puede leer la fila (sin permiso o sin red), no se fía y renumera', async () => {
+        insert
+            .mockResolvedValueOnce({ data: null, error: REPETIDO })
+            .mockResolvedValueOnce({ data: [{ id: 'SUM-556' }], error: null });
+        leer.mockRejectedValue(new TypeError('Load failed'));
+        rpc.mockResolvedValue({ data: 556, error: null });
+
+        const r = await darDeAltaSinPisar(MIA);
+
+        expect(r.error).toBeNull();
+        expect(r.id).toBe('SUM-556');
+        expect(r.renumerado).toBe(true);
     });
 });

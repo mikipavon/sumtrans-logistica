@@ -41,7 +41,7 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { agregarReceptor, leerReceptores, direccionPorNombre, direccionDeLaChuleta } from '../../utils/receptoresHabituales';
-import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
+import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
 import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, motivoSinJornada, puedeFicharAutomaticamente, textoSinJornada, MOTIVOS_BLOQUEO } from '../../utils/normasFichaje';
 import { esElMismoPueblo, normalizarPueblo, puebloDeRutaParaEnvio } from '../../utils/townMatch';
@@ -3661,10 +3661,9 @@ ${scriptDeAjuste()}
             .filter(s => {
                 if (!s || s.status !== 'Entregado') return false;
                 if (s.type === 'Recibo') return false; // No mostrar en el historial de entregas
-                // El conductor puede ser el asignado O el que recogió los bultos
-                const isMyDelivery = Number(s.assignedDriverId) === Number(currentDriverId) 
-                    || Number(s.pickedUpById) === Number(currentDriverId);
-                if (!isMyDelivery) return false;
+                // Esta pestaña es lo que entrega cada uno: manda quién lo entregó, no
+                // quién lo tenía asignado ni quién recogió los bultos (ver shipmentUtils).
+                if (!loEntregoElConductor(s, currentDriverId)) return false;
                 if (!s.updatedAt) return false;
                 
                 // Usamos deliveredAt si existe. Si es un envío antiguo, fallback a updatedAt

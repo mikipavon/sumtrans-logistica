@@ -75,6 +75,25 @@ export const estaEnElRepartoDe = (shipment, driverId) => {
 };
 
 /**
+ * Si un albarán entregado lo entregó ESTE conductor.
+ *
+ * La pestaña Entregas es lo que cada uno entrega, no lo que tocó. Antes contaba
+ * también al que había recogido los bultos: SUM-399 lo recogió Antonio y lo
+ * entregó Javito, y le salía a los dos entre sus entregas del día (15/09/2026).
+ * Manda `deliveredById`, que se sella al entregar; los albaranes antiguos que no
+ * lo tienen caen al conductor asignado, igual que hace el listado de la oficina.
+ */
+export const loEntregoElConductor = (shipment, driverId) => {
+    if (!shipment || shipment.status !== 'Entregado') return false;
+
+    const hay = (id) => id !== null && id !== undefined && id !== '';
+    if (!hay(driverId)) return false;
+
+    const quien = hay(shipment.deliveredById) ? shipment.deliveredById : shipment.assignedDriverId;
+    return hay(quien) && Number(quien) === Number(driverId);
+};
+
+/**
  * La población donde el conductor para de verdad.
  *
  * En una recogida el sitio al que va es el ORIGEN; mirando primero el destino, las

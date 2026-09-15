@@ -209,6 +209,26 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     // Merchandise Photo State
     const [merchandisePhoto, setMerchandisePhoto] = useState(null);
     const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+    // Freno contra la doble pulsación de «Generar Albarán» (y de «Cobrado» en el
+    // aviso de cobro). Entre el toque y el guardado pasan la subida de la foto y
+    // la reserva del número en el servidor; el botón seguía vivo en ese rato y un
+    // segundo toque arrancaba otro guardado entero, que reservaba OTRO número y
+    // salía como un albarán gemelo (15/09/2026: SUM-1314 y SUM-1315, la misma
+    // recogida). El ref es el que decide, porque el estado tarda un render en
+    // llegar; el estado sólo apaga los botones.
+    const guardandoRef = useRef(false);
+    const [guardando, setGuardando] = useState(false);
+    const sinRepetir = async (trabajo) => {
+        if (guardandoRef.current) return;
+        guardandoRef.current = true;
+        setGuardando(true);
+        try {
+            await trabajo();
+        } finally {
+            guardandoRef.current = false;
+            setGuardando(false);
+        }
+    };
     const [validationFailed, setValidationFailed] = useState(false);
     const [porteMissing, setPorteMissing] = useState(false); // Se intentó guardar sin elegir Pagado/Debido
     const fileInputRef = useRef(null);
@@ -955,9 +975,12 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         saveFormToSession(foto); // Que la foto no se pierda si cae la app después
     };
 
-    const handleInitialSubmit = async (e) => {
+    const handleInitialSubmit = (e) => {
         e.preventDefault();
+        return sinRepetir(altaInicial);
+    };
 
+    const altaInicial = async () => {
         // El porte decide QUIÉN PAGA: la tarifa, la serie (SUM/HAB) y el cobro en destino
         // salen de aquí. Antes venía premarcado "Pagado" y se colaban albaranes sin
         // decidirlo. Ahora hay que elegirlo a mano.
@@ -2097,7 +2120,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
 
                         <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 sm:rounded-b-2xl" id="shipment-form-save-btn">
                             <button type="button" onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors text-sm">Cancelar</button>
-                            <button type="submit" className="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 text-sm"><Package size={18} />Generar Albarán</button>
+                            <button type="submit" disabled={guardando} className="flex-[2] bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 text-sm disabled:opacity-60 disabled:cursor-wait"><Package size={18} />{guardando ? 'Guardando...' : 'Generar Albarán'}</button>
                     </div>
                 </form>
             </div>
@@ -2232,8 +2255,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                     </div>
 
                     <div className="grid grid-cols-2 gap-3 pt-2">
-                        <button type="button" onClick={() => { setSelectedDebtIds([]); finalizeSubmit(pendingSubmitData, 'Pending'); }} className="py-3 px-4 bg-white border-2 border-slate-200 text-slate-600 font-bold rounded-xl text-xs hover:bg-slate-50 transition-colors">Cobrar Más Tarde</button>
-                        <button type="button" onClick={() => finalizeSubmit(pendingSubmitData, 'Paid')} className="py-3 px-4 bg-green-600 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-green-500/20 hover:bg-green-700 transition-colors"><Check size={18} />Cobrado</button>
+                        <button type="button" disabled={guardando} onClick={() => sinRepetir(() => { setSelectedDebtIds([]); return finalizeSubmit(pendingSubmitData, 'Pending'); })} className="py-3 px-4 bg-white border-2 border-slate-200 text-slate-600 font-bold rounded-xl text-xs hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-wait">Cobrar Más Tarde</button>
+                        <button type="button" disabled={guardando} onClick={() => sinRepetir(() => finalizeSubmit(pendingSubmitData, 'Paid'))} className="py-3 px-4 bg-green-600 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-green-500/20 hover:bg-green-700 transition-colors disabled:opacity-60 disabled:cursor-wait"><Check size={18} />{guardando ? 'Guardando...' : 'Cobrado'}</button>
                     </div>
 
                     {/* Botón Factura Simplificada (Disimulado) */}
@@ -2241,6 +2264,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                         <div className="pt-3 text-center">
                             <button
                                 type="button"
+                                disabled={guardando}
                                 onClick={() => {
                                     const totalConIva = +(grandTotal * 1.21).toFixed(2);
                                     // 1. Generar e imprimir la factura simplificada
@@ -2252,14 +2276,14 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                         articles: selectedArticles.map(a => ({ name: a.name, quantity: a.quantity, price: a.unitPrice }))
                                     });
                                     // 2. Cobrar con el importe IVA incluido y marcar como factura simplificada
-                                    finalizeSubmit({
+                                    sinRepetir(() => finalizeSubmit({
                                         ...pendingSubmitData,
                                         amount: totalConIva,
                                         customAmount: totalConIva,
                                         hasSimplifiedInvoice: true,
                                         simplifiedInvoiceAmount: grandTotal,
                                         simplifiedInvoicePaid: true
-                                    }, 'Paid');
+                                    }, 'Paid'));
                                 }}
                                 className="text-[10px] text-slate-400 hover:text-slate-600 underline font-medium transition-colors"
                             >

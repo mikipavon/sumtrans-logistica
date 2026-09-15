@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador } from './shipmentUtils';
+import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -135,6 +135,48 @@ describe('estaEnElRepartoDe', () => {
         const albaran = { id: 'SUM-139', status: 'En reparto', assignedDriverId: '3' };
 
         expect(estaEnElRepartoDe(albaran, JUAN)).toBe(true);
+    });
+});
+
+describe('loEntregoElConductor', () => {
+    // El caso real (15/09/2026): Antonio recoge SUM-399 en el cliente y lo escanea
+    // (pickedUpById), Javito lo lleva y lo entrega (deliveredById). En Entregas
+    // sólo tiene que salirle a Javito.
+    const ANTONIO = 21;
+    const JAVITO = 22;
+    const entregado = { id: 'SUM-399', status: 'Entregado', assignedDriverId: JAVITO, pickedUpById: ANTONIO, deliveredById: JAVITO };
+
+    it('le sale al que lo entregó, no al que lo recogió', () => {
+        expect(loEntregoElConductor(entregado, JAVITO)).toBe(true);
+        expect(loEntregoElConductor(entregado, ANTONIO)).toBe(false);
+    });
+
+    it('quien cubre la ruta de otro se lleva la entrega, aunque el asignado sea el otro', () => {
+        const cubierto = { ...entregado, assignedDriverId: ANTONIO, deliveredById: JAVITO };
+
+        expect(loEntregoElConductor(cubierto, JAVITO)).toBe(true);
+        expect(loEntregoElConductor(cubierto, ANTONIO)).toBe(false);
+    });
+
+    it('un albarán antiguo sin deliveredById cae al conductor asignado', () => {
+        const antiguo = { id: 'SUM-100', status: 'Entregado', assignedDriverId: JAVITO, pickedUpById: ANTONIO };
+
+        expect(loEntregoElConductor(antiguo, JAVITO)).toBe(true);
+        expect(loEntregoElConductor(antiguo, ANTONIO)).toBe(false);
+    });
+
+    it('lo que no está entregado no es entrega de nadie', () => {
+        expect(loEntregoElConductor({ ...entregado, status: 'En reparto' }, JAVITO)).toBe(false);
+    });
+
+    it('sin ids no se cuela en la lista de nadie', () => {
+        expect(loEntregoElConductor({ id: 'SUM-1', status: 'Entregado' }, JAVITO)).toBe(false);
+        expect(loEntregoElConductor(entregado, null)).toBe(false);
+        expect(loEntregoElConductor(null, JAVITO)).toBe(false);
+    });
+
+    it('acepta el id como texto, que es como llega a veces del móvil', () => {
+        expect(loEntregoElConductor({ ...entregado, deliveredById: '22' }, JAVITO)).toBe(true);
     });
 });
 

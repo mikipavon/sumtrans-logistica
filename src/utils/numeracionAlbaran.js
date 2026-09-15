@@ -87,6 +87,38 @@ export const reservarNumerosAlbaran = async (prefijo, cantidad = 1, { enviosLoca
 export const CODIGO_ID_REPETIDO = '23505';
 
 /**
+ * Si ya hay una fila con este id, ¿es ESTA misma alta y no otra que ocupó el número?
+ *
+ * Pasa cuando el insert llega a la base de datos pero la respuesta se pierde por
+ * el camino (cobertura mala): la app lo da por fallido, lo encola, y al
+ * sincronizar el insert choca con su propia fila. Hasta el 15/09/2026 aquí se
+ * pedía otro número y se grababa un gemelo (SUM-1314 y SUM-1315, la misma
+ * recogida). Se reconoce por el milisegundo del alta (createdAt) y el creador.
+ * Sin createdAt no hay forma de saberlo y no se consulta; si la consulta falla o
+ * la fila no se puede leer, se devuelve null y se renumera como siempre.
+ *
+ * @returns {Promise<object|null>} La fila tal como está grabada, o null.
+ */
+const filaYaGrabada = async (fila) => {
+    const marca = fila?.data?.createdAt;
+    if (!marca) return null;
+    try {
+        const { data: existente, error } = await supabase
+            .from('shipments')
+            .select('*')
+            .eq('id', fila.id)
+            .maybeSingle();
+        if (error || !existente) return null;
+        const suya = existente.data || {};
+        const mismoCreador = (suya.createdById ?? null) === (fila.data.createdById ?? null);
+        return (suya.createdAt === marca && mismoCreador) ? existente : null;
+    } catch (err) {
+        console.warn(`[numeracionAlbaran] No se pudo comprobar si ${fila.id} ya era nuestro:`, err);
+        return null;
+    }
+};
+
+/**
  * Da de alta una fila de `shipments` sin pisar ninguna que ya exista.
  *
  * ── Por qué no vale `upsert` ─────────────────────────────────────────────────────
@@ -108,6 +140,7 @@ export const CODIGO_ID_REPETIDO = '23505';
  * @returns {Promise<{data: Array|null, error: object|null, id: string, renumerado: boolean}>}
  *          `id` es el que ha quedado grabado; `renumerado` avisa de que no es el
  *          que traía la fila, para que quien llama actualice su copia.
+ *          `yaEstaba` dice que la fila ya estaba grabada de un intento anterior.
  */
 export const darDeAltaSinPisar = async (fila, { enviosLocales = [], intentos = 3 } = {}) => {
     let actual = { ...fila };
@@ -122,6 +155,13 @@ export const darDeAltaSinPisar = async (fila, { enviosLocales = [], intentos = 3
             return { data: null, error, id: actual.id, renumerado: false };
         }
         ultimoError = error;
+
+        // ¿La fila que choca es esta misma, grabada en un intento anterior cuya
+        // respuesta no llegó? Entonces ya está hecho: no se pide otro número.
+        const grabada = await filaYaGrabada(actual);
+        if (grabada) {
+            return { data: [grabada], error: null, id: actual.id, renumerado: actual.id !== fila.id, yaEstaba: true };
+        }
 
         const m = String(actual.id || '').match(/^([A-Z]+)-(\d+)$/i);
         if (!m) break; // Sin serie correlativa no hay "siguiente número" que probar
