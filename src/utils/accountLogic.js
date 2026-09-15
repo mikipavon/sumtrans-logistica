@@ -157,6 +157,16 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     const fechaCobroPorte = (s) => s.portePaidAt || s.paidAt;
     const fechaCobroReembolso = (s) => s.codPaidAt || s.paidAt;
 
+    // EL DÍA DEL COBRO MANDA.
+    // Un porte cobrado hoy salía también en la caja de AYER si el albarán se había
+    // dado de alta (o entregado) ayer: la fecha del albarán entraba como alternativa
+    // aunque el cobro ya tuviera la suya (caso ECUGENIL HAB-304 de Juan Carlos, 7 €
+    // en dos cierres). La fecha del albarán o de la entrega es solo el respaldo
+    // para los albaranes de antes del cambio, que no guardaron ninguna fecha de cobro.
+    const cobradoElDia = (s, fechaRespaldo) => (
+        fechaCobroPorte(s) ? isToday(fechaCobroPorte(s), targetDate) : isToday(fechaRespaldo, targetDate)
+    );
+
     // 1. Cobros en Origen (Porte Pagado hoy)
     const prepaidCollections = (allShipments || []).filter(s => {
         if (!s || s.porteType !== 'Pagado' || !s.portePaid) return false;
@@ -174,7 +184,7 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         
         if (!isMyResponsibility) return false;
         // BUG FIX: removed isToday(s.updatedAt) to prevent old prepaid shipments from reappearing when unassigned or edited today.
-        if (!isToday(fechaCobroPorte(s), targetDate) && !isToday(s.date, targetDate)) return false;
+        if (!cobradoElDia(s, s.date)) return false;
         return isCashClient(s.client, clients, s.billingType);
     });
 
@@ -194,7 +204,7 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
         // Día del cobro DEL PORTE o, si falta, día de la entrega. Nunca updatedAt: un
         // retoque de la oficina al albarán hoy hacía reaparecer en la Cuenta de
         // hoy un porte Debido cobrado ayer (mismo fallo que los reembolsos).
-        if (!isToday(fechaCobroPorte(s), targetDate) && !isToday(s.deliveredAt, targetDate)) return false;
+        if (!cobradoElDia(s, s.deliveredAt)) return false;
         // Para Porte Debido, el que paga es el DESTINATARIO, por tanto miramos si el destino es contado
         return isCashClient(s.destinationName || s.client, clients, s.destinationBillingType);
     });
@@ -445,7 +455,7 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     const simplifiedInvoices = (allShipments || []).filter(s => {
         if (!s || !s.hasSimplifiedInvoice || !s.simplifiedInvoicePaid) return false;
         // Evitar que s.updatedAt cause falsos positivos al desasignar
-        if (!isToday(fechaCobroPorte(s), targetDate) && !isToday(s.date, targetDate)) return false;
+        if (!cobradoElDia(s, s.date)) return false;
 
         let isMyResponsibility = false;
         if (s.porteCollectedById) {

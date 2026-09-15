@@ -660,3 +660,48 @@ describe('la oficina corrige el precio despues del cobro', () => {
         expect(result.allPorteDetail[0].amount).toBe('10.00');
     });
 });
+
+// ── Un porte cobrado hoy no puede salir en la caja de ayer ───────────────────
+// La fecha del albarán (o de la entrega) entraba como alternativa aunque el cobro
+// ya tuviera la suya: ECUGENIL HAB-304 salía en el cierre de ayer y en el de hoy.
+
+describe('un porte cobrado hoy sale solo en la Cuenta de hoy', () => {
+    const driverId = 1;
+    const hoy = new Date();
+    const ayer = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d; })();
+    const clients = [{ name: 'ECUGENIL', billingType: 'Clientes Habituales' }];
+
+    const cuenta = (envio, dia) => calculateDailyAccount({
+        allShipments: [envio], driverId, clients, collectedCollections: [], targetDate: dia
+    });
+
+    it('Porte Pagado dado de alta ayer y cobrado hoy: no sale ayer', () => {
+        const envio = { id: 'HAB-304', porteType: 'Pagado', portePaid: true, amount: '7.00', client: 'ECUGENIL',
+            assignedDriverId: driverId, date: ayer.toISOString(), portePaidAt: hoy.toISOString() };
+        expect(cuenta(envio, ayer).collectedPorte).toBe(0);
+        expect(cuenta(envio, hoy).collectedPorte).toBe(7);
+    });
+
+    it('Porte Debido entregado ayer y cobrado hoy: no sale ayer', () => {
+        const envio = { id: 'HAB-305', porteType: 'Debido', status: 'Entregado', portePaid: true, amount: '9.00',
+            client: 'Remitente', destinationName: 'ECUGENIL', assignedDriverId: driverId,
+            deliveredAt: ayer.toISOString(), portePaidAt: hoy.toISOString() };
+        expect(cuenta(envio, ayer).collectedPorte).toBe(0);
+        expect(cuenta(envio, hoy).collectedPorte).toBe(9);
+    });
+
+    it('factura simplificada de un albarán de ayer cobrada hoy: no sale ayer', () => {
+        const envio = { id: 'HAB-306', porteType: 'Pagado', hasSimplifiedInvoice: true, simplifiedInvoicePaid: true,
+            simplifiedInvoiceAmount: '12.10', client: 'ECUGENIL', assignedDriverId: driverId,
+            date: ayer.toISOString(), portePaidAt: hoy.toISOString() };
+        expect(cuenta(envio, ayer).collectedSimplifiedInvoices).toBe(0);
+        expect(cuenta(envio, hoy).collectedSimplifiedInvoices).toBe(12.1);
+    });
+
+    it('albarán antiguo sin fecha de cobro: sigue saliendo el día del albarán', () => {
+        const envio = { id: 'HAB-1', porteType: 'Pagado', portePaid: true, amount: '7.00', client: 'ECUGENIL',
+            assignedDriverId: driverId, date: ayer.toISOString() };
+        expect(cuenta(envio, ayer).collectedPorte).toBe(7);
+        expect(cuenta(envio, hoy).collectedPorte).toBe(0);
+    });
+});
