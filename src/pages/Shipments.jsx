@@ -4,8 +4,12 @@ import { useState, useMemo, useEffect } from 'react';
 import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
-import { getPackagesCount, intervinoConductor, importeParaMostrar, poblacionYCalle, fichaDelPagador } from '../utils/shipmentUtils';
+import { getPackagesCount, intervinoConductor, importeParaMostrar, poblacionYCalle, fichaDelPagador, quienPagaElPorte } from '../utils/shipmentUtils';
 import { coincideBusqueda, coincideEnCampos } from '../utils/busqueda';
+import { compartirAlbaranPorWhatsApp } from '../utils/mensajeJustificante';
+import { ladosDelEnvio } from '../utils/telefonosDelEnvio';
+import ElegirWhatsAppModal, { PUNTUAL } from '../components/shipments/ElegirWhatsAppModal';
+import { guardarTelefonoTecleado } from '../utils/guardarTelefonoTecleado';
 import { SIN_FILTRO, BAREMO_1, BAREMO_2, TIPOS_DE_CLIENTE, coincideCliente, filtroPoblacion, filtroTipoDeCliente, opcionesDeClientes, opcionesDePoblaciones } from '../utils/filtrosEnvios';
 import FiltroClienteBuscable from '../components/shipments/FiltroClienteBuscable';
 import ImportExcelShipments from '../components/clients/ImportExcelShipments';
@@ -41,6 +45,55 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     // Details Modal State
     const [selectedShipment, setSelectedShipment] = useState(null);
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
+
+    // Justificante por WhatsApp desde el detalle del albarán: la misma ventana que
+    // el repartidor (las dos puntas, y "otro número" diciendo de quién es) y la
+    // misma regla para el número tecleado: si es del remitente o del destinatario,
+    // a su ficha (o ficha nueva) y al albarán si venía sin teléfono; si es "sólo
+    // este envío", no se guarda. Lo distinto es el orden: la oficina abre el chat
+    // en otra pestaña, así que la app sigue viva y puede guardar detrás sin hacer
+    // esperar a nadie.
+    const [whatsappPrompt, setWhatsappPrompt] = useState(null);
+    const abrirWhatsappPrompt = (envio) => {
+        if (!envio) return;
+        const lados = ladosDelEnvio(envio, clients);
+        setWhatsappPrompt({
+            shipment: envio,
+            phone: '',
+            lados,
+            // Sin ningún móvil que ofrecer no hay nada que elegir: directo al teclado.
+            editando: lados.every(l => l.moviles.length === 0),
+            // Sin nada preseleccionado: de quién es el número se marca a cada vez.
+            deQuien: null,
+        });
+    };
+    const mandarWhatsapp = (telefono, paga, { tecleado = false, deQuien = null } = {}) => {
+        const limpio = String(telefono || '').replace(/\s+/g, '').replace('+', '');
+        if (!limpio) {
+            alert("Por favor, introduce un número de teléfono válido.");
+            return;
+        }
+        const envio = whatsappPrompt?.shipment;
+        setWhatsappPrompt(null);
+        // Si el número es de una punta concreta, los importes van según esa punta
+        // pague o no; si es un contacto puntual, se deduce de la parada (paga null).
+        const esPunta = deQuien === 'Remitente' || deQuien === 'Destinatario';
+        const pagaElegido = esPunta ? quienPagaElPorte(envio) === deQuien : paga;
+        compartirAlbaranPorWhatsApp(envio, clients, { telefono: limpio, paga: pagaElegido });
+        if (tecleado && esPunta && deQuien !== PUNTUAL) {
+            guardarTelefonoTecleado({
+                shipment: envio,
+                clients,
+                telefono: limpio,
+                papel: deQuien,
+                onUpdateClient,
+                onAddClient,
+                onUpdateShipment,
+                firma: { createdBy: 'Administrador', creatorId: null, isTest: false },
+            }).catch(err => console.error("[WhatsApp] Error guardando el teléfono:", err));
+        }
+    };
+
     
     // Export Modal State
     const [exportModal, setExportModal] = useState({ isOpen: false, startDate: '', endDate: '', onlyFacturacion: true, excludeExported: true, specificId: '' });
@@ -920,6 +973,18 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                 coverageZones={coverageZones}
                 familyOrder={[]}
                 driverNamePreference={driverNamePreference}
+                // El botón de WhatsApp del modal no hacía nada aquí: sólo el panel del
+                // repartidor le pasaba función.
+                onWhatsAppShare={abrirWhatsappPrompt}
+            />
+
+            <ElegirWhatsAppModal
+                prompt={whatsappPrompt}
+                onChange={setWhatsappPrompt}
+                onElegirOpcion={(opcion) => mandarWhatsapp(opcion.numero, opcion.paga)}
+                // Un número tecleado se da por el contacto de la parada: importes sólo
+                // si esa parada es quien paga (lo decide mensajeDelJustificante).
+                onEnviarTecleado={({ phone, deQuien }) => mandarWhatsapp(phone, null, { tecleado: true, deQuien })}
             />
 
             <CreateShipmentModal

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { telefonosDeLaParada, movilesDelEnvio } from './DriverDashboard';
+import { telefonosDeLaParada, movilesDelEnvio, ladosDelEnvio, destinoDelTelefonoNuevo } from './telefonosDelEnvio';
 
 // Un cliente típico: el fijo de la nave en 'phone' (el que baja al albarán) y el
 // móvil del encargado en 'mobile', que hasta ahora no lo miraba nadie.
@@ -171,5 +171,62 @@ describe('movilesDelEnvio', () => {
 
     it('sin albarán no devuelve nada', () => {
         expect(movilesDelEnvio(null, CLIENTES)).toEqual([]);
+    });
+});
+
+describe('destinoDelTelefonoNuevo', () => {
+    it('dice en qué hueco de la ficha iría un móvil nuevo', () => {
+        expect(destinoDelTelefonoNuevo(null)).toBe('nueva');
+        expect(destinoDelTelefonoNuevo({ phone: '', mobile: '' })).toBe('phone');
+        expect(destinoDelTelefonoNuevo({ phone: '954112233', mobile: '' })).toBe('mobile');
+        // Un fijo en el hueco del móvil no sirve: cuenta como hueco libre.
+        expect(destinoDelTelefonoNuevo({ phone: '954112233', mobile: '955000000' })).toBe('mobile');
+        expect(destinoDelTelefonoNuevo({ phone: '954112233', mobile: '600111222' })).toBe('sustituye');
+    });
+});
+
+describe('ladosDelEnvio', () => {
+    // Entrega de Kiosco Ana (móvil en ficha) a Ferretería Luna (sólo fijo).
+    const ENTREGA = {
+        type: 'Entrega',
+        porteType: 'Pagado',
+        originName: 'Kiosco Ana',
+        originPhone: '',
+        destinationName: 'Ferretería Luna',
+        destinationPhone: '954112233',
+    };
+
+    it('devuelve las dos puntas, la parada delante, cada una con lo suyo', () => {
+        const lados = ladosDelEnvio(ENTREGA, CLIENTES);
+        expect(lados.map(l => l.papel)).toEqual(['Destinatario', 'Remitente']);
+        expect(lados[0]).toMatchObject({
+            nombre: 'Ferretería Luna', paga: false, moviles: [], tieneFijo: true, fijo: '954112233',
+            destino: 'mobile', movilActual: '',
+        });
+        expect(lados[1]).toMatchObject({
+            nombre: 'Kiosco Ana', paga: true, tieneFijo: false,
+            moviles: [{ numero: '655443322', papel: 'Remitente', nombre: 'Kiosco Ana', paga: true }],
+            // Sólo tiene móvil: el hueco de teléfono está libre y un número nuevo iría ahí.
+            destino: 'phone', movilActual: '655443322',
+        });
+    });
+
+    it('con ficha llena avisa de que sustituye y dice qué móvil', () => {
+        const lados = ladosDelEnvio({ ...ENTREGA, destinationName: 'Bar Pepe', destinationPhone: '' }, CLIENTES);
+        expect(lados[0]).toMatchObject({ papel: 'Destinatario', destino: 'sustituye', movilActual: '600 111 222' });
+    });
+
+    it('sin ficha, el destino es crearla', () => {
+        const lados = ladosDelEnvio({ ...ENTREGA, destinationName: 'Desconocido SL', destinationPhone: '' }, CLIENTES);
+        expect(lados[0]).toMatchObject({ papel: 'Destinatario', destino: 'nueva', moviles: [], tieneFijo: false });
+    });
+
+    it('en una recogida el remitente va primero', () => {
+        expect(ladosDelEnvio({ ...ENTREGA, type: 'Recogida' }, CLIENTES).map(l => l.papel))
+            .toEqual(['Remitente', 'Destinatario']);
+    });
+
+    it('sin albarán no devuelve nada', () => {
+        expect(ladosDelEnvio(null, CLIENTES)).toEqual([]);
     });
 });

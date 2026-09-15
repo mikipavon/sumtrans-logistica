@@ -42,7 +42,7 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { agregarReceptor, leerReceptores, direccionPorNombre, direccionDeLaChuleta } from '../../utils/receptoresHabituales';
-import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, lineasDeDineroDelJustificante, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
+import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
 import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, motivoSinJornada, puedeFicharAutomaticamente, textoSinJornada, MOTIVOS_BLOQUEO } from '../../utils/normasFichaje';
 import { esElMismoPueblo, normalizarPueblo, puebloDeRutaParaEnvio } from '../../utils/townMatch';
@@ -52,6 +52,11 @@ import { adaptarConocimiento, registrarEntrega, contarPueblosMemorizados } from 
 import { turnoQueSeAsignaAhora, turnoQueSeRepartaAhora, etiquetaTurno } from '../../utils/turnos';
 import { resolverLogo, insigniaDeAgencia, buscarClienteDeEnvio } from '../../utils/marca';
 import { abrirWhatsApp, necesitaGestoDelUsuario } from '../../utils/whatsappLink';
+import { mensajeDelJustificante } from '../../utils/mensajeJustificante';
+import { telefonosDeLaParada, ladosDelEnvio } from '../../utils/telefonosDelEnvio';
+import { PUNTUAL } from '../../components/shipments/ElegirWhatsAppModal';
+import { guardarTelefonoTecleado } from '../../utils/guardarTelefonoTecleado';
+import ElegirWhatsAppModal from '../../components/shipments/ElegirWhatsAppModal';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import RouteMapModal from '../../components/driver/RouteMapModal';
 import DriverGuidedTour from '../../components/DriverGuidedTour';
@@ -71,147 +76,8 @@ const normalizeClientName = (name) => {
         .replace(/\s+/g, " "); // collapse multiple spaces
 };
 
-// ── ¿Es un fijo? ──
-// En España los móviles empiezan por 6 o 7 y los fijos por 8 o 9. Un fijo no
-// tiene WhatsApp, así que mandarle ahí el justificante es tirarlo. Solo damos
-// por fijo lo que reconocemos como número español de 9 cifras: un extranjero o
-// cualquier cosa rara se manda tal cual, que de eso sabe más el conductor.
-const esFijoEspanol = (numero) => {
-    const limpio = String(numero || '').replace(/[\s.\-()+]/g, '');
-    const nacional = limpio.startsWith('34') ? limpio.slice(2) : limpio;
-    return nacional.length === 9 && /^[89]/.test(nacional);
-};
-
-// Mismo número escrito de dos formas (con prefijo, con espacios) es uno solo.
-const claveDeTelefono = (numero) => String(numero || '')
-    .replace(/[\s.\-()+]/g, '')
-    .replace(/^34/, '');
-
-// Los teléfonos de UN contacto del albarán (el remitente o el destinatario), MÓVILES
-// PRIMERO: a un cliente se le localiza antes en el móvil, y el fijo de la nave no lo
-// coge nadie a media tarde. De aquí salen tanto los números del justificante de
-// WhatsApp (que solo pueden ser móviles) como la lista del botón de llamar.
-//
-// Se juntan dos fuentes porque ninguna basta sola: el teléfono del albarán es el
-// más concreto —lo tecleó quien creó el envío— pero el autorrelleno solo baja el
-// 'phone' de la ficha, así que un móvil guardado en 'mobile' no llega nunca al
-// albarán.
-//
-// Se busca por nombre exacto, no con la tolerancia de marca de buscarClienteDeEnvio:
-// esa empareja también por etiqueta de agencia, y un albarán de TSB acabaría
-// ofreciendo el teléfono de la agencia en vez del de quien recibe el paquete.
-const telefonosDelContacto = (nombreCrudo, delAlbaran, clientes) => {
-    const nombre = normalizeClientName(nombreCrudo);
-
-    let fichaPhone = null;
-    let fichaMobile = null;
-    if (nombre && Array.isArray(clientes)) {
-        for (const c of clientes) {
-            if (!c) continue;
-            // La sede manda sobre la ficha madre, pero si a la sede le falta un
-            // hueco se completa con el de la madre: es la misma empresa.
-            const sede = (c.branches || []).find(b => normalizeClientName(b?.name) === nombre);
-            if (sede) {
-                fichaPhone = sede.phone || c.phone;
-                fichaMobile = sede.mobile || c.mobile;
-                break;
-            }
-            if (normalizeClientName(c.name) === nombre || normalizeClientName(c.legalName) === nombre) {
-                fichaPhone = c.phone;
-                fichaMobile = c.mobile;
-                break;
-            }
-        }
-    }
-
-    const vistos = new Set();
-    const lista = [];
-    [delAlbaran, fichaMobile, fichaPhone].forEach(numero => {
-        const texto = String(numero || '').trim();
-        if (!texto) return;
-        const clave = claveDeTelefono(texto);
-        if (!clave || vistos.has(clave)) return;
-        vistos.add(clave);
-        lista.push({ numero: texto, esFijo: esFijoEspanol(texto) });
-    });
-
-    // Móviles delante, respetando dentro de cada grupo el orden de arriba.
-    return [...lista.filter(t => !t.esFijo), ...lista.filter(t => t.esFijo)];
-};
-
-// La parada de ESTE conductor: el remitente si va a recoger, el destinatario si va
-// a entregar. De aquí salen el botón de llamar y la ficha donde se guarda un número
-// nuevo.
-export const telefonosDeLaParada = (stop, clientes) => {
-    if (!stop) return [];
-    const esRecogida = stop.type === 'Recogida';
-    return telefonosDelContacto(
-        esRecogida ? (stop.originName || stop.client) : nombreDestinatarioEnRuta(stop, clientes),
-        esRecogida ? stop.originPhone : stop.destinationPhone,
-        clientes,
-    );
-};
-
-// Los MÓVILES de las dos puntas del albarán, para el justificante de WhatsApp: el
-// justificante le interesa tanto a quien recibe el paquete como a quien lo mandó
-// (que muchas veces es quien paga el porte y quiere ver que llegó). Antes solo se
-// ofrecía la parada y al remitente había que teclearle el número a mano.
-//
-// Delante va la punta donde está el conductor ahora mismo, que es la que va a usar
-// nueve de cada diez veces. Los fijos no salen: no tienen WhatsApp.
-export const movilesDelEnvio = (stop, clientes) => {
-    if (!stop) return [];
-    const esRecogida = stop.type === 'Recogida';
-    const pagador = quienPagaElPorte(stop);
-
-    // 'client' es el nombre suelto del albarán: solo vale como respaldo en la punta
-    // que es la parada, que es de la que habla ese campo.
-    const lados = [
-        {
-            papel: 'Remitente',
-            nombre: stop.originName || (esRecogida ? stop.client : '') || '',
-            telefono: stop.originPhone,
-        },
-        {
-            papel: 'Destinatario',
-            nombre: (stop.destinationName || !esRecogida) ? nombreDestinatarioEnRuta(stop, clientes) : '',
-            telefono: stop.destinationPhone,
-        },
-    ];
-    if (!esRecogida) lados.reverse();
-
-    const vistos = new Map();
-    const opciones = [];
-    lados.forEach(lado => {
-        telefonosDelContacto(lado.nombre, lado.telefono, clientes)
-            .filter(t => !t.esFijo)
-            .forEach(({ numero }) => {
-                const clave = claveDeTelefono(numero);
-                const yaEsta = vistos.get(clave);
-                if (yaEsta) {
-                    // El mismo número en las dos puntas (remitente y destinatario son la
-                    // misma empresa) es un solo botón, el de la punta que va delante. Pero
-                    // si quien paga es la otra punta, ese botón paga igual: es el mismo
-                    // teléfono, y esconderle el precio sería esconderle SU propia factura.
-                    if (lado.papel === pagador) yaEsta.paga = true;
-                    return;
-                }
-                // 'paga' decide si a este contacto se le manda el precio del porte
-                // (ver lineasDeDineroDelJustificante): los datos del cobro son para
-                // quien lo paga, al otro se le manda el justificante sin ellos.
-                const opcion = {
-                    numero,
-                    papel: lado.papel,
-                    nombre: lado.nombre,
-                    paga: lado.papel === pagador,
-                };
-                vistos.set(clave, opcion);
-                opciones.push(opcion);
-            });
-    });
-
-    return opciones;
-};
+// Los teléfonos del albarán y de las fichas (fijos, móviles, sedes) viven en
+// src/utils/telefonosDelEnvio.js: los usa también la oficina desde Envíos.
 
 /** El pueblo (o su C.P.) está en las tablas de Baremo 1 o 2. */
 const isCityInBaremo = (city, zip) => {
@@ -2626,50 +2492,33 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     // botones, que ya estaba guardado en alguna parte y no hay que volver a guardar.
     // `paga` dice si el número elegido es el de quien paga el porte: lo trae el botón
     // del modal, que ya lo sabe por el albarán. null = no viene de un botón (el conductor
-    // tecleó el número), y entonces se deduce de la parada más abajo.
-    const handleWhatsAppShare = async (shipment, manualPhone = null, { tecleado = false, paga = null } = {}) => {
-        // Correct logic: If it's a pickup, use origin phone. If it's a delivery, use destination phone.
-        const isPickup = shipment.type === 'Recogida';
-        const targetName = isPickup
-            ? (shipment.originName || shipment.client)
-            : nombreDestinatarioEnRuta(shipment, clients);
-        const targetPhone = isPickup ? shipment.originPhone : shipment.destinationPhone;
-
-        // Aquí solo vale un móvil: a un fijo el justificante no llega. Este es el de la
-        // parada (a quien el conductor tiene delante), y sirve para dos cosas: es el
-        // que se manda cuando ya viene elegido de fuera, y su ausencia es la que decide
-        // si el número tecleado hay que guardarlo en la ficha.
-        const telefonosDelCliente = telefonosDeLaParada(shipment, clients);
-        const movilDisponible = telefonosDelCliente.find(t => !t.esFijo)?.numero || null;
-        const phone = manualPhone || movilDisponible;
+    // tecleó el número), y entonces lo decide `deQuien`: la punta que el conductor
+    // marcó como dueña del número ('Remitente' / 'Destinatario') o PUNTUAL, un
+    // contacto de este reparto que no se guarda y al que se trata como la parada.
+    const handleWhatsAppShare = async (shipment, manualPhone = null, { tecleado = false, paga = null, deQuien = null } = {}) => {
 
         // El justificante ya no sale directo ni aunque el cliente tenga móvil: quien
         // recibe el paquete no es siempre el de la ficha (un vecino, el encargado de
         // turno) y el conductor no tenía dónde decirlo, el mensaje se iba al número de
-        // siempre sin preguntar. El modal ofrece los móviles de las dos puntas del
-        // albarán en un toque y deja teclear otro.
+        // siempre sin preguntar. El modal enseña las dos puntas del albarán (con su
+        // móvil, o con "añadir teléfono" si no lo tiene) y deja teclear otro.
         if (manualPhone === null) {
-            const opciones = movilesDelEnvio(shipment, clients);
+            const lados = ladosDelEnvio(shipment, clients);
             setWhatsappPrompt({
                 shipment,
                 phone: '',
-                opciones,
+                lados,
                 // Sin ningún móvil que ofrecer no hay nada que elegir: directo al teclado.
-                editando: opciones.length === 0,
-                // Si la parada no tiene móvil propio, el número que se teclee es el que
-                // le falta a su ficha y sí se guarda. Se decide aquí, con el modal ya
-                // abierto delante, y no al enviar: para entonces el móvil elegido puede
-                // ser el de la otra punta del albarán.
-                guardaEnFicha: !movilDisponible,
-                // 'motivo' solo cambia el texto del modal: si no hay móvil pero sí queda
-                // algún teléfono es que todos son fijos, y el conductor tiene que entender
-                // por qué le pedimos otro número teniendo el cliente teléfono.
-                motivo: telefonosDelCliente.length > 0 ? 'fijo' : 'sin_telefono',
+                editando: lados.every(l => l.moviles.length === 0),
+                // De quién es el número lo marca el conductor a cada vez, sin nada
+                // preseleccionado: así un toque de más no pega el número a la ficha
+                // que no era.
+                deQuien: null,
             });
             return;
         }
 
-        const cleanPhone = (phone || '').replace(/\s+/g, '').replace('+', '');
+        const cleanPhone = (manualPhone || '').replace(/\s+/g, '').replace('+', '');
         if (!cleanPhone && manualPhone !== null) {
             alert("Por favor, introduce un número de teléfono válido.");
             return;
@@ -2686,147 +2535,29 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         // primer await dejaba la escritura de la ficha para el siguiente tick, el
         // navegador ya se había ido a WhatsApp y el teléfono no llegaba nunca a la
         // ficha. Por eso va primero la ficha, que es el dato que hay que conservar.
-        const guardarTelefono = async () => {
-            const normalizedTarget = normalizeClientName(targetName);
-
-            // 1) La ficha del cliente.
-            if (normalizedTarget) {
-                try {
-                    const matchedClient = clientsMap.get(normalizedTarget);
-
-                    if (matchedClient) {
-                        // Solo 'phone' y 'mobile' se leen en el formulario de cliente y en
-                        // el autorrelleno del albarán, así que escribir en cualquier otro
-                        // campo es tirar el dato.
-                        const ficha = matchedClient._isBranch ? matchedClient._branch : matchedClient;
-                        const fichaPhone = String(ficha.phone || '').trim();
-                        const fichaMobile = String(ficha.mobile || '').trim();
-
-                        let cambios = null;
-                        if (!fichaPhone) cambios = { phone: manualPhone };
-                        else if (fichaPhone !== manualPhone && !fichaMobile) cambios = { mobile: manualPhone };
-                        else if (fichaPhone !== manualPhone && esFijoEspanol(fichaMobile) && !esFijoEspanol(manualPhone)) {
-                            // El hueco del móvil ocupado por otro fijo no le sirve a nadie:
-                            // si el conductor acaba de teclear un móvil de verdad, ese manda.
-                            // Sin esto le pediríamos el número en cada justificante.
-                            cambios = { mobile: manualPhone };
-                        }
-                        // Si ya tiene los dos huecos ocupados no pisamos nada: esto puede
-                        // ser un contacto puntual y la ficha manda sobre el albarán.
-
-                        if (cambios && onUpdateClient) {
-                            await onUpdateClient(
-                                matchedClient.id,
-                                cambios,
-                                matchedClient._isBranch ? matchedClient._branch.id : null
-                            );
-                        }
-                    } else if (onAddClient) {
-                        // No hay ficha: la creamos pendiente de validar para que el
-                        // número no se quede huérfano en el albarán.
-                        await onAddClient({
-                            name: targetName,
-                            address: (isPickup ? shipment.originAddress : (shipment.destinationAddress || shipment.address)) || '',
-                            city: (isPickup ? shipment.originCity : shipment.destinationCity) || '',
-                            zip: (isPickup ? shipment.originZip : shipment.destinationZip) || '',
-                            phone: manualPhone,
-                            coordinates: (isPickup ? shipment.originCoordinates : shipment.destinationCoordinates) || '',
-                            type: isPickup ? 'Remitente' : 'Destinatario',
-                            billingType: 'Clientes Habituales',
-                            status: 'pending',
-                            // Si el porte lo paga una agencia, el cliente es suyo (ver agencyOwnership.js)
-                            ownerAgencyId: resolveOwnerAgencyId(shipment, clients),
-                            createdFrom: 'WhatsApp Justificante',
-                            createdBy: firmaDelConductor,
-                            creatorId: currentDriverId,
-                            isTest: isTestMode,
-                        });
-                    }
-                } catch (err) {
-                    console.error("[WhatsApp] Error guardando el teléfono en la ficha:", err);
-                }
-            }
-
-            // 2) El albarán, solo si venía sin teléfono. Si lo que tiene es un fijo
-            // no lo pisamos: para llamar es el bueno, y el móvil ya ha quedado en la
-            // ficha, que es de donde lo cogeremos la próxima vez.
-            // Vía onUpdateShipment para que use las columnas reales de la tabla y se
-            // encole si el conductor no tiene cobertura. Va en su propio try para que
-            // un fallo de la ficha no se lo lleve por delante.
-            if (!String(targetPhone || '').trim()) {
-                try {
-                    await onUpdateShipment(shipment.id, isPickup
-                        ? { originPhone: manualPhone }
-                        : { destinationPhone: manualPhone });
-                } catch (err) {
-                    console.error("[WhatsApp] Error guardando el teléfono en el albarán:", err);
-                }
-            }
-        };
+        // La regla de qué hueco de la ficha ocupa el número (y el alta de la ficha
+        // si no existe) vive en guardarTelefonoTecleado.js: es la misma que aplica
+        // la oficina desde Envíos.
+        const guardarTelefono = () => guardarTelefonoTecleado({
+            shipment,
+            clients,
+            telefono: manualPhone,
+            papel: deQuien,
+            onUpdateClient,
+            onAddClient,
+            onUpdateShipment,
+            firma: { createdBy: firmaDelConductor, creatorId: currentDriverId, isTest: isTestMode },
+        });
 
         // El mensaje se arma ANTES de guardar nada: en iPhone hay que abrir la bandeja
         // de compartir sin esperas de por medio (ver el bloque del final).
-        const date = shipment.date || new Date().toLocaleDateString('es-ES');
-        const origin = shipment.originName || shipment.client;
-        const dest = nombreDestinatarioEnRuta(shipment, clients);
-
-        const normalize = (val) => String(val || '').toLowerCase().trim();
-        const originClient = clientsMap?.get(normalizeClientName(shipment.originName || shipment.client));
-        const destClient = fichaDelDestinatario(shipment, clients)?.client || clientsMap?.get(normalizeClientName(shipment.destinationName || shipment.client));
-
-        const mainBillingType = normalize(shipment.billingType || originClient?.billingType || '');
-        const destBillingType = normalize(shipment.destinationBillingType || destClient?.billingType || '');
-
-        let isSecret = false;
-        if (mainBillingType.includes('habitual') || mainBillingType.includes('diar') || mainBillingType.includes('libre') || mainBillingType.includes('contado') || mainBillingType.includes('presupuesto')) isSecret = true;
-        if (destBillingType.includes('habitual') || destBillingType.includes('diar') || destBillingType.includes('libre') || destBillingType.includes('contado') || destBillingType.includes('presupuesto')) isSecret = true;
-
-        // "DE ENTREGA" solo cuando el paquete está entregado de verdad: el mismo
-        // botón sale en la pestaña de asignar, y ahí el papel afirmaba una entrega
-        // que no había ocurrido. Sin entregar se queda en *JUSTIFICANTE* a secas.
-        const estaEntregado = shipment.status === 'Entregado' || !!shipment.deliveredAt;
-        const titleText = isSecret
-            ? (estaEntregado ? `*JUSTIFICANTE DE ENTREGA*` : `*JUSTIFICANTE*`)
-            : `*JUSTIFICANTE SUMTRANS LOGISTICA*`;
-
-        // Serie HAB- = clientes al contado: pagan un precio cerrado en mano, así que
-        // el justificante muestra ese importe tal cual, sin desglose de IVA.
-        // Los albaranes antiguos sin prefijo caen en isSecret.
-        const idUpper = String(shipment.id || '').toUpperCase();
-        const isContado = idUpper.startsWith('HAB-') || (!idUpper.startsWith('SUM-') && isSecret);
-
-        // ¿El justificante va a quien paga el porte? Si viene de un botón del modal, lo
-        // dice la propia opción; si el conductor tecleó un número suelto, se da por
-        // hecho que es el contacto de la parada que tiene delante (el remitente en una
-        // recogida, el destinatario en una entrega).
-        //
-        // Con esto se decide si el mensaje lleva precio y estado del cobro: son datos
-        // de quien paga. Al otro (un porte debido avisando al remitente, por ejemplo)
-        // se le manda el justificante sin importes ni "pendiente de cobro", que no es
-        // deuda suya y no tiene por qué ver lo que factura el de enfrente.
-        const papelDeLaParada = isPickup ? 'Remitente' : 'Destinatario';
-        const pagaQuienRecibeElMensaje = paga === null
-            ? quienPagaElPorte(shipment) === papelDeLaParada
-            : paga === true;
-
-        // El mensaje se escribe con saltos de línea de verdad: quien lo codifica para
-        // la URL es abrirWhatsApp. Si aquí volviéramos a poner %0A a mano, se
-        // codificaría dos veces y el cliente leería el "%0A" en el chat.
-        const { estadoText, priceText, codText } = lineasDeDineroDelJustificante(shipment, {
-            paga: pagaQuienRecibeElMensaje,
-            isContado,
-        });
-
-        const message = `${titleText}\n\n` +
-            `*REF:* ${shipment.id}\n` +
-            `*Fecha:* ${date}\n` +
-            `*Remitente:* ${origin}\n` +
-            `*Destinatario:* ${dest}\n` +
-            estadoText +
-            priceText +
-            codText +
-            `\n` +
-            `Gracias por su confianza.`;
+        // El texto vive en mensajeJustificante.js, que es el mismo que manda la oficina
+        // desde Envíos: los dos justificantes tienen que decir lo mismo.
+        // Si el número es de una punta concreta, los importes van según esa punta
+        // pague o no; si es un contacto puntual, se deduce de la parada (paga null).
+        const esPunta = deQuien === 'Remitente' || deQuien === 'Destinatario';
+        const pagaElegido = esPunta ? quienPagaElPorte(shipment) === deQuien : paga;
+        const message = mensajeDelJustificante(shipment, clients, { paga: pagaElegido });
 
         let finalPhone = cleanPhone;
         // Si tiene 9 dígitos y empieza por 6, 7 o 9 (típico de España), añadimos el 34 si no lo tiene
@@ -2839,15 +2570,13 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
         
         // --- QUIÉN VA PRIMERO: GUARDAR EL TELÉFONO O ABRIR WHATSAPP ---
         // Depende del móvil, y por eso no se puede hacer igual en los dos:
-        // Solo se guarda lo que el conductor teclea, y solo si la parada no tenía móvil:
-        // ese es el dato que le falta a la ficha. Los demás casos NO se guardan:
-        // · un número elegido de la lista ya está guardado donde toca — y si es el de
-        //   la otra punta del albarán, copiarlo aquí le metería a esta ficha el
-        //   teléfono de otra empresa;
-        // · un número tecleado teniendo la parada móvil bueno es el contacto puntual de
-        //   este reparto (un vecino, el encargado de turno) y no puede quedarse pegado
-        //   a la ficha del cliente para siempre.
-        const hayQueGuardar = Boolean(tecleado && cleanPhone && !movilDisponible);
+        // Solo se guarda lo que el conductor teclea Y ha dicho de quién es (remitente
+        // o destinatario). Los demás casos NO se guardan:
+        // · un número elegido de la lista ya está guardado donde toca;
+        // · un número marcado como "sólo este envío" es el contacto puntual de este
+        //   reparto (un vecino, el encargado de turno) y no puede quedarse pegado a
+        //   la ficha del cliente para siempre.
+        const hayQueGuardar = Boolean(tecleado && cleanPhone && esPunta && deQuien !== PUNTUAL);
 
         if (necesitaGestoDelUsuario()) {
             // iPhone. La bandeja de compartir solo la abre iOS si viene del dedo del
@@ -4801,111 +4530,14 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
             />
 
             {/* WhatsApp Phone Prompt Modal */}
-            {whatsappPrompt && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
-                        <div className="p-6">
-                            <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-4">
-                                <MessageSquare size={24} />
-                            </div>
-                            <h3 className="text-lg font-bold text-slate-800 mb-1">Enviar Justificante</h3>
-
-                            {/* Dos pantallas en el mismo modal: la de elegir (solo si el cliente
-                                tiene algún móvil guardado) y la de teclear un número a mano. */}
-                            {!whatsappPrompt.editando ? (
-                                <>
-                                    <p className="text-sm text-slate-500 mb-5">
-                                        {whatsappPrompt.opciones?.length > 1
-                                            ? '¿A qué WhatsApp lo mando?'
-                                            : 'Se enviará a este WhatsApp:'}
-                                    </p>
-
-                                    <div className="space-y-2 mb-4">
-                                        {(whatsappPrompt.opciones || []).map((opcion) => (
-                                            <button
-                                                key={`${opcion.papel}-${opcion.numero}`}
-                                                onClick={() => handleWhatsAppShare(whatsappPrompt.shipment, opcion.numero, { paga: opcion.paga })}
-                                                className="w-full px-4 py-3 text-left text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-lg shadow-emerald-500/20 transition-all"
-                                            >
-                                                {/* El papel va delante del número a propósito: el conductor
-                                                    no reconoce un teléfono de memoria, pero sí sabe si se lo
-                                                    quiere mandar a quien recibe o a quien lo mandó. */}
-                                                <span className="block text-[10px] font-bold uppercase tracking-wider text-white/70">
-                                                    {opcion.papel}
-                                                    {/* Aviso de por qué un justificante lleva precio y el otro no: los
-                                                        importes del porte solo van a quien lo paga. */}
-                                                    {opcion.paga ? " · PAGA EL PORTE" : " · SIN IMPORTES"}
-                                                </span>
-                                                {opcion.nombre && (
-                                                    <span className="block text-sm font-semibold truncate">{opcion.nombre}</span>
-                                                )}
-                                                <span className="block font-bold text-lg tracking-wide">{opcion.numero}</span>
-                                            </button>
-                                        ))}
-                                    </div>
-
-                                    <button
-                                        onClick={() => setWhatsappPrompt(prev => ({ ...prev, editando: true, phone: '' }))}
-                                        className="w-full py-3 text-sm font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors"
-                                    >
-                                        Enviar a otro número
-                                    </button>
-                                    <button
-                                        onClick={() => setWhatsappPrompt(null)}
-                                        className="w-full py-3 mt-2 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors"
-                                    >
-                                        Cancelar
-                                    </button>
-                                </>
-                            ) : (
-                                <>
-                                    <p className="text-sm text-slate-500 mb-6">
-                                        {!whatsappPrompt.guardaEnFicha
-                                            ? 'Solo para este envío: el justificante irá a este número y la ficha del cliente se queda como está.'
-                                            : whatsappPrompt.motivo === 'fijo'
-                                                ? 'El teléfono del cliente es un fijo y no tiene WhatsApp. Introduce un móvil:'
-                                                : 'El cliente no tiene teléfono guardado. Introduce el número de WhatsApp:'}
-                                    </p>
-
-                                    <input
-                                        type="tel"
-                                        autoFocus
-                                        value={whatsappPrompt.phone}
-                                        onChange={(e) => setWhatsappPrompt(prev => ({ ...prev, phone: e.target.value }))}
-                                        placeholder="Ej: 600123456"
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all font-bold text-lg text-slate-700 mb-4"
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' && !whatsappPrompt.saving) handleWhatsAppShare(whatsappPrompt.shipment, whatsappPrompt.phone, { tecleado: true });
-                                        }}
-                                    />
-
-                                    <div className="flex gap-3">
-                                        <button
-                                            onClick={() => setWhatsappPrompt(prev => (
-                                                prev?.opciones?.length > 0 ? { ...prev, editando: false } : null
-                                            ))}
-                                            disabled={whatsappPrompt.saving}
-                                            className="flex-1 py-3 text-sm font-bold text-slate-500 hover:bg-slate-50 rounded-xl transition-colors disabled:opacity-40"
-                                        >
-                                            {whatsappPrompt.opciones?.length > 0 ? 'Volver' : 'Cancelar'}
-                                        </button>
-                                        <button
-                                            onClick={() => handleWhatsAppShare(whatsappPrompt.shipment, whatsappPrompt.phone, { tecleado: true })}
-                                            disabled={whatsappPrompt.saving}
-                                            className="flex-1 py-3 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-70"
-                                        >
-                                            {/* El botón se queda un instante en "Guardando..." a propósito: es el
-                                                tiempo que tarda el número en llegar a la ficha, y si abriéramos
-                                                WhatsApp antes la página se descarga y el dato se pierde. */}
-                                            {whatsappPrompt.saving ? 'Guardando...' : 'Abrir WhatsApp'}
-                                        </button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
+            {/* La ventana de a qué WhatsApp va el justificante es la misma que usa la
+                oficina desde Envíos; aquí además guarda el número tecleado en la ficha. */}
+            <ElegirWhatsAppModal
+                prompt={whatsappPrompt}
+                onChange={setWhatsappPrompt}
+                onElegirOpcion={(opcion) => handleWhatsAppShare(whatsappPrompt.shipment, opcion.numero, { paga: opcion.paga })}
+                onEnviarTecleado={({ phone, deQuien }) => handleWhatsAppShare(whatsappPrompt.shipment, phone, { tecleado: true, deQuien })}
+            />
             {/* Offline Banner — shown when no connectivity */}
             {!isOnline && (
                 <div
