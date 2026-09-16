@@ -29,15 +29,44 @@ const numeroDeVersion = (() => {
 })()
 
 const fechaDeCompilacion = new Date().toISOString()
+const versionDeLaApp = `v${numeroDeVersion}+${commit}`
+
+// Fichero /version-desplegada.json, junto al index.html, con la versión que hay en
+// el servidor. La app lo consulta de vez en cuando (ver hooks/useVersionNueva) para
+// enterarse de que se ha desplegado algo nuevo: sin esto, una pestaña que lleva
+// abierta desde por la mañana —o la app instalada en el móvil de un cliente— sigue
+// con el JavaScript viejo hasta que alguien recarga a mano.
+//
+// En Vercel sale con Cache-Control: no-store (vercel.json, la regla de /(.*)), así
+// que cada consulta llega al servidor. En desarrollo lo sirve el propio servidor.
+const NOMBRE_VERSION_DESPLEGADA = 'version-desplegada.json'
+const contenidoVersionDesplegada = () =>
+  JSON.stringify({ version: versionDeLaApp, numero: numeroDeVersion, fecha: fechaDeCompilacion })
+
+const versionDesplegada = () => ({
+  name: 'version-desplegada',
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: NOMBRE_VERSION_DESPLEGADA, source: contenidoVersionDesplegada() })
+  },
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      if ((req.url || '').split('?')[0] !== `/${NOMBRE_VERSION_DESPLEGADA}`) return next()
+      res.setHeader('Content-Type', 'application/json')
+      res.setHeader('Cache-Control', 'no-store')
+      res.end(contenidoVersionDesplegada())
+    })
+  }
+})
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
-    react()
+    react(),
+    versionDesplegada()
   ],
   // Para poder saber con qué versión petó el móvil de un repartidor (ver utils/errorLog).
   define: {
-    __APP_VERSION__: JSON.stringify(`v${numeroDeVersion}+${commit}`),
+    __APP_VERSION__: JSON.stringify(versionDeLaApp),
     __APP_BUILD_NUMBER__: numeroDeVersion,
     __APP_BUILD_DATE__: JSON.stringify(fechaDeCompilacion)
   },

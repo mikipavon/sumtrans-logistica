@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import AvisoVersionNueva from './components/AvisoVersionNueva.jsx'
 import { registrarError, engancharErroresGlobales } from './utils/errorLog'
 import { esRuidoDeSesion } from './utils/ruidoDeSesion'
 
@@ -75,6 +76,10 @@ try {
     <StrictMode>
       <ErrorBoundary origen="app">
         <App />
+        {/* Aviso de "hay una versión nueva": va aquí y no dentro de App para que salga
+            en todas las pantallas (login, cliente, repartidor, oficina) sin tocar cada
+            una. Si se despliega un cambio, la pestaña que lleva abierta se entera. */}
+        <AvisoVersionNueva />
       </ErrorBoundary>
     </StrictMode>,
   )
