@@ -102,6 +102,23 @@ export function correosDeAcceso(client) {
     return [principal, ...accesosAdicionales(client).map(a => a.email)].filter(Boolean);
 }
 
+// ── A quién hay que quitarle el acceso al guardar la ficha ──
+//
+// A los correos que estaban en "Otros correos con acceso" y ya no están en
+// ninguna parte. "En ninguna parte" incluye el principal: subir un correo de la
+// lista de abajo al "Correo de Acceso" de arriba lo saca de la lista, pero esa
+// persona sigue entrando, ahora como principal. Mirando sólo la lista, se le
+// borraba la cuenta en el mismo guardado que acababa de dejársela lista.
+// Pasó con ERFRI el 14/09/2026: franciscopineda@ se creó como adicional, se subió
+// a principal, y la oficina aceptó el "¿Quitarle el acceso?" creyendo que sólo
+// se quitaba la fila repetida.
+export function accesosQueSeQuitan(anterior, nueva) {
+    const siguen = correosDeAcceso(nueva);
+    return accesosAdicionales(anterior)
+        .map(a => a.email)
+        .filter(email => !siguen.includes(email));
+}
+
 // ── Lo que se guarda en la tabla, sin ninguna contraseña ──
 //
 // La ficha nunca guarda contraseñas, ni la principal ni las de los accesos

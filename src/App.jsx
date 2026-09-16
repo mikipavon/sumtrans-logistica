@@ -44,7 +44,7 @@ import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { fetchAllRows } from './utils/fetchAllRows';
 import { conTopeDeTiempo, errorDeServidorSiLoEs } from './utils/topeDeTiempo';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
-import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, fichaSinContrasenas } from './utils/clientAccess';
+import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, accesosQueSeQuitan, fichaSinContrasenas } from './utils/clientAccess';
 import { planDeAcceso } from './utils/accesoFichaExistente';
 import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNombreCliente } from './utils/altaClientes';
 import { establecerContextoDeError } from './utils/errorLog';
@@ -2541,12 +2541,12 @@ function App() {
   const sincronizarAccesosAdicionales = async (anterior, nueva, clientId) => {
     const ahora = accesosAdicionales(nueva);
     const antes = accesosAdicionales(anterior).map(a => a.email);
-    const correosAhora = ahora.map(a => a.email);
     const listos = [];
 
     // 1. Los que ya no están: se les quita el acceso, avisando antes. Borrar una
     //    cuenta no tiene vuelta atrás, y desde la ficha no se ve a quién afecta.
-    for (const email of antes.filter(e => !correosAhora.includes(e))) {
+    //    El que ha pasado a ser el correo principal NO se va (ver accesosQueSeQuitan).
+    for (const email of accesosQueSeQuitan(anterior, nueva)) {
       const confirmado = window.confirm(
         `¿Quitarle el acceso al portal a ${email}?\n\n` +
         `Su cuenta se borra y dejará de poder entrar. Los albaranes que haya creado no se tocan.`

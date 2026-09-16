@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { emailDeAcceso, tieneCorreoDeAccesoPropio, accesosAdicionales, correosDeAcceso, fichaSinContrasenas } from './clientAccess';
+import { emailDeAcceso, tieneCorreoDeAccesoPropio, accesosAdicionales, correosDeAcceso, accesosQueSeQuitan, fichaSinContrasenas } from './clientAccess';
 
 describe('emailDeAcceso', () => {
     it('usa el correo de acceso cuando la ficha lo trae', () => {
@@ -87,6 +87,38 @@ describe('correosDeAcceso', () => {
 
     it('sin correo ninguno devuelve la lista vacía, no una llena de huecos', () => {
         expect(correosDeAcceso({})).toEqual([]);
+    });
+});
+
+describe('accesosQueSeQuitan', () => {
+    it('quita el correo que se borra de la lista', () => {
+        const antes = { accessEmail: 'pedidos@empresa.com', accessEmailsExtra: [{ email: 'dueno@empresa.com' }] };
+        const ahora = { accessEmail: 'pedidos@empresa.com', accessEmailsExtra: [] };
+        expect(accesosQueSeQuitan(antes, ahora)).toEqual(['dueno@empresa.com']);
+    });
+
+    it('no quita el que se ha subido a correo de acceso principal (caso ERFRI)', () => {
+        const antes = {
+            email: 'marinaalfonsin@erfri.com ; angelguerrero@erfri.com',
+            accessEmailsExtra: [{ email: 'franciscopineda@erfri.com' }],
+        };
+        const ahora = {
+            email: 'marinaalfonsin@erfri.com ; angelguerrero@erfri.com',
+            accessEmail: 'franciscopineda@erfri.com',
+            accessEmailsExtra: [{ email: 'franciscopineda@erfri.com' }],
+        };
+        expect(accesosQueSeQuitan(antes, ahora)).toEqual([]);
+        expect(accesosQueSeQuitan(antes, { ...ahora, accessEmailsExtra: [] })).toEqual([]);
+    });
+
+    it('no quita nada si la lista no cambia, aunque cambie la mayúscula', () => {
+        const antes = { accessEmailsExtra: [{ email: 'dueno@empresa.com' }] };
+        const ahora = { accessEmailsExtra: [{ email: 'Dueno@Empresa.com' }] };
+        expect(accesosQueSeQuitan(antes, ahora)).toEqual([]);
+    });
+
+    it('en un alta no hay nada anterior que quitar', () => {
+        expect(accesosQueSeQuitan({}, { accessEmailsExtra: [{ email: 'a@x.com' }] })).toEqual([]);
     });
 });
 
