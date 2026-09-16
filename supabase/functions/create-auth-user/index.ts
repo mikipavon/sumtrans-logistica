@@ -145,6 +145,69 @@ async function buscarPorEmail(
   return null
 }
 
+// ── ¿A quién le abre el portal esta cuenta que ya existe? ──
+//
+// Sirve para decidir si una cuenta que ya está en Auth se puede reutilizar para
+// la ficha a la que se le está dando acceso. Se mira `profiles`, que es lo que
+// leen las políticas RLS (supabase/13_rls_perfiles_sin_metadatos.sql), y los
+// metadatos sólo si el perfil no existe.
+//
+// Devuelve null cuando NO hay nadie a quien quitarle nada: la cuenta ya es de
+// esta misma ficha, o apunta a una que ya no existe (una solicitud web que se
+// borró, una ficha duplicada que se fusionó con otra). Y devuelve el nombre de
+// quien la usa cuando apunta a otra ficha o a un conductor que siguen vivos.
+//
+// Pasó con PECOMARK el 15/09/2026: su correo ya tenía cuenta de antes, apuntando
+// a una ficha que ya no estaba. "Dar acceso" desde su ficha de verdad sólo le
+// cambió la contraseña y los metadatos —el trigger escribe `profiles` al CREAR—,
+// así que entraba bien y RLS no le dejaba ver ninguna ficha: "No encontramos tu
+// ficha", con teléfono de la oficina.
+async function aQuienLeAbreElPortal(
+  supabase: ReturnType<typeof createClient>,
+  cuenta: { id: string; user_metadata?: Record<string, unknown> },
+  rolDestino: string,
+  vinculoDestino: string,
+): Promise<string | null> {
+  const { data: perfil } = await supabase
+    .from('profiles')
+    .select('role, linked_id')
+    .eq('id', cuenta.id)
+    .maybeSingle()
+
+  const rolActual = String(perfil?.role ?? cuenta.user_metadata?.role ?? '')
+  const vinculoActual = String(perfil?.linked_id ?? cuenta.user_metadata?.linked_id ?? '')
+
+  if (!vinculoActual) return null
+  if (rolActual === rolDestino && vinculoActual === vinculoDestino) return null
+
+  // Un vínculo que no es un número no puede ser el id de ninguna ficha: las dos
+  // tablas llevan id numérico, y preguntarles por un texto tumba la consulta.
+  if (!/^\d+$/.test(vinculoActual)) return null
+
+  if (rolActual === 'driver') {
+    const { data: conductor, error } = await supabase
+      .from('drivers')
+      .select('id, data')
+      .eq('id', vinculoActual)
+      .maybeSingle()
+    if (error) return `un conductor que no se ha podido comprobar (${error.message})`
+    if (!conductor) return null
+    const nombre = String((conductor.data as Record<string, unknown> | null)?.name || '')
+    return `el conductor ${nombre || `nº ${vinculoActual}`}`
+  }
+
+  // Cualquier otro rol se trata como cliente: las cuentas antiguas pueden venir
+  // sin rol en los metadatos y sin perfil, y siempre han sido de clientes.
+  const { data: ficha, error } = await supabase
+    .from('clients')
+    .select('id, name')
+    .eq('id', vinculoActual)
+    .maybeSingle()
+  if (error) return `un cliente que no se ha podido comprobar (${error.message})`
+  if (!ficha) return null
+  return `el cliente ${String(ficha.name || '') || `nº ${vinculoActual}`}`
+}
+
 // ── Crear la cuenta, o actualizar la contraseña si el email ya existe ──
 async function crearOActualizar(
   supabase: ReturnType<typeof createClient>,
@@ -186,7 +249,29 @@ async function crearOActualizar(
     return json({ error: updateError.message }, 500)
   }
 
-  console.log(`[create-auth-user] Contraseña actualizada para ${email} (${metadata.role})`)
+  // ⚠️ Lo que decide qué ve al entrar es profiles.linked_id, y el trigger
+  // handle_new_user() sólo lo escribe al CREAR la cuenta. Actualizando sólo
+  // los metadatos, una cuenta que ya existía seguía abriendo la ficha de
+  // antes —o ninguna, si esa ficha ya no estaba— aunque la oficina acabara de
+  // darle acceso a otra. Quien llega aquí ya ha comprobado que la cuenta se
+  // puede reutilizar (ver aQuienLeAbreElPortal), así que se apunta a la ficha
+  // buena, igual que hace mover_acceso.
+  const { error: perfilError } = await supabase
+    .from('profiles')
+    .upsert({
+      id: existente.id,
+      role: metadata.role,
+      linked_id: metadata.linked_id,
+      display_name: metadata.display_name,
+    }, { onConflict: 'id' })
+
+  if (perfilError) {
+    return json({
+      error: `La contraseña se ha actualizado pero la cuenta no se ha podido apuntar a la ficha: ${perfilError.message}`,
+    }, 500)
+  }
+
+  console.log(`[create-auth-user] Contraseña actualizada para ${email} (${metadata.role}) → ${metadata.linked_id}`)
   return json({ ok: true, action: 'updated', userId: existente.id })
 }
 
@@ -408,6 +493,11 @@ serve(async (req: Request) => {
         role: rol,
         linked_id: String(linked_id || ''),
         display_name: display_name || emailNormalizado,
+        // Siempre escrita, como en mover_acceso: updateUserById fusiona los
+        // metadatos, y un correo que era adicional y pasa a principal seguiría
+        // marcado. Con la marca vieja, buscarPorVinculo() no lo ve como principal
+        // y la revocación de adicionales se lo puede llevar por delante.
+        acceso_adicional: '',
       }
 
       // ¿Esta ficha ya tenía cuenta con OTRO email? Entonces no se crea nada
@@ -427,6 +517,22 @@ serve(async (req: Request) => {
         }
         console.log(`[create-auth-user] Correo de acceso movido ${yaVinculada.email} → ${emailNormalizado} (${rol})`)
         return json({ ok: true, action: 'email_changed', userId: yaVinculada.id })
+      }
+
+      // ── ¿Ese correo ya entra con otra cuenta? ──
+      // crearOActualizar() reutiliza la cuenta si el correo ya existe, y ahora
+      // además la apunta a esta ficha. Eso sólo se puede hacer si no se le
+      // quita el portal a nadie: si la cuenta sigue abriendo la ficha de otro
+      // cliente, o la app de un conductor, se para aquí y se dice de quién es.
+      const yaConCuenta = await buscarPorEmail(supabase, emailNormalizado)
+      if (yaConCuenta) {
+        const dueno = await aQuienLeAbreElPortal(supabase, yaConCuenta, rol, metadata.linked_id)
+        if (dueno) {
+          console.warn(`[create-auth-user] ${emailNormalizado} ya es la cuenta de ${dueno} — no se le da acceso a ${rol} ${metadata.linked_id}`)
+          return json({
+            error: `Ese correo ya entra en la aplicación como ${dueno}. Quítale el acceso ahí (o fusiona las fichas) antes de dárselo aquí, o usa otro correo.`,
+          }, 409)
+        }
       }
 
       return await crearOActualizar(supabase, emailNormalizado, password, metadata)
