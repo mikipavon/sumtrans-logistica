@@ -54,7 +54,7 @@ export default function Sidebar({ onLogout, currentView, onNavigate, pendingClie
     ];
 
     return (
-        <aside className={`bg-slate-900 border-r border-slate-800 text-white transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'} flex flex-col h-screen fixed left-0 top-0 shadow-xl z-50`}>
+        <aside className={`bg-slate-900 border-r border-slate-800 text-white transition-all duration-300 ${collapsed ? 'w-20' : 'w-72'} flex flex-col h-screen fixed left-0 top-0 shadow-xl z-50`}>
             {/* Header */}
             <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800 shrink-0 bg-slate-900">
                 {!collapsed && (
@@ -72,7 +72,7 @@ export default function Sidebar({ onLogout, currentView, onNavigate, pendingClie
             </div>
 
             {/* Navigation Sections */}
-            <nav className="flex-1 py-6 px-3 space-y-8 overflow-y-auto custom-scrollbar">
+            <nav className="flex-1 py-6 px-3 space-y-8 overflow-y-auto overflow-x-hidden custom-scrollbar">
                 {sections.map((section, index) => (
                     <div key={index}>
                         {!collapsed && <h3 className="px-3 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-wider">{section.title}</h3>}

@@ -232,7 +232,7 @@ export default function Layout({ children, onLogout, currentView, onNavigate, pe
                 isSyncing={isSyncingQueue}
             />
             <Sidebar onLogout={onLogout} currentView={currentView} onNavigate={onNavigate} pendingClientsCount={pendingClientsCount} pendingIncidentsCount={pendingIncidentsCount} irregularCount={irregularCount} onSecretUnlock={onSecretUnlock} />
-            <div className="pl-64 transition-all duration-300">
+            <div className="pl-72 transition-all duration-300">
                 <header className={`h-16 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 sticky z-40 px-8 flex items-center justify-between shadow-sm transition-all duration-300 ${bannerVisible ? 'top-10' : 'top-0'}`}>
                     <h2 className="text-xl font-semibold text-slate-800 dark:text-white capitalize">
                         Panel de Control
