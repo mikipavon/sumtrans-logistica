@@ -1,37 +1,58 @@
-import { TrendingUp, Package, Truck, AlertCircle, BarChart2, DollarSign, Activity, Clock, Filter, Calendar, CheckCircle } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { TrendingUp, Package, Truck, AlertCircle, BarChart2, DollarSign, Activity, Clock, Filter, Calendar, CheckCircle, ChevronDown, Users } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import {
+    CATEGORIAS_DE_INGRESO,
+    TODAS_LAS_CATEGORIAS,
+    importeDelEnvio,
+    clasificadorDeIngresos,
+    categoriasMarcadas,
+    tituloDeIngresos,
+    ingresosPorCliente,
+    sumaDeIngresos
+} from '../utils/ingresosDelPanel';
+
+const formatoEuros = (n) => `€${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const ESTILO_CATEGORIA = {
+    facturacion: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300',
+    habituales: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    presupuestos: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+};
+
+// Opciones del desplegable "Ingresos por cliente". "lineas" sigue a las casillas
+// de la gráfica, igual que la tarjeta; las demás fijan una categoría.
+const OPCIONES_POR_CLIENTE = [
+    { valor: 'lineas', etiqueta: 'Según las líneas marcadas' },
+    ...CATEGORIAS_DE_INGRESO.map((c) => ({ valor: c.clave, etiqueta: c.etiqueta })),
+    { valor: 'todas', etiqueta: 'Todo (Total General)' }
+];
 
 export default function Dashboard({ onSync, isSyncing, shipments = [], clients = [], vehicles = [], isGhostModeUnlocked = false, onNavigate }) {
-    const normalize = (val) => String(val || '').toLowerCase().trim();
-    // `amount` casi siempre lleva el símbolo € ("€7.00") o es literalmente "Tarifa";
-    // customAmount manda si está puesto. Un `parseFloat` a pelo sobre cualquiera de
-    // los dos da NaN con el símbolo delante, así que se usa siempre este parser en
-    // vez de repetirlo suelto por el componente — el desglose de "Ingresos por
-    // periodo" (revenueData) contaba 0€ en casi todos los envíos por tener su propio
-    // parseFloat sin limpiar, mientras el KPI de arriba (stats) sí usaba uno robusto.
-    const safeParseAmount = (v) => parseFloat(String(v || '0').replace(',', '.').replace(/[^0-9.-]/g, '')) || 0;
-
-    const [timeGrouping, setTimeGrouping] = useState('days'); 
-    const [dateRange, setDateRange] = useState('7'); 
+    const [timeGrouping, setTimeGrouping] = useState('days');
+    const [dateRange, setDateRange] = useState('7');
     const [customStart, setCustomStart] = useState('');
     const [customEnd, setCustomEnd] = useState('');
-    
+
     const [showFacturacion, setShowFacturacion] = useState(true);
     const [showHabituales, setShowHabituales] = useState(true);
     const [showPresupuestos, setShowPresupuestos] = useState(true);
     const [showTotal, setShowTotal] = useState(false);
 
-    const clientsMap = useMemo(() => {
-        const map = new Map();
-        (clients || []).forEach(c => {
-            const nameNorm = normalize(c.name);
-            const legalNorm = normalize(c.legalName);
-            if (nameNorm) map.set(nameNorm, c);
-            if (legalNorm) map.set(legalNorm, c);
-        });
-        return map;
-    }, [clients]);
+    const [porClienteAbierto, setPorClienteAbierto] = useState(false);
+    const [verPorCliente, setVerPorCliente] = useState('lineas');
+    const porClienteRef = useRef(null);
+
+    // Cada albarán va a una sola línea, según el tipo de cobro de quien paga.
+    const clasificar = useMemo(() => clasificadorDeIngresos(clients), [clients]);
+
+    // Líneas que suma la tarjeta. Con el candado echado sólo existen los envíos
+    // de facturación, así que se suma todo lo visible y no se nombra nada más.
+    const categoriasDeLaTarjeta = useMemo(() => (
+        isGhostModeUnlocked
+            ? categoriasMarcadas({ total: showTotal, facturacion: showFacturacion, habituales: showHabituales, presupuestos: showPresupuestos })
+            : TODAS_LAS_CATEGORIAS
+    ), [isGhostModeUnlocked, showTotal, showFacturacion, showHabituales, showPresupuestos]);
 
     const parseShipmentDate = (s) => {
         if (s.createdAt) {
@@ -90,6 +111,30 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
         return { startDate: start, endDate: today, filteredShipments: filtered };
     }, [shipments, dateRange, customStart, customEnd]);
 
+    // Lo que suma la tarjeta, cliente a cliente: su total es el de la tarjeta.
+    const ingresosDeLaTarjeta = useMemo(
+        () => sumaDeIngresos(ingresosPorCliente(filteredShipments, clasificar, categoriasDeLaTarjeta)),
+        [filteredShipments, clasificar, categoriasDeLaTarjeta]
+    );
+
+    const categoriasPorCliente = useMemo(() => {
+        if (!isGhostModeUnlocked || verPorCliente === 'lineas') return categoriasDeLaTarjeta;
+        if (verPorCliente === 'todas') return TODAS_LAS_CATEGORIAS;
+        return [verPorCliente];
+    }, [isGhostModeUnlocked, verPorCliente, categoriasDeLaTarjeta]);
+
+    const filasPorCliente = useMemo(
+        () => ingresosPorCliente(filteredShipments, clasificar, categoriasPorCliente),
+        [filteredShipments, clasificar, categoriasPorCliente]
+    );
+    const totalPorCliente = useMemo(() => sumaDeIngresos(filasPorCliente), [filasPorCliente]);
+
+    const abrirPorCliente = () => {
+        setVerPorCliente('lineas');
+        setPorClienteAbierto(true);
+        requestAnimationFrame(() => porClienteRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    };
+
     const stats = useMemo(() => {
         // Status counts use ALL shipments (estado operativo actual, sin filtro de fecha)
         const allShipments = Array.isArray(shipments) ? shipments : [];
@@ -97,16 +142,16 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
         const entregados = allShipments.filter(s => s.status === 'Entregado').length;
         const pendientes = allShipments.filter(s => ['Pendiente', 'Asignado', 'Pendiente de asignar'].includes(s.status)).length;
 
-        // Ingresos sí usa el periodo seleccionado
-        const ingresosMes = filteredShipments.reduce((acc, s) => acc + safeParseAmount(s.customAmount || s.amount), 0);
-        
+        // Ingresos sí usa el periodo seleccionado, y sólo las líneas marcadas
+        const tituloIngresos = isGhostModeUnlocked ? tituloDeIngresos(categoriasDeLaTarjeta) : 'Ingresos (Periodo)';
+
         return [
             { title: 'En Reparto', value: enReparto.toString(), icon: Truck, color: 'bg-blue-500 dark:bg-blue-600', trend: '', filterKey: 'En reparto' },
             { title: 'Entregados', value: entregados.toString(), icon: Package, color: 'bg-emerald-500 dark:bg-emerald-600', trend: '', filterKey: 'Entregado' },
             { title: 'Pendientes', value: pendientes.toString(), icon: Clock, color: 'bg-amber-500 dark:bg-amber-600', trend: '', filterKey: 'Pendiente' },
-            { title: 'Ingresos (Periodo)', value: `€${ingresosMes.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`, icon: DollarSign, color: 'bg-indigo-500 dark:bg-indigo-600', trend: '', filterKey: null },
+            { title: tituloIngresos, value: formatoEuros(ingresosDeLaTarjeta), icon: DollarSign, color: 'bg-indigo-500 dark:bg-indigo-600', trend: '', filterKey: null, hint: 'Por cliente ↓' },
         ];
-    }, [shipments, filteredShipments]);
+    }, [shipments, isGhostModeUnlocked, categoriasDeLaTarjeta, ingresosDeLaTarjeta]);
 
     const revenueData = useMemo(() => {
         const buckets = new Map();
@@ -163,20 +208,12 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
 
             const bucket = buckets.get(key);
             if (bucket) {
-                const amount = safeParseAmount(s.customAmount || s.amount);
+                const amount = importeDelEnvio(s);
+                const categoria = clasificar(s);
 
-                const remitente = clientsMap.get(normalize(s.client));
-                const destinatario = clientsMap.get(normalize(s.destinationName || s.client));
-                
-                const mainBillingType = normalize(s.billingType || (remitente ? remitente.billingType : ''));
-                const destBillingType = normalize(s.destinationBillingType || (destinatario ? destinatario.billingType : ''));
-                
-                const isPresupuesto = mainBillingType.includes('presupuesto') || destBillingType.includes('presupuesto');
-                const isHabitual = ['habitual', 'diar', 'libre', 'contado'].some(t => mainBillingType.includes(t) || destBillingType.includes(t));
-                
-                if (isPresupuesto) {
+                if (categoria === 'presupuestos') {
                     bucket.presupuestos += amount;
-                } else if (isHabitual) {
+                } else if (categoria === 'habituales') {
                     bucket.habituales += amount;
                 } else {
                     bucket.ingresos += amount; // Facturación Normal
@@ -186,7 +223,7 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
         });
 
         return Array.from(buckets.values());
-    }, [filteredShipments, clientsMap, timeGrouping, startDate, endDate]);
+    }, [filteredShipments, clasificar, timeGrouping, startDate, endDate]);
 
     const loadMargins = useMemo(() => {
         let heavyShipments = 0;
@@ -300,18 +337,20 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
                         onClick={() => {
                             if (stat.filterKey && onNavigate) {
                                 onNavigate('shipments', stat.filterKey);
+                            } else if (stat.hint) {
+                                abrirPorCliente();
                             }
                         }}
                         className={`bg-white dark:bg-slate-800 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700/60 hover:shadow-lg hover:border-blue-500/30 transition-all group ${
-                            stat.filterKey ? 'cursor-pointer active:scale-[0.97]' : ''
+                            stat.filterKey || stat.hint ? 'cursor-pointer active:scale-[0.97]' : ''
                         }`}
                     >
                         <div className="flex items-center justify-between mb-4">
                             <div className={`${stat.color} p-3 rounded-xl text-white shadow-sm group-hover:scale-110 transition-transform`}>
                                 <stat.icon size={24} />
                             </div>
-                            {stat.filterKey && (
-                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Ver →</span>
+                            {(stat.filterKey || stat.hint) && (
+                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">{stat.hint || 'Ver →'}</span>
                             )}
                             {stat.trend && (
                             <span className={`text-sm font-bold ${stat.trend.startsWith('+') ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30' : 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30'} px-2.5 py-1 rounded-full`}>
@@ -438,7 +477,7 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" strokeOpacity={0.2} />
                                 <Tooltip
                                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', backgroundColor: 'var(--tooltip-bg, white)' }}
-                                    formatter={(value) => [`€${value.toFixed(2)}`, ""]}
+                                    formatter={(value, name) => [formatoEuros(value), name]}
                                 />
                                 <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
                                 {(!isGhostModeUnlocked || showFacturacion) && (
@@ -549,6 +588,97 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
                     </div>
                 </div>
 
+            </div>
+
+            {/* Ingresos por cliente (desplegable) */}
+            <div ref={porClienteRef} className="scroll-mt-4 bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700/60">
+                <button
+                    type="button"
+                    onClick={() => setPorClienteAbierto(v => !v)}
+                    aria-expanded={porClienteAbierto}
+                    className="w-full flex items-center justify-between gap-4 p-6 text-left"
+                >
+                    <div className="min-w-0">
+                        <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                            <Users className="text-indigo-500 shrink-0" size={20} />
+                            Ingresos por cliente
+                        </h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                            {filasPorCliente.length} {filasPorCliente.length === 1 ? 'cliente' : 'clientes'} en el periodo seleccionado
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-lg font-bold text-slate-800 dark:text-white">{formatoEuros(totalPorCliente)}</span>
+                        <ChevronDown size={20} className={`text-slate-400 transition-transform ${porClienteAbierto ? 'rotate-180' : ''}`} />
+                    </div>
+                </button>
+
+                {porClienteAbierto && (
+                    <div className="px-6 pb-6">
+                        {isGhostModeUnlocked && (
+                            <select
+                                value={verPorCliente}
+                                onChange={(e) => setVerPorCliente(e.target.value)}
+                                aria-label="Qué ingresos mostrar por cliente"
+                                className="mb-4 w-full sm:w-auto bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-medium rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white cursor-pointer"
+                            >
+                                {OPCIONES_POR_CLIENTE.map(o => (
+                                    <option key={o.valor} value={o.valor}>{o.etiqueta}</option>
+                                ))}
+                            </select>
+                        )}
+
+                        {filasPorCliente.length === 0 ? (
+                            <p className="py-8 text-center text-sm text-slate-400">No hay ingresos de este tipo en el periodo.</p>
+                        ) : (
+                            <div className="max-h-[480px] overflow-auto rounded-xl border border-slate-100 dark:border-slate-700/60">
+                                <table className="w-full text-sm">
+                                    <thead className="sticky top-0 bg-slate-50 dark:bg-slate-900 text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                        <tr>
+                                            <th className="px-4 py-2 text-left font-bold">Cliente</th>
+                                            {isGhostModeUnlocked && <th className="hidden sm:table-cell px-4 py-2 text-left font-bold">Tipo</th>}
+                                            <th className="px-4 py-2 text-right font-bold">Albaranes</th>
+                                            <th className="px-4 py-2 text-right font-bold">Importe</th>
+                                            <th className="hidden sm:table-cell px-4 py-2 text-right font-bold">%</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
+                                        {filasPorCliente.map(fila => (
+                                            <tr key={fila.cliente} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
+                                                <td className="px-4 py-2 font-medium text-slate-700 dark:text-slate-200 break-words">{fila.cliente}</td>
+                                                {isGhostModeUnlocked && (
+                                                    <td className="hidden sm:table-cell px-4 py-2">
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {fila.categorias.map(c => (
+                                                                <span key={c} className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${ESTILO_CATEGORIA[c]}`}>
+                                                                    {CATEGORIAS_DE_INGRESO.find(x => x.clave === c).etiqueta}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </td>
+                                                )}
+                                                <td className="px-4 py-2 text-right tabular-nums text-slate-600 dark:text-slate-300">{fila.envios}</td>
+                                                <td className="px-4 py-2 text-right tabular-nums font-bold text-slate-800 dark:text-white whitespace-nowrap">{formatoEuros(fila.importe)}</td>
+                                                <td className="hidden sm:table-cell px-4 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">
+                                                    {totalPorCliente > 0 ? `${((fila.importe / totalPorCliente) * 100).toLocaleString('es-ES', { maximumFractionDigits: 1 })}%` : '—'}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                    <tfoot className="sticky bottom-0 bg-slate-50 dark:bg-slate-900 font-bold text-slate-800 dark:text-white">
+                                        <tr>
+                                            <td className="px-4 py-2">Total</td>
+                                            {isGhostModeUnlocked && <td className="hidden sm:table-cell" />}
+                                            <td className="px-4 py-2 text-right tabular-nums">{filasPorCliente.reduce((n, f) => n + f.envios, 0)}</td>
+                                            <td className="px-4 py-2 text-right tabular-nums whitespace-nowrap">{formatoEuros(totalPorCliente)}</td>
+                                            <td className="hidden sm:table-cell" />
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );
