@@ -341,6 +341,17 @@ describe('aprendizaje del transportista', () => {
             envio({ coords: punto(3), nombre: 'z' }),
         ];
     };
+    // Tres paradas en triángulo: por cercanía sale x, y, z (4,2 km). Hacer x, z, y
+    // cuesta 4,5 km: un pelín más, lo que puede valer una manía con motivo. En línea
+    // recta no hay orden aprendido que no doble los kilómetros, y ese ya no manda.
+    const triangulo = () => {
+        contador = 0;
+        return [
+            envio({ coords: punto(0.6), nombre: 'x' }),
+            envio({ coords: punto(3), nombre: 'y' }),
+            envio({ coords: punto(3, 1.2), nombre: 'z' }),
+        ];
+    };
     const gps = { lat: norte(0), lon: este(0) };
 
     it('sin historial manda la geografía', () => {
@@ -350,10 +361,20 @@ describe('aprendizaje del transportista', () => {
 
     it('con historial firme manda el orden que confirma el transportista', () => {
         const r = optimizarRuta({
+            envios: triangulo(), rutas, conductorId: 7, ahora: MANANA, gps,
+            aprendizaje: memoriaFirme('cabra', 'manana', { x: 0, z: 0.5, y: 1 }),
+        });
+        expect(nombres(r)).toEqual(['x', 'z', 'y']);
+    });
+
+    it('pero un orden aprendido que dobla los kilómetros ya no manda: se va por cercanía', () => {
+        // El historial se alimenta del orden que propone la app: un zigzag de un mal
+        // día se aprendía y se repetía para siempre.
+        const r = optimizarRuta({
             envios: tresParadas(), rutas, conductorId: 7, ahora: MANANA, gps,
             aprendizaje: memoriaFirme('cabra', 'manana', { z: 0, y: 0.5, x: 1 }),
         });
-        expect(nombres(r)).toEqual(['z', 'y', 'x']);
+        expect(nombres(r)).toEqual(['x', 'y', 'z']);
     });
 
     it('con historial flojo no se atreve a darle la vuelta a la geografía', () => {
@@ -370,13 +391,16 @@ describe('aprendizaje del transportista', () => {
 
     it('los clientes nuevos se colocan donde menos desvían el orden aprendido', () => {
         contador = 0;
+        // El conductor entra por el medio: x y z le quedan a 1,2 km cada una, y el
+        // aprendido (z antes que x) no cuesta ni un metro más que por cercanía.
         const envios = [
-            envio({ coords: punto(0), nombre: 'x' }),
+            envio({ coords: punto(0.6), nombre: 'x' }),
             envio({ coords: punto(3), nombre: 'z' }),
-            envio({ coords: punto(1.5), nombre: 'nuevo' }),
+            envio({ coords: punto(1.8, 0.6), nombre: 'nuevo' }),
         ];
         const r = optimizarRuta({
-            envios, rutas, conductorId: 7, ahora: MANANA, gps,
+            envios, rutas, conductorId: 7, ahora: MANANA,
+            gps: { lat: norte(1.8), lon: este(0) },
             aprendizaje: memoriaFirme('cabra', 'manana', { z: 0, x: 1 }),
         });
         // Aprendido: z antes que x. El nuevo está justo entre los dos.
@@ -388,38 +412,39 @@ describe('aprendizaje del transportista', () => {
             _v: 2,
             cabra: {
                 manana: { x: { orden: 0, count: 10 }, y: { orden: 0.5, count: 10 }, z: { orden: 1, count: 10 } },
-                tarde: { z: { orden: 0, count: 10 }, y: { orden: 0.5, count: 10 }, x: { orden: 1, count: 10 } },
+                tarde: { x: { orden: 0, count: 10 }, z: { orden: 0.5, count: 10 }, y: { orden: 1, count: 10 } },
             },
         };
         const rutasTarde = [{ id: 'r1', conductorId: 7, poblacionesTarde: ['Cabra'] }];
         const manana = optimizarRuta({
-            envios: tresParadas(), rutas: rutasTarde, conductorId: 7, ahora: MANANA, gps, aprendizaje: dosTurnos,
+            envios: triangulo(), rutas: rutasTarde, conductorId: 7, ahora: MANANA, gps, aprendizaje: dosTurnos,
         });
         const tarde = optimizarRuta({
-            envios: tresParadas(), rutas: rutasTarde, conductorId: 7, ahora: TARDE, gps, aprendizaje: dosTurnos,
+            envios: triangulo(), rutas: rutasTarde, conductorId: 7, ahora: TARDE, gps, aprendizaje: dosTurnos,
         });
         expect(nombres(manana)).toEqual(['x', 'y', 'z']);
-        expect(nombres(tarde)).toEqual(['z', 'y', 'x']);
+        expect(nombres(tarde)).toEqual(['x', 'z', 'y']);
     });
 
     it('hereda del maestro de SU ruta antes que del de otra', () => {
         const conocimiento = {
             masterByRoute: {
                 r_otra: { _v: 2, cabra: { manana: { x: { orden: 0, count: 10 }, y: { orden: 0.5, count: 10 }, z: { orden: 1, count: 10 } } } },
-                r1: { _v: 2, cabra: { manana: { z: { orden: 0, count: 10 }, y: { orden: 0.5, count: 10 }, x: { orden: 1, count: 10 } } } },
+                r1: { _v: 2, cabra: { manana: { x: { orden: 0, count: 10 }, z: { orden: 0.5, count: 10 }, y: { orden: 1, count: 10 } } } },
             },
         };
         const r = optimizarRuta({
-            envios: tresParadas(), rutas, conductorId: 7, ahora: MANANA, gps, conocimiento,
+            envios: triangulo(), rutas, conductorId: 7, ahora: MANANA, gps, conocimiento,
         });
-        expect(nombres(r)).toEqual(['z', 'y', 'x']);
+        expect(nombres(r)).toEqual(['x', 'z', 'y']);
     });
 
     it('aplica el aprendizaje viejo, con la ciudad escrita a la antigua', () => {
         contador = 0;
+        // z está 100 m más lejos que x: ir a z primero cuesta un 20 % más, no el doble.
         const envios = [
-            envio({ ciudad: 'MONTALBÁN DE CÓRDOBA (14548)', coords: punto(0), nombre: 'x' }),
-            envio({ ciudad: 'MONTALBÁN DE CÓRDOBA (14548)', coords: punto(3), nombre: 'z' }),
+            envio({ ciudad: 'MONTALBÁN DE CÓRDOBA (14548)', coords: punto(0.4), nombre: 'x' }),
+            envio({ ciudad: 'MONTALBÁN DE CÓRDOBA (14548)', coords: punto(0.5), nombre: 'z' }),
         ];
         const rutasMontalban = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Montalbán de Córdoba'] }];
         // Formato v1: posición absoluta y clave con código postal.
@@ -433,6 +458,95 @@ describe('aprendizaje del transportista', () => {
             envios, rutas: rutasMontalban, conductorId: 7, ahora: MANANA, gps, aprendizaje: viejo,
         });
         expect(nombres(r)).toEqual(['z', 'x']);
+    });
+});
+
+// ── En el polígono manda la cercanía ─────────────────────────────────────────
+// El historial y la urgencia se sumaban en kilómetros de castigo (0,8 y 0,3 km), y
+// con naves a 300 m unas de otras eso decidía más que la distancia real: el reparto
+// de Córdoba salía en zigzag. Ahora solo desempatan entre paradas casi a la misma
+// distancia.
+
+describe('en el polígono manda la cercanía', () => {
+    const rutas = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Cabra'] }];
+    const gps = { lat: norte(0), lon: este(0) };
+    // Historial flojo (dos confirmaciones): b antes que a.
+    const historialFlojo = {
+        _v: 2,
+        cabra: { manana: { b: { orden: 0, count: 2 }, a: { orden: 1, count: 2 } } },
+    };
+
+    it('la parada claramente más cerca va antes, diga lo que diga el historial', () => {
+        contador = 0;
+        const envios = [
+            envio({ coords: punto(0.3), nombre: 'a' }),
+            envio({ coords: punto(0.6), nombre: 'b' }),
+        ];
+        const r = optimizarRuta({ envios, rutas, conductorId: 7, ahora: MANANA, gps, aprendizaje: historialFlojo });
+        expect(nombres(r)).toEqual(['a', 'b']);
+    });
+
+    it('pero entre dos casi a la misma distancia sigue desempatando el historial', () => {
+        contador = 0;
+        const envios = [
+            envio({ coords: punto(0.3), nombre: 'a' }),
+            envio({ coords: punto(0.33), nombre: 'b' }),
+        ];
+        const r = optimizarRuta({ envios, rutas, conductorId: 7, ahora: MANANA, gps, aprendizaje: historialFlojo });
+        expect(nombres(r)).toEqual(['b', 'a']);
+    });
+
+    it('una parada no urgente ya no espera si está claramente más cerca', () => {
+        contador = 0;
+        const envios = [
+            envio({ coords: punto(0.3), nombre: 'normal_cerca' }),
+            envio({ coords: punto(0.5), nombre: 'urgente_lejos' }),
+        ];
+        const r = optimizarRuta({
+            envios, rutas, conductorId: 7, ahora: MANANA, gps,
+            resolverCliente: (e) => e.destinationName === 'normal_cerca'
+                ? { name: 'normal_cerca', priority: 'normal' }
+                : null,
+        });
+        expect(nombres(r)).toEqual(['normal_cerca', 'urgente_lejos']);
+    });
+
+    it('a la misma distancia, la urgente sigue yendo antes', () => {
+        contador = 0;
+        const envios = [
+            envio({ coords: punto(0.3), nombre: 'normal' }),
+            envio({ coords: punto(0.32), nombre: 'urgente' }),
+        ];
+        const r = optimizarRuta({
+            envios, rutas, conductorId: 7, ahora: MANANA, gps,
+            resolverCliente: (e) => e.destinationName === 'normal'
+                ? { name: 'normal', priority: 'normal' }
+                : null,
+        });
+        expect(nombres(r)).toEqual(['urgente', 'normal']);
+    });
+
+    it('el zigzag del polígono: siete naves en cruz salen encadenadas por cercanía', () => {
+        contador = 0;
+        // Parecido al reparto de Córdoba del 15/09/2026: dos naves pegadas a la
+        // izquierda, dos arriba, una a la derecha y una abajo. El historial (firme)
+        // guardaba el orden en cruz que la propia app había propuesto.
+        const envios = [
+            envio({ coords: punto(0), nombre: 'p3' }),
+            envio({ coords: punto(0.7, -0.2), nombre: 'p4' }),
+            envio({ coords: punto(0.55, 0.2), nombre: 'p5' }),
+            envio({ coords: punto(0.4, -0.2), nombre: 'p6' }),
+            envio({ coords: punto(1.0, 0.1), nombre: 'p7' }),
+            envio({ coords: punto(0.8, -0.25), nombre: 'p8' }),
+            envio({ coords: punto(1.0, 0), nombre: 'p9' }),
+        ];
+        const enCruz = memoriaFirme('cabra', 'manana', { p3: 0, p4: 1 / 6, p5: 2 / 6, p6: 3 / 6, p7: 4 / 6, p8: 5 / 6, p9: 1 });
+        const r = optimizarRuta({ envios, rutas, conductorId: 7, ahora: MANANA, gps, aprendizaje: enCruz });
+        const orden = nombres(r);
+        expect(orden).not.toEqual(['p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9']);
+        // Las dos de la izquierda van seguidas, y las dos de arriba también.
+        expect(Math.abs(orden.indexOf('p4') - orden.indexOf('p8'))).toBe(1);
+        expect(Math.abs(orden.indexOf('p7') - orden.indexOf('p9'))).toBe(1);
     });
 });
 

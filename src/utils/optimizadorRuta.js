@@ -35,6 +35,15 @@
  *    firme, manda el orden que él confirma y la geografía solo coloca a los clientes
  *    nuevos. Mientras no lo hay, manda la geografía y el historial desempata.
  *
+ *    Pero "desempata" quiere decir eso: el historial y la urgencia solo eligen entre
+ *    paradas que están CASI a la misma distancia (ver MARGEN_EMPATE). Antes se sumaban
+ *    como kilómetros de castigo, y en un polígono donde las naves están a 300 m unas
+ *    de otras esos castigos mandaban más que la distancia real: el reparto cruzaba
+ *    el polígono en zigzag. Y el orden aprendido, aunque sea firme, tampoco manda si
+ *    sale claramente más largo que ir por cercanía (ver TOLERANCIA_ORDEN_APRENDIDO):
+ *    el historial lo alimenta el propio orden que propone la app, así que un zigzag
+ *    que se coló un día se aprende y se repite para siempre.
+ *
  * 5. Una parada de la que solo se sabe el pueblo —un aviso por teléfono, sin calle ni
  *    GPS— se ordena por el punto del pueblo, no se va al final por estar ciega. Ese
  *    punto es aproximado y va aparte (`coordsRef`), para que no cuente como una
@@ -89,6 +98,25 @@ const PESO_MEMORIA_KM = 0.8;
 
 /** Lo que "pesa" no ser urgente, entre los nuestros (en km). */
 const PESO_NO_URGENTE_KM = 0.3;
+
+/**
+ * Hasta dónde dos paradas cuentan como "a la misma distancia".
+ *
+ * El historial y la urgencia solo eligen entre las paradas que quedan a menos de un
+ * 25 % más lejos que la más cercana (y como mínimo 100 m más, para que a distancias
+ * de polígono no se quede sola la más cercana por un metro). Fuera de ese margen
+ * manda la cercanía, y los pesos de arriba ni se miran.
+ */
+export const MARGEN_EMPATE = 0.25;
+export const MARGEN_EMPATE_MIN_KM = 0.1;
+
+/**
+ * Cuánto más largo puede salir el orden aprendido que el orden por cercanía y aun así
+ * mandar. Un 30 % deja sitio para las manías con motivo (el que cierra a la una va
+ * antes aunque pille algo peor); doblar los kilómetros ya no es una manía, es un
+ * zigzag aprendido de un mal día.
+ */
+export const TOLERANCIA_ORDEN_APRENDIDO = 0.3;
 
 const RADIO_TIERRA_KM = 6371;
 
@@ -389,16 +417,44 @@ const ordenarPorMemoria = (items, memoria, entrada) => {
     return cadena;
 };
 
-/** Historial flojo: vecino más cercano, con el historial desempatando. */
+/** Los kilómetros de una cadena de paradas, empezando por `entrada`. */
+const longitudDeCadena = (cadena, entrada) => {
+    let total = 0;
+    let cursor = entrada;
+    cadena.forEach(item => {
+        if (!item.coordsRef) return;
+        if (cursor) {
+            const tramo = distanciaEntre(cursor, item.coordsRef);
+            if (Number.isFinite(tramo)) total += tramo;
+        }
+        cursor = item.coordsRef;
+    });
+    return total;
+};
+
+/**
+ * Historial flojo: vecino más cercano, con el historial desempatando.
+ *
+ * Solo compiten las paradas que quedan casi a la misma distancia que la más cercana
+ * (MARGEN_EMPATE). Antes competían todas, y como el historial y la urgencia se suman
+ * en kilómetros, una parada a 600 m ganaba a otra a 300 m por tener mejor historial:
+ * en un pueblo pasa poco, en un polígono pasa en cada parada.
+ */
 const ordenarPorGeografia = (items, memoria, confianza, entrada) => {
     const restantes = [...items];
     const salida = [];
     let cursor = entrada;
     while (restantes.length > 0) {
+        const distancias = restantes.map(item => (cursor ? distanciaEntre(cursor, item.coordsRef) : 0));
+        const masCerca = Math.min(...distancias);
+        const umbral = Number.isFinite(masCerca)
+            ? Math.max(masCerca * (1 + MARGEN_EMPATE), masCerca + MARGEN_EMPATE_MIN_KM)
+            : Infinity;
         let mejor = 0;
         let mejorScore = Infinity;
         restantes.forEach((item, i) => {
-            const dist = cursor ? distanciaEntre(cursor, item.coordsRef) : 0;
+            const dist = distancias[i];
+            if (dist > umbral) return;
             const orden = ordenDeCliente(memoria, item.nombre);
             const sesgoMemoria = (orden === null ? 0.5 : orden) * PESO_MEMORIA_KM * confianza;
             const sesgoUrgencia = item.urgente ? 0 : PESO_NO_URGENTE_KM;
@@ -420,9 +476,20 @@ const ordenarBloque = (bloque, memoria, entrada) => {
     const sinCoords = bloque.filter(i => !i.coordsRef);
     const confianza = confianzaDeMemoria(memoria, bloque.map(i => i.nombre));
 
-    const ordenados = confianza >= UMBRAL_MEMORIA_FIRME
-        ? ordenarPorMemoria(conCoords, memoria, entrada)
-        : ordenarPorGeografia(conCoords, memoria, confianza, entrada);
+    // Con historial firme manda el orden aprendido... mientras no salga claramente
+    // más largo que ir por cercanía. El historial se alimenta del orden que la app
+    // propone, así que sin este freno un zigzag se aprende y se repite cada día.
+    const porCercania = ordenarPorGeografia(conCoords, memoria, confianza, entrada);
+    let ordenados = porCercania;
+    if (confianza >= UMBRAL_MEMORIA_FIRME) {
+        const aprendido = ordenarPorMemoria(conCoords, memoria, entrada);
+        // La vara de medir es la cadena por cercanía a secas, sin historial: la de
+        // arriba ya lleva el historial desempatando y no vale para juzgarlo.
+        const soloCercania = ordenarPorGeografia(conCoords, {}, 0, entrada);
+        const kmAprendido = longitudDeCadena(aprendido, entrada);
+        const kmCercania = longitudDeCadena(soloCercania, entrada);
+        if (kmAprendido <= kmCercania * (1 + TOLERANCIA_ORDEN_APRENDIDO)) ordenados = aprendido;
+    }
 
     // Sin ninguna referencia no se puede optimizar: al final del bloque, por historial
     // y luego por dirección, que al menos deja juntas las de la misma calle.
@@ -458,11 +525,21 @@ const pasarDeCamino = (lista, deCamino, radioKm) => {
         if (!actual.coords || restantes.length < 2) continue;
 
         const rumbo = restantes[0].coords || null;
+        const hastaElRumbo = rumbo ? distanciaEntre(actual.coords, rumbo) : Infinity;
         const elegidas = [];
         for (let i = 1; i < restantes.length && elegidas.length < MAX_ARRASTRE_DE_CAMINO; i++) {
             const candidata = restantes[i];
             if (!candidata.coords) continue;
-            if (distanciaEntre(actual.coords, candidata.coords) > radioKm) continue;
+            // Solo agencias, que es lo que dice la regla 3. Se aplicaba a todo, y en un
+            // polígono donde todo queda a menos de 1 km adelantaba SIEMPRE la segunda
+            // y la tercera parada por delante de la primera: el orden por cercanía
+            // salía del bloque bien hecho y esto lo volvía a revolver.
+            if (!candidata.agencia) continue;
+            const hastaLaCandidata = distanciaEntre(actual.coords, candidata.coords);
+            if (hastaLaCandidata > radioKm) continue;
+            // "De camino" también quiere decir que pilla ANTES que la siguiente parada:
+            // una agencia a 800 m no está de camino a una nave que queda a 200 m.
+            if (hastaLaCandidata >= hastaElRumbo) continue;
             if (costeDeInsercion(actual.coords, candidata.coords, rumbo) > radioKm) continue;
             elegidas.push(candidata);
         }
