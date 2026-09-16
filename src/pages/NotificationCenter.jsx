@@ -3,11 +3,33 @@ import { Bell, Package, CheckCircle, FileText, AlertTriangle, ChevronRight, Exte
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { getIrregularReasons } from '../utils/shipmentUtils';
 import { coincideBusqueda, coincideEnCampos } from '../utils/busqueda';
+import { fechaSinHora } from '../utils/fechaSinHora';
+
+// El día se saca de createdAt, que es ISO. shipment.date es texto en español y
+// new Date lo lee a la americana, así que sólo se usa (tal cual) si no hay createdAt.
+const instanteDeAlta = (shipment) => {
+    const t = new Date(shipment.createdAt || 0).getTime();
+    return isNaN(t) ? 0 : t;
+};
+
+const grupoPorDia = (shipment) => {
+    const t = instanteDeAlta(shipment);
+    if (!t) {
+        const escrita = fechaSinHora(shipment.date);
+        return { clave: `sin-alta:${escrita}`, titulo: escrita || 'Sin fecha' };
+    }
+    const d = new Date(t);
+    const titulo = d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return { clave: d.toLocaleDateString('es-ES'), titulo: titulo.charAt(0).toUpperCase() + titulo.slice(1) };
+};
+
+const nombreDeCliente = (shipment) => String(shipment.client || '').trim();
 
 export default function NotificationCenter({ shipments, drivers, clients, onUpdateShipment, articles, tariffs, defaultCodFee, familyOrder, coverageZones }) {
     const [selectedShipment, setSelectedShipment] = useState(null);
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [searchTerm, setSearchTerm] = useState('');
+    const [orden, setOrden] = useState('recientes'); // 'recientes' | 'antiguos' | 'cliente'
 
     // Filter shipments that have irregular reasons and are not dismissed
     const allNotifications = useMemo(() => {
@@ -30,6 +52,54 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
             coincideEnCampos([...reasons, shipment.observations], searchTerm)
         );
     }, [allNotifications, searchTerm]);
+
+    // Orden y agrupación: por día (el más nuevo o el más viejo arriba) o por cliente
+    // de la A a la Z, y dentro de cada cliente el más nuevo arriba.
+    const grupos = useMemo(() => {
+        const lista = [...notifications];
+        if (orden === 'cliente') {
+            lista.sort((a, b) => {
+                const ca = nombreDeCliente(a.shipment);
+                const cb = nombreDeCliente(b.shipment);
+                if (!ca !== !cb) return ca ? -1 : 1; // los que no tienen cliente, al final
+                return ca.localeCompare(cb, 'es', { sensitivity: 'base' }) ||
+                    instanteDeAlta(b.shipment) - instanteDeAlta(a.shipment);
+            });
+        } else {
+            const signo = orden === 'antiguos' ? 1 : -1;
+            lista.sort((a, b) => signo * (instanteDeAlta(a.shipment) - instanteDeAlta(b.shipment)));
+        }
+
+        const resultado = [];
+        const porClave = new Map();
+        for (const item of lista) {
+            let clave, titulo;
+            if (orden === 'cliente') {
+                const nombre = nombreDeCliente(item.shipment);
+                clave = nombre.toLocaleLowerCase('es');
+                titulo = nombre || 'Sin cliente';
+            } else {
+                ({ clave, titulo } = grupoPorDia(item.shipment));
+            }
+            let grupo = porClave.get(clave);
+            if (!grupo) {
+                grupo = { clave, titulo, items: [] };
+                porClave.set(clave, grupo);
+                resultado.push(grupo);
+            }
+            grupo.items.push(item);
+        }
+        return resultado;
+    }, [notifications, orden]);
+
+    const toggleSelectGroup = (ids) => {
+        setSelectedIds(prev => {
+            const newSet = new Set(prev);
+            const todos = ids.every(id => newSet.has(id));
+            ids.forEach(id => todos ? newSet.delete(id) : newSet.add(id));
+            return newSet;
+        });
+    };
 
     const handleDismiss = async (e, shipmentId) => {
         e.stopPropagation();
@@ -140,14 +210,28 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
                         <span className="text-sm font-bold text-slate-700">Seleccionar Todos</span>
                     </label>
 
-                    {selectedIds.size > 0 && (
-                        <button 
-                            onClick={handleBulkDismiss}
-                            className="px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg text-sm font-bold shadow-md transition-colors flex items-center gap-2"
-                        >
-                            <CheckCircle size={16} /> Marcar {selectedIds.size} como vistos
-                        </button>
-                    )}
+                    <div className="flex flex-wrap items-center gap-3">
+                        {selectedIds.size > 0 && (
+                            <button
+                                onClick={handleBulkDismiss}
+                                className="px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg text-sm font-bold shadow-md transition-colors flex items-center gap-2"
+                            >
+                                <CheckCircle size={16} /> Marcar {selectedIds.size} como vistos
+                            </button>
+                        )}
+                        <label className="flex items-center gap-2 text-sm font-bold text-slate-600">
+                            Ordenar
+                            <select
+                                value={orden}
+                                onChange={(e) => setOrden(e.target.value)}
+                                className="px-3 py-2 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                            >
+                                <option value="recientes">Días (más recientes)</option>
+                                <option value="antiguos">Días (más antiguos)</option>
+                                <option value="cliente">Cliente (A-Z)</option>
+                            </select>
+                        </label>
+                    </div>
                 </div>
             )}
 
@@ -169,9 +253,27 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
                     <p className="text-slate-500">No hay ningún envío irregular o con alertas pendiente de revisar.</p>
                 </div>
             ) : (
+                <div className="space-y-8">
+                  {grupos.map(grupo => {
+                    const idsDelGrupo = grupo.items.map(n => n.shipment.id);
+                    const grupoEntero = idsDelGrupo.every(id => selectedIds.has(id));
+                    return (
+                    <section key={grupo.clave} className="space-y-3">
+                      <label className="flex items-center gap-3 px-1 cursor-pointer">
+                          <input
+                              type="checkbox"
+                              className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                              checked={grupoEntero}
+                              onChange={() => toggleSelectGroup(idsDelGrupo)}
+                              title="Seleccionar este grupo"
+                          />
+                          <h2 className="text-sm font-black text-slate-700 uppercase tracking-wide">{grupo.titulo}</h2>
+                          <span className="text-xs font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{grupo.items.length}</span>
+                          <span className="flex-1 h-px bg-slate-200"></span>
+                      </label>
                 <div className="grid grid-cols-1 gap-4">
-                    {notifications.map(({ shipment, reasons }) => (
-                        <div 
+                    {grupo.items.map(({ shipment, reasons }) => (
+                        <div
                             key={shipment.id}
                             onClick={() => setSelectedShipment(shipment)}
                             className={`bg-white rounded-xl border p-5 shadow-sm hover:shadow-md transition-all cursor-pointer group flex flex-col sm:flex-row gap-5 ${selectedIds.has(shipment.id) ? 'border-amber-400 bg-amber-50/30' : 'border-slate-200 hover:border-amber-300'}`}
@@ -200,7 +302,7 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
                                         {shipment.status || 'Pendiente'}
                                     </span>
                                     <span className="text-xs text-slate-400 font-medium ml-auto">
-                                        {new Date(shipment.createdAt || shipment.date).toLocaleDateString('es-ES')}
+                                        {fechaSinHora(shipment.createdAt || shipment.date)}
                                     </span>
                                 </div>
                                 
@@ -262,6 +364,10 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
                             </div>
                         </div>
                     ))}
+                </div>
+                    </section>
+                    );
+                  })}
                 </div>
             )}
 
