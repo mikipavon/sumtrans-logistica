@@ -12,6 +12,7 @@ import CityAutocomplete from '../CityAutocomplete';
 import { supabase } from '../../lib/supabase';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
+import { ahoraParaInputLocal, conHoraRapida, HORAS_RAPIDAS_DE_ASIGNACION } from '../../utils/horaDeAsignacion';
 
 // El nombre de quien crea la ficha lo pone App.jsx, que sabe caer en la sesión
 // guardada si la lista aún no ha cargado. `drivers` sí se vuelve a leer aquí, pero
@@ -1407,15 +1408,6 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
 
     if (!isOpen) return null;
 
-    // La hora de ahora tal y como la quiere un <input type="datetime-local">: en local,
-    // no en UTC. Restar el desfase antes de cortar el ISO es lo mismo que hace el cuadro
-    // de asignar del listado; sin eso, en verano propondría dos horas menos.
-    const ahoraParaInputLocal = () => {
-        const d = new Date();
-        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-        return d.toISOString().slice(0, 16);
-    };
-
     const nombreDeConductor = (d) => {
         const name = d?.name || '';
         const alias = d?.alias || '';
@@ -1827,6 +1819,24 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                             disabled={!formData.assignedDriverId}
                                             onChange={(e) => setFormData(prev => ({ ...prev, scheduledDate: e.target.value }))}
                                         />
+                                        <div className="flex gap-2 mt-2">
+                                            {HORAS_RAPIDAS_DE_ASIGNACION.map(hora => {
+                                                const activa = (formData.scheduledDate || '').endsWith(`T${hora}`);
+                                                return (
+                                                    <button
+                                                        key={hora}
+                                                        type="button"
+                                                        disabled={!formData.assignedDriverId}
+                                                        onClick={() => setFormData(prev => ({ ...prev, scheduledDate: conHoraRapida(prev.scheduledDate, hora) }))}
+                                                        className={`flex-1 py-1.5 text-xs font-bold rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${activa
+                                                            ? 'bg-blue-600 border-blue-600 text-white'
+                                                            : 'bg-white border-slate-200 text-slate-600 hover:border-blue-400 hover:text-blue-600'}`}
+                                                    >
+                                                        {hora}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
                                         <p className="text-[10px] text-slate-400 mt-1 leading-tight">
                                             {formData.assignedDriverId
                                                 ? 'No le aparece al conductor hasta esa hora.'

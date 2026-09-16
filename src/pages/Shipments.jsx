@@ -6,10 +6,11 @@ import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { getPackagesCount, intervinoConductor, importeParaMostrar, poblacionYCalle, fichaDelPagador, quienPagaElPorte } from '../utils/shipmentUtils';
 import { coincideBusqueda, coincideEnCampos } from '../utils/busqueda';
+import { ahoraParaInputLocal, conHoraRapida, HORAS_RAPIDAS_DE_ASIGNACION } from '../utils/horaDeAsignacion';
 import { compartirAlbaranPorWhatsApp } from '../utils/mensajeJustificante';
 import { ladosDelEnvio } from '../utils/telefonosDelEnvio';
-import ElegirWhatsAppModal, { PUNTUAL } from '../components/shipments/ElegirWhatsAppModal';
 import { guardarTelefonoTecleado } from '../utils/guardarTelefonoTecleado';
+import ElegirWhatsAppModal, { PUNTUAL } from '../components/shipments/ElegirWhatsAppModal';
 import { SIN_FILTRO, BAREMO_1, BAREMO_2, TIPOS_DE_CLIENTE, coincideCliente, filtroPoblacion, filtroTipoDeCliente, opcionesDeClientes, opcionesDePoblaciones } from '../utils/filtrosEnvios';
 import FiltroClienteBuscable from '../components/shipments/FiltroClienteBuscable';
 import ImportExcelShipments from '../components/clients/ImportExcelShipments';
@@ -39,7 +40,10 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     const [importMode, setImportMode] = useState('excel'); // 'excel' | 'fotos' (albaranes de agencia leídos por OCR)
     const [importClientSearch, setImportClientSearch] = useState('');
     const [viewMode, setViewMode] = useState('list'); // 'list' or 'stats'
-    const [assignmentModal, setAssignmentModal] = useState({ isOpen: false, shipmentId: null, driverId: '', scheduledDate: '' });
+    // shipmentIds: la ventana de "Programar Asignación" sirve igual para una fila que para
+    // todos los albaranes marcados con la casilla; antes solo admitía uno.
+    const ASIGNACION_CERRADA = { isOpen: false, shipmentIds: [], driverId: '', scheduledDate: '' };
+    const [assignmentModal, setAssignmentModal] = useState(ASIGNACION_CERRADA);
 
 
     // Details Modal State
@@ -94,7 +98,6 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         }
     };
 
-    
     // Export Modal State
     const [exportModal, setExportModal] = useState({ isOpen: false, startDate: '', endDate: '', onlyFacturacion: true, excludeExported: true, specificId: '' });
 
@@ -492,6 +495,31 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                     {/* Action Buttons Row */}
                     <div className="flex flex-wrap items-center gap-2">
                         {selectedIds.length > 0 && (
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg border border-blue-200 text-xs font-bold">
+                                <User size={15} />
+                                <select
+                                    value=""
+                                    onChange={(e) => {
+                                        const driverId = e.target.value;
+                                        if (!driverId) return;
+                                        setAssignmentModal({
+                                            isOpen: true,
+                                            shipmentIds: [...selectedIds],
+                                            driverId,
+                                            scheduledDate: ahoraParaInputLocal()
+                                        });
+                                    }}
+                                    className="bg-transparent text-xs font-bold text-blue-700 focus:outline-none cursor-pointer"
+                                    title="Asignar todos los envíos marcados a un conductor"
+                                >
+                                    <option value="">Asignar los {selectedIds.length} a…</option>
+                                    {(drivers || []).map(driver => (
+                                        <option key={driver.id} value={driver.id}>{getDriverDisplayName(driver)}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                        {selectedIds.length > 0 && (
                             <button
                                 onClick={() => {
                                     if (window.confirm(`¿Estás seguro de que deseas borrar los ${selectedIds.length} envíos seleccionados?`)) {
@@ -763,14 +791,11 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                     onChange={(e) => {
                                                         const driverId = e.target.value;
                                                         if (driverId) {
-                                                            const nowLocal = new Date();
-                                                            nowLocal.setMinutes(nowLocal.getMinutes() - nowLocal.getTimezoneOffset());
-                                                            const localDatetime = nowLocal.toISOString().slice(0, 16);
                                                             setAssignmentModal({
                                                                 isOpen: true,
-                                                                shipmentId: shipment.id,
+                                                                shipmentIds: [shipment.id],
                                                                 driverId: driverId,
-                                                                scheduledDate: shipment.scheduledDate || localDatetime
+                                                                scheduledDate: shipment.scheduledDate || ahoraParaInputLocal()
                                                             });
                                                         } else {
                                                             onAssignDriver(shipment.id, '', null);
@@ -1012,9 +1037,9 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                         <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                             <h3 className="font-bold text-slate-800 flex items-center gap-2">
                                 <Calendar size={16} className="text-blue-500" />
-                                Programar Asignación
+                                Programar Asignación{assignmentModal.shipmentIds.length > 1 ? ` (${assignmentModal.shipmentIds.length} envíos)` : ''}
                             </h3>
-                            <button onClick={() => setAssignmentModal({ isOpen: false, shipmentId: null, driverId: '', scheduledDate: '' })} className="text-slate-400 hover:text-slate-600">
+                            <button onClick={() => setAssignmentModal(ASIGNACION_CERRADA)} className="text-slate-400 hover:text-slate-600">
                                 <X size={20} />
                             </button>
                         </div>
@@ -1037,19 +1062,42 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                     onChange={(e) => setAssignmentModal(prev => ({ ...prev, scheduledDate: e.target.value }))}
                                     className="w-full text-sm border-2 border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none font-semibold text-slate-700"
                                 />
+                                <div className="flex gap-2">
+                                    {HORAS_RAPIDAS_DE_ASIGNACION.map(hora => {
+                                        const activa = (assignmentModal.scheduledDate || '').endsWith(`T${hora}`);
+                                        return (
+                                            <button
+                                                key={hora}
+                                                type="button"
+                                                onClick={() => setAssignmentModal(prev => ({ ...prev, scheduledDate: conHoraRapida(prev.scheduledDate, hora) }))}
+                                                className={`flex-1 py-2 text-sm font-bold rounded-xl border-2 transition-colors ${activa
+                                                    ? 'bg-blue-600 border-blue-600 text-white'
+                                                    : 'bg-white border-slate-200 text-slate-600 hover:border-blue-400 hover:text-blue-600'}`}
+                                            >
+                                                {hora}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
                             </div>
                         </div>
                         <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
                             <button 
-                                onClick={() => setAssignmentModal({ isOpen: false, shipmentId: null, driverId: '', scheduledDate: '' })}
+                                onClick={() => setAssignmentModal(ASIGNACION_CERRADA)}
                                 className="flex-1 py-3 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
                             >
                                 Cancelar
                             </button>
                             <button 
-                                onClick={() => {
-                                    onAssignDriver(assignmentModal.shipmentId, assignmentModal.driverId, assignmentModal.scheduledDate);
-                                    setAssignmentModal({ isOpen: false, shipmentId: null, driverId: '', scheduledDate: '' });
+                                onClick={async () => {
+                                    const { shipmentIds, driverId, scheduledDate } = assignmentModal;
+                                    setAssignmentModal(ASIGNACION_CERRADA);
+                                    // En serie y no a la vez: cada asignación lee el albarán de la
+                                    // lista actual y lo escribe entero, y así ninguna pisa a otra.
+                                    for (const id of shipmentIds) {
+                                        await onAssignDriver(id, driverId, scheduledDate);
+                                    }
+                                    if (shipmentIds.length > 1) setSelectedIds([]);
                                 }}
                                 className="flex-[2] py-3 text-sm font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-500/20 transition-all active:scale-95 flex items-center justify-center gap-2"
                             >
