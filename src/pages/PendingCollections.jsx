@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Wallet, Filter, Search, User, Calendar, Truck, Euro, AlertTriangle, CheckCircle, ArrowRight, Pencil, X, FileText, ChevronUp, ChevronDown } from 'lucide-react';
+import { Wallet, Filter, Search, User, Calendar, Truck, Euro, AlertTriangle, CheckCircle, ArrowRight, Pencil, X, FileText, ChevronUp, ChevronDown, Plus, Camera } from 'lucide-react';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
+import NuevaDeudaModal from '../components/shipments/NuevaDeudaModal';
 import { utils, writeFile } from 'xlsx';
 import { lineasDeCobro, needsDriverAfterCollecting } from '../utils/pendingCollections';
 import { coincideBusqueda } from '../utils/busqueda';
@@ -9,7 +10,7 @@ import { coincideBusqueda } from '../utils/busqueda';
 const SIN_REPARTIDOR = 'unassigned';
 const sinRepartidor = (v) => v === null || v === undefined || v === '';
 
-export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onReassignCollection, onReassignCollections, onUpdateShipment, driverNamePreference = 'both' }) {
+export default function PendingCollections({ shipments, drivers, clients, onAssignDriver, onReassignCollection, onReassignCollections, onUpdateShipment, onCreateShipment, articles = [], driverNamePreference = 'both', isGhostModeUnlocked = true }) {
     const getDriverDisplayName = (driver) => {
         if (!driver) return '';
         const name = driver.name || '';
@@ -35,6 +36,8 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
     const [assignPrompt, setAssignPrompt] = useState(null);
     const [promptDriverId, setPromptDriverId] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
+    // Ventana "Añadir deuda": apuntar a un cliente dinero que no viene de ningún albarán.
+    const [nuevaDeudaAbierta, setNuevaDeudaAbierta] = useState(false);
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -213,7 +216,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                     'Remitente': item.client,
                     'Destinatario': item.destinationName || 'N/A',
                     'Pagador': t.payerName,
-                    'Concepto': t.type,
+                    'Concepto': item.type === 'Recibo' ? `Recibo: ${item.observations || ''}` : t.type,
                     'Importe': typeof t.amountDisplay !== 'undefined' ? t.amountDisplay : t.amount,
                     'Conductor': driver ? getDriverDisplayName(driver) : 'Sin Asignar',
                     'Estado Envío': item.status
@@ -274,6 +277,15 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                 onClose={() => { setIsDetailsModalOpen(false); setSelectedShipment(null); }}
                 shipment={selectedShipment}
                 onUpdate={handleDetailsUpdate}
+            />
+            <NuevaDeudaModal
+                isOpen={nuevaDeudaAbierta}
+                onClose={() => setNuevaDeudaAbierta(false)}
+                clients={clients}
+                drivers={drivers}
+                articles={articles}
+                onCreateShipment={onCreateShipment}
+                getDriverDisplayName={getDriverDisplayName}
             />
 
             {/* Aviso: cobrado pero sin repartidor. Se muestra al cerrar la ficha
@@ -338,6 +350,19 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                 </div>
 
                 <div className="flex gap-4">
+                    {/* Con el candado del Modo Fantasma echado la oficina no ve ningún cobro
+                        de Cliente Habitual, y una deuda apuntada a mano es justo eso: se
+                        guardaría y desaparecería de la lista en el acto. Sin candado, no hay botón. */}
+                    {onCreateShipment && isGhostModeUnlocked && (
+                        <button
+                            onClick={() => setNuevaDeudaAbierta(true)}
+                            title="Apuntar a un cliente una deuda que no viene de ningún albarán de la app"
+                            className="flex items-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors font-bold text-sm shadow-sm"
+                        >
+                            <Plus size={18} />
+                            Añadir deuda
+                        </button>
+                    )}
                     <button
                         onClick={handleExportToExcel}
                         title="Exportar a Excel"
@@ -485,6 +510,9 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                                 // For Porte, it depends on porteType (Debido = Receiver, Pagado = Sender)
                                 const isReceiverPayer = hasReembolso || (hasPorte && item.porteType === 'Debido');
                                 const isSenderPayer = hasPorte && item.porteType !== 'Debido';
+                                // Un Recibo (cierre de presupuestos o deuda apuntada a mano) no tiene
+                                // destinatario: en su lugar se enseña el concepto de la deuda.
+                                const esRecibo = item.type === 'Recibo';
 
                                 return (
                                     <tr key={item.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => { setSelectedShipment(item); setIsDetailsModalOpen(true); }}>
@@ -505,10 +533,11 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                                                 </span>
                                                 <span
                                                     className={`truncate mt-0.5 ${isReceiverPayer ? 'font-bold text-slate-900 text-sm' : 'text-slate-500 text-[11px]'}`}
-                                                    title={`Destinatario: ${item.destinationName || 'Destinatario'}`}
+                                                    title={esRecibo ? `Concepto: ${item.observations || ''}` : `Destinatario: ${item.destinationName || 'Destinatario'}`}
                                                 >
                                                     {isReceiverPayer && <span className="mr-1 text-[10px] text-amber-500">◆</span>}
-                                                    {item.destinationName || 'Destinatario'}
+                                                    {esRecibo && item.deliveryPhoto && <Camera size={10} className="inline mr-1 text-emerald-600" aria-label="Con foto del papel firmado" />}
+                                                    {esRecibo ? (item.observations || 'Recibo de oficina') : (item.destinationName || 'Destinatario')}
                                                 </span>
                                             </div>
                                         </td>
@@ -521,7 +550,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                                                     ${t.type === 'Reembolso' ? 'bg-purple-50 text-purple-700 border border-purple-100' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}
                                                     >
                                                         {t.type === 'Reembolso' ? <Euro size={12} className="shrink-0" /> : <Truck size={12} className="shrink-0" />}
-                                                        <span className="truncate">{t.type === 'Reembolso' ? 'Reembolso' : t.type}</span>
+                                                        <span className="truncate">{t.type === 'Reembolso' ? 'Reembolso' : (esRecibo ? 'Recibo (oficina)' : t.type)}</span>
                                                     </span>
                                                 ))}
                                             </div>

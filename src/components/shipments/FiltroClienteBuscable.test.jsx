@@ -48,4 +48,27 @@ describe('FiltroClienteBuscable', () => {
         fireEvent.change(input, { target: { value: 'zzz' } });
         expect(screen.getByText(/Ningún cliente contiene/)).toBeInTheDocument();
     });
+
+    it('sin permitirLibre (el filtro de Envíos) no ofrece usar lo escrito ni lo guarda al salir', () => {
+        const onChange = vi.fn();
+        render(<div><FiltroClienteBuscable value={SIN_FILTRO} onChange={onChange} opciones={opciones} /><button>fuera</button></div>);
+        const input = screen.getByPlaceholderText('Todos los Clientes');
+        fireEvent.focus(input);
+        fireEvent.change(input, { target: { value: 'Bar Manolo' } });
+        expect(screen.queryByText(/Usar «/)).toBeNull();
+        fireEvent.mouseDown(screen.getByText('fuera'));
+        expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it('con permitirLibre la fila "Usar" devuelve el nombre escrito, sin la marca interna', () => {
+        const onChange = vi.fn();
+        render(<FiltroClienteBuscable value={SIN_FILTRO} onChange={onChange} opciones={opciones} permitirLibre />);
+        const input = screen.getByPlaceholderText('Todos los Clientes');
+        fireEvent.focus(input);
+        fireEvent.change(input, { target: { value: '  lek ' } });
+        // Hay coincidencias: la fila libre va al final, detrás de los clientes.
+        expect(screen.getByText('INDUSTRIAL LEKUE S.L.')).toBeInTheDocument();
+        fireEvent.mouseDown(screen.getByText('Usar «lek» (cliente sin ficha)'));
+        expect(onChange).toHaveBeenCalledWith('lek');
+    });
 });

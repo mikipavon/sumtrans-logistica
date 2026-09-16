@@ -11,8 +11,17 @@ import { SIN_FILTRO } from '../../utils/filtrosEnvios';
  * contienen; con las flechas y Enter se elige, con Escape se cierra y la X
  * vuelve a "Todos los Clientes". El valor elegido es siempre un nombre entero
  * de la lista (o SIN_FILTRO): el filtrado exacto lo sigue haciendo el listado.
+ *
+ * Con `permitirLibre` (la ventana de Añadir deuda) también vale un nombre que no
+ * está en la lista: un cliente de los albaranes en papel que nunca tuvo ficha.
+ * Sale una fila "Usar «lo escrito»" y, si se pincha fuera con algo escrito, se
+ * queda eso en vez de perderse.
  */
-export default function FiltroClienteBuscable({ value, onChange, opciones = [], textoTodo = 'Todos los Clientes', title }) {
+// Marca de la fila "usar lo escrito". Empieza por un carácter que ningún nombre lleva.
+const LIBRE = String.fromCharCode(0) + 'libre:';
+const esLibre = (opcion) => typeof opcion === 'string' && opcion.startsWith(LIBRE);
+
+export default function FiltroClienteBuscable({ value, onChange, opciones = [], textoTodo = 'Todos los Clientes', title, permitirLibre = false }) {
     const activo = value && value !== SIN_FILTRO;
     const [abierto, setAbierto] = useState(false);
     const [texto, setTexto] = useState('');
@@ -21,13 +30,25 @@ export default function FiltroClienteBuscable({ value, onChange, opciones = [], 
     const input = useRef(null);
     const lista = useRef(null);
 
+    // El nombre de la lista que coincide entero con lo escrito, si lo hay.
+    const exacto = (escrito) => {
+        const buscado = normalizarTexto(escrito);
+        return buscado ? opciones.find((o) => normalizarTexto(o) === buscado) : undefined;
+    };
+
     const visibles = useMemo(() => {
         const buscado = normalizarTexto(texto);
         const coinciden = buscado
             ? opciones.filter((o) => normalizarTexto(o).includes(buscado))
             : opciones;
-        return [SIN_FILTRO].concat(coinciden.slice(0, 300));
-    }, [opciones, texto]);
+        const libre = permitirLibre && texto.trim() && !opciones.some((o) => normalizarTexto(o) === buscado)
+            ? [LIBRE + texto.trim()]
+            : [];
+        // Sin coincidencias, la fila libre va la primera para que Enter la coja.
+        return coinciden.length === 0
+            ? libre.concat([SIN_FILTRO])
+            : [SIN_FILTRO].concat(coinciden.slice(0, 300), libre);
+    }, [opciones, texto, permitirLibre]);
 
     useEffect(() => { setResaltado(0); }, [texto, abierto]);
 
@@ -41,7 +62,11 @@ export default function FiltroClienteBuscable({ value, onChange, opciones = [], 
     useEffect(() => {
         if (!abierto) return undefined;
         const fuera = (e) => {
-            if (contenedor.current && !contenedor.current.contains(e.target)) cerrar();
+            if (contenedor.current && !contenedor.current.contains(e.target)) {
+                // Lo escrito no se pierde al pinchar en otro campo.
+                if (permitirLibre && texto.trim()) elegir(exacto(texto) ?? (LIBRE + texto.trim()));
+                else cerrar();
+            }
         };
         document.addEventListener('mousedown', fuera);
         document.addEventListener('touchstart', fuera);
@@ -54,7 +79,7 @@ export default function FiltroClienteBuscable({ value, onChange, opciones = [], 
     const abrir = () => { setTexto(''); setAbierto(true); };
     const cerrar = () => { setAbierto(false); setTexto(''); };
     const elegir = (opcion) => {
-        onChange(opcion);
+        onChange(esLibre(opcion) ? opcion.slice(LIBRE.length) : opcion);
         cerrar();
         if (input.current) input.current.blur();
     };
@@ -73,7 +98,11 @@ export default function FiltroClienteBuscable({ value, onChange, opciones = [], 
         else if (e.key === 'Escape') { cerrar(); e.preventDefault(); }
     };
 
-    const etiqueta = (opcion) => (opcion === SIN_FILTRO ? textoTodo : opcion);
+    const etiqueta = (opcion) => {
+        if (opcion === SIN_FILTRO) return textoTodo;
+        if (esLibre(opcion)) return `Usar «${opcion.slice(LIBRE.length)}» (cliente sin ficha)`;
+        return opcion;
+    };
 
     return (
         <div ref={contenedor} className="relative" title={title}>
@@ -117,7 +146,7 @@ export default function FiltroClienteBuscable({ value, onChange, opciones = [], 
                             onMouseEnter={() => setResaltado(idx)}
                             className={`px-3 py-2 text-sm cursor-pointer whitespace-nowrap ${
                                 idx === resaltado ? 'bg-blue-600 text-white' : opcion === value ? 'bg-blue-50 text-blue-700' : 'text-slate-700'
-                            } ${opcion === SIN_FILTRO ? 'font-semibold border-b border-slate-100' : ''}`}
+                            } ${opcion === SIN_FILTRO ? 'font-semibold border-b border-slate-100' : ''} ${esLibre(opcion) ? 'italic' : ''}`}
                         >
                             {etiqueta(opcion)}
                         </div>
