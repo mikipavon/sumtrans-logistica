@@ -83,6 +83,24 @@ describe('ingresosPorCliente', () => {
         expect(filas.map((f) => f.cliente)).toEqual(['Muebles Pérez', 'Reformas Sur', 'Bar Manolo']);
     });
 
+    it('junta las sedes con su ficha madre', () => {
+        const fichas = [
+            { id: 10, name: 'Talleres Ruiz', clientNumber: '123', billingType: 'Facturación',
+                branches: [{ id: 'b1', name: 'Talleres Ruiz Lucena' }] },
+            { id: 11, name: 'Talleres Ruiz Montilla', clientNumber: '123-A', billingType: 'Facturación' }
+        ];
+        const portes = [
+            { client: 'Talleres Ruiz', porteType: 'Pagado', amount: '€10.00' },
+            { client: 'TALLERES RUIZ LUCENA', porteType: 'Pagado', amount: '€20.00' },
+            { client: 'Talleres Ruiz Montilla', porteType: 'Pagado', amount: '€30.00' },
+            { client: 'Otro', destinationName: 'Talleres Ruiz Lucena', porteType: 'Debido', amount: '€5.00' }
+        ];
+        const filas = ingresosPorCliente(portes, clasificadorDeIngresos(fichas), ['facturacion'], fichas);
+        expect(filas).toEqual([
+            { cliente: 'Talleres Ruiz', categorias: ['facturacion'], envios: 4, importe: 65 }
+        ]);
+    });
+
     it('sin categorías no devuelve nada', () => {
         expect(ingresosPorCliente(envios, clasificar, [])).toEqual([]);
     });

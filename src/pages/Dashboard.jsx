@@ -113,8 +113,8 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
 
     // Lo que suma la tarjeta, cliente a cliente: su total es el de la tarjeta.
     const ingresosDeLaTarjeta = useMemo(
-        () => sumaDeIngresos(ingresosPorCliente(filteredShipments, clasificar, categoriasDeLaTarjeta)),
-        [filteredShipments, clasificar, categoriasDeLaTarjeta]
+        () => sumaDeIngresos(ingresosPorCliente(filteredShipments, clasificar, categoriasDeLaTarjeta, clients)),
+        [filteredShipments, clasificar, categoriasDeLaTarjeta, clients]
     );
 
     const categoriasPorCliente = useMemo(() => {
@@ -124,8 +124,8 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
     }, [isGhostModeUnlocked, verPorCliente, categoriasDeLaTarjeta]);
 
     const filasPorCliente = useMemo(
-        () => ingresosPorCliente(filteredShipments, clasificar, categoriasPorCliente),
-        [filteredShipments, clasificar, categoriasPorCliente]
+        () => ingresosPorCliente(filteredShipments, clasificar, categoriasPorCliente, clients),
+        [filteredShipments, clasificar, categoriasPorCliente, clients]
     );
     const totalPorCliente = useMemo(() => sumaDeIngresos(filasPorCliente), [filasPorCliente]);
 

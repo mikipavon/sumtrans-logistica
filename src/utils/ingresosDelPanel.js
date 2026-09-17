@@ -14,6 +14,7 @@
 
 import { filtroTipoDeCliente, nombreDelPagador } from './filtrosEnvios';
 import { normalizarTexto } from './busqueda';
+import { quienPagaElPorte } from './shipmentUtils';
 
 export const CATEGORIAS_DE_INGRESO = [
     { clave: 'facturacion', tipo: 'Facturación', etiqueta: 'Facturación' },
@@ -57,16 +58,54 @@ export const tituloDeIngresos = (claves) => {
 };
 
 /**
- * Ingresos agrupados por quien paga, sólo de las categorías pedidas, de mayor a
- * menor importe. Cada fila: { cliente, categorias, envios, importe }.
+ * Devuelve una función envío → ficha madre de quien paga (o null si no hay
+ * ficha). Las sedes no son clientes aparte: una sede guardada dentro de la
+ * ficha (branches) y una ficha numerada "123-A" cuentan para su matriz, igual
+ * que al decidir el tipo de cobro en filtrosEnvios.
  */
-export const ingresosPorCliente = (envios, clasificar, claves) => {
+const buscadorDeMatriz = (clientes) => {
+    const porNombre = new Map();
+    const porId = new Map();
+    const porNumero = new Map();
+    (Array.isArray(clientes) ? clientes : []).forEach((c) => {
+        if (!c) return;
+        if (c.id != null) porId.set(String(c.id), c);
+        const numero = String(c.clientNumber || '').trim();
+        if (numero && !porNumero.has(numero)) porNumero.set(numero, c);
+        [c.name, c.legalName]
+            .concat(Array.isArray(c.branches) ? c.branches.map((b) => b?.name) : [])
+            .forEach((n) => {
+                const clave = normalizarTexto(n);
+                if (clave && !porNombre.has(clave)) porNombre.set(clave, c);
+            });
+    });
+    const matriz = (ficha) => {
+        const m = String(ficha?.clientNumber || '').trim().match(/^(.*?\d)[-_ ]?[a-zA-Z]{1,2}$/);
+        return (m && porNumero.get(m[1])) || ficha;
+    };
+    return (envio) => {
+        let ficha = porNombre.get(normalizarTexto(nombreDelPagador(envio)));
+        if (!ficha && quienPagaElPorte(envio) !== 'Destinatario' && envio?.clientId != null) {
+            ficha = porId.get(String(envio.clientId));
+        }
+        return ficha ? matriz(ficha) : null;
+    };
+};
+
+/**
+ * Ingresos agrupados por quien paga —con sus sedes sumadas a la ficha madre—,
+ * sólo de las categorías pedidas, de mayor a menor importe.
+ * Cada fila: { cliente, categorias, envios, importe }.
+ */
+export const ingresosPorCliente = (envios, clasificar, claves, clientes = []) => {
+    const matrizDe = buscadorDeMatriz(clientes);
     const grupos = new Map();
     (Array.isArray(envios) ? envios : []).forEach((envio) => {
         const categoria = clasificar(envio);
         if (!claves.includes(categoria)) return;
-        const nombre = String(nombreDelPagador(envio) || '').trim() || 'Sin cliente';
-        const clave = normalizarTexto(nombre) || nombre;
+        const ficha = matrizDe(envio);
+        const nombre = String(ficha?.name || nombreDelPagador(envio) || '').trim() || 'Sin cliente';
+        const clave = ficha?.id != null ? `ficha:${ficha.id}` : (normalizarTexto(nombre) || nombre);
         let fila = grupos.get(clave);
         if (!fila) {
             fila = { cliente: nombre, categorias: [], envios: 0, importe: 0 };
