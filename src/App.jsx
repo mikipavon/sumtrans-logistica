@@ -63,6 +63,7 @@ import { BAREMO_1_PUEBLOS, BAREMO_2_PUEBLOS } from './data/baremos';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { enqueue, getQueue, dequeue, getQueueLength } from './utils/offlineQueue';
 import { darDeAltaSinPisar } from './utils/numeracionAlbaran';
+import { createdAtDeFechaContable } from './utils/reciboDeDeuda';
 import { prefijoDeCliente, siguienteNumeroDeCliente, numeroQueLeFalta } from './utils/numeracionCliente';
 import { uploadProof } from './utils/storage';
 
@@ -3102,7 +3103,10 @@ function App() {
     const shipmentModel = new Shipment({
       ...newShipment,
       type: newShipment.type || 'Entrega',
-      createdAt: new Date().toISOString(),
+      // Un albarán en papel apuntado con fecha atrasada (Cobros Pendientes ›
+      // Añadir deuda) se fecha en su día: Envíos, la exportación y el cierre de
+      // presupuestos lo colocan por createdAt.
+      createdAt: createdAtDeFechaContable(newShipment.fechaContable) || new Date().toISOString(),
       createdBy: creatorName,
       createdById: creatorId,
       assignedDriverId: newShipment.assignedDriverId,

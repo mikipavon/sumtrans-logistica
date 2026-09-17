@@ -6,6 +6,7 @@ import { saveAs } from 'file-saver';
 import { generateDeliveryPDFBlob } from '../../utils/deliveryPdf';
 import { printBudgetSummary } from '../../utils/printBudgetSummary';
 import { fichaDelPagador } from '../../utils/shipmentUtils';
+import { mesDelPresupuesto } from '../../utils/reciboDeDeuda';
 
 export default function BudgetLiquidationModal({ isOpen, onClose, shipments, clients, drivers, onCreateShipment, onUpdateMultipleShipments }) {
     const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
@@ -42,16 +43,9 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
 
             if (billingType !== 'Presupuesto') return;
 
-            // Comprobar la fecha
-            const sDate = s.createdAt ? new Date(s.createdAt) : new Date();
-            // Para parsear date string "dd/mm/yyyy" si createdAt falla
-            if (!s.createdAt && s.date && typeof s.date === 'string' && s.date.includes('/')) {
-                const parts = s.date.split('/');
-                if (parts.length === 3) sDate.setFullYear(parts[2], parts[1] - 1, parts[0]);
-            }
-            const sMonth = sDate.toISOString().substring(0, 7);
-            
-            if (sMonth !== selectedMonth) return;
+            // Comprobar la fecha. Una deuda apuntada a mano cuenta en el mes de su
+            // fecha escrita (fechaContable), no en el del día en que se tecleó.
+            if (mesDelPresupuesto(s) !== selectedMonth) return;
 
             const amount = parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
             
@@ -86,13 +80,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             if (!s.budgetLiquidated || !s.linkedReceiptId) return;
             if (s.type === 'Recibo' || s.type === 'Cobro') return;
 
-            const sDate = s.createdAt ? new Date(s.createdAt) : new Date();
-            if (!s.createdAt && s.date && typeof s.date === 'string' && s.date.includes('/')) {
-                const parts = s.date.split('/');
-                if (parts.length === 3) sDate.setFullYear(parts[2], parts[1] - 1, parts[0]);
-            }
-            const sMonth = sDate.toISOString().substring(0, 7);
-            if (sMonth !== selectedMonth) return;
+            if (mesDelPresupuesto(s) !== selectedMonth) return;
 
             if (!byReceipt.has(s.linkedReceiptId)) {
                 byReceipt.set(s.linkedReceiptId, []);

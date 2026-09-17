@@ -284,6 +284,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                 clients={clients}
                 drivers={drivers}
                 articles={articles}
+                shipments={shipments}
                 onCreateShipment={onCreateShipment}
                 getDriverDisplayName={getDriverDisplayName}
             />

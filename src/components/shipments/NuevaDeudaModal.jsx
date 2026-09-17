@@ -1,10 +1,11 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { X, Wallet, Camera, Image as ImageIcon, Trash2, Package, Plus } from 'lucide-react';
+import { X, Wallet, Camera, Image as ImageIcon, Trash2, Package, Plus, FileText, Truck } from 'lucide-react';
 import { articulosParaCliente, lineaDeArticulo, repreciarLineas, totalDeArticulos } from '../../utils/articulosDeDeuda';
 import FiltroClienteBuscable from './FiltroClienteBuscable';
 import CameraCaptureModal from '../CameraCaptureModal';
 import { SIN_FILTRO } from '../../utils/filtrosEnvios';
-import { construirRecibo, fotosDeRecibo, hoyParaElCampo as hoy, MAX_FOTOS_DE_DEUDA, BUCKET_FOTOS_DE_DEUDA } from '../../utils/reciboDeDeuda';
+import { construirRecibo, construirAlbaranAtrasado, tipoDeCobroDelCliente, serieDelAlbaran, destinoDelAlbaran, fotosDeRecibo, hoyParaElCampo as hoy, MAX_FOTOS_DE_DEUDA, BUCKET_FOTOS_DE_DEUDA } from '../../utils/reciboDeDeuda';
+import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { uploadProof } from '../../utils/storage';
 import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 
@@ -25,10 +26,24 @@ import { compressImage, esImagenComprimible } from '../../utils/imageCompression
 const subirFotoPorDefecto = (id, dataUrl) => uploadProof(id, dataUrl, BUCKET_FOTOS_DE_DEUDA);
 const comprimirFotoPorDefecto = (file) => compressImage(file, 1200, 1200, 0.8);
 
+// 'septiembre de 2026' a partir de '2026-09-17'.
+const nombreDelMes = (yyyyMmDd) => {
+    const [y, m] = String(yyyyMmDd || '').split('-').map(Number);
+    if (!y || !m) return 'este mes';
+    return new Date(y, m - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+};
+
+// Las dos cosas que se pueden apuntar (ver utils/reciboDeDeuda.js).
+const ALBARAN = 'albaran';
+const RECIBO = 'recibo';
+
 export default function NuevaDeudaModal({
-    isOpen, onClose, clients, drivers, articles = [], onCreateShipment, getDriverDisplayName,
-    subirFoto = subirFotoPorDefecto, comprimirFoto = comprimirFotoPorDefecto
+    isOpen, onClose, clients, drivers, articles = [], shipments = [], onCreateShipment, getDriverDisplayName,
+    subirFoto = subirFotoPorDefecto, comprimirFoto = comprimirFotoPorDefecto,
+    // El número del albarán, de su serie, como en el alta. Por props para el test.
+    pedirNumero = async (serie) => (await reservarNumerosAlbaran(serie, 1, { enviosLocales: shipments })).primero
 }) {
+    const [modo, setModo] = useState(ALBARAN);
     const [clienteNombre, setClienteNombre] = useState(SIN_FILTRO);
     const [importe, setImporte] = useState('');
     // Desglose en artículos (opcional). Al cambiar, el importe se rellena con su
@@ -62,6 +77,8 @@ export default function NuevaDeudaModal({
         return (clients || []).find(c => c.name === nombre) || { id: null, name: nombre, sinFicha: true };
     };
     const cliente = fichaDe(clienteNombre);
+    const esAlbaran = modo === ALBARAN;
+    const tipoDeCobro = tipoDeCobroDelCliente(cliente);
     const nombreDe = (d) => (getDriverDisplayName ? getDriverDisplayName(d) : d.name);
     const cabenMasFotos = fotos.length < MAX_FOTOS_DE_DEUDA;
     const catalogo = useMemo(() => articulosParaCliente(articles, cliente), [articles, cliente]);
@@ -95,6 +112,7 @@ export default function NuevaDeudaModal({
     const quitarArticulo = (uniqueId) => ponerLineas(lineas.filter(l => l.uniqueId !== uniqueId));
 
     const limpiar = () => {
+        setModo(ALBARAN);
         setClienteNombre(SIN_FILTRO);
         setLineas([]);
         setBaremo(1);
@@ -138,14 +156,23 @@ export default function NuevaDeudaModal({
 
     const guardar = async (e) => {
         e.preventDefault();
-        if (!cliente) { setAviso('Elige el cliente al que se le apunta la deuda, o escribe su nombre.'); return; }
+        if (!cliente) { setAviso(esAlbaran ? 'Elige el cliente del albarán, o escribe su nombre.' : 'Elige a quién se le cobra el recibo, o escribe su nombre.'); return; }
         const total = Number(String(importe).replace(',', '.'));
         if (!Number.isFinite(total) || total <= 0) { setAviso('El importe tiene que ser mayor que cero.'); return; }
-        if (!concepto.trim()) { setAviso('Escribe el concepto: qué se debe (por ejemplo, "Albaranes de agosto").'); return; }
+        if (!concepto.trim()) { setAviso(esAlbaran ? 'Escribe el concepto: qué lleva el albarán (por ejemplo, "Albarán en papel 1234").' : 'Escribe el concepto: qué se cobra (por ejemplo, "Albaranes de agosto").'); return; }
         setAviso('');
         setGuardando(true);
         try {
-            const recibo = construirRecibo({ cliente, importe: total, concepto: concepto.trim(), fecha, driverId, articulos: lineas });
+            const datos = { cliente, importe: total, concepto: concepto.trim(), fecha, articulos: lineas };
+            let recibo;
+            if (esAlbaran) {
+                const serie = serieDelAlbaran(tipoDeCobro);
+                let numero = null;
+                try { numero = await pedirNumero(serie); } catch (err) { console.error('[NuevaDeuda] Sin número de serie:', err); }
+                recibo = construirAlbaranAtrasado({ ...datos, id: numero ? serie + '-' + numero : undefined });
+            } else {
+                recibo = construirRecibo({ ...datos, driverId });
+            }
 
             // Las fotos se suben ANTES de dar de alta el recibo, para que nazca ya
             // con sus URL: así vale también si el alta se queda en la cola sin
@@ -156,7 +183,7 @@ export default function NuevaDeudaModal({
                     urls.push(await subirFoto(recibo.id, foto));
                 } catch (err) {
                     console.error('[NuevaDeuda] No se pudo subir la foto:', err);
-                    setAviso('No se ha podido subir la foto del papel firmado (' + (err?.message || 'error de red') + '). La deuda no se ha guardado.');
+                    setAviso('No se ha podido subir la foto del papel firmado (' + (err?.message || 'error de red') + '). No se ha guardado nada.');
                     return;
                 }
             }
@@ -164,7 +191,7 @@ export default function NuevaDeudaModal({
             // El mismo recibo (mismo número) con el que se nombraron las fotos.
             const creado = await onCreateShipment({ ...recibo, ...fotosDeRecibo(urls) });
             if (!creado) {
-                setAviso('No se ha podido guardar la deuda. Inténtalo otra vez.');
+                setAviso(esAlbaran ? 'No se ha podido guardar el albarán. Inténtalo otra vez.' : 'No se ha podido guardar el recibo. Inténtalo otra vez.');
                 return;
             }
             limpiar();
@@ -192,16 +219,37 @@ export default function NuevaDeudaModal({
                             <Wallet size={20} />
                         </div>
                         <div>
-                            <h3 className="text-lg font-bold text-slate-800 leading-tight">Añadir deuda a un cliente</h3>
+                            <h3 className="text-lg font-bold text-slate-800 leading-tight">Añadir deuda</h3>
                             <p className="text-sm text-slate-500 mt-1">
-                                Para dinero que no viene de ningún albarán de la app: albaranes en papel, portes sin grabar.
-                                Le saldrá al repartidor en su pestaña Cobros y aquí, en Cobros Pendientes.
+                                Para lo que no entró por la app: albaranes en papel o un cobro que un transportista tiene que hacer.
                             </p>
                         </div>
                     </div>
                     <button type="button" onClick={cerrar} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600" title="Cerrar">
                         <X size={18} />
                     </button>
+                </div>
+
+                {/* Qué se apunta: un albarán del cliente o un recibo para el transportista */}
+                <div role="radiogroup" aria-label="Qué se apunta" className="grid grid-cols-2 gap-2">
+                    {[
+                        { valor: ALBARAN, titulo: 'Albarán al cliente', texto: 'Se acumula en la cuenta del cliente, como sus demás albaranes.', icono: <FileText size={14} /> },
+                        { valor: RECIBO, titulo: 'Recibo al transportista', texto: 'Cobro directo: le sale al repartidor en su pestaña Cobros.', icono: <Truck size={14} /> },
+                    ].map(({ valor, titulo, texto, icono }) => (
+                        <button
+                            key={valor}
+                            type="button"
+                            role="radio"
+                            aria-checked={modo === valor}
+                            onClick={() => setModo(valor)}
+                            className={`text-left rounded-xl border-2 p-2.5 transition-colors ${modo === valor ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                        >
+                            <span className={`flex items-center gap-1.5 text-sm font-bold ${modo === valor ? 'text-indigo-700' : 'text-slate-700'}`}>
+                                {icono} {titulo}
+                            </span>
+                            <span className="block text-[11px] leading-snug text-slate-500 mt-0.5">{texto}</span>
+                        </button>
+                    ))}
                 </div>
 
                 <div>
@@ -215,7 +263,13 @@ export default function NuevaDeudaModal({
                     />
                     {cliente?.sinFicha && (
                         <p className="text-[11px] text-amber-700 mt-1">
-                            Cliente sin ficha: la deuda se guarda con este nombre, sin tarifa especial.
+                            Cliente sin ficha: al guardar se le crea una, pendiente de validar, como en cualquier alta. Sin tarifa especial.
+                        </p>
+                    )}
+                    {cliente && esAlbaran && (
+                        <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5 mt-1.5">
+                            <strong>Cliente de {tipoDeCobro}.</strong> El albarán no va a ningún repartidor: {destinoDelAlbaran(tipoDeCobro)}.
+                            Cuenta en {nombreDelMes(fecha)}, el mes de la fecha.
                         </p>
                     )}
                 </div>
@@ -334,11 +388,13 @@ export default function NuevaDeudaModal({
                         className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         value={concepto}
                         onChange={(e) => setConcepto(e.target.value)}
-                        placeholder="Albaranes de agosto (SUM-401, SUM-410)"
+                        placeholder={esAlbaran ? "Albarán en papel nº 1234" : "Albaranes de agosto (SUM-401, SUM-410)"}
                         maxLength={200}
                     />
                 </div>
 
+                {/* Un albarán no se le da a nadie: sólo el recibo tiene transportista. */}
+                {!esAlbaran && (
                 <div>
                     <label htmlFor="nueva-deuda-repartidor" className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Quién la cobra</label>
                     <select
@@ -353,6 +409,7 @@ export default function NuevaDeudaModal({
                         ))}
                     </select>
                 </div>
+                )}
 
                 {/* Foto del papel firmado */}
                 <div>
@@ -391,7 +448,7 @@ export default function NuevaDeudaModal({
                     />
                     {fotos.length === 0 ? (
                         <p className="text-xs text-slate-400 italic bg-slate-50 border border-dashed border-slate-200 rounded-lg px-3 py-2">
-                            Sin foto. Se verá en la ficha del recibo como justificante de entrega.
+                            Sin foto. Se verá en su ficha como justificante de entrega.
                         </p>
                     ) : (
                         <div className="flex gap-3">
@@ -431,7 +488,7 @@ export default function NuevaDeudaModal({
                         disabled={guardando}
                         className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
-                        {guardando ? (fotos.length ? 'Subiendo foto…' : 'Guardando…') : 'Apuntar deuda'}
+                        {guardando ? (fotos.length ? 'Subiendo foto…' : 'Guardando…') : (esAlbaran ? 'Crear albarán' : 'Crear recibo')}
                     </button>
                 </div>
             </form>

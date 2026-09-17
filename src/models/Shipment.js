@@ -53,6 +53,10 @@ export default class Shipment {
     // Importes
     this.date = data.date || new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
     this.createdAt = data.createdAt || new Date().toISOString();
+    // Día (YYYY-MM-DD) al que pertenece un apunte hecho a mano con fecha atrasada
+    // (deuda de presupuesto de albaranes en papel). El cierre de presupuestos lo
+    // usa en vez de createdAt. Sin copiarlo aquí se perdería al crear el albarán.
+    this.fechaContable = data.fechaContable || null;
     this.address = data.address || '';
     this.amount = data.amount || 0;
     // `amount` suele llevar el símbolo de moneda ("€7.00") o ser "Tarifa": parseFloat
