@@ -32,6 +32,7 @@ describe('quienMandoLaMercancia', () => {
         expect(quien.nombre).toBe('TSB');
         expect(quien.albaran).toBe('SUM-2');
         expect(quien.otros).toBe(1);
+        expect(quien.todos.map(r => r.nombre)).toEqual(['PROSERVICE', 'TSB']);
     });
 
     it('a una ficha de remitente le enseña a quién le mandó', () => {

@@ -85,7 +85,8 @@ const sinRepetir = (...listas) => {
  * ficha es un remitente).
  *
  * @returns {null | {sentido: 'recibe'|'manda', nombre: string, albaran: string,
- *                   fecha: string, otros: number}}
+ *                   fecha: string, otros: number,
+ *                   todos: {clave: string, nombre: string}[]}}
  *          `otros` es cuántas empresas MÁS aparecen al otro lado, para poder
  *          decir "y 2 más" sin tener que enseñarlas todas.
  */
@@ -104,7 +105,7 @@ export function quienMandoLaMercancia(client, indice) {
         );
 
     const deInteres = [];
-    const nombres = new Set();
+    const nombres = new Map();
     for (const envio of candidatos) {
         const nombre = esRemitente ? nombreDelDestinatario(envio) : nombreDelRemitente(envio);
         const suClave = normalizarNombreCliente(nombre);
@@ -112,7 +113,7 @@ export function quienMandoLaMercancia(client, indice) {
         // (remitente y destinatario iguales) sólo repetiría la propia ficha.
         if (!suClave || suClave === yo) continue;
         deInteres.push({ envio, nombre });
-        nombres.add(suClave);
+        if (!nombres.has(suClave)) nombres.set(suClave, nombre);
     }
 
     if (deInteres.length === 0) return null;
@@ -129,5 +130,8 @@ export function quienMandoLaMercancia(client, indice) {
         albaran: elegido.envio?.id != null ? String(elegido.envio.id) : '',
         fecha: String(elegido.envio?.date || ''),
         otros: Math.max(0, nombres.size - 1),
+        // Todas las empresas del otro lado, sin repetir: el filtro de la
+        // pantalla tiene que encontrar la ficha también por las del "y 1 más".
+        todos: [...nombres.entries()].map(([clave, nombre]) => ({ clave, nombre })),
     };
 }

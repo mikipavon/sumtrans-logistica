@@ -308,6 +308,28 @@ describe('Validar Clientes — quién le mandó la mercancía', () => {
         expect(screen.getByText('JOSE LOPEZ')).toBeInTheDocument();
     });
 
+    it('el filtro «Mercancía de» deja sólo las fichas de esa empresa, también las del "y 1 más"', () => {
+        localStorage.setItem('validacion-vista', 'lista');
+        const otra = { id: 22, name: 'Bar Pepe', status: 'pending', type: 'Destinatario', createdFrom: 'Reparto (Driver)' };
+        const envios = [
+            envio,
+            { ...envio, id: 'SUM-600', originName: 'TSB', client: 'TSB', destinationName: 'José López', createdAt: '2026-09-11T07:00:00.000Z' },
+            { ...envio, id: 'SUM-601', originName: 'TSB', client: 'TSB', destinationName: 'BAR PEPE' },
+        ];
+        render(<ClientValidation clients={[destinatario, otra]} shipments={envios} {...props} />);
+        const filtro = screen.getByRole('combobox', { name: /quién mandó la mercancía/ });
+        expect(screen.getByRole('option', { name: 'TSB (2)' })).toBeInTheDocument();
+
+        // PROSERVICE sólo sale como "y 1 más" en José López: aun así la encuentra.
+        fireEvent.change(filtro, { target: { value: screen.getByRole('option', { name: 'PROSERVICE (1)' }).value } });
+        expect(screen.getByText('José López')).toBeInTheDocument();
+        expect(screen.queryByText('Bar Pepe')).not.toBeInTheDocument();
+
+        fireEvent.change(filtro, { target: { value: screen.getByRole('option', { name: 'TSB (2)' }).value } });
+        expect(screen.getByText('José López')).toBeInTheDocument();
+        expect(screen.getByText('Bar Pepe')).toBeInTheDocument();
+    });
+
     it('sin el albarán cargado no se enseña ninguna línea', () => {
         localStorage.setItem('validacion-vista', 'lista');
         render(<ClientValidation clients={[destinatario]} shipments={[]} {...props} />);

@@ -649,9 +649,46 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                 ? clientesPorOrigen.filter(c => duplicadosPorCliente.has(c.id))
                 : clientesPorOrigen;
 
-    const filteredClients = searchTerm.trim() === ''
+    // Filtro «Mercancía de»: la empresa que mandó el paquete (o a la que se lo
+    // mandó la ficha, si es remitente). Guarda la clave normalizada, para que
+    // "TSB" y "T.S.B." cuenten como la misma. '' = todas.
+    const [remitenteFiltro, setRemitenteFiltro] = useState('');
+
+    // Las opciones salen de las fichas que ya se ven con el origen y el aviso
+    // elegidos, con cuántas lleva cada una: así nunca se ofrece una empresa que
+    // dejaría la lista vacía.
+    const opcionesRemitente = (() => {
+        const cuenta = new Map();
+        clientesPorAviso.forEach(c => {
+            (quienMandoPorCliente.get(c.id)?.todos || []).forEach(({ clave, nombre }) => {
+                const actual = cuenta.get(clave);
+                if (actual) actual.total += 1;
+                else cuenta.set(clave, { clave, nombre, total: 1 });
+            });
+        });
+        return [...cuenta.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+    })();
+
+    const clientesPorRemitente = remitenteFiltro === ''
         ? clientesPorAviso
-        : clientesPorAviso.filter(c => {
+        : clientesPorAviso.filter(c =>
+            (quienMandoPorCliente.get(c.id)?.todos || []).some(r => r.clave === remitenteFiltro));
+
+    // Al cambiar de pestaña la empresa elegida puede no tener fichas en la
+    // nueva; se sigue ofreciendo con un 0 para que el desplegable no se quede
+    // en blanco mientras filtra por ella.
+    const [nombreRemitenteFiltro, setNombreRemitenteFiltro] = useState('');
+    const opcionesRemitenteVisibles = remitenteFiltro !== '' && !opcionesRemitente.some(o => o.clave === remitenteFiltro)
+        ? [{ clave: remitenteFiltro, nombre: nombreRemitenteFiltro, total: 0 }, ...opcionesRemitente]
+        : opcionesRemitente;
+    const elegirRemitente = (clave) => {
+        setRemitenteFiltro(clave);
+        setNombreRemitenteFiltro(opcionesRemitente.find(o => o.clave === clave)?.nombre || '');
+    };
+
+    const filteredClients = searchTerm.trim() === ''
+        ? clientesPorRemitente
+        : clientesPorRemitente.filter(c => {
             const term = normalize(searchTerm);
             // También por correo, CIF y persona de contacto: es lo que se tiene
             // a mano cuando llega el aviso de un registro y se quiere buscar.
@@ -903,6 +940,38 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                             className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
                         />
                     </div>
+                    {opcionesRemitenteVisibles.length > 0 && (
+                        <div className="flex items-center gap-1.5 min-w-0 md:max-w-xs">
+                            <div className="relative min-w-0 flex-1">
+                                <Truck size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-400 pointer-events-none" />
+                                <select
+                                    value={remitenteFiltro}
+                                    onChange={(e) => elegirRemitente(e.target.value)}
+                                    title="Enseñar sólo las fichas cuya mercancía mandó esta empresa"
+                                    aria-label="Filtrar por quién mandó la mercancía"
+                                    className={`w-full pl-9 pr-3 py-2.5 border rounded-xl text-sm truncate focus:outline-none focus:ring-2 focus:ring-indigo-400 ${remitenteFiltro
+                                        ? 'border-indigo-300 bg-indigo-50 text-indigo-700 font-bold'
+                                        : 'border-slate-200 bg-white text-slate-600'
+                                        }`}
+                                >
+                                    <option value="">Mercancía de cualquiera</option>
+                                    {opcionesRemitenteVisibles.map(o => (
+                                        <option key={o.clave} value={o.clave}>{o.nombre} ({o.total})</option>
+                                    ))}
+                                </select>
+                            </div>
+                            {remitenteFiltro && (
+                                <button
+                                    type="button"
+                                    onClick={() => elegirRemitente('')}
+                                    title="Quitar el filtro de mercancía"
+                                    className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                                >
+                                    <X size={16} />
+                                </button>
+                            )}
+                        </div>
+                    )}
                     <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl self-start md:self-auto">
                         {[
                             { clave: 'lista', texto: 'Lista', icono: <List size={15} /> },
@@ -1204,7 +1273,9 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                     </div>
                     <h3 className="text-lg font-bold text-slate-800 mb-2">Sin resultados</h3>
                     <p className="text-slate-500">
-                        {aviso
+                        {remitenteFiltro
+                            ? `Ninguna ficha de esta pestaña lleva mercancía de ${nombreRemitenteFiltro || 'esa empresa'}${searchTerm.trim() !== '' ? ` y coincide con "${searchTerm}"` : ''}. Quita el filtro de «Mercancía de» para verlas todas.`
+                            : aviso
                             ? `Ninguna ficha de ese aviso queda a la vista${searchTerm.trim() !== '' ? ` buscando "${searchTerm}"` : ' en esta pestaña'}. Vuelve a pinchar el aviso para quitar el filtro.`
                             : searchTerm.trim() !== ''
                             ? `Ningún cliente pendiente${origenActivo === 'web' ? ' registrado en la web' : ''} coincide con "${searchTerm}".`
