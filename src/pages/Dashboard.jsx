@@ -1,4 +1,4 @@
-import { TrendingUp, Package, Truck, AlertCircle, BarChart2, DollarSign, Activity, Clock, Filter, Calendar, CheckCircle, ChevronDown, Users } from 'lucide-react';
+import { TrendingUp, Package, Truck, AlertCircle, BarChart2, DollarSign, Activity, Clock, Filter, Calendar, CheckCircle, ChevronDown, Users, Search, X } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import {
@@ -11,6 +11,7 @@ import {
     ingresosPorCliente,
     sumaDeIngresos
 } from '../utils/ingresosDelPanel';
+import { coincideEnCampos } from '../utils/busqueda';
 
 const formatoEuros = (n) => `€${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -41,6 +42,7 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
 
     const [porClienteAbierto, setPorClienteAbierto] = useState(false);
     const [verPorCliente, setVerPorCliente] = useState('lineas');
+    const [buscarCliente, setBuscarCliente] = useState('');
     const porClienteRef = useRef(null);
 
     // Cada albarán va a una sola línea, según el tipo de cobro de quien paga.
@@ -128,6 +130,12 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
         [filteredShipments, clasificar, categoriasPorCliente, clients]
     );
     const totalPorCliente = useMemo(() => sumaDeIngresos(filasPorCliente), [filasPorCliente]);
+    // El buscador sólo esconde filas: el % sigue siendo sobre el total del periodo.
+    const filasVisibles = useMemo(
+        () => filasPorCliente.filter(f => coincideEnCampos(f.cliente, buscarCliente)),
+        [filasPorCliente, buscarCliente]
+    );
+    const buscando = buscarCliente.trim() !== '';
 
     const abrirPorCliente = () => {
         setVerPorCliente('lineas');
@@ -615,6 +623,7 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
 
                 {porClienteAbierto && (
                     <div className="px-6 pb-6">
+                        <div className="mb-4 flex flex-col sm:flex-row gap-2 sm:items-center">
                         {isGhostModeUnlocked && (
                             <select
                                 value={verPorCliente}
@@ -627,9 +636,28 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
                                 ))}
                             </select>
                         )}
+                        <div className="relative w-full sm:w-72">
+                            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                            <input
+                                type="search"
+                                value={buscarCliente}
+                                onChange={(e) => setBuscarCliente(e.target.value)}
+                                placeholder="Buscar cliente..."
+                                aria-label="Buscar cliente"
+                                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm rounded-lg pl-9 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white [&::-webkit-search-cancel-button]:hidden"
+                            />
+                            {buscando && (
+                                <button type="button" onClick={() => setBuscarCliente('')} aria-label="Borrar búsqueda" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                                    <X size={14} />
+                                </button>
+                            )}
+                        </div>
+                        </div>
 
                         {filasPorCliente.length === 0 ? (
                             <p className="py-8 text-center text-sm text-slate-400">No hay ingresos de este tipo en el periodo.</p>
+                        ) : filasVisibles.length === 0 ? (
+                            <p className="py-8 text-center text-sm text-slate-400">Ningún cliente coincide con «{buscarCliente.trim()}».</p>
                         ) : (
                             <div className="max-h-[480px] overflow-auto rounded-xl border border-slate-100 dark:border-slate-700/60">
                                 <table className="w-full text-sm">
@@ -643,7 +671,7 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
-                                        {filasPorCliente.map(fila => (
+                                        {filasVisibles.map(fila => (
                                             <tr key={fila.cliente} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
                                                 <td className="px-4 py-2 font-medium text-slate-700 dark:text-slate-200 break-words">{fila.cliente}</td>
                                                 {isGhostModeUnlocked && (
@@ -667,11 +695,13 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
                                     </tbody>
                                     <tfoot className="sticky bottom-0 bg-slate-50 dark:bg-slate-900 font-bold text-slate-800 dark:text-white">
                                         <tr>
-                                            <td className="px-4 py-2">Total</td>
+                                            <td className="px-4 py-2">{buscando ? `Total de ${filasVisibles.length} ${filasVisibles.length === 1 ? 'cliente' : 'clientes'}` : 'Total'}</td>
                                             {isGhostModeUnlocked && <td className="hidden sm:table-cell" />}
-                                            <td className="px-4 py-2 text-right tabular-nums">{filasPorCliente.reduce((n, f) => n + f.envios, 0)}</td>
-                                            <td className="px-4 py-2 text-right tabular-nums whitespace-nowrap">{formatoEuros(totalPorCliente)}</td>
-                                            <td className="hidden sm:table-cell" />
+                                            <td className="px-4 py-2 text-right tabular-nums">{filasVisibles.reduce((n, f) => n + f.envios, 0)}</td>
+                                            <td className="px-4 py-2 text-right tabular-nums whitespace-nowrap">{formatoEuros(buscando ? sumaDeIngresos(filasVisibles) : totalPorCliente)}</td>
+                                            <td className="hidden sm:table-cell px-4 py-2 text-right tabular-nums text-slate-500 dark:text-slate-400">
+                                                {buscando && totalPorCliente > 0 ? `${((sumaDeIngresos(filasVisibles) / totalPorCliente) * 100).toLocaleString('es-ES', { maximumFractionDigits: 1 })}%` : ''}
+                                            </td>
                                         </tr>
                                     </tfoot>
                                 </table>
