@@ -9,7 +9,7 @@ import LabelPrintModal from '../../components/clients/LabelPrintModal';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { construirAgendaDestinatarios, filtrarAgendaDestinatarios, agendaDesdeServidor, juntarAgendas } from '../../utils/agendaDestinatarios';
 import { cargarAgendaDelServidor } from '../../utils/agendaDestinatariosServidor';
-import { getPackagesCount, envioEsDelCliente, papelDelClienteEnElEnvio } from '../../utils/shipmentUtils';
+import { getPackagesCount, envioEsDelCliente, papelDelClienteEnElEnvio, quienPagaElPorte } from '../../utils/shipmentUtils';
 import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
@@ -125,6 +125,7 @@ export default function ClientDashboard({
                 if (key === 'date') return new Date(s.createdAt || s.date).getTime();
                 if (key === 'destinationName') return laOtraParte(s, client).toLowerCase();
                 if (key === 'destination') return (s.destinationCity || s.destination || '').toLowerCase();
+                if (key === 'porte') return quienPagaElPorte(s);
                 if (key === 'status') return (s.status || '').toLowerCase();
                 return '';
             };
@@ -811,6 +812,9 @@ export default function ClientDashboard({
                                         <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destination')}>
                                             Destino {sortConfig.key === 'destination' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
+                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('porte')}>
+                                            Porte {sortConfig.key === 'porte' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
+                                        </th>
                                         <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('status')}>
                                             Estado {sortConfig.key === 'status' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
@@ -820,7 +824,7 @@ export default function ClientDashboard({
                                 <tbody>
                                     {enviosVisibles.length === 0 ? (
                                         <tr>
-                                            <td colSpan="7" className="px-6 py-8 text-center text-slate-500">
+                                            <td colSpan="8" className="px-6 py-8 text-center text-slate-500">
                                                 {filtroTarjeta === 'transito'
                                                     ? 'No hay envíos en tránsito con estos filtros.'
                                                     : filtroTarjeta === 'entregados'
@@ -851,6 +855,13 @@ export default function ClientDashboard({
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-4 text-slate-500">{s.destinationCity || s.destination || '-'}</td>
+                                                {/* Sólo la etiqueta: el importe del porte no se enseña en el portal */}
+                                                <td className="px-4 py-4">
+                                                    {quienPagaElPorte(s) === 'Destinatario'
+                                                        ? <span className="px-3 py-1 rounded-full text-xs font-bold border whitespace-nowrap bg-amber-50 text-amber-700 border-amber-200">Debido</span>
+                                                        : <span className="px-3 py-1 rounded-full text-xs font-bold border whitespace-nowrap bg-blue-50 text-blue-700 border-blue-200">Pagado</span>
+                                                    }
+                                                </td>
                                                 <td className="px-4 py-4">
                                                     <div className="flex flex-wrap items-center gap-2">
                                                         <span className={`px-3 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${getStatusColor(s.status)}`}>

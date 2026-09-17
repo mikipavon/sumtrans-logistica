@@ -110,6 +110,16 @@ describe('ClientDashboard · lo que ve el cliente', () => {
 // Con decenas de envíos, el filtro de fechas no basta para dar con uno: el
 // cliente busca por el nombre de quien lo recibe o se lo manda, por su propia
 // referencia o por el número de albarán. Sin tildes, como en la oficina.
+describe('ClientDashboard · columna Porte', () => {
+    it('dice Pagado o Debido según el albarán, sin importe', () => {
+        pintar();
+        expect(screen.getByRole('columnheader', { name: /Porte/ })).toBeInTheDocument();
+        expect(within(filaDe('SUM-100')).getByText('Debido')).toBeInTheDocument();
+        expect(within(filaDe('SUM-101')).getByText('Pagado')).toBeInTheDocument();
+        expect(filaDe('SUM-100').textContent).not.toMatch(/€/);
+    });
+});
+
 describe('ClientDashboard · buscador', () => {
     const buscar = (texto) => fireEvent.change(
         screen.getByRole('textbox', { name: /buscar envíos/i }), { target: { value: texto } }
