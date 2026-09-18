@@ -4,12 +4,17 @@ import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 import { buscarArticuloBadi, baremoDelPunto, precioUnitarioParaCliente, prefijoSerieDelCliente, esPoblacionConocida } from '../../utils/importacionEnvios';
 import { hojasDeFichero, leerHoja, miniaturaDeLienzo, cerrarLector } from '../../utils/ocrAlbaran';
+import { leerHojaConIA } from '../../utils/iaAlbaran';
+import PanelConsumoIA from './PanelConsumoIA';
 
-// Importa albaranes de agencia (TXT, etc.) a partir de fotos o PDF. La lectura
-// se hace en el propio navegador con Tesseract (ver ocrAlbaran.js): no cuesta
-// nada y no sale ningún dato de la oficina, a cambio la lectura no es perfecta.
-// Por eso nada se guarda sin pasar por la revisión: cada hoja se enseña junto a
-// lo que se ha leído y la oficina corrige lo que haga falta antes de crear.
+// Importa albaranes de agencia (TXT, TSB, etc.) a partir de fotos o PDF.
+//
+// Cada hoja la lee primero una IA con visión (iaAlbaran.js → función
+// leer-albaran → OpenRouter), que con fotos de móvil torcidas acierta casi
+// todo. Si la IA no responde o se acaba el saldo, esa hoja se lee con Tesseract
+// en el propio navegador (ocrAlbaran.js), gratis pero bastante peor.
+// Sea cual sea el lector, nada se guarda sin pasar por la revisión: cada hoja se
+// enseña junto a lo que se ha leído y la oficina corrige antes de crear.
 //
 // El cliente que se recibe es la AGENCIA, que es quien paga el porte. El
 // remitente leído del papel va a originName (quien entrega la mercancía).
@@ -32,6 +37,12 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
     const [hojaAmpliada, setHojaAmpliada] = useState(null);
     const [textoVisible, setTextoVisible] = useState(null);
     const colaRef = useRef(Promise.resolve());
+    // Sin saldo no tiene sentido seguir llamando a la IA hoja por hoja: el resto
+    // de la importación va directa al lector gratuito.
+    const iaSinSaldoRef = useRef(false);
+    const [avisoIA, setAvisoIA] = useState('');
+    const [consumo, setConsumo] = useState({ hojas: 0, coste: 0 });
+    const [refrescoSaldo, setRefrescoSaldo] = useState(0);
 
     useEffect(() => () => { cerrarLector(); }, []);
 
@@ -59,17 +70,36 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                     const lienzo = lienzos[i];
                     const id = `h${++contadorHojas}`;
                     setHojas(prev => [...prev, { id, fichero: fichero.name, pagina: i + 1, miniatura: miniaturaDeLienzo(lienzo), grande: null, campos: camposVacios(), texto: '', estado: 'leyendo', progreso: 0 }]);
+
+                    if (!iaSinSaldoRef.current) {
+                        try {
+                            // La IA no avisa del avance: media barra mientras piensa.
+                            actualizarHoja(id, { progreso: 0.5 });
+                            const { campos, coste } = await leerHojaConIA(lienzo);
+                            actualizarHoja(id, { campos, texto: '', lector: 'ia', estado: 'leida', progreso: 1, grande: miniaturaDeLienzo(lienzo, 1400) });
+                            setConsumo(c => ({ hojas: c.hojas + 1, coste: c.coste + (coste || 0) }));
+                            continue;
+                        } catch (err) {
+                            console.error('La IA no pudo leer la hoja; se lee con el lector gratuito', fichero.name, err);
+                            if (err?.sinSaldo) iaSinSaldoRef.current = true;
+                            setAvisoIA(err?.sinSaldo
+                                ? 'Se ha acabado el saldo de la IA: el resto de hojas se lee con el lector gratuito, que falla más. Recarga en openrouter.ai y vuelve a subirlas.'
+                                : `La IA no ha podido leer alguna hoja (${err?.message || 'error'}); esas se han leído con el lector gratuito. Revísalas con cuidado.`);
+                            actualizarHoja(id, { progreso: 0 });
+                        }
+                    }
+
                     try {
                         const { campos, texto, lienzo: leido } = await leerHoja(lienzo, (p) => actualizarHoja(id, { progreso: p }));
                         // Si hubo que girar la foto, la miniatura enseña la hoja tal y como se ha leído.
-                        actualizarHoja(id, { campos, texto, estado: 'leida', progreso: 1, miniatura: miniaturaDeLienzo(leido), grande: miniaturaDeLienzo(leido, 1400) });
+                        actualizarHoja(id, { campos, texto, lector: 'tesseract', estado: 'leida', progreso: 1, miniatura: miniaturaDeLienzo(leido), grande: miniaturaDeLienzo(leido, 1400) });
                     } catch (err) {
                         console.error('Error leyendo la hoja', fichero.name, err);
                         actualizarHoja(id, { estado: 'error', error: 'No se pudo leer la hoja', grande: miniaturaDeLienzo(lienzo, 1400) });
                     }
                 }
             }
-        }).finally(() => setLeyendo(false));
+        }).finally(() => { setLeyendo(false); setRefrescoSaldo(n => n + 1); });
     }, [actualizarHoja]);
 
     const handleDrop = (e) => { e.preventDefault(); setDragOver(false); leerFicheros(e.dataTransfer.files); };
@@ -176,7 +206,10 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
         setImportando(false);
     };
 
-    const reiniciar = () => { setHojas([]); setResultado(null); setStep(1); };
+    const reiniciar = () => {
+        setHojas([]); setResultado(null); setStep(1);
+        setConsumo({ hojas: 0, coste: 0 }); setAvisoIA(''); iaSinSaldoRef.current = false;
+    };
 
     // Función de pintado, no componente: si fuera un componente definido aquí
     // dentro, React lo daría por nuevo en cada render y el input perdería el
@@ -197,7 +230,7 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                     <div className="p-2 bg-emerald-100 rounded-xl"><Camera size={20} className="text-emerald-600" /></div>
                     <div>
                         <h2 className="font-bold text-slate-800">Importar albaranes de agencia</h2>
-                        <p className="text-xs text-slate-500">Fotos o PDF de los albaranes. La app los lee aquí mismo y tú revisas antes de crear.</p>
+                        <p className="text-xs text-slate-500">Fotos o PDF de los albaranes. Los lee una IA y tú revisas antes de crear.</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -205,7 +238,15 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                 </div>
             </div>
 
-            <div className="p-6">
+            <div className="p-6 space-y-4">
+                {step !== 3 && (
+                    <PanelConsumoIA allShipments={allShipments} hojasImportacion={consumo.hojas} costeImportacion={consumo.coste} refresco={refrescoSaldo} />
+                )}
+                {avisoIA && step !== 3 && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-800 flex items-start gap-2">
+                        <AlertTriangle size={14} className="shrink-0 mt-0.5" /> {avisoIA}
+                    </div>
+                )}
                 {step === 1 && (
                     <div className="space-y-4">
                         <div
@@ -220,7 +261,7 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                             <Camera size={44} className="mx-auto text-slate-300 mb-3" />
                             <p className="text-lg font-bold text-slate-700 mb-1">Arrastra aquí las fotos o PDF de los albaranes</p>
                             <p className="text-sm text-slate-500">Puedes soltar muchos a la vez. Cada hoja será un albarán.</p>
-                            <p className="text-xs text-slate-400 mt-2">La primera vez tarda unos segundos en descargar el lector.</p>
+                            <p className="text-xs text-slate-400 mt-2">Cada hoja tarda unos segundos en leerse.</p>
                         </div>
 
                         {hojas.length > 0 && (
@@ -235,7 +276,7 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                                                     <div className="h-full bg-emerald-500 transition-all" style={{ width: `${Math.round((h.progreso || 0) * 100)}%` }} />
                                                 </div>
                                             )}
-                                            {h.estado === 'leida' && <p className="text-emerald-600">Leída: {h.campos.destinatario || 'sin destinatario'}{h.campos.poblacion ? ` · ${h.campos.poblacion}` : ''}</p>}
+                                            {h.estado === 'leida' && <p className="text-emerald-600">Leída{h.lector === 'tesseract' ? ' (lector gratuito)' : ''}: {h.campos.destinatario || 'sin destinatario'}{h.campos.poblacion ? ` · ${h.campos.poblacion}` : ''}</p>}
                                             {h.estado === 'error' && <p className="text-red-600">{h.error}</p>}
                                         </div>
                                         <button onClick={() => quitarHoja(h.id)} className="text-slate-300 hover:text-red-500" title="Quitar"><Trash2 size={14} /></button>
@@ -271,9 +312,16 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                                         {h.miniatura && (
                                             <img src={h.miniatura} alt="" className="w-24 rounded border border-slate-200 cursor-zoom-in" onClick={() => setHojaAmpliada(h)} title="Ver en grande" />
                                         )}
-                                        <button onClick={() => setTextoVisible(textoVisible === h.id ? null : h.id)} className="text-[10px] text-slate-400 hover:text-slate-600 flex items-center gap-1">
-                                            {textoVisible === h.id ? <EyeOff size={10} /> : <Eye size={10} />} texto leído
-                                        </button>
+                                        {h.lector === 'tesseract' ? (
+                                            <>
+                                                <span className="text-[10px] font-bold text-amber-600" title="La IA no pudo leer esta hoja">lector gratuito</span>
+                                                <button onClick={() => setTextoVisible(textoVisible === h.id ? null : h.id)} className="text-[10px] text-slate-400 hover:text-slate-600 flex items-center gap-1">
+                                                    {textoVisible === h.id ? <EyeOff size={10} /> : <Eye size={10} />} texto leído
+                                                </button>
+                                            </>
+                                        ) : h.lector === 'ia' && (
+                                            <span className="text-[10px] font-bold text-violet-500">leído con IA</span>
+                                        )}
                                         <button onClick={() => quitarHoja(h.id)} className="text-[10px] text-red-400 hover:text-red-600 flex items-center gap-1"><Trash2 size={10} /> quitar</button>
                                     </div>
                                     <div className="flex-1 min-w-0 space-y-2">

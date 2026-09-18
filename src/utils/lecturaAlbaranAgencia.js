@@ -118,6 +118,14 @@ function valorDeEtiqueta(celdas, regex, ancho, valido) {
     return '';
 }
 
+// Restos que el OCR saca del borde de la hoja o de las rayas de las casillas
+// ("E", "F", "|"): sin cifras y con una o dos letras como mucho.
+const ES_RESTO_DE_BORDE = /^[^\dA-Za-zÀ-ÿ]*[A-Za-zÀ-ÿ]{0,2}[^\dA-Za-zÀ-ÿ]*$/;
+
+// Si la casilla de al lado está muy cerca, el OCR la pega al nombre:
+// "AKZO NOBEL INDUSTRIAL PAINTS, S.L. — Ref. 6104889491".
+const quitarCasillaPegada = (t) => limpiar(t.replace(/\s+(?:[—–-]+\s*)?ref\.?\s*:?\s*\d[\d\s-]*$/i, '').replace(/\s+[—–]+\s*$/, ''));
+
 /** Líneas que cuelgan de una etiqueta (nombre, dirección, "CP POBLACIÓN"). */
 function bloqueBajoEtiqueta(celdas, regex, ancho) {
     const et = buscarEtiqueta(celdas, regex);
@@ -127,10 +135,10 @@ function bloqueBajoEtiqueta(celdas, regex, ancho) {
     const enLinea = limpiar(et.text.replace(new RegExp(regex.source, 'i'), '')).replace(/^[\s:.-]+/, '');
     if (enLinea) lineas.push(enLinea);
     let y1 = et.y1;
-    const siguientes = celdas.filter(c => alineadaDebajo(et, c, tolX) && c.y0 > et.y0).sort((a, b) => a.y0 - b.y0);
+    const siguientes = celdas.filter(c => alineadaDebajo(et, c, tolX) && c.y0 > et.y0 && !ES_RESTO_DE_BORDE.test(c.text)).sort((a, b) => a.y0 - b.y0);
     for (const c of siguientes) {
         if (ETIQUETA_DE_CORTE.test(sinAcentos(c.text))) break;
-        lineas.push(c.text);
+        lineas.push(quitarCasillaPegada(c.text));
         y1 = c.y1;
         if (partirCp(c.text) || lineas.length >= 5) break;
     }
@@ -304,6 +312,10 @@ export function interpretarAlbaran(entrada) {
     if (m) porte = /pagad/i.test(m[1]) ? 'Pagado' : 'Debido';
     else if (/\bp\.?\s*pagados?\b|\(pagados?\)/i.test(plano)) porte = 'Pagado';
     else if (/\bp\.?\s*debidos?\b|\(debidos?\)/i.test(plano)) porte = 'Debido';
+    // El OCR pierde a veces el rótulo "Porte" y el paréntesis y deja la palabra
+    // sola ("PAGADOS)"). En plural no sale en ningún otro sitio de la hoja.
+    else if (/\bpagados\b/i.test(plano)) porte = 'Pagado';
+    else if (/\bdebidos\b/i.test(plano)) porte = 'Debido';
 
     m = plano.match(/reembolso\w*\s*:?\s*(\d{1,6}[.,]\d{2})\s*(?:€|eur)?/i);
     const reembolso = m ? leerNumero(m[1]) : 0;
@@ -322,4 +334,27 @@ export function interpretarAlbaran(entrada) {
         porte,
         reembolso: reembolso || 0,
     };
+}
+
+/**
+ * Inclinación de la hoja en grados, medida en las líneas base que devuelve el
+ * OCR. Una foto hecha a pulso sale torcida dos o tres grados y basta con eso
+ * para que un rótulo y lo que va debajo parezcan estar en la misma fila.
+ * Se toma la mediana de las líneas largas, que las cortas (una cifra, una raya)
+ * dan ángulos al azar. Negativo = el texto sube hacia la derecha.
+ *
+ * @param {Array<{baseline?: {x0:number, y0:number, x1:number, y1:number}}>} lineas
+ * @param {number} anchoPagina
+ * @returns {number} grados; 0 si no hay líneas suficientes para medir
+ */
+export function inclinacionDeLineas(lineas, anchoPagina) {
+    const minimo = (anchoPagina || 0) * 0.1;
+    const angulos = (lineas || [])
+        .map(l => l.baseline)
+        .filter(b => b && (b.x1 - b.x0) > minimo)
+        .map(b => (Math.atan2(b.y1 - b.y0, b.x1 - b.x0) * 180) / Math.PI)
+        .filter(a => Math.abs(a) < 15)
+        .sort((a, b) => a - b);
+    if (angulos.length < 3) return 0;
+    return angulos[Math.floor(angulos.length / 2)];
 }

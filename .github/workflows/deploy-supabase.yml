@@ -31,6 +31,8 @@ jobs:
           # Requieren JWT. Además comprueban el rol del llamante dentro de la función.
           supabase functions deploy confirmar-acceso --project-ref mottccbalzdzrgqzfkdl
           supabase functions deploy create-auth-user --project-ref mottccbalzdzrgqzfkdl
+          # Lee fotos de albaranes con IA (OpenRouter). Sólo admin; la clave es el secreto OPENROUTER_API_KEY.
+          supabase functions deploy leer-albaran --project-ref mottccbalzdzrgqzfkdl
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
