@@ -4,6 +4,7 @@
 // se saca aquí para que las dos importaciones no puedan calcular distinto.
 
 import { ALL_BAREMO_PUEBLOS } from '../data/baremos';
+import { baremoDelPunto as baremoDelPuntoAlta } from './precioArticulo';
 
 export const normalizarTexto = (text) => {
     if (!text) return '';
@@ -24,22 +25,14 @@ export function buscarArticuloBadi(articles, numPackages) {
     return closest || sorted[sorted.length - 1] || null;
 }
 
-/** Baremo (1 ó 2) de una población/CP según tarifas, zonas de cobertura y el maestro de pueblos. */
+/**
+ * Baremo (1 ó 2) de una población/CP. Es la misma cuenta que el alta
+ * (utils/precioArticulo.js): hasta el 18/9/2026 aquí vivía una copia vieja que
+ * daba Baremo 1 a Antequera cuando en Ajustes quedaba una fila suya sin baremo,
+ * y los albaranes importados salían a precio B1.
+ */
 export function baremoDelPunto(city, zip, { tariffs, coverageZones } = {}) {
-    const cleanCity = String(city || '').trim().toLowerCase();
-    const cleanZip = String(zip || '').trim();
-    if (!cleanCity && !cleanZip) return 1;
-    const normCity = normalizarTexto(cleanCity);
-    if (tariffs) {
-        const found = tariffs.find(t => (t.match && normalizarTexto(t.match) === normCity) || (t.zipPrefix && cleanZip && cleanZip.startsWith(t.zipPrefix.trim())));
-        if (found?.baremo) return Number(found.baremo);
-    }
-    const dynMatch = (coverageZones || []).find(p => (normCity && normalizarTexto(p.name) === normCity) || (cleanZip && String(p.zip || '').trim() === cleanZip));
-    if (dynMatch) return Number(dynMatch.baremo || 1);
-    const masterMatch = (ALL_BAREMO_PUEBLOS || []).find(p => (normCity && normalizarTexto(p.name) === normCity) || (cleanZip && String(p.zip || '').trim() === cleanZip));
-    if (masterMatch) return Number(masterMatch.baremo);
-    if (cleanZip && !cleanZip.startsWith('14')) return 2;
-    return 1;
+    return baremoDelPuntoAlta(city, zip, { tariffs: tariffs || null, coverageZones: coverageZones || [] }).baremo;
 }
 
 /** Si la población o el CP aparecen en tarifas, zonas de cobertura o el maestro de pueblos. */
