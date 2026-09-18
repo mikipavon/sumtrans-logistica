@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { interpretarAlbaran, repartirEnColumnas } from './lecturaAlbaranAgencia';
+import { interpretarAlbaran, repartirEnColumnas, inclinacionDeLineas } from './lecturaAlbaranAgencia';
 
 // Columnas tal y como quedan tras repartir el OCR de un albarán TXT real
 // (foto hecha en la furgoneta, la hoja va repetida dos veces más el aviso de paso).
@@ -197,6 +197,64 @@ describe('interpretarAlbaran con un albarán TSB (lectura por etiquetas)', () =>
 
     it('entiende "Porte (PAGADOS)"', () => {
         expect(r.porte).toBe('Pagado');
+    });
+});
+
+// Lo que devolvió el OCR con una foto real de un TSB (17/09/26), ya enderezada:
+// el rótulo "Porte" se pierde y del paréntesis sólo queda el de cierre, la casilla
+// "Ref." se pega al remitente y del borde de la hoja salen letras sueltas.
+const TSB_FOTO_LINEAS = [
+    filaOcr(210, ['Remitente', 110], ['Fecha EA:', 620], ['999423323648', 1110], ['17/09/26', 1320]),
+    filaOcr(250, ['AKZO NOBEL INDUSTRIAL PAINTS, S.L. — Ref. 6104889491', 100]),
+    filaOcr(290, ['PLATAFORMA LOGISTICA DE', 100], ['Cod. 05000162-01', 620]),
+    filaOcr(330, ['50197 ZARAGOZA', 100], ['NIF. B08218158', 620], ['PAGADOS)', 1270]),
+    filaOcr(380, ['Consignatari', 90], ['Ped. 38510', 620]),
+    filaOcr(420, ['E', 30], ['CARPINTERÍA FERAN HERM.ROMERO', 90], ['Dep.', 850]),
+    filaOcr(460, ['F', 30], ['C/PINTOR ZURBARÁN, 32.', 90], ['Cod. 99999999-14', 850]),
+    filaOcr(500, ['14520 FERNAN NUÑEZ', 80], ['NIF.', 620], ['Telf.', 910]),
+    filaOcr(560, ['Observaciones', 70], ['Recibí', 620]),
+];
+
+describe('interpretarAlbaran con la lectura de una foto real de TSB', () => {
+    const r = interpretarAlbaran(repartirEnColumnas(TSB_FOTO_LINEAS, 1600));
+
+    it('quita del remitente la casilla "Ref." que el OCR le pega', () => {
+        expect(r.remitente).toBe('AKZO NOBEL INDUSTRIAL PAINTS, S.L.');
+    });
+
+    it('no mete en la dirección las letras sueltas del borde de la hoja', () => {
+        expect(r.destinatario).toBe('CARPINTERÍA FERAN HERM.ROMERO');
+        expect(r.direccion).toBe('C/PINTOR ZURBARÁN, 32.');
+        expect(r.cp).toBe('14520');
+        expect(r.poblacion).toBe('FERNAN NUÑEZ');
+    });
+
+    it('entiende "PAGADOS" aunque se pierdan el rótulo Porte y el paréntesis', () => {
+        expect(r.porte).toBe('Pagado');
+    });
+
+    it('no confunde "Pagado" en singular (una nota cualquiera) con el tipo de porte', () => {
+        expect(interpretarAlbaran('Consignatario\nPEPE\n14500 PUENTE GENIL\nPagado el 50% por adelantado').porte).toBe('');
+    });
+});
+
+describe('inclinacionDeLineas', () => {
+    const linea = (x0, y0, x1, y1) => ({ baseline: { x0, y0, x1, y1 } });
+
+    it('mide la inclinación con la mediana de las líneas largas', () => {
+        // Tres líneas que suben unos 3,4° hacia la derecha y una raya torcida de más.
+        const lineas = [linea(100, 400, 800, 358), linea(100, 500, 700, 464), linea(90, 600, 900, 551), linea(0, 0, 1500, 300)];
+        expect(inclinacionDeLineas(lineas, 1600)).toBeCloseTo(-3.4, 0);
+    });
+
+    it('no cuenta las líneas cortas, que dan ángulos al azar', () => {
+        const lineas = [linea(100, 100, 700, 100), linea(100, 200, 800, 200), linea(100, 300, 600, 300), linea(10, 10, 40, 30), linea(50, 50, 70, 80)];
+        expect(inclinacionDeLineas(lineas, 1600)).toBe(0);
+    });
+
+    it('sin líneas suficientes para medir devuelve 0', () => {
+        expect(inclinacionDeLineas([linea(0, 0, 900, 50)], 1600)).toBe(0);
+        expect(inclinacionDeLineas([], 1600)).toBe(0);
     });
 });
 
