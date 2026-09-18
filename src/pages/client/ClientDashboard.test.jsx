@@ -299,3 +299,39 @@ describe('ClientDashboard · agenda con fichas', () => {
         aviso.mockRestore();
     });
 });
+
+describe('ClientDashboard · precio del envío por baremo', () => {
+    // El portal calculaba el baremo con una copia propia: la primera fila de
+    // Ajustes que casara, y sin baremo valía como Baremo 1. Un envío del cliente
+    // a Antequera salía a 4,30 (precio B1) con una fila así (18/9/2026).
+    it('a Antequera cobra el precio B2 aunque en Ajustes quede una fila suya sin baremo', async () => {
+        cargarAgendaDelServidor.mockResolvedValueOnce([
+            { nombre: 'Ferretería Antequera', direccion: 'C/ Infante 3', cp: '29200', poblacion: 'Antequera',
+              ficha_id: null, sede_id: null, veces: 2, ultimo_envio: '2026-08-01T10:00:00.000Z' },
+        ]);
+        reservarNumerosAlbaran.mockResolvedValueOnce({ primero: 502 });
+        const onCreateShipment = vi.fn();
+        const BLT_1 = { id: '1774442159060', name: 'BLT_1', category: 'BADI', price: '4.30', priceB2: '6.00' };
+        render(
+            <ClientDashboard client={ESMEBRA} onLogout={() => {}} allShipments={[enviado]} drivers={[]}
+                allClients={[ESMEBRA]} articles={[BLT_1]} tariffs={[]}
+                coverageZones={[{ id: 1, name: 'Antequera', zip: '29200' }, { id: 2, name: 'Antequera', zip: '29200', baremo: 2 }]}
+                onCreateShipment={onCreateShipment} onUpdateClient={vi.fn()} onDeleteShipment={vi.fn()} />
+        );
+        fireEvent.click(screen.getByText('Crear Nuevo Envío'));
+        const destinatario = screen.getByPlaceholderText('Empieza a escribir para ver sugerencias...');
+        fireEvent.focus(destinatario);
+        await waitFor(() => expect(screen.getByText('Ferretería Antequera')).toBeTruthy());
+        fireEvent.mouseDown(screen.getByText('Ferretería Antequera').closest('button'));
+
+        fireEvent.change(document.querySelector('select[required]'), { target: { value: BLT_1.id } });
+        fireEvent.click(document.querySelector('input[name="porteType"][value="Pagado"]'));
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalled());
+        const envio = onCreateShipment.mock.calls[0][0];
+        expect(envio.destinationCity).toBe('Antequera');
+        expect(envio.articles[0].unitPrice).toBe(6);
+        expect(envio.amount).toBe('6.00');
+    });
+});

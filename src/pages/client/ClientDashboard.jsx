@@ -7,6 +7,7 @@ import { generateDeliveryPDF, generateDeliveryNotesPDF } from '../../utils/deliv
 import LabelPrintModal from '../../components/clients/LabelPrintModal';
 
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
+import { baremoDelEnvio, precioUnitarioArticulo } from '../../utils/precioArticulo';
 import { construirAgendaDestinatarios, filtrarAgendaDestinatarios, agendaDesdeServidor, juntarAgendas } from '../../utils/agendaDestinatarios';
 import { cargarAgendaDelServidor } from '../../utils/agendaDestinatariosServidor';
 import { getPackagesCount, envioEsDelCliente, papelDelClienteEnElEnvio, quienPagaElPorte } from '../../utils/shipmentUtils';
@@ -346,57 +347,19 @@ export default function ClientDashboard({
         }
 
         // --- PRICING LOGIC ---
-        const normalizeText = (text) => {
-            if (!text) return '';
-            return String(text).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
-        };
-        const getPointBaremo = (city, zip) => {
-            let baremo = 1; let tariffId = null;
-            const cleanCity = String(city || '').trim().toLowerCase();
-            const cleanZip = String(zip || '').trim();
-            if (!cleanCity && !cleanZip) return { baremo: 1, tariffId: null }; 
-
-            if (tariffs) {
-                const normCity = normalizeText(cleanCity);
-                const foundTariff = tariffs.find(t => (t.match && normCity && normalizeText(t.match) === normCity) || (t.zipPrefix && cleanZip && cleanZip.startsWith(t.zipPrefix.trim())));
-                if (foundTariff) {
-                    tariffId = foundTariff.id;
-                    if (foundTariff.baremo) baremo = Number(foundTariff.baremo);
-                }
-            }
-            if (!tariffId || baremo === 1) {
-                const normCity = normalizeText(cleanCity);
-                const dynamicMatch = (coverageZones || []).find(p => (normCity && normalizeText(p.name) === normCity) || (cleanZip && String(p.zip || '').trim() === cleanZip));
-                const masterMatch = (ALL_BAREMO_PUEBLOS || []).find(p => (normCity && normalizeText(p.name) === normCity) || (cleanZip && String(p.zip || '').trim() === cleanZip));
-                if (dynamicMatch) baremo = Number(dynamicMatch.baremo || 1);
-                else if (masterMatch) baremo = Number(masterMatch.baremo);
-                else if (cleanCity || cleanZip) baremo = 2;
-            }
-            return { baremo, tariffId };
-        };
-
+        // La misma cuenta que el alta de la oficina (utils/precioArticulo.js).
+        // Hasta el 18/9/2026 aqu\u00ed viv\u00eda una copia que cog\u00eda la primera fila de
+        // Ajustes que casara por nombre o C.P., y si no ten\u00eda baremo la daba
+        // por Baremo 1: un env\u00edo del cliente a Antequera sal\u00eda a precio B1.
         let unitPrice = 0;
         if (selectedArticle) {
-            const originCity = newOriginCity;
-            const originZip = newOriginZip;
-            const originInfo = getPointBaremo(originCity, originZip);
-            const destInfo = getPointBaremo(newDestinationCity, newDestinationZip);
-            const baremo = (Number(originInfo.baremo) === 2 || Number(destInfo.baremo) === 2) ? 2 : 1;
-            const tariffId = destInfo.tariffId;
-
-            unitPrice = parseFloat(selectedArticle.price || 0);
-
-            if (baremo === 2 && client.customRatesB2 && client.customRatesB2[selectedArticle.id] !== undefined && client.customRatesB2[selectedArticle.id] !== '') {
-                unitPrice = parseFloat(client.customRatesB2[selectedArticle.id]);
-            } else if (baremo === 1 && client.customRates && client.customRates[selectedArticle.id] !== undefined && client.customRates[selectedArticle.id] !== '') {
-                unitPrice = parseFloat(client.customRates[selectedArticle.id]);
-            } else if (client.customRates && client.customRates[selectedArticle.id] !== undefined && client.customRates[selectedArticle.id] !== '') {
-                unitPrice = parseFloat(client.customRates[selectedArticle.id]);
-            } else if (selectedArticle.zonePrices && tariffId && selectedArticle.zonePrices[tariffId]) {
-                unitPrice = parseFloat(selectedArticle.zonePrices[tariffId]);
-            } else if (baremo === 2 && (selectedArticle.priceB2 !== undefined && selectedArticle.priceB2 !== null && selectedArticle.priceB2 !== '')) {
-                unitPrice = parseFloat(selectedArticle.priceB2);
-            }
+            const { baremo, tariffId } = baremoDelEnvio({
+                originCity: newOriginCity,
+                originZip: newOriginZip,
+                destinationCity: newDestinationCity,
+                destinationZip: newDestinationZip,
+            }, { tariffs, coverageZones });
+            unitPrice = precioUnitarioArticulo(selectedArticle, { baremo, tariffId, cliente: client });
         }
 
         const amountNum = parseFloat(codAmount) || 0;

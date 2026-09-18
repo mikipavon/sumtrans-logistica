@@ -11,8 +11,9 @@ import { ALL_BAREMO_PUEBLOS } from '../data/baremos';
 // no se hubiera tocado nada. Aquí está la cuenta una sola vez y las dos
 // pantallas llaman a lo mismo, así que ya no pueden separarse.
 //
-// La importación de Excel (ImportExcelShipments) y el portal del cliente
-// (ClientDashboard) todavía llevan su propia copia de estas reglas.
+// Las importaciones (utils/importacionEnvios.js) y el portal del cliente
+// (ClientDashboard) llaman aquí desde el 18/9/2026; antes llevaban copias que
+// daban Baremo 1 a un pueblo B2 con una fila sin baremo en Ajustes.
 
 // Igual que se normalizan los pueblos en el alta: sin acentos, sin "de Córdoba",
 // "de la Frontera" ni "de los Caballeros", sin signos y con un solo espacio.
