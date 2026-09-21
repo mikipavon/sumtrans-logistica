@@ -56,6 +56,16 @@ export function getLabelCount(shipment) {
     return Math.max(1, count);
 }
 
+/**
+ * Imagen del QR de un bulto. Se pide grande (8 px por módulo) y con corrección
+ * de errores alta: con 3 px por módulo el navegador estiraba la imagen con
+ * bordes difuminados y las etiquetadoras térmicas los convertían en puntitos,
+ * y el QR salía borroso y no se leía (21/09/2026, etiqueta de rollo 75×52).
+ */
+function urlDelQR(texto) {
+    return `https://bwipjs-api.metafloor.com/?bcid=qrcode&text=${encodeURIComponent(texto)}&scale=8&eclevel=H&rotate=N`;
+}
+
 // ─── HTML de una etiqueta individual ────────────────────────────────────────
 
 function buildLabelHTML(shipment, client, bultoIndex, totalBultos) {
@@ -64,7 +74,7 @@ function buildLabelHTML(shipment, client, bultoIndex, totalBultos) {
     const hasClientLogo = !!clientLogo;
     const printDate    = new Date().toLocaleDateString('es-ES');
     const qrText       = `${shipment.id}-${bultoIndex}`;
-    const qrUrl        = `https://bwipjs-api.metafloor.com/?bcid=qrcode&text=${encodeURIComponent(qrText)}&scale=3&rotate=N`;
+    const qrUrl        = urlDelQR(qrText);
 
     const articleNames = shipment.articles && shipment.articles.length > 0
         ? shipment.articles.map(a => a.name).join(', ')
@@ -443,7 +453,7 @@ function buildLabelHTML75x52(shipment, client, bultoIndex, totalBultos) {
     const logoSrc    = clientLogo || '/logo-sum.svg';
     const printDate  = new Date().toLocaleDateString('es-ES');
     const qrText     = `${shipment.id}-${bultoIndex}`;
-    const qrUrl      = `https://bwipjs-api.metafloor.com/?bcid=qrcode&text=${encodeURIComponent(qrText)}&scale=2&rotate=N`;
+    const qrUrl      = urlDelQR(qrText);
     const destCity   = [shipment.destinationZip, shipment.destinationCity].filter(Boolean).join(' ');
     const origen     = [shipment.originName || shipment.client, shipment.originCity].filter(Boolean).join(' · ');
 
