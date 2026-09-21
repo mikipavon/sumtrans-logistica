@@ -46,6 +46,7 @@ import { conTopeDeTiempo, errorDeServidorSiLoEs } from './utils/topeDeTiempo';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
 import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, accesosQueSeQuitan, fichaSinContrasenas } from './utils/clientAccess';
 import { planDeAcceso } from './utils/accesoFichaExistente';
+import { planDeVinculo, enviosQueSeVinculan, enlaceDelEnvio } from './utils/vincularFichaPendiente';
 import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNombreCliente } from './utils/altaClientes';
 import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre, hayAutoLoginPendiente } from './utils/ventanaPadre';
@@ -4470,6 +4471,44 @@ function App() {
     return true;
   };
 
+  // ── La ficha que nació en una entrega y que ya teníamos ──
+  //
+  // Lo mismo que lo de arriba pero para las fichas que crea la app sola (al
+  // entregar, al hacer un albarán): no traen acceso que mover, traen un nombre
+  // escrito de otra manera y el GPS del conductor. Se queda la ficha de
+  // siempre, se le cuelga una sede con ese nombre (ver
+  // utils/vincularFichaPendiente.js), los albaranes cargados que apuntaban a la
+  // pendiente pasan a la buena, y la pendiente se borra.
+  //
+  // El orden: primero la ficha, luego los albaranes y al final el borrado, que
+  // es lo único irreversible. Si algo falla antes, la solicitud sigue ahí para
+  // volver a intentarlo; lo escrito en la ficha es correcto igualmente.
+  const handleVincularFichaPendiente = async (solicitud, ficha) => {
+    const plan = planDeVinculo(solicitud, ficha);
+    if (!plan.posible) {
+      alert(`No se puede vincular con «${ficha?.name || 'esa ficha'}» porque ${plan.motivo}.`);
+      return false;
+    }
+
+    const envios = enviosQueSeVinculan(solicitud, shipmentsRef.current);
+    try {
+      if (Object.keys(plan.cambios).length > 0) {
+        await handleUpdateClient(ficha.id, plan.cambios);
+      }
+      const enlace = enlaceDelEnvio(ficha, plan);
+      for (const envio of envios) {
+        await handleUpdateShipment(envio.id, enlace);
+      }
+      await handleDeleteClients([solicitud.id]);
+    } catch (e) {
+      console.warn('[Vincular] No se pudo vincular la ficha pendiente:', e);
+      alert(`⚠️ No se ha podido vincular «${solicitud?.name}» con «${ficha?.name}»:\n\n${e.message}`);
+      return false;
+    }
+
+    return { envios: envios.length, sedeNueva: plan.sedeNueva };
+  };
+
   // --- NUEVOS ESTADOS PARA COPIA DE SEGURIDAD (Movid@s tras TODAS las declaraciones de estado) ---
   const [backupDirHandle, setBackupDirHandle] = useState(null)
   // autoBackupInterval y lastBackupTime son preferencias LOCALES de UI → sí usan localStorage
@@ -4929,7 +4968,7 @@ function App() {
       />}
       {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onReply={handleIncidentReply} onUpdateShipment={handleUpdateShipment} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} articles={articles} tariffs={tariffs} coverageZones={coverageZones} familyOrder={familyOrder} driverNamePreference={driverNamePreference} />}
       {currentView === 'notifications' && <NotificationCenter shipments={visibleShipments} drivers={drivers} clients={visibleClients} onUpdateShipment={handleUpdateShipment} articles={articles} tariffs={tariffs} defaultCodFee={defaultCodFee} familyOrder={familyOrder} coverageZones={coverageZones} />}
-      {currentView === 'clientValidation' && <ClientValidation clients={clients} shipments={shipments} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} onDeleteClients={handleDeleteClients} onGrantAccessToExisting={handleDarAccesoAFichaExistente} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
+      {currentView === 'clientValidation' && <ClientValidation clients={clients} shipments={shipments} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} onDeleteClients={handleDeleteClients} onGrantAccessToExisting={handleDarAccesoAFichaExistente} onVincularFichaPendiente={handleVincularFichaPendiente} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
       </Suspense>
       {currentView === 'settings' && (
         <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">

@@ -7,6 +7,7 @@ import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, busca
 import { esRegistroWeb } from '../utils/altaClientes';
 import { indexarEnviosPorCliente, quienMandoLaMercancia } from '../utils/quienMandoLaMercancia';
 import { planDeAcceso, explicarElAcceso } from '../utils/accesoFichaExistente';
+import { planDeVinculo, enviosQueSeVinculan, explicarElVinculo } from '../utils/vincularFichaPendiente';
 import { emailDeAcceso } from '../utils/clientAccess';
 // Una ficha puede llevar varios correos separados por ';'. El enlace mailto los
 // quiere separados por comas, así que se rearma en vez de meter el campo tal
@@ -84,6 +85,15 @@ function momentoDeRegistro(client) {
     return isNaN(t) ? 0 : t;
 }
 
+// ── La chapa azul que parpadea en todo registro de la web ──
+//
+// Los registros de la web son los únicos que tienen a alguien esperando, y
+// entre las decenas de fichas que crea la app sola se pasaban: el icono azul
+// no se distinguía del ámbar de un vistazo. La chapa parpadea (ver
+// animate-parpadeo-web en index.css) en la fila, en la tarjeta y en el botón
+// del encabezado, que es el que se ve desde la pestaña por defecto.
+const CHAPA_WEB = 'animate-parpadeo-web inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold shrink-0';
+
 // ── Trozos de la ficha que se pintan igual en la tarjeta y en la fila desplegada ──
 // `enTarjeta` los apila con una línea abajo; si no, van sueltos con su borde.
 
@@ -91,8 +101,10 @@ function BloqueRegistroWeb({ client, enTarjeta }) {
     return (
         <div className={`bg-blue-50/60 px-4 py-3 space-y-1.5 ${enTarjeta ? 'border-b border-blue-100' : 'rounded-lg border border-blue-100'}`}>
             <div className="flex items-center gap-2">
-                <Globe size={13} className="text-blue-600 shrink-0" />
-                <span className="text-xs font-bold text-blue-800">Se ha registrado en la web</span>
+                <span className={CHAPA_WEB}>
+                    <Globe size={12} className="shrink-0" />
+                    Se ha registrado en la web
+                </span>
             </div>
             {client.email && (
                 <div className="flex items-center gap-2 min-w-0">
@@ -208,10 +220,13 @@ function AvisoParecida({ parecidas, enTarjeta }) {
 }
 
 // Aviso de duplicado — la empresa ya está en cartera
-function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, enTarjeta }) {
+function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, vinculando, onVincular, enTarjeta }) {
     // Cuando lo único que hay es un nombre parecido, el aviso baja el tono: no
     // es "ya la tienes", es "míralo antes".
     const todoSonParecidos = parecidas.every(p => p.soloPorParecido);
+    // Las fichas que crea la app sola (al entregar, al hacer un albarán) no
+    // traen acceso que dar: lo suyo es vincularlas con la de siempre.
+    const nacioEnLaApp = !esRegistroWeb(client);
     return (
         <div className={`bg-red-50 px-4 py-3 ${enTarjeta ? 'border-b border-red-200' : 'rounded-lg border border-red-200'}`}>
             <div className="flex items-start gap-2">
@@ -247,15 +262,33 @@ function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, enTarjeta
                                         {dandoAcceso ? 'Dando el acceso…' : 'Dar el acceso a esta ficha'}
                                     </button>
                                 )}
+                                {/* La ficha que nació en una entrega y que ya teníamos con otro
+                                    nombre: se queda la de siempre, se le cuelga una sede con el
+                                    nombre del albarán y el GPS del conductor, y ésta se borra
+                                    (ver utils/vincularFichaPendiente.js). Se ofrece también con
+                                    un nombre sólo parecido, porque aquí no hay acceso de por
+                                    medio: el aviso de antes dice lo que se arriesga. */}
+                                {nacioEnLaApp && onVincular && (
+                                    <button
+                                        onClick={() => onVincular(client, ficha)}
+                                        disabled={vinculando}
+                                        className="mt-1.5 w-full flex items-center justify-center gap-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold rounded-lg text-xs transition-colors"
+                                    >
+                                        <Merge size={13} />
+                                        {vinculando ? 'Vinculando…' : 'Es esta ficha: vincular'}
+                                    </button>
+                                )}
                             </li>
                         ))}
                     </ul>
                     <p className="text-[10px] text-red-600 mt-1.5 leading-snug">
-                        {todoSonParecidos
-                            ? 'Sólo se parecen los nombres, así que no se da por hecho nada: compruébalo tú. Si es la misma empresa, aprobarla crea una segunda ficha y el cliente entrará a la nueva —vacía—, no a la suya.'
-                            : emailDeAcceso(client)
-                                ? 'Con el botón, la ficha de siempre se queda como está y sólo se le pone el acceso: la solicitud se borra y no queda una segunda ficha. Aprobarla, en cambio, crea la segunda y el cliente entrará a la nueva —vacía—, no a la suya.'
-                                : 'Aprobarla crea una segunda ficha, y el cliente entrará a la nueva —vacía—, no a la suya.'}
+                        {nacioEnLaApp && onVincular
+                            ? `${todoSonParecidos ? 'Sólo se parecen los nombres, así que no se da por hecho nada: compruébalo tú. ' : ''}Si es la misma empresa, con el botón se queda la ficha de siempre con el GPS y los albaranes de ésta, y ésta se borra. Aprobarla crea una segunda ficha; rechazarla tira el GPS del conductor.`
+                            : todoSonParecidos
+                                ? 'Sólo se parecen los nombres, así que no se da por hecho nada: compruébalo tú. Si es la misma empresa, aprobarla crea una segunda ficha y el cliente entrará a la nueva —vacía—, no a la suya.'
+                                : emailDeAcceso(client)
+                                    ? 'Con el botón, la ficha de siempre se queda como está y sólo se le pone el acceso: la solicitud se borra y no queda una segunda ficha. Aprobarla, en cambio, crea la segunda y el cliente entrará a la nueva —vacía—, no a la suya.'
+                                    : 'Aprobarla crea una segunda ficha, y el cliente entrará a la nueva —vacía—, no a la suya.'}
                     </p>
                 </div>
             </div>
@@ -382,7 +415,7 @@ function vistaGuardada() {
     }
 }
 
-export default function ClientValidation({ clients, shipments = [], onValidateClient, onUpdateClient, onDeleteClients, onGrantAccessToExisting, articles, tariffs, allPoblaciones }) {
+export default function ClientValidation({ clients, shipments = [], onValidateClient, onUpdateClient, onDeleteClients, onGrantAccessToExisting, onVincularFichaPendiente, articles, tariffs, allPoblaciones }) {
     // Filter only pending clients — exclude test-mode clients (isTest: true)
     // Los registros web van primero, y entre ellos el último de arriba: son los
     // únicos que tienen a alguien esperando al otro lado.
@@ -554,6 +587,44 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
             );
         } finally {
             setDandoAccesoId(null);
+        }
+    };
+
+    // ── Vincular la ficha que nació en una entrega con la de siempre ──
+    //
+    // El caso de casi todas las fichas del reparto que salen en rojo: el
+    // remitente escribió el nombre de otra manera y la app no encontró la
+    // ficha. No hay acceso que dar; hay un GPS que no perder y unos albaranes
+    // que dejar apuntando a la ficha buena.
+    const [vinculandoId, setVinculandoId] = useState(null);
+
+    const handleVincular = async (solicitud, ficha) => {
+        const plan = planDeVinculo(solicitud, ficha);
+        if (!plan.posible) {
+            alert(`No se puede vincular esta solicitud: ${plan.motivo}.`);
+            return;
+        }
+
+        const envios = enviosQueSeVinculan(solicitud, shipments);
+        if (!window.confirm(explicarElVinculo(solicitud, ficha, plan, envios.length))) return;
+
+        setVinculandoId(solicitud.id);
+        try {
+            const hecho = await onVincularFichaPendiente?.(solicitud, ficha);
+            if (!hecho) return;
+
+            // La solicitud ya no existe: que no se quede marcada para el borrado.
+            setSelectedIds(prev => prev.filter(id => id !== solicitud.id));
+
+            const cuantos = hecho.envios ?? envios.length;
+            alert(
+                `✅ «${solicitud.name}» ya es «${ficha.name}»${ficha.clientNumber ? ` (nº ${ficha.clientNumber})` : ''}.\n\n` +
+                (plan.sedeNueva ? `Se le ha añadido una sede con el nombre del albarán. ` : '') +
+                (cuantos === 0 ? 'Ningún albarán cargado apuntaba a la solicitud.' : cuantos === 1 ? '1 albarán apunta ya a esa ficha.' : `${cuantos} albaranes apuntan ya a esa ficha.`) +
+                `\n\nLa solicitud se ha borrado.`
+            );
+        } finally {
+            setVinculandoId(null);
         }
     };
 
@@ -806,12 +877,14 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                             title="Ver sólo los que se han registrado por la web"
                             className={`flex items-center gap-2 px-4 py-2 border rounded-xl transition-colors ${aviso === null && origenActivo === 'web'
                                 ? 'bg-blue-600 border-blue-600 text-white'
-                                : 'bg-blue-50 border-blue-200 hover:bg-blue-100'
+                                : 'animate-parpadeo-web bg-blue-50 border-blue-200 hover:bg-blue-100'
                                 }`}
                         >
-                            <Globe size={18} className={aviso === null && origenActivo === 'web' ? 'text-white' : 'text-blue-600'} />
-                            <span className={`font-bold ${aviso === null && origenActivo === 'web' ? 'text-white' : 'text-blue-700'}`}>{registrosWeb.length}</span>
-                            <span className={aviso === null && origenActivo === 'web' ? 'text-white' : 'text-blue-600'}>registrados en la web</span>
+                            {/* Sin color propio: mientras parpadea, el texto sigue al fondo
+                                (blanco sobre azul, azul oscuro sobre claro). */}
+                            <Globe size={18} className={aviso === null && origenActivo === 'web' ? 'text-white' : 'text-current'} />
+                            <span className={`font-bold ${aviso === null && origenActivo === 'web' ? 'text-white' : 'text-current'}`}>{registrosWeb.length}</span>
+                            <span className={aviso === null && origenActivo === 'web' ? 'text-white' : 'text-current'}>registrados en la web</span>
                         </button>
                     )}
                     <button
@@ -902,6 +975,27 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                         </button>
                     ))}
                 </div>
+            )}
+
+            {/* Se entra por «Creados al hacer albaranes», y ahí los de la web no
+                salen: esto los anuncia parpadeando en la pestaña por defecto, para
+                que no se queden semanas esperando sin que nadie los vea. */}
+            {origenActivo === 'app' && aviso === null && registrosWeb.length > 0 && (
+                <button
+                    type="button"
+                    onClick={() => setOrigen('web')}
+                    className="animate-parpadeo-web w-full flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl text-sm font-bold text-left"
+                >
+                    <span className="flex items-center gap-2 min-w-0">
+                        <Globe size={16} className="shrink-0" />
+                        <span>
+                            {registrosWeb.length === 1
+                                ? 'Hay 1 empresa registrada en la web esperando respuesta'
+                                : `Hay ${registrosWeb.length} empresas registradas en la web esperando respuesta`}
+                        </span>
+                    </span>
+                    <span className="shrink-0 underline">Verlas</span>
+                </button>
             )}
 
             {/* Qué se está viendo cuando hay un aviso encendido. Los avisos cuentan
@@ -1036,9 +1130,9 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                                         onChange={() => toggleSelected(client.id)}
                                         className="w-4 h-4 mt-1 rounded border-slate-300 text-amber-600 focus:ring-amber-500 shrink-0"
                                     />
-                                    <div className={`p-1.5 rounded-lg shrink-0 ${web ? 'bg-blue-100' : 'bg-amber-100'}`}>
+                                    <div className={`p-1.5 rounded-lg shrink-0 ${web ? 'animate-parpadeo-web bg-blue-100' : 'bg-amber-100'}`}>
                                         {web
-                                            ? <Globe size={14} className="text-blue-600" />
+                                            ? <Globe size={14} className="text-current" />
                                             : <Building2 size={14} className="text-amber-600" />}
                                     </div>
 
@@ -1051,8 +1145,9 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                                             )}
                                             <ChapaTipo client={client} className="sm:hidden" />
                                             {web && (
-                                                <span className="flex items-center gap-1 text-[11px] font-bold text-blue-700 shrink-0">
-                                                    <Globe size={11} /> Se ha registrado en la web
+                                                <span className={CHAPA_WEB}>
+                                                    <Globe size={11} className="shrink-0" />
+                                                    Se ha registrado en la web
                                                 </span>
                                             )}
                                             {client.legalName && client.legalName !== client.name && (
@@ -1167,6 +1262,8 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                                                 parecidas={parecidas}
                                                 dandoAcceso={dandoAccesoId === client.id}
                                                 onDarAcceso={handleDarAcceso}
+                                                vinculando={vinculandoId === client.id}
+                                                onVincular={onVincularFichaPendiente ? handleVincular : null}
                                             />
                                         )}
                                     </div>
@@ -1188,9 +1285,9 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                                         onChange={() => toggleSelected(client.id)}
                                         className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 shrink-0"
                                     />
-                                    <div className={`p-2 rounded-lg shrink-0 ${esRegistroWeb(client) ? 'bg-blue-100' : 'bg-amber-100'}`}>
+                                    <div className={`p-2 rounded-lg shrink-0 ${esRegistroWeb(client) ? 'animate-parpadeo-web bg-blue-100' : 'bg-amber-100'}`}>
                                         {esRegistroWeb(client)
-                                            ? <Globe size={16} className="text-blue-600" />
+                                            ? <Globe size={16} className="text-current" />
                                             : <Building2 size={16} className="text-amber-600" />}
                                     </div>
                                     <div className="min-w-0">
@@ -1231,6 +1328,8 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                                     parecidas={duplicadosPorCliente.get(client.id)}
                                     dandoAcceso={dandoAccesoId === client.id}
                                     onDarAcceso={handleDarAcceso}
+                                    vinculando={vinculandoId === client.id}
+                                    onVincular={onVincularFichaPendiente ? handleVincular : null}
                                     enTarjeta
                                 />
                             )}

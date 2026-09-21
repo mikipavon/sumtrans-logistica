@@ -205,3 +205,23 @@ html, body, #root, .lista-repartos {
 .leaflet-tile-pane .tiles-night {
     filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9);
 }
+
+/* Registros de la web en Validar Clientes: parpadean para que no se pasen entre
+   las decenas de fichas que crea la app sola. La animacion pisa el color de fondo
+   y del texto que pongan las clases de Tailwind, asi que basta con anadir la clase. */
+@keyframes parpadeo-web {
+  0%, 100% { background-color: #2563eb; color: #ffffff; box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.55); }
+  50% { background-color: #dbeafe; color: #1e3a8a; box-shadow: 0 0 0 6px rgba(37, 99, 235, 0); }
+}
+
+.animate-parpadeo-web {
+  animation: parpadeo-web 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-parpadeo-web {
+    animation: none;
+    background-color: #2563eb;
+    color: #ffffff;
+  }
+}

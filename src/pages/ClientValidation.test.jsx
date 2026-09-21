@@ -146,6 +146,120 @@ describe('Validar Clientes — quién se ha registrado por la web', () => {
         const chip = screen.getByText('registrados en la web').closest('div');
         expect(within(chip).getByText('1')).toBeInTheDocument();
     });
+
+    // ── Que los de la web no se pasen ──
+    //
+    // Se entra por «Creados al hacer albaranes» y ahí los registros de la web ni
+    // salen; y en «Todos», entre decenas de fichas ámbar, el icono azul no se
+    // distinguía. Lo que los señala parpadea: el botón del encabezado y un
+    // aviso en la pestaña por defecto mientras no se estén viendo, y la chapa
+    // de cada ficha en la fila y en la tarjeta.
+
+    it('desde la pestaña por defecto, el botón del encabezado y el aviso parpadean', () => {
+        render(<ClientValidation clients={[creadoEnAlbaran, registroWeb]} {...props} />);
+
+        expect(screen.getByRole('button', { name: /^1registrados en la web/ })).toHaveClass('animate-parpadeo-web');
+        const aviso = screen.getByRole('button', { name: /Hay 1 empresa registrada en la web esperando respuesta/ });
+        expect(aviso).toHaveClass('animate-parpadeo-web');
+
+        // Al pinchar el aviso se ven, y entonces ya no hace falta que parpadee nada arriba.
+        fireEvent.click(aviso);
+        expect(screen.getByText('PANADERÍA LA ESPIGA')).toBeInTheDocument();
+        expect(screen.queryByText(/esperando respuesta/)).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^1registrados en la web/ })).not.toHaveClass('animate-parpadeo-web');
+    });
+
+    it('sin registros de la web no hay aviso ni nada que parpadee', () => {
+        render(<ClientValidation clients={[creadoEnAlbaran]} {...props} />);
+
+        expect(screen.queryByText(/esperando respuesta/)).not.toBeInTheDocument();
+        expect(document.querySelector('.animate-parpadeo-web')).toBeNull();
+    });
+
+    it('la chapa del registro web parpadea en la tarjeta, y la ficha de albarán no', () => {
+        render(<ClientValidation clients={[creadoEnAlbaran, registroWeb]} {...props} />);
+        fireEvent.click(screen.getByRole('button', { name: /^Todos/ }));
+
+        expect(screen.getByText('Se ha registrado en la web')).toHaveClass('animate-parpadeo-web');
+        const tarjeta = screen.getByText('FERRETERÍA EL TORNILLO').closest('.rounded-xl');
+        expect(tarjeta.querySelector('.animate-parpadeo-web')).toBeNull();
+    });
+
+    it('en la lista, la fila del registro web también lleva la chapa parpadeando', () => {
+        localStorage.setItem('validacion-vista', 'lista');
+        render(<ClientValidation clients={[creadoEnAlbaran, registroWeb]} {...props} />);
+        fireEvent.click(screen.getByRole('button', { name: /^Todos/ }));
+
+        expect(screen.getByText('Se ha registrado en la web')).toHaveClass('animate-parpadeo-web');
+    });
+});
+
+// ── La ficha que nació en una entrega y que ya teníamos con otro nombre ──
+//
+// El conductor entrega a "FERRETERIA EL REPUESTO, S.L." y la app no encuentra
+// la ficha porque en cartera está como "FERRETERIA EL REPUESTO JOAQUIN SALIDO":
+// crea una pendiente con el GPS. Rechazarla tira el GPS; aprobarla deja dos
+// fichas. El botón del aviso rojo se queda con la de siempre.
+describe('Validar Clientes — vincular la ficha del reparto con la de siempre', () => {
+    const delReparto = {
+        id: 388,
+        name: 'FERRETERIA EL REPUESTO, S.L.',
+        status: 'pending',
+        type: 'Destinatario',
+        createdFrom: 'Reparto (Driver)',
+        createdBy: 'Cond.FRANCISCO JAVIER PAVON MAIZ',
+        city: 'CASTRO DEL RIO',
+        coordinates: '37.690619, -4.478713',
+        lastInteraction: '2026-09-16',
+    };
+    const deSiempre = { id: 26, name: 'FERRETERIA EL REPUESTO JOAQUIN SALIDO', clientNumber: 'P-26', status: 'approved', type: 'Destinatario', city: 'CASTRO DEL RIO' };
+    const albaran = { id: 'SUM-1426', destinationName: 'FERRETERIA EL REPUESTO, S.L.', destinatarioId: 388, originName: 'IBERMANGUERAS' };
+
+    it('la ficha del reparto ofrece vincularse con la parecida de cartera, y la de la web no', () => {
+        const webParecida = { ...registroWeb, id: 5, name: 'FERRETERIA EL REPUESTO SL' };
+        render(<ClientValidation clients={[delReparto, webParecida, deSiempre]} {...props} onVincularFichaPendiente={vi.fn()} />);
+        fireEvent.click(screen.getByRole('button', { name: /^Todos/ }));
+
+        expect(screen.getAllByText(/un nombre casi igual/)).toHaveLength(2);
+        expect(screen.getAllByRole('button', { name: 'Es esta ficha: vincular' })).toHaveLength(1);
+        // El registro web no tiene botón de vincular: lo suyo es dar el acceso,
+        // y con un nombre sólo parecido ni eso.
+        expect(screen.queryByRole('button', { name: /Dar el acceso/ })).not.toBeInTheDocument();
+    });
+
+    it('sin la función de App no se ofrece el botón', () => {
+        render(<ClientValidation clients={[delReparto, deSiempre]} {...props} />);
+        expect(screen.queryByRole('button', { name: 'Es esta ficha: vincular' })).not.toBeInTheDocument();
+    });
+
+    it('al pinchar explica qué va a pasar, y si se confirma vincula con la ficha de siempre', async () => {
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const alerta = vi.spyOn(window, 'alert').mockImplementation(() => {});
+        const onVincularFichaPendiente = vi.fn().mockResolvedValue({ envios: 1, sedeNueva: true });
+        render(<ClientValidation clients={[delReparto, deSiempre]} shipments={[albaran]} {...props} onVincularFichaPendiente={onVincularFichaPendiente} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Es esta ficha: vincular' }));
+
+        const texto = confirm.mock.calls[0][0];
+        expect(texto).toContain('«FERRETERIA EL REPUESTO JOAQUIN SALIDO» (nº P-26)');
+        expect(texto).toContain('se le añade una sede llamada «FERRETERIA EL REPUESTO, S.L.»');
+        expect(texto).toContain('1 albarán pasa a apuntar a esa ficha');
+        await vi.waitFor(() => expect(onVincularFichaPendiente).toHaveBeenCalledWith(delReparto, deSiempre));
+        await vi.waitFor(() => expect(alerta).toHaveBeenCalledWith(expect.stringContaining('1 albarán apunta ya a esa ficha')));
+
+        confirm.mockRestore();
+        alerta.mockRestore();
+    });
+
+    it('si no se confirma, no se toca nada', () => {
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        const onVincularFichaPendiente = vi.fn();
+        render(<ClientValidation clients={[delReparto, deSiempre]} {...props} onVincularFichaPendiente={onVincularFichaPendiente} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Es esta ficha: vincular' }));
+        expect(onVincularFichaPendiente).not.toHaveBeenCalled();
+        confirm.mockRestore();
+    });
 });
 
 // ── La misma empresa, dos y tres veces en la lista ──
