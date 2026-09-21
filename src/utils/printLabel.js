@@ -213,7 +213,8 @@ const LABEL_CSS = `
   gap: 4mm;
   flex-shrink: 0;
 }
-.lbl-qr-img { width: 38mm; height: 38mm; object-fit: contain; }
+/* Sin difuminar al escalar: las térmicas traman los bordes grises y el QR no se lee */
+.lbl-qr-img { width: 38mm; height: 38mm; object-fit: contain; image-rendering: pixelated; }
 .lbl-qr-text { display: flex; flex-direction: column; gap: 1mm; }
 .lbl-qr-ref { font-family: monospace; font-size: 11pt; font-weight: 800; letter-spacing: 2px; }
 .lbl-qr-sub { font-size: 8.5pt; color: #555; text-transform: uppercase; font-weight: 700; }
@@ -508,23 +509,24 @@ html, body { width: 75mm; margin: 0; padding: 0; background: #fff; }
 .l75-logo { max-width: 22mm; max-height: 7mm; object-fit: contain; }
 .l75-ref  { text-align: right; line-height: 1.15; }
 .l75-ref strong { display: block; font-size: 12pt; font-weight: 900; letter-spacing: 0.3px; }
-.l75-ref span   { font-size: 6pt; color: #333; font-weight: 700; }
+/* Todo en negro puro: las térmicas convierten cualquier gris en trama de puntos ilegible */
+.l75-ref span   { font-size: 6pt; color: #000; font-weight: 700; }
 
 /* Cuerpo: destinatario a la izquierda, QR a la derecha */
 .l75-body { display: flex; gap: 2mm; flex: 1; min-height: 0; }
 .l75-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .l75-side { width: 21mm; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
 
-.l75-stitle { font-size: 5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #666; }
+.l75-stitle { font-size: 5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #000; }
 .l75-dest { border: 0.4mm solid #000; border-radius: 1mm; padding: 1mm 1.5mm; }
 .l75-dest-name { font-size: 9pt; font-weight: 900; line-height: 1.1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .l75-dest-addr { font-size: 6.5pt; line-height: 1.2; margin-top: 0.5mm; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .l75-dest-city { font-size: 9pt; font-weight: 800; line-height: 1.15; margin-top: 0.5mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.l75-origin { font-size: 6pt; line-height: 1.2; margin-top: 1mm; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.l75-obs    { font-size: 6pt; line-height: 1.2; margin-top: 0.6mm; color: #333; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.l75-origin { font-size: 6pt; line-height: 1.2; margin-top: 1mm; color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.l75-obs    { font-size: 6pt; line-height: 1.2; margin-top: 0.6mm; color: #000; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
-.l75-qr     { width: 20mm; height: 20mm; object-fit: contain; }
+.l75-qr     { width: 20mm; height: 20mm; object-fit: contain; image-rendering: pixelated; }
 .l75-qr-ref { font-family: monospace; font-size: 6.5pt; font-weight: 800; letter-spacing: 0.5px; white-space: nowrap; }
 .l75-cod    { margin-top: 1mm; font-size: 7pt; font-weight: 900; line-height: 1.15; border: 0.4mm solid #000; padding: 0.6mm 1mm; border-radius: 1mm; }
 
