@@ -4,7 +4,7 @@
 // se saca aquí para que las dos importaciones no puedan calcular distinto.
 
 import { ALL_BAREMO_PUEBLOS } from '../data/baremos';
-import { baremoDelPunto as baremoDelPuntoAlta } from './precioArticulo';
+import { baremoDelPunto as baremoDelPuntoAlta, precioUnitarioArticulo } from './precioArticulo';
 
 export const normalizarTexto = (text) => {
     if (!text) return '';
@@ -46,21 +46,13 @@ export function esPoblacionConocida(city, zip, { tariffs, coverageZones } = {}) 
     return (ALL_BAREMO_PUEBLOS || []).some(p => coincide(p.name, p.zip));
 }
 
-/** Precio unitario de un artículo para un cliente en un baremo, respetando sus tarifas personalizadas. */
+/**
+ * Precio unitario de un artículo para un cliente en un baremo. La misma regla
+ * que el alta (utils/precioArticulo.js); aquí vivía una copia que aplicaba la
+ * tarifa especial de B1 también en Baremo 2.
+ */
 export function precioUnitarioParaCliente(article, cliente, baremo) {
-    if (!article) return 0;
-    let unitPrice = parseFloat(article.price || 0);
-    if (!cliente) return unitPrice;
-    if (baremo === 2 && cliente.customRatesB2?.[article.id] !== undefined && cliente.customRatesB2[article.id] !== '') {
-        unitPrice = parseFloat(cliente.customRatesB2[article.id]);
-    } else if (baremo === 1 && cliente.customRates?.[article.id] !== undefined && cliente.customRates[article.id] !== '') {
-        unitPrice = parseFloat(cliente.customRates[article.id]);
-    } else if (cliente.customRates?.[article.id] !== undefined && cliente.customRates[article.id] !== '') {
-        unitPrice = parseFloat(cliente.customRates[article.id]);
-    } else if (baremo === 2 && article.priceB2 !== undefined && article.priceB2 !== null && article.priceB2 !== '') {
-        unitPrice = parseFloat(article.priceB2);
-    }
-    return unitPrice;
+    return precioUnitarioArticulo(article, { baremo: Number(baremo) === 2 ? 2 : 1, cliente });
 }
 
 /** Prefijo de serie (HAB/SUM) según el tipo de facturación del cliente. */

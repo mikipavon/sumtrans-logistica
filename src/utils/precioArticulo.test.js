@@ -112,12 +112,15 @@ describe('precioUnitarioArticulo', () => {
         expect(precioUnitarioArticulo({ id: 'x', price: '7', priceB2: '' }, { baremo: 2 })).toBe(7);
     });
 
-    it('la tarifa especial del que paga manda sobre el artículo: B2 propia en Baremo 2, general en el resto', () => {
+    it('la tarifa especial del que paga manda sobre el artículo, cada columna sólo en su baremo', () => {
         const cliente = { customRates: { blt5: '15' }, customRatesB2: { blt5: '19,90' } };
         expect(precioUnitarioArticulo(BLT_5, { baremo: 2, cliente })).toBe(19.9);
         expect(precioUnitarioArticulo(BLT_5, { baremo: 1, cliente })).toBe(15);
-        // Sin B2 propia, en Baremo 2 se usa la general del cliente
-        expect(precioUnitarioArticulo(BLT_5, { baremo: 2, cliente: { customRates: { blt5: '15' } } })).toBe(15);
+        // ACTIVA (21/9/2026): especial sólo en la columna normal → en Baremo 2
+        // va el B2 del catálogo, no el especial de B1
+        expect(precioUnitarioArticulo(BLT_5, { baremo: 2, cliente: { customRates: { blt5: '15' } } })).toBe(21.5);
+        // Y al revés: especial sólo en B2 no toca el Baremo 1
+        expect(precioUnitarioArticulo(BLT_5, { baremo: 1, cliente: { customRatesB2: { blt5: '19,90' } } })).toBe(18);
         // Un 0 tecleado a mano es un precio, no "sin tarifa"
         expect(precioUnitarioArticulo(BLT_5, { baremo: 1, cliente: { customRates: { blt5: '0' } } })).toBe(0);
         // Vacío o basura no es una tarifa
@@ -128,7 +131,7 @@ describe('precioUnitarioArticulo', () => {
         const conZona = { ...BLT_5, zonePrices: { z9: '25' } };
         expect(precioUnitarioArticulo(conZona, { baremo: 2, tariffId: 'z9' })).toBe(25);
         expect(precioUnitarioArticulo(conZona, { baremo: 2, tariffId: 'otra' })).toBe(21.5);
-        expect(precioUnitarioArticulo(conZona, { baremo: 2, tariffId: 'z9', cliente: { customRates: { blt5: '15' } } })).toBe(15);
+        expect(precioUnitarioArticulo(conZona, { baremo: 2, tariffId: 'z9', cliente: { customRatesB2: { blt5: '15' } } })).toBe(15);
     });
 
     it('cliente por kilos: el artículo va a 0, el porte sale del peso', () => {

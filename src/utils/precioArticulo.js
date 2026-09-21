@@ -146,8 +146,12 @@ export function baremoDelEnvio({ originCity, originZip, destinationCity, destina
  *
  * De más concreto a más general, igual que en el alta:
  *   - Cliente "Por Kilos": el porte sale del peso, el artículo va a 0.
- *   - Baremo 2 con tarifa especial B2 pactada con el que paga.
- *   - Tarifa especial general del que paga (en B1, o en B2 si no tiene B2 propia).
+ *   - Tarifa especial del que paga para ESE baremo: la columna B2 de su ficha
+ *     en Baremo 2, la columna normal en Baremo 1. Cada columna vale sólo en su
+ *     baremo: hasta el 21/9/2026 la normal valía también en B2 cuando la B2
+ *     estaba vacía, y ACTIVA pagaba el frigorífico a 15 (su especial B1) en
+ *     los envíos a Antequera en vez de los 21 del catálogo. Quien quiera el
+ *     mismo precio en los dos baremos lo escribe en las dos columnas.
  *   - Precio por zona del artículo, si el destino cae en una zona con tarifa.
  *   - Baremo 2: precio B2 del artículo.
  *   - Precio base del artículo.
@@ -157,10 +161,9 @@ export function precioUnitarioArticulo(articulo, { baremo = 1, tariffId = null, 
     if (porKilos) return 0;
 
     const id = articulo.id;
-    const especialB2 = importe(cliente?.customRatesB2?.[id]);
-    if (baremo === 2 && especialB2 !== null) return especialB2;
-
-    const especial = importe(cliente?.customRates?.[id]);
+    const especial = baremo === 2
+        ? importe(cliente?.customRatesB2?.[id])
+        : importe(cliente?.customRates?.[id]);
     if (especial !== null) return especial;
 
     const porZona = (tariffId && articulo.zonePrices && articulo.zonePrices[tariffId])
