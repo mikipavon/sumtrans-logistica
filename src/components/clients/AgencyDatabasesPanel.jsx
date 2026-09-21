@@ -67,7 +67,8 @@ export default function AgencyDatabasesPanel({ allClients, shipments, ownerFilte
         if (!agencyToClose) return;
         setIsDeleting(true);
         try {
-            const { deleted } = await onDeleteAgencyDatabase(agencyToClose.id);
+            const { deleted, cancelado } = await onDeleteAgencyDatabase(agencyToClose.id);
+            if (cancelado) return; // sin la contraseña no se ha borrado nada
             alert(`✅ Base de datos de ${agencyToClose.name} eliminada: ${deleted} fichas borradas.\n\nLa ficha de la agencia y tus clientes siguen intactos.`);
             setAgencyToClose(null);
             setConfirmText('');

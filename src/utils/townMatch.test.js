@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizarPueblo, mejorPuebloParaCiudad, esElMismoPueblo, puebloDeRutaParaEnvio } from './townMatch';
+import { normalizarPueblo, mejorPuebloParaCiudad, esElMismoPueblo, puebloDeRutaParaEnvio, estaEnBaremo } from './townMatch';
 
 // Pueblos reales de las rutas de SUM (los que se pisan entre sí)
 const PUEBLOS_DE_RUTA = [
@@ -134,5 +134,34 @@ describe('puebloDeRutaParaEnvio: el CP rescata la errata del móvil', () => {
     it('CP desconocido y nombre mal escrito no proponen nada', () => {
         expect(puebloDeRutaParaEnvio('CORODBA', '99999', RUTA, BAREMO)).toBeNull();
         expect(puebloDeRutaParaEnvio('CORODBA', '', RUTA, BAREMO)).toBeNull();
+    });
+});
+
+describe('estaEnBaremo', () => {
+    const BAREMO = [
+        { name: 'Córdoba', zip: '14013', baremo: 1 },
+        { name: 'Fernan-Nuñez', zip: '14520', baremo: 1 },
+        { name: 'Antequera', zip: '29200', baremo: 2 },
+    ];
+
+    it('por nombre, tolerando acentos, mayúsculas y guiones', () => {
+        expect(estaEnBaremo('CORDOBA', '', BAREMO)).toBe(true);
+        expect(estaEnBaremo('Fernan Nuñez', '', BAREMO)).toBe(true);
+        expect(estaEnBaremo('Antequera (29200)', '', BAREMO)).toBe(true);
+    });
+
+    it('por código postal aunque el nombre venga mal escrito', () => {
+        expect(estaEnBaremo('CORODBA', '14013', BAREMO)).toBe(true);
+        expect(estaEnBaremo('', '29200', BAREMO)).toBe(true);
+    });
+
+    it('un pueblo que no está en ningún baremo es fuera de baremo', () => {
+        expect(estaEnBaremo('Sevilla', '41001', BAREMO)).toBe(false);
+        expect(estaEnBaremo('Montalbán de Córdoba', '', BAREMO)).toBe(false);
+    });
+
+    it('sin pueblo ni código postal no está en baremo', () => {
+        expect(estaEnBaremo('', '', BAREMO)).toBe(false);
+        expect(estaEnBaremo(null, undefined, BAREMO)).toBe(false);
     });
 });

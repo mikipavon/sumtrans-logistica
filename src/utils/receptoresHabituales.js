@@ -27,6 +27,8 @@
  * ficha y el que lleva escrito el albarán se queda de razón social.
  */
 
+import { nombresDeLaMadre } from './otrosNombres';
+
 // Marcas de acento sueltas que deja normalize('NFD').
 const TILDES = new RegExp('[̀-ͯ]', 'g');
 
@@ -125,8 +127,9 @@ export const direccionPorNombre = (nombre, clients = []) => {
 
     for (const client of (Array.isArray(clients) ? clients : [])) {
         if (!client) continue;
-        if (normalizarNombreDireccion(client.name) === buscado
-            || normalizarNombreDireccion(client.legalName) === buscado) {
+        // Nombre, razón social y otros nombres (ver otrosNombres.js): la ficha
+        // madre responde a los tres.
+        if (nombresDeLaMadre(client).some(n => normalizarNombreDireccion(n) === buscado)) {
             return { client, branch: null };
         }
         const branch = (Array.isArray(client.branches) ? client.branches : [])

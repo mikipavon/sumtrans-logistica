@@ -335,3 +335,248 @@ describe('ClientDashboard · precio del envío por baremo', () => {
         expect(envio.amount).toBe('6.00');
     });
 });
+
+// ── Modificar o borrar: sólo lo suyo y sólo hasta que pasamos el escáner ──
+//
+// El cliente puede cambiar o quitar un envío mientras siga pendiente y ningún
+// conductor le haya escaneado un bulto. A partir de ahí es nuestro: se le
+// enseña un candado que dice por qué, y sólo la oficina lo toca. La regla de
+// verdad está en la base de datos (fase 31); aquí se comprueba que la pantalla
+// la refleja y que modificar no reserva otro número ni crea otro albarán.
+describe('ClientDashboard · modificar y borrar hasta el escáner', () => {
+    const pendiente = (extra = {}) => ({
+        ...enviado, id: 'SUM-300', destinationAddress: 'C/ Vieja 1', destinationZip: '14900',
+        porteType: 'Pagado', observations: 'antes', ...extra,
+    });
+    const pintarCon = (envio, props = {}) => render(
+        <ClientDashboard client={ESMEBRA} onLogout={() => {}} allShipments={[envio]} drivers={[]}
+            allClients={[ESMEBRA]} articles={[]} tariffs={[]} coverageZones={[]}
+            onCreateShipment={vi.fn()} onUpdateClient={vi.fn()} onDeleteShipment={vi.fn()}
+            onUpdateShipment={vi.fn(async () => true)} {...props} />
+    );
+    const campoDestinatario = () => screen.getByPlaceholderText('Empieza a escribir para ver sugerencias...');
+    const campoObservaciones = () => screen.getByPlaceholderText('Instrucciones, horario de entrega...');
+
+    it('pendiente y sin escanear: puede modificar y borrar', () => {
+        pintarCon(pendiente());
+        const fila = within(filaDe('SUM-300'));
+        expect(fila.getByTitle('Modificar Envío')).toBeTruthy();
+        expect(fila.getByTitle('Borrar Envío')).toBeTruthy();
+    });
+
+    it('con un bulto escaneado se cierran los dos botones y el candado dice por qué', () => {
+        pintarCon(pendiente({ scannedPackages: [1] }));
+        const fila = within(filaDe('SUM-300'));
+        expect(fila.queryByTitle('Modificar Envío')).toBeNull();
+        expect(fila.queryByTitle('Borrar Envío')).toBeNull();
+        expect(fila.getByTitle(/Ya hemos recogido este envío/)).toBeTruthy();
+    });
+
+    it('en reparto no hay botones ni candado, como siempre', () => {
+        pintarCon(pendiente({ status: 'En reparto' }));
+        const fila = within(filaDe('SUM-300'));
+        expect(fila.queryByTitle('Modificar Envío')).toBeNull();
+        expect(fila.queryByTitle('Borrar Envío')).toBeNull();
+        expect(fila.queryByTitle(/sólo puede modificarlo/)).toBeNull();
+    });
+
+    it('al modificar se guarda con el mismo número, sin reservar otro ni crear albarán', async () => {
+        const onUpdateShipment = vi.fn(async () => true);
+        const onCreateShipment = vi.fn();
+        reservarNumerosAlbaran.mockClear();
+        pintarCon(pendiente(), { onUpdateShipment, onCreateShipment });
+
+        fireEvent.click(within(filaDe('SUM-300')).getByTitle('Modificar Envío'));
+        expect(screen.getByText('Modificar Envío SUM-300')).toBeTruthy();
+        expect(campoDestinatario().value).toBe('FERRETERIA PEPE');
+        expect(campoObservaciones().value).toBe('antes');
+        expect(document.querySelector('input[name="porteType"][value="Pagado"]').checked).toBe(true);
+
+        fireEvent.change(campoObservaciones(), { target: { value: 'Llamar antes de ir' } });
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onUpdateShipment).toHaveBeenCalled());
+        const [id, cambios] = onUpdateShipment.mock.calls[0];
+        expect(id).toBe('SUM-300');
+        expect(cambios).toMatchObject({ observations: 'Llamar antes de ir', destinationName: 'FERRETERIA PEPE', porteType: 'Pagado' });
+        // Lo que no es del formulario no viaja: ni número, ni fecha, ni estado.
+        expect(cambios).not.toHaveProperty('id');
+        expect(cambios).not.toHaveProperty('status');
+        expect(cambios).not.toHaveProperty('createdAt');
+        // Y el destinatario no se ha tocado, así que el enlace se queda como estaba.
+        expect(cambios).not.toHaveProperty('destinatarioId');
+        expect(onCreateShipment).not.toHaveBeenCalled();
+        expect(reservarNumerosAlbaran).not.toHaveBeenCalled();
+        // Vuelve a la lista.
+        await waitFor(() => expect(screen.queryByText('Modificar Envío SUM-300')).toBeNull());
+    });
+
+    it('si cambia el nombre del destinatario a mano, se suelta el enlace para que el servidor vuelva a emparejar', async () => {
+        const onUpdateShipment = vi.fn(async () => true);
+        pintarCon(pendiente({ destinatarioId: 101, destinatarioEmparejadoPor: 'agenda' }), { onUpdateShipment });
+        fireEvent.click(within(filaDe('SUM-300')).getByTitle('Modificar Envío'));
+        fireEvent.change(campoDestinatario(), { target: { value: 'OTRA FERRETERIA' } });
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onUpdateShipment).toHaveBeenCalled());
+        expect(onUpdateShipment.mock.calls[0][1]).toMatchObject({
+            destinationName: 'OTRA FERRETERIA', destinatarioId: null, destinatarioSedeId: null, destinatarioEmparejadoPor: null,
+        });
+    });
+
+    it('si la base de datos ya no lo deja, se queda en el formulario con lo escrito', async () => {
+        const onUpdateShipment = vi.fn(async () => false);
+        pintarCon(pendiente(), { onUpdateShipment });
+        fireEvent.click(within(filaDe('SUM-300')).getByTitle('Modificar Envío'));
+        fireEvent.change(campoObservaciones(), { target: { value: 'esto se queda' } });
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onUpdateShipment).toHaveBeenCalled());
+        expect(screen.getByText('Modificar Envío SUM-300')).toBeTruthy();
+        expect(campoObservaciones().value).toBe('esto se queda');
+    });
+
+    it('Cancelar vuelve a la lista sin guardar nada, y la pestaña de crear sale limpia', () => {
+        const onUpdateShipment = vi.fn(async () => true);
+        pintarCon(pendiente(), { onUpdateShipment });
+        fireEvent.click(within(filaDe('SUM-300')).getByTitle('Modificar Envío'));
+        fireEvent.click(screen.getByText('Cancelar'));
+        expect(onUpdateShipment).not.toHaveBeenCalled();
+        expect(screen.getByText('SUM-300')).toBeTruthy();
+
+        fireEvent.click(screen.getByText('Crear Nuevo Envío'));
+        expect(screen.getByText('Datos del Nuevo Envío')).toBeTruthy();
+        expect(campoDestinatario().value).toBe('');
+    });
+});
+
+
+// ── Varios artículos con cantidad: sólo con el interruptor de la ficha ──
+//
+// Los talleres de neumáticos (Velasco, Lucena, ACTIVA) mandan siempre por
+// cantidad: "4 de turismo y 2 de 4x4". Con un solo artículo el portal no lo
+// podía recoger. La ficha lleva el interruptor `portalVariosArticulos`; con él
+// el cliente añade líneas con cantidad (utils/articulosDelPortal.js). Sin él,
+// todo sigue como siempre: un artículo, una unidad.
+
+describe('ClientDashboard · varios artículos con cantidad', () => {
+    const TURISMO = { id: '7', name: 'TURISMO', category: 'Neumáticos', price: '3.50' };
+    const CUATRO_X_CUATRO = { id: '8', name: '4X4', category: 'Neumáticos', price: '5.00' };
+    const BLT_5 = { id: '5', name: 'BLT_5', category: 'BADI', price: '4.30' };
+    const VELASCO = { ...ESMEBRA, id: 43, name: 'NEUMATICOS VELASCO', allowedArticles: ['7', '8', '5'], portalVariosArticulos: true };
+    const pintarCon = (cliente, props = {}) => render(
+        <ClientDashboard client={cliente} onLogout={() => {}} allShipments={[]} drivers={[]}
+            allClients={[cliente]} articles={[TURISMO, CUATRO_X_CUATRO, BLT_5]} tariffs={[]} coverageZones={[]}
+            onCreateShipment={vi.fn()} onUpdateClient={vi.fn()} onDeleteShipment={vi.fn()}
+            onUpdateShipment={vi.fn(async () => true)} {...props} />
+    );
+    const selector = () => document.querySelector('#articulo-portal');
+    const campoCantidad = () => document.querySelector('#cantidad-articulo');
+    const botonAnadir = () => screen.queryByRole('button', { name: /Añadir/ });
+    const anadir = (id, cantidad) => {
+        fireEvent.change(selector(), { target: { value: id } });
+        fireEvent.change(campoCantidad(), { target: { value: cantidad } });
+        fireEvent.click(botonAnadir());
+    };
+    const lineas = () => Array.from(document.querySelectorAll('ul[aria-label="Artículos del envío"] li'))
+        .map(li => li.querySelector('span').textContent.trim());
+    const rellenarDestinoYPorte = () => {
+        fireEvent.change(screen.getByPlaceholderText('Empieza a escribir para ver sugerencias...'), { target: { value: 'TALLER PACO' } });
+        fireEvent.click(document.querySelector('input[name="porteType"][value="Pagado"]'));
+    };
+
+    it('sin el interruptor no hay cantidad ni Añadir: un artículo y una unidad, como siempre', async () => {
+        reservarNumerosAlbaran.mockResolvedValueOnce({ primero: 900 });
+        const onCreateShipment = vi.fn();
+        pintarCon({ ...VELASCO, portalVariosArticulos: false }, { onCreateShipment });
+        fireEvent.click(screen.getByText('Crear Nuevo Envío'));
+        expect(campoCantidad()).toBeNull();
+        expect(botonAnadir()).toBeNull();
+        expect(selector().required).toBe(true);
+        fireEvent.change(selector(), { target: { value: '5' } });
+        rellenarDestinoYPorte();
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalled());
+        const envio = onCreateShipment.mock.calls[0][0];
+        expect(envio.articles).toHaveLength(1);
+        expect(envio.articles[0]).toMatchObject({ name: 'BLT_5', quantity: 1, unitPrice: 4.3, totalPrice: 4.3 });
+        expect(envio.packages).toBe(5);
+        expect(envio.amount).toBe('4.30');
+    });
+
+    it('con el interruptor: 4 de turismo y 2 de 4x4 son dos líneas, seis bultos y la suma de los dos', async () => {
+        reservarNumerosAlbaran.mockResolvedValueOnce({ primero: 901 });
+        const onCreateShipment = vi.fn();
+        pintarCon(VELASCO, { onCreateShipment });
+        fireEvent.click(screen.getByText('Crear Nuevo Envío'));
+        expect(selector().required).toBe(false);
+        expect(botonAnadir().disabled).toBe(true);           // sin artículo elegido no hay nada que añadir
+        anadir('7', '4');
+        anadir('8', '2');
+        expect(lineas()).toEqual(['4x TURISMO', '2x 4X4']);
+        expect(selector().value).toBe('');                    // tras Añadir se vacía para la siguiente línea
+        expect(campoCantidad().value).toBe('1');
+        rellenarDestinoYPorte();
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalled());
+        const envio = onCreateShipment.mock.calls[0][0];
+        expect(envio.articles.map(a => [a.name, a.quantity, a.unitPrice, a.totalPrice])).toEqual([
+            ['TURISMO', 4, 3.5, 14], ['4X4', 2, 5, 10],
+        ]);
+        expect(envio.packages).toBe(6);
+        expect(envio.amount).toBe('24.00');
+    });
+
+    it('el mismo artículo dos veces se suma en una línea, y la X la quita', () => {
+        pintarCon(VELASCO);
+        fireEvent.click(screen.getByText('Crear Nuevo Envío'));
+        anadir('7', '4');
+        anadir('7', '1');
+        anadir('8', '2');
+        expect(lineas()).toEqual(['5x TURISMO', '2x 4X4']);
+        fireEvent.click(screen.getByTitle('Quitar TURISMO'));
+        expect(lineas()).toEqual(['2x 4X4']);
+    });
+
+    it('sin ninguna línea no se crea el envío ni se reserva número, y se le dice', async () => {
+        const onCreateShipment = vi.fn();
+        const alerta = vi.spyOn(window, 'alert').mockImplementation(() => {});
+        reservarNumerosAlbaran.mockClear();
+        pintarCon(VELASCO, { onCreateShipment });
+        fireEvent.click(screen.getByText('Crear Nuevo Envío'));
+        rellenarDestinoYPorte();
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(alerta).toHaveBeenCalled());
+        expect(alerta.mock.calls[0][0]).toMatch(/FALTA LA MERCANCÍA/);
+        expect(onCreateShipment).not.toHaveBeenCalled();
+        expect(reservarNumerosAlbaran).not.toHaveBeenCalled();
+        expect(screen.getByText(/Elige el artículo, pon la cantidad y pulsa Añadir/).className).toContain('text-red-600');
+        alerta.mockRestore();
+    });
+
+    it('al modificar un envío con varias líneas salen todas, y se pueden cambiar', async () => {
+        const onUpdateShipment = vi.fn(async () => true);
+        const envio = {
+            id: 'SUM-310', client: 'NEUMATICOS VELASCO', originName: 'NEUMATICOS VELASCO',
+            destinationName: 'TALLER PACO', destinationAddress: 'C/ Nueva 2', destinationZip: '14900', destinationCity: 'Lucena',
+            porteType: 'Pagado', status: 'Pendiente de asignar', createdAt: '2026-09-21T10:00:00.000Z', packages: 6,
+            articles: [{ ...TURISMO, quantity: 4, unitPrice: 3.5, totalPrice: 14 }, { ...CUATRO_X_CUATRO, quantity: 2, unitPrice: 5, totalPrice: 10 }],
+        };
+        pintarCon(VELASCO, { allShipments: [envio], onUpdateShipment });
+        fireEvent.click(within(filaDe('SUM-310')).getByTitle('Modificar Envío'));
+        expect(lineas()).toEqual(['4x TURISMO', '2x 4X4']);
+        fireEvent.click(screen.getByTitle('Quitar 4X4'));
+        anadir('5', '1');
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onUpdateShipment).toHaveBeenCalled());
+        const [id, cambios] = onUpdateShipment.mock.calls[0];
+        expect(id).toBe('SUM-310');
+        expect(cambios.articles.map(a => [a.name, a.quantity])).toEqual([['TURISMO', 4], ['BLT_5', 1]]);
+        expect(cambios.packages).toBe(9);
+        expect(cambios.amount).toBe('18.30');
+    });
+});

@@ -88,7 +88,7 @@ export function accesosAdicionales(client) {
         const email = String(fila?.email || '').trim().toLowerCase();
         if (!email || vistos.has(email)) continue;
         vistos.add(email);
-        salida.push({ email, password: String(fila?.password || '') });
+        salida.push({ email, password: sinEspaciosALosLados(fila?.password) });
     }
 
     return salida;
@@ -130,6 +130,17 @@ export function accesosQueSeQuitan(anterior, nueva) {
 //
 // De paso deja el array limpio: sin filas vacías, en minúsculas y sin repetir,
 // que es como Auth guarda los correos.
+// ── La contraseña tal como se guarda y como se comprueba ──
+//
+// Sin espacios delante ni detrás. No se ven al escribirla y llegan solos al
+// copiar y pegar (de un WhatsApp, de un correo), así que la cuenta se quedaba
+// con una contraseña distinta de la que la oficina creía haber puesto y el
+// cliente recibía "credenciales inválidas" sin ninguna pista. Pasó con REINSUR
+// el 17/09/2026. Los espacios de en medio sí se respetan.
+export function sinEspaciosALosLados(contrasena) {
+    return String(contrasena ?? '').trim();
+}
+
 export function fichaSinContrasenas(client) {
     const { password: _fueraDeLaFicha, ...ficha } = client || {};
     if (Array.isArray(ficha.accessEmailsExtra)) {

@@ -10,7 +10,11 @@ import {
     filtroTipoDeCliente,
     tipoDeClienteDelEnvio,
     BAREMO_1,
-    BAREMO_2
+    BAREMO_2,
+    SOLO_ENTREGAS,
+    SOLO_RECOGIDAS,
+    filtroTipo,
+    coincideTipo
 } from './filtrosEnvios';
 
 // Los tres albaranes del listado real al buscar "LEKUE", más un debido y una recogida.
@@ -224,5 +228,35 @@ describe('filtro por tipo de cliente (Facturación / Habitual / Presupuesto)', (
     it('la criba de un listado da lo mismo que comprobar uno a uno', () => {
         const envios = [pagado('INDUSTRIAL LEKUE S.L.'), pagado('AGROCOR BAENA'), pagado('PECOMARK S.A.')];
         expect(envios.filter(filtroTipoDeCliente('Presupuesto', clientes)).map((e) => e.client)).toEqual(['PECOMARK S.A.']);
+    });
+});
+
+describe('filtro por tipo de envío (Entregas / Recogidas) en el mismo desplegable', () => {
+    const clientes = [{ id: 1, name: 'PECOMARK S.A.', billingType: 'Presupuesto' }];
+    const entregaSinTipo = { id: 'SUM-1', client: 'PECOMARK S.A.', destinationCity: 'Cabra' };
+    const entrega = { id: 'SUM-2', type: 'Entrega', client: 'PECOMARK S.A.', destinationCity: 'Cabra' };
+    const listado = [entregaSinTipo, entrega, recogida];
+
+    it('Recogidas enseña sólo los albaranes de recogida', () => {
+        expect(listado.filter(filtroTipo(SOLO_RECOGIDAS, clientes)).map((e) => e.id)).toEqual(['REC-279']);
+    });
+
+    it('Entregas enseña el resto, incluidos los albaranes antiguos sin tipo', () => {
+        expect(listado.filter(filtroTipo(SOLO_ENTREGAS, clientes)).map((e) => e.id)).toEqual(['SUM-1', 'SUM-2']);
+    });
+
+    it('sin nada elegido pasan todos', () => {
+        expect(listado.filter(filtroTipo(SIN_FILTRO, clientes))).toHaveLength(3);
+    });
+
+    it('un tipo de cliente sigue cribando por la ficha de quien paga', () => {
+        expect(coincideTipo(entrega, 'Presupuesto', clientes)).toBe(true);
+        expect(coincideTipo(entrega, 'Facturación', clientes)).toBe(false);
+    });
+
+    it('"Recogida" a secas no se confunde con un tipo de cliente ni con Habitual', () => {
+        expect(coincideTipo(recogida, SOLO_RECOGIDAS, clientes)).toBe(true);
+        expect(coincideTipo(recogida, 'Clientes Habituales', clientes)).toBe(true);
+        expect(coincideTipo(entrega, SOLO_RECOGIDAS, clientes)).toBe(false);
     });
 });

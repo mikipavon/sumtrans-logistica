@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { LogOut, Package, Plus, MapPin, Truck, CheckCircle, Clock, FileText, Download, FileDown, Loader2, Printer, Settings as SettingsIcon, Upload, Trash2, Tag, Search } from 'lucide-react';
+import { LogOut, Package, Plus, MapPin, Truck, CheckCircle, Clock, FileText, Download, FileDown, Loader2, Printer, Settings as SettingsIcon, Upload, Trash2, Tag, Search, Pencil, Lock, X } from 'lucide-react';
 import { coincideEnCampos, normalizarTexto, CAMPOS_BUSCABLES_ENVIO } from '../../utils/busqueda';
 import ShipmentDetailsModal from '../../components/shipments/ShipmentDetailsModal';
 import { printShipmentTicket } from '../../utils/printShipment';
@@ -16,6 +16,8 @@ import ImportExcelShipments from '../../components/clients/ImportExcelShipments'
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { avisarAlPadre, estamosEmbebidos } from '../../utils/ventanaPadre';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
+import { elClientePuedeTocarlo, porQueElClienteNoPuedeTocarlo } from '../../utils/envioDelPortal';
+import { elPortalAdmiteVariosArticulos, anadirLinea, quitarLinea, lineasDelEnvio, bultosDeLosArticulos, valorarLineas } from '../../utils/articulosDelPortal';
 
 // Un envío que le llega al cliente en vez de salir de él. En la lista se marca,
 // porque si no el cliente ve su propio nombre en la columna de destinatario y no
@@ -41,12 +43,15 @@ export default function ClientDashboard({
     onCreateShipment,
     onUpdateClient,
     onDeleteShipment,
+    onUpdateShipment,
     pendingQueueCount = 0,
     isSyncingQueue = false
 }) {
     const [activeTab, setActiveTab] = useState('shipments'); // 'shipments', 'create'
     const [selectedShipment, setSelectedShipment] = useState(null);
     const [labelPrintShipment, setLabelPrintShipment] = useState(null);
+    // El envío cargado en el formulario para modificarlo. Null = alta nueva.
+    const [envioEnEdicion, setEnvioEnEdicion] = useState(null);
 
     // Notificar a la web padre que el dashboard del cliente está listo y renderizado
     useEffect(() => {
@@ -196,6 +201,12 @@ export default function ClientDashboard({
     const [newDestinationCity, setNewDestinationCity] = useState('');
     const [newDestinationName, setNewDestinationName] = useState('');
     const [selectedArticleId, setSelectedArticleId] = useState('');
+    // Con el interruptor "varios artículos" de la ficha, el cliente va añadiendo
+    // líneas { articleId, quantity } (ver utils/articulosDelPortal.js). Sin él,
+    // sólo cuenta selectedArticleId y el envío nace con una unidad.
+    const [lineasDeArticulos, setLineasDeArticulos] = useState([]);
+    const [articleQuantity, setArticleQuantity] = useState('1');
+    const [faltanArticulos, setFaltanArticulos] = useState(false);
     const [observations, setObservations] = useState('');
     const [clientReference, setClientReference] = useState('');
     const [porteType, setPorteType] = useState(''); // '' = sin elegir, obligatorio antes de enviar
@@ -270,6 +281,21 @@ export default function ClientDashboard({
         });
     }, [articles]);
 
+    const variosArticulos = elPortalAdmiteVariosArticulos(client);
+    const nombreDelArticulo = (articleId) =>
+        availableArticles.find(a => String(a.id) === String(articleId))?.name || `Artículo ${articleId}`;
+
+    // Añadir va con botón, no con el onChange del select: un select nativo
+    // cambia con cada flecha del teclado y metería el artículo varias veces.
+    const anadirArticulo = () => {
+        const nuevas = anadirLinea(lineasDeArticulos, selectedArticleId, articleQuantity);
+        if (nuevas === lineasDeArticulos) return;
+        setLineasDeArticulos(nuevas);
+        setFaltanArticulos(false);
+        setSelectedArticleId('');
+        setArticleQuantity('1');
+    };
+
     // Agenda de destinatarios: sale de los envíos que MANDA el propio cliente, no
     // de la tabla `clients`. Antes se intentaba filtrar `allClients` y salía siempre
     // vacía — un cliente sólo recibe su propia ficha (RLS, fase 04). Ver
@@ -324,43 +350,55 @@ export default function ClientDashboard({
             alert("💶 FALTA EL TIPO DE PORTE\n\nMarca si el porte es PAGADO (se carga en tu factura) o DEBIDO (se cobra en destino).");
             return;
         }
-
-        // Prefijo según tipo de cliente: HAB- para habituales/presupuesto, SUM- para el resto
-        const clientBillingType = String(client.billingType || '').toLowerCase();
-        const isHabClient = clientBillingType.includes('habitual') || clientBillingType.includes('diar') ||
-                            clientBillingType.includes('libre') || clientBillingType.includes('contado') ||
-                            clientBillingType.includes('presupuesto');
-        const clientPrefix = isHabClient ? 'HAB' : 'SUM';
-
-        // El número lo reserva el servidor. Contarlo aquí no vale: el cliente sólo
-        // ve SUS envíos (RLS, fase 04), así que su máximo va por detrás del real y
-        // el id acababa pisando el albarán de otro cliente — ver numeracionAlbaran.js.
-        const { primero: numeroAlbaran } = await reservarNumerosAlbaran(clientPrefix, 1, {
-            enviosLocales: allShipments
-        });
-
-        const selectedArticle = availableArticles.find(a => String(a.id) === String(selectedArticleId));
-        let numPackages = 1;
-        if (selectedArticle && selectedArticle.category === 'BADI') {
-            const parsed = parseInt(selectedArticle.name.replace(/\D/g, ''));
-            if (!isNaN(parsed) && parsed > 0) numPackages = parsed;
+        // Con varios artículos, el select no es obligatorio (se vacía al Añadir):
+        // lo que tiene que haber es al menos una línea. También antes del número.
+        if (variosArticulos && lineasDeArticulos.length === 0) {
+            setFaltanArticulos(true);
+            alert("📦 FALTA LA MERCANCÍA\n\nElige el artículo, pon la cantidad y pulsa Añadir. Puedes añadir varios.");
+            return;
         }
+
+        // Al modificar, el albarán conserva su número: no se reserva otro.
+        let idDelEnvio = envioEnEdicion ? envioEnEdicion.id : null;
+        if (!envioEnEdicion) {
+            // Prefijo según tipo de cliente: HAB- para habituales/presupuesto, SUM- para el resto
+            const clientBillingType = String(client.billingType || '').toLowerCase();
+            const isHabClient = clientBillingType.includes('habitual') || clientBillingType.includes('diar') ||
+                                clientBillingType.includes('libre') || clientBillingType.includes('contado') ||
+                                clientBillingType.includes('presupuesto');
+            const clientPrefix = isHabClient ? 'HAB' : 'SUM';
+
+            // El número lo reserva el servidor. Contarlo aquí no vale: el cliente sólo
+            // ve SUS envíos (RLS, fase 04), así que su máximo va por detrás del real y
+            // el id acababa pisando el albarán de otro cliente — ver numeracionAlbaran.js.
+            const { primero: numeroAlbaran } = await reservarNumerosAlbaran(clientPrefix, 1, {
+                enviosLocales: allShipments
+            });
+            idDelEnvio = `${clientPrefix}-${numeroAlbaran}`;
+        }
+
+        // Las líneas del envío: con el interruptor de la ficha, las que ha ido
+        // añadiendo; si no, el artículo del select con una unidad, como siempre.
+        const lineas = variosArticulos
+            ? lineasDeArticulos
+            : (selectedArticleId ? [{ articleId: selectedArticleId, quantity: 1 }] : []);
 
         // --- PRICING LOGIC ---
         // La misma cuenta que el alta de la oficina (utils/precioArticulo.js).
         // Hasta el 18/9/2026 aqu\u00ed viv\u00eda una copia que cog\u00eda la primera fila de
         // Ajustes que casara por nombre o C.P., y si no ten\u00eda baremo la daba
         // por Baremo 1: un env\u00edo del cliente a Antequera sal\u00eda a precio B1.
-        let unitPrice = 0;
-        if (selectedArticle) {
-            const { baremo, tariffId } = baremoDelEnvio({
-                originCity: newOriginCity,
-                originZip: newOriginZip,
-                destinationCity: newDestinationCity,
-                destinationZip: newDestinationZip,
-            }, { tariffs, coverageZones });
-            unitPrice = precioUnitarioArticulo(selectedArticle, { baremo, tariffId, cliente: client });
-        }
+        const { baremo, tariffId } = baremoDelEnvio({
+            originCity: newOriginCity,
+            originZip: newOriginZip,
+            destinationCity: newDestinationCity,
+            destinationZip: newDestinationZip,
+        }, { tariffs, coverageZones });
+        const { articles: articulosDelEnvio, total: totalPrice } = valorarLineas(
+            lineas, availableArticles,
+            (articulo) => precioUnitarioArticulo(articulo, { baremo, tariffId, cliente: client })
+        );
+        const numPackages = bultosDeLosArticulos(articulosDelEnvio);
 
         const amountNum = parseFloat(codAmount) || 0;
         // La comisión va DENTRO del precio del porte, igual que en el alta de la
@@ -368,13 +406,11 @@ export default function ClientDashboard({
         // sumaba y SUM-1003 salió a 7 € con 3 € de comisión que nadie cobraba.
         // Sin precio de tarifa se queda en "Pendiente" para que la oficina lo vea.
         const codFee = calcularComisionReembolso(client, amountNum);
-        const finalAmount = unitPrice > 0 ? unitPrice + codFee : 0;
+        const finalAmount = totalPrice > 0 ? totalPrice + codFee : 0;
 
-        const shipmentData = {
-            id: `${clientPrefix}-${numeroAlbaran}`,
-            type: 'Entrega',
-            client: client.name,
-            clientId: client.id,
+        // Lo que el cliente decide en el formulario. Al modificar es lo único que
+        // cambia: el número, la fecha y el estado se quedan como estaban.
+        const datosDelFormulario = {
             originName: client.name,
             originAddress: newOrigin,
             originZip: newOriginZip,
@@ -385,40 +421,95 @@ export default function ClientDashboard({
             destinationCity: newDestinationCity,
             origin: `${newOriginZip} ${newOriginCity}, ES`.trim(),
             destination: `${newDestinationZip} ${newDestinationCity}, ES`.trim(),
-            // El enlace con nuestra ficha cuando el destinatario salió de la agenda
-            // (fase 26). El servidor lo respeta sólo si este cliente ya le ha
-            // enviado antes; si no, lo quita y empareja por nombre como siempre.
-            ...(destinatarioEnlazado ? {
-                destinatarioId: destinatarioEnlazado.id,
-                destinatarioSedeId: destinatarioEnlazado.sedeId ?? null,
-                destinatarioEmparejadoPor: 'agenda'
-            } : {}),
-            date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
-            createdAt: new Date().toISOString(),
-            status: 'Pendiente de asignar',
             packages: numPackages,
             weightKg: weightKg && parseFloat(weightKg) > 0 ? parseFloat(weightKg) : null,
             observations: observations,
             clientReference: clientReference ? clientReference.trim() : null,
-            articles: selectedArticle ? [{
-                ...selectedArticle,
-                uniqueId: Date.now(),
-                quantity: 1,
-                unitPrice: unitPrice,
-                totalPrice: unitPrice
-            }] : [],
+            articles: articulosDelEnvio,
             amount: finalAmount ? finalAmount.toFixed(2) : 'Pendiente',
-            paymentStatus: 'Pending',
             porteType: porteType,
             hasCod: amountNum > 0,
             codAmount: amountNum,
             codCommission: codFee
         };
 
-        onCreateShipment(shipmentData);
+        // El enlace con nuestra ficha cuando el destinatario salió de la agenda
+        // (fase 26). El servidor lo respeta sólo si este cliente ya le ha
+        // enviado antes; si no, lo quita y empareja por nombre como siempre.
+        // Al modificar: si ha cambiado el nombre a mano se suelta el enlace que
+        // tuviera, para que el servidor vuelva a emparejar; si no lo ha tocado,
+        // se deja como estaba.
+        const nombreDestinoCambiado = !!envioEnEdicion &&
+            normalizarTexto(envioEnEdicion.destinationName || '') !== normalizarTexto(newDestinationName || '');
+        const enlaceDestinatario = destinatarioEnlazado
+            ? {
+                destinatarioId: destinatarioEnlazado.id,
+                destinatarioSedeId: destinatarioEnlazado.sedeId ?? null,
+                destinatarioEmparejadoPor: 'agenda'
+            }
+            : nombreDestinoCambiado
+                ? { destinatarioId: null, destinatarioSedeId: null, destinatarioEmparejadoPor: null }
+                : {};
+
+        if (envioEnEdicion) {
+            // Si la base de datos ya no lo deja (lo hemos recogido mientras lo
+            // tenía abierto), el manejador avisa y devuelve false: se queda en
+            // el formulario con lo que había escrito.
+            const guardado = await onUpdateShipment(envioEnEdicion.id, { ...datosDelFormulario, ...enlaceDestinatario });
+            if (guardado === false) return;
+        } else {
+            onCreateShipment({
+                id: idDelEnvio,
+                type: 'Entrega',
+                client: client.name,
+                clientId: client.id,
+                ...datosDelFormulario,
+                ...enlaceDestinatario,
+                date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
+                createdAt: new Date().toISOString(),
+                status: 'Pendiente de asignar',
+                paymentStatus: 'Pending'
+            });
+        }
+
+        setEnvioEnEdicion(null);
         setActiveTab('shipments');
-        
-        // Reset form
+        limpiarFormulario();
+    };
+
+    // Cargar un envío en el formulario para modificarlo. Sólo se ofrece para los
+    // que aún no hemos recogido (utils/envioDelPortal.js).
+    const empezarAModificar = (s) => {
+        setEnvioEnEdicion(s);
+        setNewOrigin(s.originAddress || client.address || '');
+        setNewOriginZip(s.originZip || client.zip || '');
+        setNewOriginCity(s.originCity || client.city || '');
+        setNewDestinationName(s.destinationName || '');
+        setNewDestination(s.destinationAddress || '');
+        setNewDestinationZip(s.destinationZip || '');
+        setNewDestinationCity(s.destinationCity || '');
+        setDestinatarioEnlazado(null);
+        const articulo = Array.isArray(s.articles) && s.articles[0] ? s.articles[0] : null;
+        setSelectedArticleId(articulo && articulo.id !== undefined && articulo.id !== null ? String(articulo.id) : '');
+        setLineasDeArticulos(lineasDelEnvio(s));
+        setArticleQuantity('1');
+        setFaltanArticulos(false);
+        setObservations(s.observations || '');
+        setClientReference(s.clientReference || '');
+        setPorteType(s.porteType === 'Debido' || s.porteType === 'Pagado' ? s.porteType : '');
+        setPorteMissing(false);
+        setCodAmount(parseFloat(s.codAmount) > 0 ? String(s.codAmount) : '');
+        setWeightKg(parseFloat(s.weightKg) > 0 ? String(s.weightKg) : '');
+        setActiveTab('create');
+    };
+
+    const cancelarEdicion = () => {
+        setEnvioEnEdicion(null);
+        limpiarFormulario();
+        setActiveTab('shipments');
+    };
+
+    const limpiarFormulario = () => {
         setNewDestination('');
         setNewDestinationZip('');
         setNewDestinationCity('');
@@ -428,6 +519,9 @@ export default function ClientDashboard({
         setNewOriginZip(client.zip || '');
         setNewOriginCity(client.city || '');
         setSelectedArticleId('');
+        setLineasDeArticulos([]);
+        setArticleQuantity('1');
+        setFaltanArticulos(false);
         setObservations('');
         setClientReference('');
         setPorteType('');
@@ -672,8 +766,12 @@ export default function ClientDashboard({
                     >
                         <Package size={18} /> Mis Envíos
                     </button>
-                    <button 
-                        onClick={() => setActiveTab('create')}
+                    <button
+                        onClick={() => {
+                            // Si venía de modificar uno, la pestaña vuelve a ser un alta limpia.
+                            if (envioEnEdicion) { setEnvioEnEdicion(null); limpiarFormulario(); }
+                            setActiveTab('create');
+                        }}
                         className={`pb-4 px-2 text-sm font-bold flex items-center gap-2 border-b-2 transition-colors ${activeTab === 'create' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
                     >
                         <Plus size={18} /> Crear Nuevo Envío
@@ -873,18 +971,40 @@ export default function ClientDashboard({
 
                                                 <td className="px-4 py-4 text-right sticky right-0 bg-white group-hover:bg-slate-50">
                                                     <div className="flex justify-end gap-2">
+                                                        {/* Modificar y borrar: sólo lo suyo, y sólo hasta que escaneamos los
+                                                            bultos. Un pendiente ya recogido enseña un candado que dice por qué. */}
                                                         {s.status === 'Pendiente de asignar' && !esRecibido(s, client) && (
-                                                            <button 
-                                                                onClick={() => {
-                                                                    if (window.confirm('¿Estás seguro de que deseas borrar este envío?')) {
-                                                                        onDeleteShipment(s.id);
-                                                                    }
-                                                                }}
-                                                                className="p-2 text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
-                                                                title="Borrar Envío"
-                                                            >
-                                                                <Trash2 size={16} />
-                                                            </button>
+                                                            elClientePuedeTocarlo(s, client) ? (
+                                                                <>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => empezarAModificar(s)}
+                                                                        className="p-2 text-amber-600 bg-amber-50 rounded-lg hover:bg-amber-100 transition-colors"
+                                                                        title="Modificar Envío"
+                                                                    >
+                                                                        <Pencil size={16} />
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            if (window.confirm('¿Estás seguro de que deseas borrar este envío?')) {
+                                                                                onDeleteShipment(s.id);
+                                                                            }
+                                                                        }}
+                                                                        className="p-2 text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                                                                        title="Borrar Envío"
+                                                                    >
+                                                                        <Trash2 size={16} />
+                                                                    </button>
+                                                                </>
+                                                            ) : (
+                                                                <span
+                                                                    className="p-2 text-slate-400 bg-slate-100 rounded-lg cursor-help inline-flex"
+                                                                    title={porQueElClienteNoPuedeTocarlo(s, client)}
+                                                                >
+                                                                    <Lock size={16} />
+                                                                </span>
+                                                            )
                                                         )}
                                                         <button 
                                                             onClick={() => setSelectedShipment(s)}
@@ -930,7 +1050,14 @@ export default function ClientDashboard({
 
                 {activeTab === 'create' && (
                     <form onSubmit={handleCreateSubmit} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8 max-w-3xl animate-in fade-in slide-in-from-bottom-4">
-                        <h2 className="text-xl font-bold text-slate-800 mb-6">Datos del Nuevo Envío</h2>
+                        {envioEnEdicion ? (
+                            <div className="mb-6">
+                                <h2 className="text-xl font-bold text-slate-800">Modificar Envío {envioEnEdicion.id}</h2>
+                                <p className="text-sm text-slate-500 mt-1">Puedes cambiarlo hasta que recojamos los bultos. Después sólo podrá hacerlo nuestra oficina.</p>
+                            </div>
+                        ) : (
+                            <h2 className="text-xl font-bold text-slate-800 mb-6">Datos del Nuevo Envío</h2>
+                        )}
                         
                         <div className="space-y-6">
                             {/* Origin (Auto-filled but editable) */}
@@ -1068,18 +1195,71 @@ export default function ClientDashboard({
                                 <div className="flex flex-col gap-4">
                                     <div className="flex flex-col md:flex-row gap-4">
                                         <div className="w-full md:w-1/2">
+                                            {/* Con el interruptor de la ficha (talleres de neumáticos: "4 de
+                                                turismo y 2 de 4x4") el cliente añade líneas con cantidad. Sin él,
+                                                un solo artículo y una unidad, como siempre. */}
                                             <label className="block text-sm font-medium text-slate-700 mb-1">Tipo de Mercancía</label>
-                                            <select 
-                                                required 
-                                                value={selectedArticleId} 
-                                                onChange={e=>setSelectedArticleId(e.target.value)} 
-                                                className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all bg-white"
-                                            >
-                                                <option value="" disabled>Selecciona un tipo...</option>
-                                                {availableArticles.map(a => (
-                                                    <option key={a.id} value={a.id}>{a.name}</option>
-                                                ))}
-                                            </select>
+                                            <div className="flex gap-2">
+                                                <select
+                                                    id="articulo-portal"
+                                                    required={!variosArticulos}
+                                                    value={selectedArticleId}
+                                                    onChange={e=>setSelectedArticleId(e.target.value)}
+                                                    className={`flex-1 min-w-0 px-4 py-2 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all bg-white ${faltanArticulos ? 'border-red-400' : 'border-slate-200'}`}
+                                                >
+                                                    <option value="" disabled={!variosArticulos}>{variosArticulos ? 'Elige un artículo...' : 'Selecciona un tipo...'}</option>
+                                                    {availableArticles.map(a => (
+                                                        <option key={a.id} value={a.id}>{a.name}</option>
+                                                    ))}
+                                                </select>
+                                                {variosArticulos && (
+                                                    <>
+                                                        <input
+                                                            id="cantidad-articulo"
+                                                            type="number"
+                                                            min="1"
+                                                            step="1"
+                                                            aria-label="Cantidad"
+                                                            title="Cantidad"
+                                                            value={articleQuantity}
+                                                            onChange={e => setArticleQuantity(e.target.value)}
+                                                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); anadirArticulo(); } }}
+                                                            className="w-16 shrink-0 px-2 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all bg-white text-center font-bold"
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            onClick={anadirArticulo}
+                                                            disabled={!selectedArticleId}
+                                                            className="shrink-0 px-3 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 transition-colors flex items-center gap-1"
+                                                        >
+                                                            <Plus size={16} /> Añadir
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
+                                            {variosArticulos && (
+                                                lineasDeArticulos.length > 0 ? (
+                                                    <ul className="mt-2 border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white" aria-label="Artículos del envío">
+                                                        {lineasDeArticulos.map(linea => (
+                                                            <li key={linea.articleId} className="flex items-center justify-between px-3 py-2 text-sm">
+                                                                <span><span className="font-bold text-slate-700">{linea.quantity}x</span> <span className="text-slate-600">{nombreDelArticulo(linea.articleId)}</span></span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setLineasDeArticulos(quitarLinea(lineasDeArticulos, linea.articleId))}
+                                                                    title={`Quitar ${nombreDelArticulo(linea.articleId)}`}
+                                                                    className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                                                >
+                                                                    <X size={16} />
+                                                                </button>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                ) : (
+                                                    <p className={`mt-1.5 text-[11px] font-bold ${faltanArticulos ? 'text-red-600' : 'text-slate-400'}`}>
+                                                        Elige el artículo, pon la cantidad y pulsa Añadir. Puedes añadir varios.
+                                                    </p>
+                                                )
+                                            )}
                                         </div>
                                         <div className="w-full md:w-1/2">
                                             <label className="block text-sm font-medium text-slate-700 mb-1">Reembolso a Cobrar (€)</label>
@@ -1158,10 +1338,25 @@ export default function ClientDashboard({
                             </div>
 
                             <div className="pt-6 border-t border-slate-100">
-                                <button type="submit" className="w-full bg-blue-600 text-white font-bold text-lg py-4 rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30 flex justify-center items-center gap-2">
-                                    <Plus size={24} /> Crear Envío
-                                </button>
-                                <p className="text-center text-xs text-slate-500 mt-4">Al crear el envío, este pasará a estar pendiente de recogida por nosotros.</p>
+                                {envioEnEdicion ? (
+                                    <div className="flex flex-col md:flex-row gap-3">
+                                        <button type="submit" className="flex-1 bg-amber-500 text-white font-bold text-lg py-4 rounded-xl hover:bg-amber-600 transition-colors shadow-lg shadow-amber-500/30 flex justify-center items-center gap-2">
+                                            <Pencil size={24} /> Guardar cambios
+                                        </button>
+                                        <button type="button" onClick={cancelarEdicion} className="md:w-48 bg-white text-slate-600 font-bold text-lg py-4 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors flex justify-center items-center gap-2">
+                                            <X size={20} /> Cancelar
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button type="submit" className="w-full bg-blue-600 text-white font-bold text-lg py-4 rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30 flex justify-center items-center gap-2">
+                                        <Plus size={24} /> Crear Envío
+                                    </button>
+                                )}
+                                <p className="text-center text-xs text-slate-500 mt-4">
+                                    {envioEnEdicion
+                                        ? 'El envío conserva su número y sigue pendiente de recogida.'
+                                        : 'Al crear el envío, este pasará a estar pendiente de recogida por nosotros.'}
+                                </p>
                             </div>
                         </div>
                     </form>
@@ -1293,6 +1488,24 @@ export default function ClientDashboard({
                                         <div>
                                             <p className="font-bold text-slate-800 text-sm">📄 Folio A4 (4 posiciones)</p>
                                             <p className="text-xs text-slate-500 mt-0.5 leading-snug">Divide el folio A4 en 4 etiquetas A6 (2×2). La app recuerda qué posición usaste para aprovechar el papel.</p>
+                                        </div>
+                                    </label>
+                                    <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                                        client.labelPrintMode === '75x52'
+                                            ? 'border-violet-500 bg-violet-50'
+                                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                                    }`}>
+                                        <input
+                                            type="radio"
+                                            name="labelPrintMode"
+                                            value="75x52"
+                                            checked={client.labelPrintMode === '75x52'}
+                                            onChange={() => onUpdateClient && onUpdateClient(client.id, { labelPrintMode: '75x52' })}
+                                            className="mt-0.5 text-violet-600 border-slate-300 focus:ring-violet-500"
+                                        />
+                                        <div>
+                                            <p className="font-bold text-slate-800 text-sm">🏷️ Rollo 75×52mm</p>
+                                            <p className="text-xs text-slate-500 mt-0.5 leading-snug">Etiqueta apaisada pequeña para etiquetadoras de rollo. Una etiqueta por bulto, con el destinatario grande y el QR al lado.</p>
                                         </div>
                                     </label>
                                 </div>

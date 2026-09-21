@@ -1,4 +1,4 @@
-import { X, Building2, Package, FileText, MapPin, Loader2, Mic, MicOff, Truck } from 'lucide-react';
+import { X, Building2, Package, FileText, MapPin, Loader2, Mic, MicOff, Truck, Phone } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import CityAutocomplete from '../CityAutocomplete';
@@ -14,6 +14,7 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
         originAddress: '',
         originZip: '',
         originCity: '',
+        originPhone: '', // Teléfono del remitente: es el que llama el repartidor desde la parada.
         observations: '',
         originCoordinates: '',
         branchId: null,
@@ -85,6 +86,7 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 originAddress: '',
                 originZip: '',
                 originCity: '',
+                originPhone: '',
                 observations: '',
                 originCoordinates: '',
                 branchId: null,
@@ -96,14 +98,14 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
             setAvisoGuardado(null);
             setGuardando(false);
             numeroReservadoRef.current = null;
-        } else if (isDriver) {
-            // Sólo el conductor está donde se recoge. Si lo capturaba también la
-            // oficina, el cliente nuevo nacía con las coordenadas de la oficina
-            // y luego el GPS bueno del repartidor no las pisaba (sólo rellena
-            // huecos).
-            captureGps();
         }
-    }, [isOpen, isDriver]);
+        // Al crear la recogida NO se captura el GPS, ni en la oficina ni en el
+        // móvil: quien la apunta no está en casa del remitente. La ubicación se
+        // coge cuando el repartidor llega y hace el albarán (CreateShipmentModal).
+        // Si se capturaba aquí, la ficha del remitente nacía con la posición de
+        // donde se apuntó la recogida y el GPS bueno ya no la pisaba (sólo
+        // rellena huecos).
+    }, [isOpen]);
 
     const captureGps = () => {
         if (!navigator.geolocation) return;
@@ -211,6 +213,8 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 originAddress: branch.address || item.address || '',
                 originZip: branch.zip || item.zip || '',
                 originCity: branch.city || item.city || '',
+                // Móvil antes que fijo: es a quien hay que localizar para recoger.
+                originPhone: branch.mobile || branch.phone || item.mobile || item.phone || '',
                 originCoordinates: branch.coordinates || '',
                 branchId: branch.id,
                 _parentClientId: item.id.split('_')[0]
@@ -222,6 +226,7 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 originAddress: item.address || '',
                 originZip: item.zip || '',
                 originCity: item.city || '',
+                originPhone: item.mobile || item.phone || '',
                 originCoordinates: item.coordinates || '',
                 branchId: null,
                 _parentClientId: null
@@ -263,6 +268,7 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 originAddress: formData.originAddress,
                 originZip: formData.originZip,
                 originCity: formData.originCity,
+                originPhone: String(formData.originPhone || '').trim(),
                 originCoordinates: formData.originCoordinates,
 
                 // Destination is generic for Pickups until processed
@@ -460,6 +466,35 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                                         className={inputClass}
                                         value={formData.originZip}
                                         onChange={(e) => handleZipChange(e.target.value)}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Teléfono del remitente. Va a originPhone, que es lo que
+                                el repartidor llama desde la parada y lo que sale en el
+                                detalle del albarán; antes había que meterlo en
+                                Observaciones y no servía para el botón de llamar. */}
+                            <div>
+                                <div className="flex justify-between items-center mb-1">
+                                    <label className={labelClass + " mb-0"}>Teléfono</label>
+                                    <button
+                                        type="button"
+                                        onClick={() => startListening('phone', 'originPhone')}
+                                        className={`p-1 rounded-md transition-colors ${listeningField === 'phone' ? 'bg-red-100 text-red-600 animate-pulse' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
+                                        title="Hablar para escribir"
+                                    >
+                                        {listeningField === 'phone' ? <MicOff size={14} /> : <Mic size={14} />}
+                                    </button>
+                                </div>
+                                <div className="relative">
+                                    <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                    <input
+                                        type="tel"
+                                        inputMode="tel"
+                                        placeholder="Teléfono de contacto..."
+                                        className={inputClass + " pl-9"}
+                                        value={formData.originPhone}
+                                        onChange={(e) => setFormData({ ...formData, originPhone: e.target.value })}
                                     />
                                 </div>
                             </div>

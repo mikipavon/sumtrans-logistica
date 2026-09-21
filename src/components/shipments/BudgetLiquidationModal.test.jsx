@@ -58,9 +58,92 @@ describe('BudgetLiquidationModal · deudas apuntadas a mano', () => {
         expect(screen.getByText('€55.00')).toBeInTheDocument();
     });
 
-    it('en septiembre no sale', () => {
+    it('en septiembre no sale si se desmarca sumar los meses anteriores', () => {
         montar([albaranDeAgosto, deudaDeAgosto]);
         elegirMes('2026-09');
+        fireEvent.click(screen.getByRole('checkbox', { name: /meses anteriores/ }));
         expect(screen.queryByText('ISPAVICAR')).toBeNull();
+    });
+});
+
+// ── Septiembre de 2026, primer mes con la app: se cierra junto con agosto ──
+const albaranDeSeptiembre = {
+    id: 'HAB-950', type: 'Entrega', client: 'ISPAVICAR', billingType: 'Presupuesto',
+    porteType: 'Pagado', amount: '€10.00', customAmount: 10, status: 'Entregado',
+    createdAt: '2026-09-12T09:00:00.000Z', date: '12 sept 2026',
+};
+
+describe('BudgetLiquidationModal · meses anteriores sin cerrar', () => {
+    it('el cierre de septiembre suma lo de agosto, en una fila, y dice qué meses lleva', () => {
+        montar([albaranDeAgosto, deudaDeAgosto, albaranDeSeptiembre]);
+        elegirMes('2026-09');
+        expect(screen.getByRole('checkbox', { name: /meses anteriores/ })).toBeChecked();
+        expect(screen.getByText(/\(2 albaranes\)/)).toBeInTheDocument();
+        expect(screen.getAllByText('ISPAVICAR')).toHaveLength(1);
+        expect(screen.getByText('3 envíos acumulados')).toBeInTheDocument();
+        expect(screen.getByText('€65.00')).toBeInTheDocument();
+        expect(screen.getByText('Agosto y septiembre de 2026')).toBeInTheDocument();
+    });
+
+    it('desmarcado, septiembre sólo cobra lo suyo', () => {
+        montar([albaranDeAgosto, deudaDeAgosto, albaranDeSeptiembre]);
+        elegirMes('2026-09');
+        fireEvent.click(screen.getByRole('checkbox', { name: /meses anteriores/ }));
+        expect(screen.getByText('1 envíos acumulados')).toBeInTheDocument();
+        expect(screen.getByText('€10.00')).toBeInTheDocument();
+        expect(screen.queryByText('Agosto y septiembre de 2026')).toBeNull();
+    });
+
+    it('sin nada anterior pendiente no sale la casilla', () => {
+        montar([albaranDeSeptiembre]);
+        elegirMes('2026-09');
+        expect(screen.queryByRole('checkbox', { name: /meses anteriores/ })).toBeNull();
+        expect(screen.getByText('€10.00')).toBeInTheDocument();
+    });
+
+    it('los meses posteriores nunca entran', () => {
+        montar([albaranDeAgosto, albaranDeSeptiembre]);
+        elegirMes('2026-08');
+        expect(screen.getByText('€20.00')).toBeInTheDocument();
+        expect(screen.getByText('1 envíos acumulados')).toBeInTheDocument();
+    });
+
+    it('al cerrar, el recibo dice el periodo y se marcan los tres albaranes', async () => {
+        const onCreateShipment = vi.fn().mockResolvedValue(true);
+        const onUpdateMultipleShipments = vi.fn().mockResolvedValue(true);
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        render(
+            <BudgetLiquidationModal
+                isOpen onClose={vi.fn()} clients={clients}
+                drivers={[{ id: 7, name: 'Paco' }]}
+                shipments={[albaranDeAgosto, deudaDeAgosto, albaranDeSeptiembre]}
+                onCreateShipment={onCreateShipment}
+                onUpdateMultipleShipments={onUpdateMultipleShipments}
+            />
+        );
+        elegirMes('2026-09');
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '7' } });
+        fireEvent.click(screen.getByText('Cerrar Mes'));
+        await vi.waitFor(() => expect(onUpdateMultipleShipments).toHaveBeenCalled());
+        expect(window.confirm.mock.calls[0][0]).toContain('Agosto y septiembre de 2026');
+        const recibo = onCreateShipment.mock.calls[0][0];
+        expect(recibo).toMatchObject({ type: 'Recibo', customAmount: 65 });
+        expect(recibo.observations).toContain('Agosto y septiembre de 2026');
+        expect(onUpdateMultipleShipments.mock.calls[0][0].map(u => u.id).sort()).toEqual(['HAB-900', 'HAB-901', 'HAB-950']);
+        window.confirm.mockRestore();
+        window.alert.mockRestore();
+    });
+
+    it('en Ya Liquidados el cierre conjunto sale entero en septiembre y no en agosto', () => {
+        const recibo = { id: 'RC-1', type: 'Recibo', client: 'ISPAVICAR', customAmount: 65, amount: '65.00', assignedDriverId: 7 };
+        const cerrado = (s) => ({ ...s, budgetLiquidated: true, linkedReceiptId: 'RC-1' });
+        montar([cerrado(albaranDeAgosto), cerrado(deudaDeAgosto), cerrado(albaranDeSeptiembre), recibo]);
+        fireEvent.click(screen.getByText(/Ya Liquidados/));
+        elegirMes('2026-09');
+        expect(screen.getByText(/3 envíos · RC-1/)).toBeInTheDocument();
+        expect(screen.getByText('Agosto y septiembre de 2026')).toBeInTheDocument();
+        elegirMes('2026-08');
+        expect(screen.queryByText(/RC-1/)).toBeNull();
     });
 });

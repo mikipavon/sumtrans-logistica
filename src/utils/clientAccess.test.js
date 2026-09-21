@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { emailDeAcceso, tieneCorreoDeAccesoPropio, accesosAdicionales, correosDeAcceso, accesosQueSeQuitan, fichaSinContrasenas } from './clientAccess';
+import { emailDeAcceso, tieneCorreoDeAccesoPropio, accesosAdicionales, correosDeAcceso, accesosQueSeQuitan, fichaSinContrasenas, sinEspaciosALosLados } from './clientAccess';
 
 describe('emailDeAcceso', () => {
     it('usa el correo de acceso cuando la ficha lo trae', () => {
@@ -145,5 +145,18 @@ describe('fichaSinContrasenas', () => {
         fichaSinContrasenas(original);
         expect(original.password).toBe('principal1');
         expect(original.accessEmailsExtra[0].password).toBe('p1');
+    });
+});
+
+describe('sinEspaciosALosLados', () => {
+    it('quita los espacios pegados al copiar y respeta los de en medio', () => {
+        expect(sinEspaciosALosLados(' Reinsurruben7305 \n')).toBe('Reinsurruben7305');
+        expect(sinEspaciosALosLados('dos palabras')).toBe('dos palabras');
+        expect(sinEspaciosALosLados(undefined)).toBe('');
+    });
+
+    it('los otros correos con acceso llegan a Auth sin esos espacios', () => {
+        const ficha = { accessEmail: 'a@x.es', accessEmailsExtra: [{ email: 'b@x.es', password: 'Clave123 ' }] };
+        expect(accesosAdicionales(ficha)).toEqual([{ email: 'b@x.es', password: 'Clave123' }]);
     });
 });

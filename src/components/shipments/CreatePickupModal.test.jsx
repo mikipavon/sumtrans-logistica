@@ -194,7 +194,7 @@ describe('CreatePickupModal — numeración y guardado', () => {
     });
 });
 
-// ── El GPS de origen es cosa del conductor ──
+// ── La recogida no captura el GPS de origen ──
 //
 // El modal capturaba la posición del navegador al abrirse para todo el mundo.
 // Desde la oficina eso ponía las coordenadas de la oficina a la recogida y, de
@@ -234,14 +234,98 @@ describe('CreatePickupModal — captura de GPS al abrir', () => {
         expect(onSave.mock.calls[0][0].originCoordinates).toBe('');
     });
 
-    it('el conductor sí lo captura y va en la recogida', async () => {
+    // El repartidor tampoco: apunta la recogida desde donde esté. La ubicación
+    // del remitente se coge al llegar y hacer el albarán.
+    it('el conductor tampoco lo captura: la ubicación se coge al hacer el albarán', async () => {
         const onSave = vi.fn().mockResolvedValue(true);
         abrirConGuardado({ onSave, isDriver: true });
 
-        expect(getCurrentPosition).toHaveBeenCalled();
+        expect(getCurrentPosition).not.toHaveBeenCalled();
 
         rellenarYEnviar();
         await waitFor(() => expect(onSave).toHaveBeenCalled());
-        expect(onSave.mock.calls[0][0].originCoordinates).toBe('37.586000, -4.638000');
+        expect(onSave.mock.calls[0][0].originCoordinates).toBe('');
+    });
+});
+
+// ── Teléfono del remitente ──
+//
+// La recogida no tenía hueco para el teléfono: la oficina lo metía en
+// Observaciones y el botón de llamar del repartidor (que lee originPhone) se
+// quedaba sin número. Ahora hay campo propio, se guarda en originPhone y al
+// elegir una ficha se rellena con su móvil (o su fijo si no tiene móvil).
+
+describe('CreatePickupModal — teléfono del remitente', () => {
+    beforeEach(() => {
+        reservar.mockReset();
+        reservar.mockResolvedValue({ primero: 500, reservado: true });
+    });
+
+    const campoTelefono = () => screen.getByPlaceholderText('Teléfono de contacto...');
+
+    it('el teléfono tecleado se guarda en originPhone, sin espacios por los lados', async () => {
+        const onSave = vi.fn().mockResolvedValue(true);
+        abrirConGuardado({ onSave });
+
+        fireEvent.change(campoTelefono(), { target: { value: ' 619389746 ' } });
+        rellenarYEnviar();
+
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        expect(onSave.mock.calls[0][0].originPhone).toBe('619389746');
+    });
+
+    it('sin teléfono la recogida sale con originPhone vacío, no undefined', async () => {
+        const onSave = vi.fn().mockResolvedValue(true);
+        abrirConGuardado({ onSave });
+
+        rellenarYEnviar();
+
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        expect(onSave.mock.calls[0][0].originPhone).toBe('');
+    });
+
+    it('al elegir una ficha se rellena con su móvil antes que con su fijo', () => {
+        render(
+            <CreatePickupModal
+                isOpen
+                onClose={vi.fn()}
+                onSave={vi.fn()}
+                clients={[{ id: 1, name: 'JOSE ROLDAN MERINO', city: 'Nueva Carteya', phone: '957000000', mobile: '619389746' }]}
+                allPoblaciones={['Nueva Carteya']}
+                allShipments={[]}
+            />
+        );
+
+        fireEvent.change(screen.getByPlaceholderText('Buscar cliente...'), { target: { value: 'JOSE' } });
+        fireEvent.click(screen.getByText('JOSE ROLDAN MERINO'));
+
+        expect(campoTelefono().value).toBe('619389746');
+    });
+
+    it('al elegir una sede se lleva el teléfono de la sede, y si no tiene, el de la ficha madre', () => {
+        render(
+            <CreatePickupModal
+                isOpen
+                onClose={vi.fn()}
+                onSave={vi.fn()}
+                clients={[{
+                    id: 7, name: 'AGROCOR', phone: '957111111',
+                    branches: [
+                        { id: 1, name: 'AGROCOR MONTILLA', city: 'Montilla', mobile: '600111222' },
+                        { id: 2, name: 'AGROCOR TORRECILLA', city: 'Montilla' }
+                    ]
+                }]}
+                allPoblaciones={['Montilla']}
+                allShipments={[]}
+            />
+        );
+
+        fireEvent.change(screen.getByPlaceholderText('Buscar cliente...'), { target: { value: 'AGROCOR' } });
+        fireEvent.click(screen.getByText('AGROCOR MONTILLA'));
+        expect(campoTelefono().value).toBe('600111222');
+
+        fireEvent.change(screen.getByPlaceholderText('Buscar cliente...'), { target: { value: 'AGROCOR' } });
+        fireEvent.click(screen.getByText('AGROCOR TORRECILLA'));
+        expect(campoTelefono().value).toBe('957111111');
     });
 });

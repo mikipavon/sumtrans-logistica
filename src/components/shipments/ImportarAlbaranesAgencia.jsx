@@ -5,7 +5,9 @@ import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 import { buscarArticuloBadi, baremoDelPunto, precioUnitarioParaCliente, prefijoSerieDelCliente, esPoblacionConocida } from '../../utils/importacionEnvios';
 import { hojasDeFichero, leerHoja, miniaturaDeLienzo, cerrarLector } from '../../utils/ocrAlbaran';
 import { leerHojaConIA } from '../../utils/iaAlbaran';
+import { poblacionSegunCP } from '../../utils/lecturaAlbaranIA';
 import { cobraPorKilos, precioPorKilos, tramoDePeso } from '../../utils/precioPorKilos';
+import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import PanelConsumoIA from './PanelConsumoIA';
 
 // Importa albaranes de agencia (TXT, TSB, etc.) a partir de fotos o PDF.
@@ -17,8 +19,15 @@ import PanelConsumoIA from './PanelConsumoIA';
 // Sea cual sea el lector, nada se guarda sin pasar por la revisión: cada hoja se
 // enseña junto a lo que se ha leído y la oficina corrige antes de crear.
 //
-// El cliente que se recibe es la AGENCIA, que es quien paga el porte. El
-// remitente leído del papel va a originName (quien entrega la mercancía).
+// El cliente que se recibe es la AGENCIA, que es quien paga el porte: todo
+// albarán de agencia nace con porte Pagado, diga lo que diga el papel y sean
+// quienes sean el remitente y el destinatario. El remitente leído del papel
+// va a originName (quien entrega la mercancía).
+//
+// La población leída se cuadra con el CP nada más leer la hoja
+// (poblacionSegunCP): las etiquetas ponen "CORDOBA" en la delegación de
+// destino y el lector se lo llevaba a la población aunque el CP fuera 14920
+// (Aguilar de la Frontera). El cambio se enseña como aviso en la revisión.
 
 let contadorHojas = 0;
 
@@ -31,7 +40,7 @@ function kilosDe(valor) {
 }
 
 function camposVacios() {
-    return { expedicion: '', remitente: '', destinatario: '', direccion: '', poblacion: '', cp: '', telefono: '', bultos: null, kilos: null, porte: '', reembolso: 0, devolverFirmado: false };
+    return { expedicion: '', remitente: '', destinatario: '', direccion: '', poblacion: '', cp: '', telefono: '', bultos: null, kilos: null, reembolso: 0, devolverFirmado: false };
 }
 
 export default function ImportarAlbaranesAgencia({ client, onCreateShipment, allShipments, articles, tariffs, coverageZones, onClose, isAdmin }) {
@@ -56,6 +65,12 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
     const actualizarHoja = useCallback((id, cambios) => {
         setHojas(prev => prev.map(h => (h.id === id ? { ...h, ...(typeof cambios === 'function' ? cambios(h) : cambios) } : h)));
     }, []);
+
+    // Pueblos con su CP para cuadrar la población leída: las zonas de cobertura
+    // de Ajustes (que la oficina mantiene) y, por si faltara alguno, el maestro.
+    const pueblos = useMemo(() => [...(coverageZones || []), ...ALL_BAREMO_PUEBLOS], [coverageZones]);
+    const pueblosRef = useRef(pueblos);
+    pueblosRef.current = pueblos;
 
     const leerFicheros = useCallback((ficheros) => {
         const lista = Array.from(ficheros || []).filter(f => /^image\//.test(f.type) || f.type === 'application/pdf' || /\.(pdf|jpe?g|png|webp|bmp|gif)$/i.test(f.name));
@@ -82,8 +97,9 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                         try {
                             // La IA no avisa del avance: media barra mientras piensa.
                             actualizarHoja(id, { progreso: 0.5 });
-                            const { campos, coste } = await leerHojaConIA(lienzo);
-                            actualizarHoja(id, { campos, texto: '', lector: 'ia', estado: 'leida', progreso: 1, grande: miniaturaDeLienzo(lienzo, 1400) });
+                            const { campos: leidos, coste } = await leerHojaConIA(lienzo);
+                            const { campos, correccion } = poblacionSegunCP(leidos, pueblosRef.current);
+                            actualizarHoja(id, { campos, correccion, texto: '', lector: 'ia', estado: 'leida', progreso: 1, grande: miniaturaDeLienzo(lienzo, 1400) });
                             setConsumo(c => ({ hojas: c.hojas + 1, coste: c.coste + (coste || 0) }));
                             continue;
                         } catch (err) {
@@ -97,9 +113,10 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                     }
 
                     try {
-                        const { campos, texto, lienzo: leido } = await leerHoja(lienzo, (p) => actualizarHoja(id, { progreso: p }));
+                        const { campos: leidos, texto, lienzo: leido } = await leerHoja(lienzo, (p) => actualizarHoja(id, { progreso: p }));
+                        const { campos, correccion } = poblacionSegunCP(leidos, pueblosRef.current);
                         // Si hubo que girar la foto, la miniatura enseña la hoja tal y como se ha leído.
-                        actualizarHoja(id, { campos, texto, lector: 'tesseract', estado: 'leida', progreso: 1, miniatura: miniaturaDeLienzo(leido), grande: miniaturaDeLienzo(leido, 1400) });
+                        actualizarHoja(id, { campos, correccion, texto, lector: 'tesseract', estado: 'leida', progreso: 1, miniatura: miniaturaDeLienzo(leido), grande: miniaturaDeLienzo(leido, 1400) });
                     } catch (err) {
                         console.error('Error leyendo la hoja', fichero.name, err);
                         actualizarHoja(id, { estado: 'error', error: 'No se pudo leer la hoja', grande: miniaturaDeLienzo(lienzo, 1400) });
@@ -123,7 +140,9 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
         if (!c.poblacion && !c.cp) errores.push('Falta la población o el CP');
         const bultos = parseInt(c.bultos) || 0;
         if (bultos < 1) errores.push('Faltan los bultos');
-        if (c.porte !== 'Pagado' && c.porte !== 'Debido') errores.push('Elige si el porte es pagado o debido');
+        // Lo que se cambió al leer (la población por el CP) se enseña para que la
+        // oficina lo vea junto a la foto, aunque después lo edite.
+        if (h.correccion) avisos.push(h.correccion);
         if ((c.poblacion || c.cp) && !esPoblacionConocida(c.poblacion, c.cp, { tariffs, coverageZones })) avisos.push('Población fuera del baremo: revisa el nombre');
         // Sin kilos, a una agencia que cobra por peso el porte le saldría a 0.
         const kilos = kilosDe(c.kilos);
@@ -197,7 +216,8 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                         customAmount: porte > 0 ? Math.round((porte + codFee) * 100) / 100 : null,
                         billingType: client.billingType || 'Clientes Habituales',
                         paymentStatus: 'Pending',
-                        porteType: c.porte,
+                        // Siempre Pagado: el porte de un albarán de agencia lo paga la agencia.
+                        porteType: 'Pagado',
                         hasCod: codAmt > 0,
                         codAmount: codAmt,
                         codCommission: codFee,
@@ -354,14 +374,10 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                                             {campo(h, 'cp', 'C.P.')}
                                             {campo(h, 'telefono', 'Teléfono')}
                                             {campo(h, 'bultos', 'Bultos', { tipo: 'number' })}
-                                            <label className="flex flex-col gap-0.5">
+                                            <div className="flex flex-col gap-0.5">
                                                 <span className="text-[10px] font-bold uppercase text-slate-500">Porte</span>
-                                                <select className={inputCls} value={h.campos.porte || ''} onChange={(e) => editarCampo(h.id, 'porte', e.target.value)}>
-                                                    <option value="">— Elegir —</option>
-                                                    <option value="Pagado">Pagado (remitente)</option>
-                                                    <option value="Debido">Debido (destinatario)</option>
-                                                </select>
-                                            </label>
+                                                <span className="px-2 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700" title="El porte de un albarán de agencia lo paga siempre la agencia">Pagado (lo paga la agencia)</span>
+                                            </div>
                                             {campo(h, 'reembolso', 'Reembolso €', { placeholder: '0' })}
                                             {campo(h, 'kilos', 'Kilos', { placeholder: '—' })}
                                             <div className="flex flex-col gap-0.5">

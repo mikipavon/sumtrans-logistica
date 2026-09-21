@@ -25,6 +25,9 @@ const formatMonthLabel = (monthStr) => {
 export const printBudgetSummary = (clientData, month, status = null) => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
+    // Un cierre que arrastra meses anteriores trae su periodo ('Agosto y
+    // septiembre de 2026'); si no, el mes elegido.
+    const periodo = clientData.periodo || formatMonthLabel(month);
 
     const rows = (clientData.shipments || []).map(s => {
         const date = s.createdAt ? new Date(s.createdAt).toLocaleDateString('es-ES') : (s.date || '—');
@@ -47,7 +50,7 @@ export const printBudgetSummary = (clientData, month, status = null) => {
     printWindow.document.write(`
         <html>
         <head>
-            <title>Detalle Presupuesto - ${clientData.clientName} - ${month}</title>
+            <title>Detalle Presupuesto - ${clientData.clientName} - ${periodo}</title>
             <style>
                 * { margin: 0; padding: 0; box-sizing: border-box; }
                 body { font-family: Arial, sans-serif; color: #1e293b; padding: 20mm; max-width: 210mm; margin: 0 auto; }
@@ -82,7 +85,7 @@ export const printBudgetSummary = (clientData, month, status = null) => {
                 <div class="logo">SUMTRANS LOGISTICA</div>
                 <div class="doc-title">
                     <h1>Detalle de Presupuesto</h1>
-                    <p>${formatMonthLabel(month)}</p>
+                    <p>${periodo}</p>
                 </div>
             </div>
 

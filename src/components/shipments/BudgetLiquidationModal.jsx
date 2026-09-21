@@ -7,12 +7,15 @@ import { generateDeliveryPDFBlob } from '../../utils/deliveryPdf';
 import { printBudgetSummary } from '../../utils/printBudgetSummary';
 import { fichaDelPagador } from '../../utils/shipmentUtils';
 import { mesDelPresupuesto } from '../../utils/reciboDeDeuda';
+import { entraEnElCierre, nombreDelPeriodo, mesDelCierre } from '../../utils/mesesDelCierre';
 
 export default function BudgetLiquidationModal({ isOpen, onClose, shipments, clients, drivers, onCreateShipment, onUpdateMultipleShipments }) {
     const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
     const [selectedDriverId, setSelectedDriverId] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [viewTab, setViewTab] = useState('pending'); // 'pending' | 'liquidated'
+    // Sumar también lo que quedó sin cerrar de meses anteriores (ver utils/mesesDelCierre.js).
+    const [arrastrarAnteriores, setArrastrarAnteriores] = useState(true);
 
     // Filtrar los envíos de "Presupuesto" que no estén liquidados y correspondan al mes seleccionado
     const budgetData = useMemo(() => {
@@ -45,7 +48,8 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
 
             // Comprobar la fecha. Una deuda apuntada a mano cuenta en el mes de su
             // fecha escrita (fechaContable), no en el del día en que se tecleó.
-            if (mesDelPresupuesto(s) !== selectedMonth) return;
+            const mes = mesDelPresupuesto(s);
+            if (!entraEnElCierre(mes, selectedMonth, arrastrarAnteriores)) return;
 
             const amount = parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
             
@@ -57,16 +61,33 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                     clientId: clientId,
                     clientName: clientName,
                     shipments: [],
+                    meses: new Set(),
                     totalAmount: 0
                 });
             }
 
             const clientData = dataByClient.get(key);
             clientData.shipments.push(s);
+            clientData.meses.add(mes);
             clientData.totalAmount += amount;
         });
 
-        return Array.from(dataByClient.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+        return Array.from(dataByClient.values())
+            .map(d => ({ ...d, meses: [...d.meses].sort(), periodo: nombreDelPeriodo([...d.meses]) }))
+            .sort((a, b) => b.totalAmount - a.totalAmount);
+    }, [shipments, clients, isOpen, selectedMonth, arrastrarAnteriores]);
+
+    // Albaranes de meses anteriores que quedaron sin cerrar. Se cuentan siempre,
+    // con la casilla marcada o no, para que se sepa que existen.
+    const deMesesAnteriores = useMemo(() => {
+        if (!isOpen) return 0;
+        return shipments.filter(s => {
+            if (s.budgetLiquidated || s.type === 'Recibo' || s.type === 'Cobro') return false;
+            const tipo = s.billingType || (fichaDelPagador(s, clients) || {}).billingType;
+            if (tipo !== 'Presupuesto') return false;
+            if ((parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0) <= 0) return false;
+            return mesDelPresupuesto(s) < selectedMonth;
+        }).length;
     }, [shipments, clients, isOpen, selectedMonth]);
 
     // Presupuestos ya cerrados este mes: para saber a quién se le asignó cada cobro
@@ -80,15 +101,17 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             if (!s.budgetLiquidated || !s.linkedReceiptId) return;
             if (s.type === 'Recibo' || s.type === 'Cobro') return;
 
-            if (mesDelPresupuesto(s) !== selectedMonth) return;
-
             if (!byReceipt.has(s.linkedReceiptId)) {
                 byReceipt.set(s.linkedReceiptId, []);
             }
             byReceipt.get(s.linkedReceiptId).push(s);
         });
 
-        const groups = Array.from(byReceipt.entries()).map(([receiptId, groupShipments]) => {
+        // Un recibo sale en el mes en que se cerró: el de su albarán más reciente.
+        // Así un cierre de agosto y septiembre juntos se ve entero en septiembre.
+        const groups = Array.from(byReceipt.entries())
+            .filter(([, groupShipments]) => mesDelCierre(groupShipments.map(mesDelPresupuesto)) === selectedMonth)
+            .map(([receiptId, groupShipments]) => {
             const receipt = shipments.find(s => s.id === receiptId);
             const driver = receipt ? (drivers || []).find(d => String(d.id) === String(receipt.assignedDriverId)) : null;
             const totalAmount = receipt
@@ -99,6 +122,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                 receiptId,
                 clientName: groupShipments[0]?.client || receipt?.client || 'Desconocido',
                 shipments: groupShipments,
+                periodo: nombreDelPeriodo(groupShipments.map(mesDelPresupuesto)),
                 totalAmount,
                 receipt,
                 driverName: driver?.name || (receipt?.assignedDriverId ? 'Conductor desconocido' : 'Sin asignar'),
@@ -120,7 +144,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             return;
         }
 
-        if (!window.confirm(`¿Estás seguro de que quieres cerrar el mes para ${clientData.clientName} por €${clientData.totalAmount.toFixed(2)}?\n\nSe asignará el cobro a este conductor y los albaranes seleccionados se marcarán como liquidados.`)) {
+        if (!window.confirm(`¿Estás seguro de que quieres cerrar ${clientData.periodo || 'el mes'} para ${clientData.clientName} por €${clientData.totalAmount.toFixed(2)}?\n\nSe asignará el cobro a este conductor y los albaranes seleccionados se marcarán como liquidados.`)) {
             return;
         }
 
@@ -148,7 +172,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                 codAmount: 0,
                 assignedDriverId: selectedDriverId,
                 status: 'Pendiente de asignar',
-                observations: `Cobro mensual presupuestos acumulados (${selectedMonth}). Incluye ${clientData.shipments.length} envíos.`,
+                observations: `Cobro mensual presupuestos acumulados (${clientData.periodo || selectedMonth}). Incluye ${clientData.shipments.length} envíos.`,
             };
 
             const created = await onCreateShipment(dummyShipment);
@@ -330,6 +354,22 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                     )}
                 </div>
 
+                {viewTab === 'pending' && deMesesAnteriores > 0 && (
+                    <label className="mx-6 -mt-2 mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            className="mt-0.5 accent-indigo-600"
+                            checked={arrastrarAnteriores}
+                            onChange={(e) => setArrastrarAnteriores(e.target.checked)}
+                        />
+                        <span>
+                            Sumar también lo que quedó sin cerrar de meses anteriores
+                            <span className="font-bold"> ({deMesesAnteriores} {deMesesAnteriores === 1 ? 'albarán' : 'albaranes'})</span>.
+                            Se cobra todo junto en este cierre.
+                        </span>
+                    </label>
+                )}
+
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 bg-slate-50">
                     {viewTab === 'pending' ? (
@@ -351,6 +391,9 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                                                 <div className="flex items-center gap-3 mt-1">
                                                     <span className="text-xs font-bold px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md">Presupuesto</span>
                                                     <span className="text-sm text-slate-500">{data.shipments.length} envíos acumulados</span>
+                                                    {data.meses.length > 1 && (
+                                                        <span className="text-xs font-bold px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md">{data.periodo}</span>
+                                                    )}
                                                 </div>
                                             </div>
                                             <div className="flex flex-col md:flex-row items-center gap-4">
@@ -414,6 +457,9 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                                                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                                                     <span className="text-xs font-bold px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md">Presupuesto</span>
                                                     <span className="text-sm text-slate-500">{data.shipments.length} envíos · {data.receiptId}</span>
+                                                    {data.periodo && data.periodo.includes(' y ') && (
+                                                        <span className="text-xs font-bold px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md">{data.periodo}</span>
+                                                    )}
                                                     <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${
                                                         data.isCollected ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'
                                                     }`}>

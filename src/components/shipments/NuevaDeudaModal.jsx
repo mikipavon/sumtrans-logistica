@@ -54,7 +54,10 @@ export default function NuevaDeudaModal({
     const [articuloElegido, setArticuloElegido] = useState('');
     const [cantidad, setCantidad] = useState(1);
     const [concepto, setConcepto] = useState('');
-    const [fecha, setFecha] = useState(hoy);
+    // Sin fecha de serie: un albarán en papel lleva la suya, y con "hoy" puesto
+    // se guardaba en el mes equivocado sin que nadie lo notara (HAB-426, que era
+    // de agosto, quedó en septiembre). El recibo, si no se pone, es de hoy.
+    const [fecha, setFecha] = useState('');
     const [driverId, setDriverId] = useState('');
     // Fotos del papel firmado, ya encogidas, en base64. Se suben al guardar.
     const [fotos, setFotos] = useState([]);
@@ -120,7 +123,7 @@ export default function NuevaDeudaModal({
         setCantidad(1);
         setImporte('');
         setConcepto('');
-        setFecha(hoy());
+        setFecha('');
         setDriverId('');
         setFotos([]);
         setAviso('');
@@ -159,11 +162,12 @@ export default function NuevaDeudaModal({
         if (!cliente) { setAviso(esAlbaran ? 'Elige el cliente del albarán, o escribe su nombre.' : 'Elige a quién se le cobra el recibo, o escribe su nombre.'); return; }
         const total = Number(String(importe).replace(',', '.'));
         if (!Number.isFinite(total) || total <= 0) { setAviso('El importe tiene que ser mayor que cero.'); return; }
+        if (esAlbaran && !fecha) { setAviso('Pon la fecha del albarán en papel: decide en qué mes cuenta.'); return; }
         if (!concepto.trim()) { setAviso(esAlbaran ? 'Escribe el concepto: qué lleva el albarán (por ejemplo, "Albarán en papel 1234").' : 'Escribe el concepto: qué se cobra (por ejemplo, "Albaranes de agosto").'); return; }
         setAviso('');
         setGuardando(true);
         try {
-            const datos = { cliente, importe: total, concepto: concepto.trim(), fecha, articulos: lineas };
+            const datos = { cliente, importe: total, concepto: concepto.trim(), fecha: fecha || hoy(), articulos: lineas };
             let recibo;
             if (esAlbaran) {
                 const serie = serieDelAlbaran(tipoDeCobro);
@@ -269,7 +273,7 @@ export default function NuevaDeudaModal({
                     {cliente && esAlbaran && (
                         <p className="text-[11px] text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5 mt-1.5">
                             <strong>Cliente de {tipoDeCobro}.</strong> El albarán no va a ningún repartidor: {destinoDelAlbaran(tipoDeCobro)}.
-                            Cuenta en {nombreDelMes(fecha)}, el mes de la fecha.
+                            {fecha ? <>Cuenta en {nombreDelMes(fecha)}, el mes de la fecha.</> : <>Pon la fecha del papel: decide en qué mes cuenta.</>}
                         </p>
                     )}
                 </div>
@@ -377,6 +381,11 @@ export default function NuevaDeudaModal({
                             value={fecha}
                             onChange={(e) => setFecha(e.target.value)}
                         />
+                        {!fecha && (
+                            <span className="block text-[10px] text-slate-400 mt-0.5">
+                                {esAlbaran ? 'La del papel. Obligatoria.' : 'Si no se pone, hoy.'}
+                            </span>
+                        )}
                     </div>
                 </div>
 

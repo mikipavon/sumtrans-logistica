@@ -8,6 +8,7 @@ import { generateDeliveryPDF } from '../../utils/deliveryPdf';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import CameraCaptureModal from '../CameraCaptureModal';
+import CityAutocomplete from '../CityAutocomplete';
 import { getPackagesCount } from '../../utils/shipmentUtils';
 
 
@@ -412,6 +413,17 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
     // sede, los albaranes ya creados NO se actualizan solos y se quedan con la
     // posición vieja en el mapa de ruta. Esto busca el valor actual guardado
     // en cliente o sede para poder resincronizar un albarán puntual.
+    // Nombres que ofrecen los buscadores de cliente, remitente y destinatario.
+    // Antes eran un <datalist> nativo, que compara letra a letra: tecleando
+    // "ramirez" no salía "Manuel Ramírez Doblas" por la tilde (y en Android el
+    // datalist ni se abre). CityAutocomplete busca sin tildes y funciona en el
+    // móvil; al elegir un nombre dispara el mismo onChange con el nombre
+    // completo, así que el relleno de dirección y teléfono sigue igual.
+    const nombresFicha = [
+        ...(clients || []).map(c => c.name),
+        ...(clients || []).flatMap(c => c.branches || []).map(b => b.name),
+    ].filter(Boolean);
+
     const findSavedCoordinates = (name) => {
         const norm = String(name || '').trim().toLowerCase();
         if (!norm) return null;
@@ -509,16 +521,6 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
     // El zoom del conductor se reaplica más abajo, pero sólo al CONTENIDO de cada bloque.
     return createPortal(
         <div className="fixed inset-0 bg-slate-900/90 z-[100] flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-md animate-in fade-in duration-200">
-            {isEditing && !isReadOnly && (
-                <datalist id="edit-clients-list">
-                    {(clients || []).map(c => (
-                        <option key={`client-${c.id}`} value={c.name} />
-                    ))}
-                    {(clients || []).flatMap(c => c.branches || []).map(b => (
-                        <option key={`branch-${b.id}`} value={b.name} />
-                    ))}
-                </datalist>
-            )}
             <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col modal-mobile-height">
                 {/* Header */}
                 <div className="sticky top-0 bg-white border-b border-gray-100 p-4 flex items-center justify-between z-10 shrink-0" style={{ zoom }}>
@@ -595,9 +597,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">Cliente</span>
                                 {isEditing && !isReadOnly ? (
                                     <>
-                                        <input
-                                            type="text"
-                                            list="edit-clients-list"
+                                        <CityAutocomplete
+                                            poblaciones={nombresFicha}
+                                            placeholder="Buscar cliente..."
                                             value={formData.client || ''}
                                             onChange={(e) => {
                                                 const val = e.target.value;
@@ -640,8 +642,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     <div className="space-y-1">
                                         <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">Nombre</span>
                                         {isEditing && !isReadOnly ? (
-                                            <input
-                                                type="text"
+                                            <CityAutocomplete
+                                                poblaciones={nombresFicha}
+                                                placeholder="Buscar remitente..."
                                                 value={formData.originName || formData.senderName || ''}
                                                 onChange={(e) => {
                                                     const val = e.target.value;
@@ -677,7 +680,6 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                                         }
                                                     }
                                                 }}
-                                                list="edit-clients-list"
                                                 className="w-full text-sm border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                                             />
                                         ) : (
@@ -750,8 +752,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     <div className="space-y-1">
                                         <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">Nombre</span>
                                         {isEditing && !isReadOnly ? (
-                                            <input
-                                                type="text"
+                                            <CityAutocomplete
+                                                poblaciones={nombresFicha}
+                                                placeholder="Buscar destinatario..."
                                                 value={formData.destinationName || formData.receiverName || ''}
                                                 onChange={(e) => {
                                                     const val = e.target.value;
@@ -779,7 +782,6 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                                         }
                                                     }
                                                 }}
-                                                list="edit-clients-list"
                                                 className="w-full text-sm border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                                             />
                                         ) : (

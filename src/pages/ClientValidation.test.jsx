@@ -235,14 +235,14 @@ describe('Validar Clientes — vincular la ficha del reparto con la de siempre',
     it('al pinchar explica qué va a pasar, y si se confirma vincula con la ficha de siempre', async () => {
         const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
         const alerta = vi.spyOn(window, 'alert').mockImplementation(() => {});
-        const onVincularFichaPendiente = vi.fn().mockResolvedValue({ envios: 1, sedeNueva: true });
+        const onVincularFichaPendiente = vi.fn().mockResolvedValue({ envios: 1, otroNombre: true });
         render(<ClientValidation clients={[delReparto, deSiempre]} shipments={[albaran]} {...props} onVincularFichaPendiente={onVincularFichaPendiente} />);
 
         fireEvent.click(screen.getByRole('button', { name: 'Es esta ficha: vincular' }));
 
         const texto = confirm.mock.calls[0][0];
         expect(texto).toContain('«FERRETERIA EL REPUESTO JOAQUIN SALIDO» (nº P-26)');
-        expect(texto).toContain('se le añade una sede llamada «FERRETERIA EL REPUESTO, S.L.»');
+        expect(texto).toContain('se le apunta «FERRETERIA EL REPUESTO, S.L.» en «Otros nombres»');
         expect(texto).toContain('1 albarán pasa a apuntar a esa ficha');
         await vi.waitFor(() => expect(onVincularFichaPendiente).toHaveBeenCalledWith(delReparto, deSiempre));
         await vi.waitFor(() => expect(alerta).toHaveBeenCalledWith(expect.stringContaining('1 albarán apunta ya a esa ficha')));

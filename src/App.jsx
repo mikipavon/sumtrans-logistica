@@ -44,7 +44,7 @@ import { supabase, getUserProfile, getCurrentSession } from './lib/supabase'
 import { fetchAllRows } from './utils/fetchAllRows';
 import { conTopeDeTiempo, errorDeServidorSiLoEs } from './utils/topeDeTiempo';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
-import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, accesosQueSeQuitan, fichaSinContrasenas } from './utils/clientAccess';
+import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, accesosQueSeQuitan, fichaSinContrasenas, sinEspaciosALosLados } from './utils/clientAccess';
 import { planDeAcceso } from './utils/accesoFichaExistente';
 import { planDeVinculo, enviosQueSeVinculan, enlaceDelEnvio } from './utils/vincularFichaPendiente';
 import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNombreCliente } from './utils/altaClientes';
@@ -67,6 +67,7 @@ import { darDeAltaSinPisar } from './utils/numeracionAlbaran';
 import { createdAtDeFechaContable } from './utils/reciboDeDeuda';
 import { prefijoDeCliente, siguienteNumeroDeCliente, numeroQueLeFalta } from './utils/numeracionCliente';
 import { uploadProof } from './utils/storage';
+import { AVISO_ENVIO_YA_ES_NUESTRO } from './utils/envioDelPortal';
 
 
 
@@ -567,6 +568,11 @@ function App() {
       if (confirm2 !== 'BORRAR TODO') return;
     }
 
+    const autorizado = await autorizarBorrado(onlyTestData
+      ? 'Vas a borrar los envíos y clientes de MODO PRUEBAS.'
+      : 'Vas a borrar TODOS los envíos, firmas, fotos y coordenadas GPS.');
+    if (!autorizado) return;
+
     try {
       setIsSyncing(true);
       
@@ -729,6 +735,56 @@ function App() {
     }
     return null;
   }, [ghostPrompt, leerGhostHash]);
+
+  // ── Contraseña para borrar ──────────────────────────────────────────────────
+  // Borrar albaranes, transportistas, artículos, clientes o vehículos pide la
+  // misma Contraseña SUM del Modo Fantasma: la oficina entra como admin, así que
+  // su propia clave de acceso no protegería de nada. Se pide DESPUÉS de los
+  // avisos y ANTES de tocar la base de datos; cancelar o fallar no borra nada.
+  // El cliente que borra su propio envío desde el portal no la conoce ni la
+  // necesita; si es la oficina "entrando como" cliente, sí se pide.
+  const [borradoPrompt, setBorradoPrompt] = useState(null);
+
+  const autorizarBorrado = useCallback(async (detalle) => {
+    if (userRole !== 'admin' && !suplantandoCliente) return true;
+    let hash;
+    try {
+      hash = await leerGhostHash();
+    } catch (err) {
+      alert('No se ha podido comprobar la contraseña. No se ha borrado nada.\n\n' + (err?.message || err));
+      return false;
+    }
+    return new Promise((resolve) => {
+      setBorradoPrompt({ mode: hash ? 'unlock' : 'crear', tieneActual: !!hash, detalle, resolve });
+    });
+  }, [userRole, suplantandoCliente, leerGhostHash]);
+
+  const handleBorradoPasswordSubmit = useCallback(async ({ actual, nueva }) => {
+    if (!borradoPrompt) return null;
+    const guardado = await leerGhostHash();
+
+    if (borradoPrompt.mode === 'unlock') {
+      if (!guardado) return 'Ya no hay contraseña configurada. Cierra y vuelve a intentarlo.';
+      if (!(await verifyGhostPassword(actual, guardado))) return 'Contraseña incorrecta.';
+    } else {
+      // Primera vez: se crea aquí mismo, igual que al desbloquear el Modo Fantasma.
+      if (guardado) return 'Ya hay una contraseña creada desde otro equipo. Cierra y vuelve a intentarlo.';
+      const { error } = await supabase
+        .from('settings')
+        .upsert({ key: GHOST_PASS_KEY, value: await hashGhostPassword(nueva) });
+      if (error) return 'No se ha podido guardar: ' + error.message;
+      setGhostPassSet(true);
+    }
+
+    borradoPrompt.resolve(true);
+    setBorradoPrompt(null);
+    return null;
+  }, [borradoPrompt, leerGhostHash]);
+
+  const cancelarBorrado = useCallback(() => {
+    borradoPrompt?.resolve(false);
+    setBorradoPrompt(null);
+  }, [borradoPrompt]);
 
   /**
    * Borra los cobros de unos envíos de la caja de todos los conductores.
@@ -899,6 +955,8 @@ function App() {
     const confirm2 = window.prompt(`Esta acción es IRREVERSIBLE e impactará a todos los conductores y la Nube.\nEscribe "BORRAR" (en mayúsculas) para confirmar la destrucción de los ${secrets.length} registros:`);
     if (confirm2 !== "BORRAR") return;
 
+    if (!(await autorizarBorrado(`Vas a borrar ${secrets.length} envíos confidenciales.`))) return;
+
     try {
       const idsToDelete = secrets.map(s => s.id);
       
@@ -913,7 +971,7 @@ function App() {
       console.error(err);
       alert('Error crítico intentando borrar en Supabase.');
     }
-  }, [getSecretShipments, purgeCollectionsForShipments]);
+  }, [getSecretShipments, purgeCollectionsForShipments, autorizarBorrado]);
 
   const handleCleanOrphanedFiles = useCallback(async () => {
     let confirmMessage = "¿Seguro que quieres buscar y eliminar de la nube TODAS las fotos y firmas que ya no tienen un envío asociado en tu panel?";
@@ -2095,13 +2153,25 @@ function App() {
       }
 
       // ── Autenticación con Supabase Auth ──
-      const { data: authData, error: authError } = await conTopeDeTiempo(
+      let { data: authData, error: authError } = await conTopeDeTiempo(
         supabase.auth.signInWithPassword({
           email: authEmail,
           password: password,
         }),
         SEGUNDOS_ESPERA_LOGIN
       );
+
+      // Un espacio pegado sin querer delante o detrás de la contraseña no se ve
+      // al escribirla. Las cuentas nuevas se guardan sin ellos, así que si lo
+      // tecleado tal cual no entra, se prueba otra vez sin los espacios.
+      if (authError && !errorDeServidorSiLoEs(authError) && password !== sinEspaciosALosLados(password)) {
+        const segundo = await conTopeDeTiempo(
+          supabase.auth.signInWithPassword({ email: authEmail, password: sinEspaciosALosLados(password) }),
+          SEGUNDOS_ESPERA_LOGIN
+        );
+        authData = segundo.data;
+        authError = segundo.error;
+      }
 
       if (authError || !authData.user) {
         // Un "no" del servidor no es un "no" a la contraseña. Si el que falla es él
@@ -2351,6 +2421,7 @@ function App() {
 
   const handleCleanupDriverData = async (pattern = 'miki') => {
     if (!window.confirm(`¿Seguro que quieres borrar todos los datos que contengan "${pattern}"?`)) return;
+    if (!(await autorizarBorrado(`Vas a borrar los transportistas y datos que contengan "${pattern}".`))) return;
 
     const lowerPattern = pattern.toLowerCase();
     
@@ -2472,7 +2543,11 @@ function App() {
   // albaranes. Sin ese aviso, la función de servidor encuentra la cuenta que ya
   // está vinculada al cliente y le cambia el correo, así que en vez de dos
   // personas entrando quedaría una sola con el correo del otro.
-  const syncClientAuthAccount = async ({ email, password, clientId, displayName, adicional = false }) => {
+  const syncClientAuthAccount = async ({ email, password: tecleada, clientId, displayName, adicional = false }) => {
+    // Sin espacios a los lados: llegan al copiar y pegar, no se ven en pantalla
+    // y la cuenta se quedaba con una contraseña que nadie sabía escribir. Pasó
+    // con REINSUR el 17/09/2026. El login también los quita (ver handleLogin).
+    const password = sinEspaciosALosLados(tecleada);
     const motivo = !email
       ? 'la ficha no tiene correo de acceso ni e-mail de contacto'
       : (!password || password.length < 6)
@@ -2639,8 +2714,10 @@ function App() {
     }
   }
 
+  // El aviso con el nombre lo da ya la pantalla de Transportistas.
   const handleDeleteDriver = async (driverId) => {
-    if (!window.confirm('¿Seguro que quieres borrar este conductor?')) return;
+    const nombre = drivers.find(d => String(d.id) === String(driverId))?.name || 'este transportista';
+    if (!(await autorizarBorrado(`Vas a borrar al transportista ${nombre}.`))) return;
     try {
       const { error } = await supabase.from('drivers').delete().eq('id', driverId);
       if (error) throw error;
@@ -2988,6 +3065,7 @@ function App() {
   }
 
   const handleDeleteVehicle = async (id) => {
+    if (!(await autorizarBorrado(`Vas a borrar el vehículo ${id}.`))) return;
     try {
       const { error } = await supabase.from('vehicles').delete().eq('id', id);
       if (error) throw error;
@@ -3399,20 +3477,28 @@ function App() {
       }
 
       // REVERSIÓN DE PRESUPUESTOS
+      // Se pregunta aquí, pero se revierte después de la contraseña: si no se
+      // llega a borrar, el cierre del mes tiene que quedar como estaba.
+      let presupuestosARevertir = [];
       if (shipmentToDelete && shipmentToDelete.type === 'Recibo') {
           const linkedShipments = shipmentsRef.current.filter(s => s.linkedReceiptId === shipmentId);
           if (linkedShipments.length > 0) {
-              if (window.confirm(`Este recibo está vinculado a ${linkedShipments.length} presupuestos.\nSi lo borras, esos presupuestos volverán a estar pendientes de cierre mensual.\n\n¿Deseas continuar y revertir el cierre?`)) {
-                  const updatesArray = linkedShipments.map(s => ({
-                      id: s.id,
-                      updates: { budgetLiquidated: false, linkedReceiptId: null }
-                  }));
-                  // Ejecutar actualización múltiple local y en la nube
-                  await handleUpdateMultipleShipments(updatesArray);
-              } else {
+              if (!window.confirm(`Este recibo está vinculado a ${linkedShipments.length} presupuestos.\nSi lo borras, esos presupuestos volverán a estar pendientes de cierre mensual.\n\n¿Deseas continuar y revertir el cierre?`)) {
                   return; // Cancelar borrado
               }
+              presupuestosARevertir = linkedShipments;
           }
+      }
+
+      if (!(await autorizarBorrado(`Vas a borrar el albarán ${shipmentId}.`))) return;
+
+      if (presupuestosARevertir.length > 0) {
+          const updatesArray = presupuestosARevertir.map(s => ({
+              id: s.id,
+              updates: { budgetLiquidated: false, linkedReceiptId: null }
+          }));
+          // Ejecutar actualización múltiple local y en la nube
+          await handleUpdateMultipleShipments(updatesArray);
       }
 
       const { error } = await supabase.from('shipments').delete().eq('id', shipmentId);
@@ -3425,7 +3511,60 @@ function App() {
     }
   }
 
+  // ── El portal del cliente: borrar y modificar sólo lo que aún no hemos recogido ──
+  //
+  // El cliente no pasa por la contraseña de borrado ni por la cola de reintentos
+  // de la oficina. Se le pide a Supabase la fila tocada (.select()): la política
+  // RLS (fase 31) no da error cuando no deja, sólo no devuelve nada. Antes la
+  // app quitaba el envío de la lista como si se hubiera borrado y volvía al
+  // recargar (NEUMATICOS VELASCO, 21/09/2026). Devuelven false cuando no se ha
+  // guardado nada, para que el portal no dé el cambio por hecho.
+  const handleClientDeleteShipment = async (shipmentId) => {
+    try {
+      const { data, error } = await supabase.from('shipments').delete().eq('id', shipmentId).select('id');
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        alert(AVISO_ENVIO_YA_ES_NUESTRO);
+        return false;
+      }
+      setShipments(prev => prev.filter(s => s.id !== shipmentId));
+      return true;
+    } catch (e) {
+      alert('No se ha podido borrar el envío. Inténtalo de nuevo o llámanos.');
+      console.error(e);
+      return false;
+    }
+  };
+
+  const handleClientUpdateShipment = async (shipmentId, updates) => {
+    const actual = shipmentsRef.current.find(s => s.id === shipmentId);
+    if (!actual) return false;
+    // Número, fecha, estado y conductor grabado se quedan como estaban: el
+    // cliente sólo manda los campos del formulario.
+    const mergedData = { ...actual, ...updates, id: shipmentId, status: actual.status };
+    try {
+      const { data, error } = await supabase
+        .from('shipments')
+        .update({ status: mergedData.status, assignedDriverId: mergedData.assignedDriverId ?? null, data: mergedData })
+        .eq('id', shipmentId)
+        .select();
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        alert(AVISO_ENVIO_YA_ES_NUESTRO);
+        return false;
+      }
+      const guardado = { ...data[0].data, id: data[0].id };
+      setShipments(prev => prev.map(s => s.id === shipmentId ? guardado : s));
+      return true;
+    } catch (e) {
+      alert('No se han podido guardar los cambios. Inténtalo de nuevo o llámanos.');
+      console.error(e);
+      return false;
+    }
+  };
+
   const handleDeleteMultipleShipments = async (shipmentIds) => {
+    if (!(await autorizarBorrado(`Vas a borrar ${shipmentIds.length} albaranes.`))) return;
     try {
       const { error } = await supabase.from('shipments').delete().in('id', shipmentIds);
       if (error) throw error;
@@ -4041,6 +4180,8 @@ function App() {
 
   const handleDeleteClient = async (clientId) => {
     if (!window.confirm("¿Estás seguro de que quieres eliminar este cliente permanentemente?")) return;
+    const nombre = clients.find(c => String(c.id) === String(clientId))?.name || 'este cliente';
+    if (!(await autorizarBorrado(`Vas a borrar la ficha de ${nombre}.`))) return;
     try {
       const { error } = await supabase.from('clients').delete().eq('id', clientId);
       if (error) throw error;
@@ -4089,6 +4230,9 @@ function App() {
   const handleDeleteAgencyDatabase = async (agencyId) => {
     const toDelete = getClientsOwnedBy(agencyId, clientsRef.current).map(c => c.id);
     if (toDelete.length === 0) return { deleted: 0 };
+    if (!(await autorizarBorrado(`Vas a borrar ${toDelete.length} fichas de la base de datos de la agencia.`))) {
+      return { deleted: 0, cancelado: true };
+    }
 
     // Por lotes: un .in() con miles de ids revienta la URL de la petición.
     for (let i = 0; i < toDelete.length; i += 100) {
@@ -4182,6 +4326,8 @@ function App() {
   const handleDeleteArticle = async (id) => {
     try {
       if (!window.confirm('¿Estás seguro de que quieres eliminar este artículo?')) return;
+      const nombre = articles.find(a => a.id === id)?.name || 'este artículo';
+      if (!(await autorizarBorrado(`Vas a borrar el artículo ${nombre}.`))) return;
       const { error } = await supabase.from('articles').delete().eq('id', id);
       if (error) throw error;
       setArticles(prev => prev.filter(a => a.id !== id));
@@ -4224,7 +4370,8 @@ function App() {
   const handleDeleteAllArticles = async () => {
     try {
       if (!window.confirm('¿ESTÁS TOTALMENTE SEGURO? Esta acción borrará TODO el catálogo de artículos y servicios. No se puede deshacer.')) return;
-      
+      if (!(await autorizarBorrado(`Vas a borrar TODO el catálogo (${articles.length} artículos).`))) return;
+
       const { error } = await supabase.from('articles').delete().gt('id', 0); // Delete all
       if (error) throw error;
       
@@ -4476,7 +4623,7 @@ function App() {
   // Lo mismo que lo de arriba pero para las fichas que crea la app sola (al
   // entregar, al hacer un albarán): no traen acceso que mover, traen un nombre
   // escrito de otra manera y el GPS del conductor. Se queda la ficha de
-  // siempre, se le cuelga una sede con ese nombre (ver
+  // siempre, se le apunta ese nombre en «Otros nombres» (ver
   // utils/vincularFichaPendiente.js), los albaranes cargados que apuntaban a la
   // pendiente pasan a la buena, y la pendiente se borra.
   //
@@ -4506,7 +4653,7 @@ function App() {
       return false;
     }
 
-    return { envios: envios.length, sedeNueva: plan.sedeNueva };
+    return { envios: envios.length, otroNombre: plan.otroNombre };
   };
 
   // --- NUEVOS ESTADOS PARA COPIA DE SEGURIDAD (Movid@s tras TODAS las declaraciones de estado) ---
@@ -4834,6 +4981,11 @@ function App() {
     // tocaba `client.name` tumbaba la aplicación entera con la pantalla roja.
     const fichaDelCliente = clients.find(c => String(c.id) === String(currentClientId));
 
+    // La oficina, aunque esté dentro del portal, borra y modifica con sus
+    // propios manejadores (contraseña de borrado incluida). El cliente de
+    // verdad va por los del portal, que respetan hasta dónde le deja la base
+    // de datos (fase 31: hasta que escaneamos los bultos).
+
     // Aun emparejando bien, hay un momento en que la ficha todavía no está: los
     // datos se piden DESPUÉS de entrar, así que en el primer pintado `clients`
     // está vacío. Ahí no hay nada que enseñar todavía, pero tampoco hay ninguna
@@ -4857,7 +5009,8 @@ function App() {
           coverageZones={coverageZones}
           onCreateShipment={handleAddShipment}
           onUpdateClient={handleUpdateClient}
-          onDeleteShipment={handleDeleteShipment}
+          onDeleteShipment={suplantandoCliente ? handleDeleteShipment : handleClientDeleteShipment}
+          onUpdateShipment={suplantandoCliente ? handleUpdateShipment : handleClientUpdateShipment}
           pendingQueueCount={pendingQueueCount}
           isSyncingQueue={isSyncingQueue}
         />
@@ -5474,6 +5627,17 @@ function App() {
           tieneActual={ghostPrompt.tieneActual}
           onSubmit={handleGhostPasswordSubmit}
           onCancel={() => setGhostPrompt(null)}
+        />
+      )}
+
+      {borradoPrompt && (
+        <GhostPasswordModal
+          mode={borradoPrompt.mode}
+          tieneActual={borradoPrompt.tieneActual}
+          detalle={borradoPrompt.detalle}
+          textoBoton="Borrar"
+          onSubmit={handleBorradoPasswordSubmit}
+          onCancel={cancelarBorrado}
         />
       )}
     </Layout>

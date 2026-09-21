@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizarCamposIA, albaranesPorFotoDelMes, nivelDeSaldo } from './lecturaAlbaranIA';
+import { normalizarCamposIA, poblacionSegunCP, albaranesPorFotoDelMes, nivelDeSaldo } from './lecturaAlbaranIA';
 
 describe('normalizarCamposIA', () => {
     it('deja tal cual una lectura buena (la de Gemini con la foto real de TSB)', () => {
@@ -11,8 +11,12 @@ describe('normalizarCamposIA', () => {
         expect(r).toEqual({
             expedicion: '999423323648', remitente: 'AKZO NOBEL INDUSTRIAL PAINTS, S.L.',
             destinatario: 'CARPINTERÍA FERAN HERM.ROMERO', direccion: 'C/PINTOR ZURBARÁN, 32.',
-            poblacion: 'FERNAN NUÑEZ', cp: '14520', telefono: '', bultos: 1, kilos: 5, porte: 'Pagado', reembolso: 0, devolverFirmado: false,
+            poblacion: 'FERNAN NUÑEZ', cp: '14520', telefono: '', bultos: 1, kilos: 5, reembolso: 0, devolverFirmado: false,
         });
+    });
+
+    it('el porte del papel no cuenta: el albarán de agencia lo paga la agencia', () => {
+        expect(normalizarCamposIA({ porte: 'PORTES DEBIDOS' })).not.toHaveProperty('porte');
     });
 
     it('devolverFirmado sólo es sí con un sí claro', () => {
@@ -24,12 +28,11 @@ describe('normalizarCamposIA', () => {
         expect(normalizarCamposIA({}).devolverFirmado).toBe(false);
     });
 
-    it('arregla la forma: números como texto, espacios, porte en plural y mayúsculas', () => {
-        const r = normalizarCamposIA({ cp: ' 14500 ', bultos: '3', kilos: '12,5', porte: 'PORTES DEBIDOS', reembolso: '125,40 €', expedicion: 12345 });
+    it('arregla la forma: números como texto, espacios y símbolos', () => {
+        const r = normalizarCamposIA({ cp: ' 14500 ', bultos: '3', kilos: '12,5', reembolso: '125,40 €', expedicion: 12345 });
         expect(r.cp).toBe('14500');
         expect(r.bultos).toBe(3);
         expect(r.kilos).toBe(12.5);
-        expect(r.porte).toBe('Debido');
         expect(r.reembolso).toBe(125.4);
         expect(r.expedicion).toBe('12345');
     });
@@ -54,16 +57,61 @@ describe('normalizarCamposIA', () => {
         expect(r.reembolso).toBe(0);
     });
 
-    it('un porte que no dice pagado ni debido se queda sin elegir', () => {
-        expect(normalizarCamposIA({ porte: 'no se ve' }).porte).toBe('');
-    });
-
     it('con una respuesta vacía o nula devuelve todos los campos vacíos sin fallar', () => {
         const r = normalizarCamposIA(null);
         expect(r.destinatario).toBe('');
         expect(r.bultos).toBeNull();
         expect(r.reembolso).toBe(0);
         expect(normalizarCamposIA({ destinatario: null, poblacion: undefined }).destinatario).toBe('');
+    });
+});
+
+describe('poblacionSegunCP', () => {
+    const pueblos = [
+        { name: 'Córdoba', zip: '14013' },
+        { name: 'Aguilar de la Frontera', zip: '14920' },
+        { name: 'Fernan-Nuñez', zip: '14520' },
+        { name: 'Llanos de Don Juan', zip: '14911' },
+        { name: 'Navas del Selpillar', zip: '14911' },
+        { name: 'Jauja', zip: '14911' },
+    ];
+
+    it('el caso real: la IA puso CORDOBA (la delegación) y el CP 14920 es Aguilar', () => {
+        const r = poblacionSegunCP({ poblacion: 'CORDOBA', cp: '14920', destinatario: 'Silvia' }, pueblos);
+        expect(r.campos.poblacion).toBe('Aguilar de la Frontera');
+        expect(r.campos.destinatario).toBe('Silvia');
+        expect(r.correccion).toBe('Población cambiada por el CP 14920: se leyó «CORDOBA» y se ha puesto Aguilar de la Frontera');
+    });
+
+    it('si el nombre leído ya es el del CP, aunque esté escrito distinto, no toca nada', () => {
+        expect(poblacionSegunCP({ poblacion: 'FERNAN NUÑEZ', cp: '14520' }, pueblos).correccion).toBeNull();
+        expect(poblacionSegunCP({ poblacion: 'Fernán-Núñez (Córdoba)', cp: '14520' }, pueblos).campos.poblacion).toBe('Fernán-Núñez (Córdoba)');
+        expect(poblacionSegunCP({ poblacion: 'CORDOBA', cp: '14013' }, pueblos).correccion).toBeNull();
+    });
+
+    it('un CP con varios pueblos respeta el leído si es uno de ellos', () => {
+        expect(poblacionSegunCP({ poblacion: 'Jauja', cp: '14911' }, pueblos).correccion).toBeNull();
+        const r = poblacionSegunCP({ poblacion: 'LUCENA', cp: '14911' }, pueblos);
+        expect(r.campos.poblacion).toBe('Llanos de Don Juan');
+        expect(r.correccion).toMatch(/^Población cambiada/);
+    });
+
+    it('sin población leída la rellena por el CP', () => {
+        const r = poblacionSegunCP({ poblacion: '', cp: '14920' }, pueblos);
+        expect(r.campos.poblacion).toBe('Aguilar de la Frontera');
+        expect(r.correccion).toBe('Población puesta por el CP 14920: Aguilar de la Frontera');
+    });
+
+    it('un CP que no está en las tablas, o que no es un CP, deja lo leído tal cual', () => {
+        expect(poblacionSegunCP({ poblacion: 'CORDOBA', cp: '41001' }, pueblos)).toEqual({ campos: { poblacion: 'CORDOBA', cp: '41001' }, correccion: null });
+        expect(poblacionSegunCP({ poblacion: 'CORDOBA', cp: '' }, pueblos).correccion).toBeNull();
+        expect(poblacionSegunCP(null, pueblos).correccion).toBeNull();
+        expect(poblacionSegunCP({ poblacion: 'CORDOBA', cp: '14920' }).correccion).toBeNull();
+    });
+
+    it('las zonas de cobertura de Ajustes valen igual aunque el CP venga con espacios o sin nombre', () => {
+        const zonas = [{ name: '', zip: '14920' }, { name: 'Aguilar de la Frontera', zip: ' 14920 ' }];
+        expect(poblacionSegunCP({ poblacion: 'CORDOBA', cp: '14920' }, zonas).campos.poblacion).toBe('Aguilar de la Frontera');
     });
 });
 

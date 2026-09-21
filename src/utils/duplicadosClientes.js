@@ -21,6 +21,7 @@
 import { correosDeAcceso, tieneAccesoAlPortal } from './clientAccess';
 import { leerReceptores, juntarReceptores, normalizarNombreReceptor } from './receptoresHabituales';
 import { correosDeFicha } from './correosDeFicha';
+import { nombresDeLaMadre } from './otrosNombres';
 
 const normalizarTexto = (valor) => String(valor || '')
     .toLowerCase()
@@ -230,8 +231,10 @@ export function nombresSeParecen(unNombre, otroNombre, delLugar = new Set()) {
 }
 
 // La ficha puede llamarse de una manera y facturar con otra: se cruzan las dos.
-const nombresDe = (client) => [client?.name, client?.legalName]
-    .filter(v => String(v || '').trim() !== '');
+// Nombre, razón social y los otros nombres con los que llega en los albaranes
+// (ver otrosNombres.js): una solicitud que se llame como cualquiera de ellos
+// es "el mismo nombre".
+const nombresDe = (client) => nombresDeLaMadre(client);
 
 // ── Lo que cuesta caro de una ficha, hecho una sola vez ──
 //
@@ -251,7 +254,10 @@ function prepararFicha(client) {
         correos: correosDe(client),
         nombre: normalizarTexto(client?.name),
         legal: normalizarTexto(client?.legalName),
-        // Las palabras del nombre y las de la razón social, para cruzarlas.
+        // Todos los nombres enteros a los que responde la madre (comercial,
+        // razón social, otros nombres), para el "mismo nombre".
+        enteros: nombresDe(client).map(normalizarTexto),
+        // Las palabras de cada uno de ellos, para cruzarlas.
         nombres: nombresDe(client).map(n => clavesDelNombre(n)),
         // El pueblo, en palabras: basta con que "Rambla" sea el pueblo de una
         // para que deje de valer como apellido de la otra, y muchas fichas de
@@ -319,7 +325,9 @@ export function buscarFichasParecidas(pendiente, clients = []) {
             motivos.push('el mismo correo');
         }
 
-        if (laPendiente.nombre && laOtra.nombre === laPendiente.nombre) {
+        // Como el comercial, la razón social o uno de los otros nombres de la
+        // ficha: ese albarán ya se engancharía solo a esa ficha.
+        if (laPendiente.nombre && laOtra.enteros.includes(laPendiente.nombre)) {
             motivos.push('el mismo nombre');
         } else if (fichasSeParecen(laPendiente, laOtra)) {
             motivos.push(PARECIDO_DE_NOMBRE);

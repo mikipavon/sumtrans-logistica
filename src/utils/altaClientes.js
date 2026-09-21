@@ -15,6 +15,7 @@
 // los nombres y qué huecos rellena el alta que llega la segunda.
 
 import { leerReceptores, juntarReceptores, normalizarNombreReceptor } from './receptoresHabituales';
+import { nombresDeLaMadre } from './otrosNombres';
 
 // Mismo criterio que normalizeClientName en App.jsx y DriverDashboard.jsx: sin
 // acentos, sin mayúsculas y sin espacios de más. El guardia anterior no quitaba
@@ -29,17 +30,17 @@ export const normalizarNombreCliente = (nombre) => {
         .replace(/\s+/g, ' ');
 };
 
-// La ficha que ya representa a ese nombre, sea la madre, su razón social o una
-// de sus sedes. Devuelve { client, branch } —branch a null si es la madre— para
-// que quien rellene huecos sepa dónde escribirlos.
+// La ficha que ya representa a ese nombre, sea la madre (su nombre, su razón
+// social o uno de sus otros nombres, ver otrosNombres.js) o una de sus sedes.
+// Devuelve { client, branch } —branch a null si es la madre— para que quien
+// rellene huecos sepa dónde escribirlos.
 export function buscarFichaPorNombre(nombre, clients = []) {
     const buscado = normalizarNombreCliente(nombre);
     if (!buscado) return null;
 
     for (const client of clients) {
         if (!client) continue;
-        if (normalizarNombreCliente(client.name) === buscado
-            || normalizarNombreCliente(client.legalName) === buscado) {
+        if (nombresDeLaMadre(client).some(n => normalizarNombreCliente(n) === buscado)) {
             return { client, branch: null };
         }
         if (Array.isArray(client.branches)) {

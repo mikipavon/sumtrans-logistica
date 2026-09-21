@@ -191,3 +191,37 @@ export const filtroTipoDeCliente = (tipo, clientes) => {
 
 export const coincideTipoDeCliente = (envio, tipo, clientes) =>
     filtroTipoDeCliente(tipo, clientes)(envio);
+
+// ---------------------------------------------------------------------------
+// Filtro por tipo de envío (Entregas / Recogidas)
+// ---------------------------------------------------------------------------
+//
+// Comparte desplegable con el tipo de cliente: la oficina abre "Todos los
+// Tipos" esperando encontrar ahí las recogidas. Los valores llevan el prefijo
+// "envio:" para que no se confundan con un tipo de cliente (cualquier texto
+// desconocido cuenta como Clientes Habituales al reducirlo).
+
+export const SOLO_ENTREGAS = 'envio:Entrega';
+export const SOLO_RECOGIDAS = 'envio:Recogida';
+export const TIPOS_DE_ENVIO = [
+    { valor: SOLO_ENTREGAS, etiqueta: 'Entregas' },
+    { valor: SOLO_RECOGIDAS, etiqueta: 'Recogidas' }
+];
+
+const esFiltroDeEnvio = (valor) => typeof valor === 'string' && valor.startsWith('envio:');
+
+/** Un albarán es recogida por su tipo; todo lo demás (con o sin tipo) es entrega. */
+export const esRecogida = (envio) => envio?.type === 'Recogida';
+
+export const filtroTipoDeEnvio = (tipo) => {
+    if (tipo === SOLO_RECOGIDAS) return esRecogida;
+    if (tipo === SOLO_ENTREGAS) return (envio) => !esRecogida(envio);
+    return () => true;
+};
+
+/** El desplegable de tipos: o un tipo de envío, o un tipo de cliente. */
+export const filtroTipo = (valor, clientes) =>
+    esFiltroDeEnvio(valor) ? filtroTipoDeEnvio(valor) : filtroTipoDeCliente(valor, clientes);
+
+export const coincideTipo = (envio, valor, clientes) =>
+    filtroTipo(valor, clientes)(envio);

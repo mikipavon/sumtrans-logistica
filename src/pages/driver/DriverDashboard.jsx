@@ -45,7 +45,7 @@ import { agregarReceptor, leerReceptores, direccionPorNombre, direccionDeLaChule
 import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
 import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, motivoSinJornada, puedeFicharAutomaticamente, textoSinJornada, MOTIVOS_BLOQUEO } from '../../utils/normasFichaje';
-import { esElMismoPueblo, normalizarPueblo, puebloDeRutaParaEnvio } from '../../utils/townMatch';
+import { esElMismoPueblo, normalizarPueblo, puebloDeRutaParaEnvio, estaEnBaremo } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
 import { geocodificarDireccion } from '../../utils/geocodificar';
 import { adaptarConocimiento, registrarEntrega, contarPueblosMemorizados } from '../../utils/aprendizajeRuta';
@@ -79,19 +79,10 @@ const normalizeClientName = (name) => {
 // Los teléfonos del albarán y de las fichas (fijos, móviles, sedes) viven en
 // src/utils/telefonosDelEnvio.js: los usa también la oficina desde Envíos.
 
-/** El pueblo (o su C.P.) está en las tablas de Baremo 1 o 2. */
-const isCityInBaremo = (city, zip) => {
-    if (!city && !zip) return false;
-    const normCity = normalizeClientName(city);
-    const cleanZip = String(zip || '').trim();
-
-    return (ALL_BAREMO_PUEBLOS || []).some(p => {
-        const normPName = normalizeClientName(p.name);
-        const matchName = normCity && normPName === normCity;
-        const matchZip = cleanZip && String(p.zip || '').trim() === cleanZip;
-        return matchName || matchZip;
-    });
-};
+/** El pueblo (o su C.P.) está en las tablas de Baremo 1 o 2. La misma cuenta
+ *  que hace la oficina en Envíos (utils/townMatch.js), para que el móvil y el
+ *  listado ofrezcan «Administración» exactamente en los mismos albaranes. */
+const isCityInBaremo = (city, zip) => estaEnBaremo(city, zip, ALL_BAREMO_PUEBLOS);
 
 
 // Error Boundary for debugging

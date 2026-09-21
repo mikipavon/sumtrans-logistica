@@ -1,11 +1,16 @@
-import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Mail, Image as ImageIcon, Upload, Trash2, Percent, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck, AlertTriangle, RefreshCw } from 'lucide-react';
+import { X, Building2, MapPin, Tag, Phone, Map as MapIcon, FileCode, Euro, CreditCard, Briefcase, ListChecks, Shield, Lock, User, Mail, Image as ImageIcon, Upload, Trash2, Percent, Plus, Edit2, ChevronDown, ChevronUp, ShieldCheck, AlertTriangle, RefreshCw, GripVertical } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { uploadProof } from '../../utils/storage';
 import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 import { generarContrasena } from '../../utils/contrasenaSugerida';
+import { sinEspaciosALosLados } from '../../utils/clientAccess';
 import { getAgencies } from '../../utils/agencyOwnership';
 import { prioridadDeCliente, cambiosAlPonerPrioridad, cambiosAlCambiarDeBase, COLOR_POR_PRIORIDAD } from '../../utils/prioridadDeFicha';
-import { esRegistroWeb } from '../../utils/altaClientes';
+import { esRegistroWeb, normalizarNombreCliente } from '../../utils/altaClientes';
+import { leerOtrosNombres, conOtroNombre } from '../../utils/otrosNombres';
 import { primerCorreoDeFicha } from '../../utils/correosDeFicha';
 import { calcularComisionReembolso, COMISION_FIJA, COMISION_PORCENTAJE } from '../../utils/comisionReembolso';
 import { coincideEnCampos } from '../../utils/busqueda';
@@ -20,6 +25,7 @@ const TABS = [
     { id: 'bancario', label: 'Bancario', icon: CreditCard },
     { id: 'articulos', label: 'Artículos', icon: ListChecks },
     { id: 'sedes', label: 'Sedes', icon: Building2 },
+    { id: 'nombres', label: 'Nombres', icon: Tag },
     { id: 'reglas', label: 'Reglas', icon: ShieldCheck },
     { id: 'acceso', label: 'Acceso', icon: Shield },
 ];
@@ -99,8 +105,45 @@ function explicarFalloDeAlta(resultado) {
     }
 }
 
+function SortableArticleRow({ id, name, isFirst, isLast, onToggle, onMove }) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+    const style = {
+        transform: CSS.Transform.toString(transform ? { ...transform, x: 0 } : null),
+        transition,
+    };
+    return (
+        <div ref={setNodeRef} style={style} {...attributes} {...listeners}
+            className={`px-3 py-2 flex items-center justify-between cursor-grab active:cursor-grabbing select-none touch-none ${isDragging ? 'relative z-10 bg-white shadow-lg ring-1 ring-blue-300 rounded' : 'hover:bg-blue-100/50'}`}>
+            <div className="flex items-center gap-2">
+                <GripVertical size={14} className="text-slate-300 shrink-0" />
+                <input type="checkbox" checked={true} onChange={onToggle}
+                    className="rounded text-blue-600 focus:ring-blue-500" />
+                <span className="text-sm text-slate-700 font-medium">{name}</span>
+            </div>
+            <div className="flex items-center gap-1">
+                <button type="button" onClick={() => onMove(-1)} disabled={isFirst}
+                    className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-30" title="Subir">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m18 15-6-6-6 6" /></svg>
+                </button>
+                <button type="button" onClick={() => onMove(1)} disabled={isLast}
+                    className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-30" title="Bajar">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg>
+                </button>
+            </div>
+        </div>
+    );
+}
+
 export default function CreateClientModal({ isOpen, onClose, onSave, articles, tariffs, initialData, allPoblaciones, allClients }) {
     const [activeTab, setActiveTab] = useState('general');
+    // Lo que se está tecleando en la pestaña «Nombres» antes de pulsar Añadir.
+    const [nuevoNombre, setNuevoNombre] = useState('');
+    const anadirOtroNombre = () => {
+        const nuevo = String(nuevoNombre || '').trim();
+        if (!nuevo) return;
+        set('otrosNombres', conOtroNombre(formData, nuevo, normalizarNombreCliente));
+        setNuevoNombre('');
+    };
     const [formData, setFormData] = useState({});
 
     const defaultForm = {
@@ -128,6 +171,8 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         ownerAgencyId: null,
         weightTariff: [],
         branches: [],
+        // Otros nombres con los que llega en los albaranes (ver utils/otrosNombres.js)
+        otrosNombres: [],
         // Delivery Rules
         requireWeight: false,
         requireName: true,
@@ -189,6 +234,12 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
             }
         }
     }, [isOpen, initialData]);
+
+    // Arrastrar con el ratón: hay que mover 5px antes de que empiece, así el
+    // clic en la casilla o en las flechas sigue funcionando como siempre.
+    const articleSensors = useSensors(
+        useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    );
 
     if (!isOpen) return null;
 
@@ -435,11 +486,11 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                     // apuntara la lista entera, la credencial que se enseña no
                     // coincidiría con la cuenta que se acaba de crear y no se
                     // llegaría a enseñar.
-                    ? [{ email: (formData.accessEmail || primerCorreoDeFicha(formData.email) || '').trim(), password: formData.password }]
+                    ? [{ email: (formData.accessEmail || primerCorreoDeFicha(formData.email) || '').trim(), password: sinEspaciosALosLados(formData.password) }]
                     : []),
                 ...(formData.accessEmailsExtra || [])
                     .filter(f => f?.email && f?.password)
-                    .map(f => ({ email: f.email.trim(), password: f.password })),
+                    .map(f => ({ email: f.email.trim(), password: sinEspaciosALosLados(f.password) })),
             ];
 
             const resultado = await onSave(initialData ? { ...formData, agencyLogoUrl: finalLogoUrl, id: initialData.id } : { ...formData, agencyLogoUrl: finalLogoUrl });
@@ -481,6 +532,17 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
             return current.includes(articleId)
                 ? { ...prev, allowedArticles: current.filter(id => id !== articleId) }
                 : { ...prev, allowedArticles: [...current, articleId] };
+        });
+    };
+
+    const handleArticleDragEnd = ({ active, over }) => {
+        if (!over || active.id === over.id) return;
+        setFormData(prev => {
+            const current = prev.allowedArticles || [];
+            const from = current.indexOf(active.id);
+            const to = current.indexOf(over.id);
+            if (from < 0 || to < 0) return prev;
+            return { ...prev, allowedArticles: arrayMove(current, from, to) };
         });
     };
 
@@ -649,6 +711,16 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                         <input type="text" className={inputCls} placeholder="Ej: logistica_plus (dejar vacío para SUM)"
                                             value={formData.agencyLabel || ''} onChange={e => set('agencyLabel', e.target.value)} />
                                         <p className="text-[10px] text-slate-400 mt-1">Si se rellena, sus envíos mostrarán esta marca en lugar del logo de SUM.</p>
+                                    </Field>
+                                    <Field label="Formato de Etiqueta">
+                                        <select className={inputCls} value={formData.labelPrintMode || ''}
+                                            onChange={e => set('labelPrintMode', e.target.value || undefined)}>
+                                            <option value="">Sin fijar (el cliente elige al imprimir)</option>
+                                            <option value="a6">Etiquetadora A6 (105×148mm)</option>
+                                            <option value="a4">Folio A4 (4 etiquetas por hoja)</option>
+                                            <option value="75x52">Rollo 75×52mm (etiquetadora pequeña)</option>
+                                        </select>
+                                        <p className="text-[10px] text-slate-400 mt-1">Formato que sale preseleccionado cuando el cliente imprime etiquetas desde su portal.</p>
                                     </Field>
                                     <Field label="Logo o Banner Personalizado">
                                         <div className="mt-1 flex items-center gap-4">
@@ -1207,37 +1279,49 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                         {activeTab === 'articulos' && (
                             <div>
                                 <p className="text-xs text-slate-500 mb-3">
-                                    Selecciona los artículos visibles para este cliente y ordénalos con las flechas (los primeros aparecen antes al crear envíos).
+                                    Selecciona los artículos visibles para este cliente y ordénalos arrastrándolos con el ratón o con las flechas (los primeros aparecen antes al crear envíos).
                                 </p>
+                                {/* Talleres de neumáticos (Velasco, Lucena, ACTIVA): mandan "4 de turismo y
+                                    2 de 4x4", y con un solo artículo el portal no lo podía recoger. */}
+                                <label className="flex items-center justify-between p-3 mb-3 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-blue-300 transition-colors group">
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-lg">🧾</span>
+                                        <div>
+                                            <p className="text-sm font-bold text-slate-700 group-hover:text-blue-700 transition-colors">Varios artículos con cantidad en el portal</p>
+                                            <p className="text-[10px] text-slate-400">El cliente puede añadir varias líneas al crear un envío (4 x Turismo, 2 x 4x4...). Sin esto, elige un solo artículo.</p>
+                                        </div>
+                                    </div>
+                                    <div className="relative">
+                                        <input type="checkbox" className="sr-only peer" checked={!!formData.portalVariosArticulos} onChange={e => set('portalVariosArticulos', e.target.checked)} />
+                                        <div className="w-11 h-6 bg-slate-200 peer-checked:bg-blue-600 rounded-full transition-colors"></div>
+                                        <div className="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform"></div>
+                                    </div>
+                                </label>
                                 <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
                                     {formData.allowedArticles && formData.allowedArticles.length > 0 && (
                                         <div className="bg-blue-50 border-b border-blue-100">
                                             <div className="px-3 py-2 text-[10px] uppercase font-bold text-blue-600">Habilitados (Orden de aparición)</div>
-                                            <div className="divide-y divide-blue-100">
-                                                {formData.allowedArticles.map((articleId, index) => {
-                                                    const article = articles?.find(a => a.id === articleId);
-                                                    if (!article) return null;
-                                                    return (
-                                                        <div key={articleId} className="px-3 py-2 flex items-center justify-between hover:bg-blue-100/50">
-                                                            <div className="flex items-center gap-2">
-                                                                <input type="checkbox" checked={true} onChange={() => toggleArticle(articleId)}
-                                                                    className="rounded text-blue-600 focus:ring-blue-500" />
-                                                                <span className="text-sm text-slate-700 font-medium">{article.name}</span>
-                                                            </div>
-                                                            <div className="flex items-center gap-1">
-                                                                <button type="button" onClick={() => moveArticle(index, -1)} disabled={index === 0}
-                                                                    className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-30" title="Subir">
-                                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m18 15-6-6-6 6" /></svg>
-                                                                </button>
-                                                                <button type="button" onClick={() => moveArticle(index, 1)} disabled={index === formData.allowedArticles.length - 1}
-                                                                    className="p-1 text-slate-400 hover:text-blue-600 disabled:opacity-30" title="Bajar">
-                                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg>
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
+                                            <DndContext sensors={articleSensors} collisionDetection={closestCenter} onDragEnd={handleArticleDragEnd}>
+                                                <SortableContext items={formData.allowedArticles} strategy={verticalListSortingStrategy}>
+                                                    <div className="divide-y divide-blue-100">
+                                                        {formData.allowedArticles.map((articleId, index) => {
+                                                            const article = articles?.find(a => a.id === articleId);
+                                                            if (!article) return null;
+                                                            return (
+                                                                <SortableArticleRow
+                                                                    key={articleId}
+                                                                    id={articleId}
+                                                                    name={article.name}
+                                                                    isFirst={index === 0}
+                                                                    isLast={index === formData.allowedArticles.length - 1}
+                                                                    onToggle={() => toggleArticle(articleId)}
+                                                                    onMove={direction => moveArticle(index, direction)}
+                                                                />
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </SortableContext>
+                                            </DndContext>
                                         </div>
                                     )}
 
@@ -1284,6 +1368,81 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                         )}
 
                         {/* ─── TAB: SEDES ─── */}
+                        {/* Otros nombres: cómo escriben esta empresa los remitentes en los
+                            albaranes. Casan igual que el nombre y la razón social, pero no
+                            son sedes: no llevan dirección ni salen como delegaciones. */}
+                        {activeTab === 'nombres' && (
+                            <div className="space-y-4">
+                                <div>
+                                    <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                                        <Tag size={15} className="text-blue-600" /> Otros nombres
+                                    </h4>
+                                    <p className="text-xs text-slate-500 mt-1">
+                                        Cómo escriben a esta empresa en los albaranes ("AGROCOR", "Comercial Agrocor"...).
+                                        Un albarán con cualquiera de estos nombres se engancha a esta ficha igual que si
+                                        llevara el nombre comercial: el repartidor ve sus datos y no se crea otra ficha.
+                                        No son sedes: no llevan dirección.
+                                    </p>
+                                </div>
+
+                                {/* Sin <form>: la ficha entera ya es un formulario y uno dentro de
+                                    otro no existe para el navegador. Intro añade el nombre en vez
+                                    de guardar la ficha. */}
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={nuevoNombre}
+                                        onChange={(e) => setNuevoNombre(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key !== 'Enter') return;
+                                            e.preventDefault();
+                                            anadirOtroNombre();
+                                        }}
+                                        placeholder="Otro nombre con el que llega en los albaranes"
+                                        aria-label="Otro nombre"
+                                        className={inputCls}
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={anadirOtroNombre}
+                                        className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors shadow-md shadow-blue-500/20 shrink-0"
+                                    >
+                                        <Plus size={14} /> Añadir
+                                    </button>
+                                </div>
+
+                                {leerOtrosNombres(formData).length === 0 ? (
+                                    <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl p-8 text-center">
+                                        <Tag size={32} className="mx-auto text-slate-300 mb-2" />
+                                        <p className="text-sm font-bold text-slate-400">Sin otros nombres</p>
+                                        <p className="text-xs text-slate-400 mt-1">
+                                            Se añaden aquí o desde Validar Clientes, con «Es esta ficha: vincular».
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <ul className="space-y-2">
+                                        {leerOtrosNombres(formData).map((nombre, idx) => (
+                                            <li key={`${idx}-${nombre}`} className="flex items-center justify-between gap-3 px-4 py-2.5 bg-white border border-slate-200 rounded-xl shadow-sm">
+                                                <span className="flex items-center gap-2 min-w-0">
+                                                    <Tag size={13} className="text-blue-500 shrink-0" />
+                                                    <span className="text-sm font-bold text-slate-700 break-words">{nombre}</span>
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => set('otrosNombres', leerOtrosNombres(formData).filter((_, i) => i !== idx))}
+                                                    title={`Quitar "${nombre}"`}
+                                                    aria-label={`Quitar ${nombre}`}
+                                                    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors shrink-0"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        )}
+
                         {activeTab === 'sedes' && (
                             <div className="space-y-4">
                                 <div className="flex items-center justify-between">

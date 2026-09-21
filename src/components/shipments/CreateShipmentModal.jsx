@@ -486,8 +486,14 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                     originZip: prefillData.originZip || '',
                     originCity: prefillData.originCity || '',
                     originPhone: prefillData.originPhone || '',
-                    originCoordinates: prefillData.originCoordinates || '',
-                    
+                    // El repartidor que convierte una recogida está en casa del
+                    // remitente: vale su GPS de ahora, no lo que llevara la
+                    // recogida (las antiguas se crearon con la posición de
+                    // donde se apuntaron).
+                    originCoordinates: (isDriver && prefillData.type === 'Recogida')
+                        ? ''
+                        : (prefillData.originCoordinates || ''),
+
                     destinationName: prefillData.destinationName || '',
                     destinationAddress: prefillData.destinationAddress || '',
                     destinationZip: prefillData.destinationZip || '',
@@ -1538,23 +1544,18 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                         {(pagaOtroCliente || hayOtroPagador) && (
                                             <div className="mt-1.5 p-2 rounded-lg bg-amber-50 border border-amber-200">
                                                 <label className={labelClass}>Cliente que paga el porte</label>
-                                                <input
-                                                    type="text"
-                                                    list="payer-clients-list"
+                                                {/* Sin datalist nativo: no encontraba "Ramírez" tecleando "ramirez" y en Android no se abre. */}
+                                                <CityAutocomplete
+                                                    poblaciones={[
+                                                        ...(clients || []).filter(c => c.status !== 'pending').map(c => c.name),
+                                                        ...(clients || []).flatMap(c => c.branches || []).map(b => b.name),
+                                                    ].filter(Boolean)}
                                                     placeholder="Buscar cliente que paga..."
                                                     className={inputClass}
                                                     value={formData.payerName || ''}
                                                     onChange={(e) => handlePayerNameChange(e.target.value)}
                                                     required
                                                 />
-                                                <datalist id="payer-clients-list">
-                                                    {(clients || []).filter(c => c.status !== 'pending').map(c => (
-                                                        <option key={`payer-${c.id}`} value={c.name} />
-                                                    ))}
-                                                    {(clients || []).flatMap(c => c.branches || []).map(b => (
-                                                        <option key={`payer-branch-${b.id}`} value={b.name} />
-                                                    ))}
-                                                </datalist>
                                                 <p className="text-[9px] text-amber-700 mt-1">El remitente de arriba entrega la mercancía; el porte, la serie y la tarifa van a nombre de este cliente.</p>
                                             </div>
                                         )}

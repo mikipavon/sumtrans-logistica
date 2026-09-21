@@ -281,8 +281,13 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
     // precio bueno es el de la ficha, y el cobro es sólo lo que se apuntó en su
     // día. El importe del cobro únicamente se usa si no se puede consultar el
     // albarán: no está cargado, o no tiene un precio numérico (p.ej. "Tarifa").
+    // Un 0 SÍ es un precio: la oficina pone el porte a 0 para dejarlo sin cobrar,
+    // y exigir "> 0" hacía que la Cuenta volviera a los 7 € que se apuntaron.
+    const tieneCifra = (v) => (
+        typeof v === 'number' ? Number.isFinite(v) : /\d/.test(String(v ?? ''))
+    );
     const importeVigente = (ship, importeAlbaran, importeCobro) => (
-        ship && parseAmount(importeAlbaran) > 0 ? importeAlbaran : importeCobro
+        ship && tieneCifra(importeAlbaran) ? importeAlbaran : importeCobro
     );
     const porteDelAlbaran = (ship) => (
         ship ? (parseAmount(ship.customAmount) > 0 ? ship.customAmount : ship.amount) : null

@@ -392,6 +392,22 @@ describe('NuevaDeudaModal', () => {
         expect(onCreateShipment.mock.calls[0][0].id).toMatch(/^SUM-\d{6}$/);
     });
 
+    it('un albarán no se crea sin la fecha del papel; un recibo sin fecha es de hoy', async () => {
+        const { onCreateShipment } = montarAlbaran(clients);
+        elegirCliente('pepe', 'Talleres Pepe');
+        expect(screen.getByText(/Pon la fecha del papel/)).toBeInTheDocument();
+        fireEvent.change(screen.getByLabelText('Importe (€)'), { target: { value: '9' } });
+        fireEvent.change(screen.getByLabelText('Concepto'), { target: { value: 'Papel' } });
+        fireEvent.click(screen.getByText('Crear albarán'));
+        expect(screen.getByRole('alert')).toHaveTextContent('fecha del albarán en papel');
+        expect(onCreateShipment).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('radio', { name: /Recibo al transportista/ }));
+        fireEvent.click(screen.getByText('Crear recibo'));
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalledTimes(1));
+        expect(onCreateShipment.mock.calls[0][0].date).toBe(fechaDeAlbaran(new Date().toISOString().slice(0, 10)));
+    });
+
     it('Recibo elegido a propósito para un cliente de Presupuesto: va al transportista', async () => {
         const presupuesto = [{ id: 31, name: 'ISPAVICAR', billingType: 'Presupuesto' }];
         const { onCreateShipment } = montarAlbaran(presupuesto);

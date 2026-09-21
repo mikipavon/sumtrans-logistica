@@ -74,6 +74,10 @@ async function llamadaDeAdmin(req: Request, supabase: ReturnType<typeof createCl
   return perfil?.role === 'admin'
 }
 
+// La clave "porte" se sigue pidiendo sólo por el frontend que hay en producción
+// hasta que se publique el de 21/09/2026: la app nueva la ignora (el porte de
+// una agencia es siempre Pagado, ver lecturaAlbaranIA.js). Cuando ese frontend
+// esté en Vercel se puede quitar de aquí.
 const INSTRUCCIONES = `Eres el administrativo de una empresa de transporte de Córdoba (España).
 Te llega la foto de un albarán o etiqueta de una agencia de transporte (TSB, TXT, Seur, etc.) con un envío que tenemos que repartir.
 La foto puede estar girada, torcida o con sombras.
@@ -85,25 +89,28 @@ Devuelve SOLO un objeto JSON, sin texto alrededor, con estas claves:
   "remitente": nombre de quien envía la mercancía (casilla "Remitente"),
   "destinatario": nombre de quien recibe (casilla "Destinatario" o "Consignatario"),
   "direccion": calle y número del destinatario,
-  "poblacion": población del destinatario, sin el código postal,
+  "poblacion": población del destinatario (el pueblo que va junto a su código postal), sin el código postal ni la provincia,
   "cp": código postal del destinatario (5 cifras),
   "telefono": teléfono del destinatario, sólo cifras, "" si no aparece,
   "bultos": número de bultos (entero) o null,
-  "kilos": peso en kilos (número) o null,
-  "porte": "Pagado" si el porte es pagado/pagados, "Debido" si es debido/debidos, "" si no se ve,
+  "kilos": kilos que cobra la agencia (número) o null. Si el albarán trae varios pesos (netos, brutos, reales, convertidos o volumétricos), pon el MAYOR de todos: el volumétrico puede ser 200 aunque el paquete pese 1,
   "reembolso": importe a cobrar contra reembolso en euros (número), 0 si no hay,
-  "devolverFirmado": true si la agencia pide que le devolvamos el albarán o la documentación firmada por el destinatario, false si no
+  "devolverFirmado": true si la agencia pide que le devolvamos el albarán o la documentación firmada por el destinatario, false si no,
+  "porte": "Pagado" si el papel dice pagado/pagados, "Debido" si dice debido/debidos, "" si no se ve
 }
 
 Cuándo "devolverFirmado" es true:
 - En TXT aparece "DAC" (Devolución de Albarán/Documentación firmada), normalmente junto al servicio.
-- En XPO aparece "devolver albarán firmado".
+- En XPO aparece "DEVOLVER ALBARÁN" impreso junto a "Fecha de entrega" / "Recibí Conforme", a veces con "firmado" escrito a mano al lado. Ojo: "Dev. Alb. Rtte" es sólo el nombre de una casilla de XPO y NO cuenta.
 - Cualquier otra agencia que diga lo mismo con otras palabras ("retorno de albarán firmado", "devolver documentación firmada", "albarán conformado").
 - La casilla "Recibí (Sello, Firma y D.N.I.)" la llevan TODOS los albaranes para que firme quien recibe: eso sola NO es devolver firmado.
 
 Cuidado:
 - La cabecera con el logo, la dirección, el teléfono, el NIF y el correo de la DELEGACIÓN de la agencia NO son del remitente ni del destinatario: ignóralos.
 - "Origen", "Destino" y "Zona" son las delegaciones de la agencia (p. ej. "014-CORDOBA"), no la población del destinatario.
+- Casi todo lo que repartimos va a pueblos de la provincia de Córdoba: la delegación de destino pone "CORDOBA" aunque el paquete vaya a Aguilar de la Frontera, Montilla o Lucena. La población es el PUEBLO que acompaña al código postal en la casilla del destinatario (14920 → Aguilar de la Frontera), no la capital ni la provincia.
+- Si la población viene con la provincia detrás ("AGUILAR DE LA FRONTERA (CÓRDOBA)", "MONTILLA - CORDOBA"), quédate sólo con el pueblo.
+- El "porte" del papel sólo se copia: a nosotros nos lo paga siempre la agencia, sea pagado o debido.
 - Una casilla de reembolso vacía o a cero es 0.
 - Si un dato no se lee con seguridad, déjalo vacío ("" o null). No te lo inventes.
 - Copia los nombres y direcciones tal cual, con sus tildes y eñes.`

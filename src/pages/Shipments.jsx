@@ -11,7 +11,7 @@ import { compartirAlbaranPorWhatsApp } from '../utils/mensajeJustificante';
 import { ladosDelEnvio } from '../utils/telefonosDelEnvio';
 import { guardarTelefonoTecleado } from '../utils/guardarTelefonoTecleado';
 import ElegirWhatsAppModal, { PUNTUAL } from '../components/shipments/ElegirWhatsAppModal';
-import { SIN_FILTRO, BAREMO_1, BAREMO_2, TIPOS_DE_CLIENTE, coincideCliente, filtroPoblacion, filtroTipoDeCliente, opcionesDeClientes, opcionesDePoblaciones } from '../utils/filtrosEnvios';
+import { SIN_FILTRO, BAREMO_1, BAREMO_2, TIPOS_DE_CLIENTE, TIPOS_DE_ENVIO, coincideCliente, filtroPoblacion, filtroTipo, opcionesDeClientes, opcionesDePoblaciones } from '../utils/filtrosEnvios';
 import FiltroClienteBuscable from '../components/shipments/FiltroClienteBuscable';
 import ImportExcelShipments from '../components/clients/ImportExcelShipments';
 import ImportarAlbaranesAgencia from '../components/shipments/ImportarAlbaranesAgencia';
@@ -107,7 +107,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     const [driverFilter, setDriverFilter] = useState('all');
     const [clientFilter, setClientFilter] = useState(SIN_FILTRO);
     const [poblacionFilter, setPoblacionFilter] = useState(SIN_FILTRO);
-    const [tipoClienteFilter, setTipoClienteFilter] = useState(SIN_FILTRO);
+    // Un tipo de envío (Entregas / Recogidas) o un tipo de cliente; comparten desplegable.
+    const [tipoFilter, setTipoFilter] = useState(SIN_FILTRO);
     const [selectedIds, setSelectedIds] = useState([]);
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
     const [dateFrom, setDateFrom] = useState('');
@@ -164,8 +165,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         const safeShipments = Array.isArray(shipments) ? shipments : [];
         // Un pueblo concreto o todo un baremo; la regla de baremos es la del precio del alta.
         const pasaPoblacion = filtroPoblacion(poblacionFilter, { tariffs, coverageZones });
-        // Facturación / Habitual / Presupuesto de quien paga, con la misma regla que el Excel.
-        const pasaTipoCliente = filtroTipoDeCliente(tipoClienteFilter, clients);
+        // Entregas / Recogidas, o Facturación / Habitual / Presupuesto de quien paga (misma regla que el Excel).
+        const pasaTipo = filtroTipo(tipoFilter, clients);
         let result = safeShipments.filter(shipment => {
             // Busca en remitente y destinatario a la vez, sin depender de quién paga
             const matchesSearch = coincideBusqueda(shipment, searchTerm);
@@ -205,12 +206,12 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
             const matchesClient = coincideCliente(shipment, clientFilter);
             const matchesPoblacion = pasaPoblacion(shipment);
-            const matchesTipoCliente = pasaTipoCliente(shipment);
+            const matchesTipo = pasaTipo(shipment);
 
             // Se ha llegado pinchando una alerta: sólo esos albaranes, ni uno más.
             const matchesAlerta = !idsDeAlerta || idsDeAlerta.includes(shipment.id);
 
-            return matchesSearch && matchesStatus && matchesDriver && matchesClient && matchesPoblacion && matchesTipoCliente && matchesCodReceipt && matchesDate && matchesAlerta;
+            return matchesSearch && matchesStatus && matchesDriver && matchesClient && matchesPoblacion && matchesTipo && matchesCodReceipt && matchesDate && matchesAlerta;
         });
 
         // Apply Sorting
@@ -276,7 +277,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         }
 
         return result;
-    }, [shipments, searchTerm, statusFilter, driverFilter, clientFilter, poblacionFilter, tipoClienteFilter, clients, tariffs, coverageZones, sortConfig, dateFrom, dateTo, idsDeAlerta]);
+    }, [shipments, searchTerm, statusFilter, driverFilter, clientFilter, poblacionFilter, tipoFilter, clients, tariffs, coverageZones, sortConfig, dateFrom, dateTo, idsDeAlerta]);
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -400,6 +401,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             <option value="Entregado">Entregado</option>
                             <option value="Incidencia">Incidencia</option>
                             <option value="Entrega aplazada">Entrega aplazada</option>
+                            <option value="Administración">🏢 Administración</option>
                             <option value="cod_no_receipt">📄 Sin Justificante COD ({(Array.isArray(shipments) ? shipments : []).filter(s => s.hasCod && s.codPaid && !s.codReceiptPhoto).length})</option>
                         </select>
 
@@ -424,16 +426,23 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
                         <select
                             className={`w-full px-4 py-2.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium cursor-pointer text-sm transition-all ${
-                                tipoClienteFilter !== SIN_FILTRO ? 'border-blue-400 text-blue-700 bg-blue-50' : 'bg-slate-50 border-slate-200 text-slate-600'
+                                tipoFilter !== SIN_FILTRO ? 'border-blue-400 text-blue-700 bg-blue-50' : 'bg-slate-50 border-slate-200 text-slate-600'
                             }`}
-                            value={tipoClienteFilter}
-                            onChange={(e) => setTipoClienteFilter(e.target.value)}
-                            title="Tipo de cliente de quien paga el porte, según su ficha"
+                            value={tipoFilter}
+                            onChange={(e) => setTipoFilter(e.target.value)}
+                            title="Sólo entregas o sólo recogidas, o el tipo de cliente de quien paga el porte según su ficha"
                         >
                             <option value={SIN_FILTRO}>Todos los Tipos</option>
-                            {TIPOS_DE_CLIENTE.map(t => (
-                                <option key={t} value={t}>{t}</option>
-                            ))}
+                            <optgroup label="Tipo de envío">
+                                {TIPOS_DE_ENVIO.map(t => (
+                                    <option key={t.valor} value={t.valor}>{t.etiqueta}</option>
+                                ))}
+                            </optgroup>
+                            <optgroup label="Tipo de cliente">
+                                {TIPOS_DE_CLIENTE.map(t => (
+                                    <option key={t} value={t}>{t}</option>
+                                ))}
+                            </optgroup>
                         </select>
 
                         <select
@@ -753,7 +762,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                         shipment.status === 'Pendiente de asignar' ? 'bg-amber-50 text-amber-700 border-amber-100' :
                                                             shipment.status === 'Incidencia' ? 'bg-red-50 text-red-700 border-red-100' :
                                                                 shipment.status === 'Entrega aplazada' ? 'bg-purple-50 text-purple-700 border-purple-100' :
-                                                                    'bg-slate-50 text-slate-700 border-slate-100'}`}>
+                                                                    shipment.status === 'Administración' ? 'bg-slate-100 text-slate-700 border-slate-300' :
+                                                                        'bg-slate-50 text-slate-700 border-slate-100'}`}>
                                                 {isProgrammed ? (
                                                     <Clock size={12} className="text-indigo-500" />
                                                 ) : (
@@ -786,11 +796,14 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 <User size={14} className="text-slate-400 shrink-0" />
                                                 <select
                                                     className="bg-transparent text-sm text-slate-700 font-medium border-b border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none transition-colors cursor-pointer py-0.5 w-full min-w-0 truncate"
-                                                    value={shipment.assignedDriverId || ''}
+                                                    value={shipment.status === 'Administración' ? 'admin' : (shipment.assignedDriverId || '')}
                                                     onClick={(e) => e.stopPropagation()} // Prevent opening details when clicking select
                                                     onChange={(e) => {
                                                         const driverId = e.target.value;
-                                                        if (driverId) {
+                                                        if (driverId === 'admin') {
+                                                            // A Administración no se le programa hora: no es un reparto.
+                                                            onAssignDriver(shipment.id, 'admin', null);
+                                                        } else if (driverId) {
                                                             setAssignmentModal({
                                                                 isOpen: true,
                                                                 shipmentIds: [shipment.id],
@@ -803,6 +816,14 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                     }}
                                                 >
                                                     <option value="">-- Asignar --</option>
+                                                    {/* La oficina puede dejar cualquier albarán en Administración, esté
+                                                        el pueblo en baremo o no. La restricción de "sólo fuera de Baremo
+                                                        1 y 2" es del móvil del repartidor (pestaña Asignar), para que no
+                                                        aparque en Administración lo que tiene ruta; aquí decide la oficina.
+                                                        Además, los albaranes que teclea la oficina no salen en el Asignar
+                                                        de ningún repartidor (no los creó ninguno), y desde aquí no había
+                                                        forma de dejarlos en Administración. */}
+                                                    <option value="admin">🏢 Administración</option>
                                                     {(drivers || []).map(driver => (
                                                         <option key={driver.id} value={driver.id}>{getDriverDisplayName(driver)}</option>
                                                     ))}

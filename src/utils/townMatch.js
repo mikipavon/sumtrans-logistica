@@ -79,3 +79,24 @@ export const puebloDeRutaParaEnvio = (ciudad, cp, pueblosDeRuta = [], tablaBarem
     const delBaremo = tablaBaremo.find(p => String(p?.zip || '').trim() === cpLimpio);
     return delBaremo ? mejorPuebloParaCiudad(delBaremo.name, pueblosDeRuta) : null;
 };
+
+/**
+ * El pueblo (o su C.P.) está en las tablas de Baremo 1 o 2.
+ *
+ * Es lo que decide si un albarán tiene ruta que lo lleve. Fuera de baremo no la
+ * hay, y por eso sólo entonces se ofrece mandarlo a Administración, tanto desde
+ * la pestaña Asignar del móvil como desde el listado de Envíos de la oficina.
+ * Las dos pantallas tienen que decirlo igual: antes el móvil comparaba el nombre
+ * con su propio normalizador y "Fernan Nuñez" (sin guión) salía como fuera de
+ * baremo. Aquí se compara con `normalizarPueblo`, que quita guiones y el C.P.
+ * entre paréntesis, igual que al buscar la ruta del envío.
+ */
+export const estaEnBaremo = (ciudad, cp, tablaBaremo = []) => {
+    const c = normalizarPueblo(ciudad);
+    const cpLimpio = String(cp || '').trim();
+    if (!c && !cpLimpio) return false;
+    return (tablaBaremo || []).some(p =>
+        (!!c && normalizarPueblo(p?.name) === c) ||
+        (!!cpLimpio && String(p?.zip || '').trim() === cpLimpio)
+    );
+};

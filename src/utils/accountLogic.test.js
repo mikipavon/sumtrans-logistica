@@ -659,6 +659,26 @@ describe('la oficina corrige el precio despues del cobro', () => {
         expect(result.collectedPorte).toBe(10);
         expect(result.allPorteDetail[0].amount).toBe('10.00');
     });
+
+    // HAB-397: la oficina deja el porte a 0 despues de que JAVITO cobrara 7.
+    it('un porte corregido a 0 deja la Cuenta a 0, no vuelve al importe cobrado', () => {
+        const albaran = { id: 'HAB-397', porteType: 'Debido', status: 'Entregado', portePaid: true, assignedDriverId: driverId, amount: '0', customAmount: 0, paidAt: hoy };
+        const cobros = [{ id: 'COL-5', type: 'Porte', amount: '7.00', shipmentId: 'HAB-397', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [albaran], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.collectedPorte).toBe(0);
+        expect(result.allPorteDetail[0].amount).toBe('0.00');
+    });
+
+    it('un albaran con el precio vacio no borra el importe cobrado', () => {
+        const albaran = { id: 'HAB-125', porteType: 'Debido', status: 'Entregado', portePaid: true, assignedDriverId: driverId, amount: '', paidAt: hoy };
+        const cobros = [{ id: 'COL-6', type: 'Porte', amount: '9.00', shipmentId: 'HAB-125', date: hoy }];
+        const result = calculateDailyAccount({
+            allShipments: [albaran], driverId, clients: [], collectedCollections: cobros
+        });
+        expect(result.collectedPorte).toBe(9);
+    });
 });
 
 // ── Un porte cobrado hoy no puede salir en la caja de ayer ───────────────────

@@ -28,78 +28,61 @@ const ficha = {
 };
 
 describe('planDeVinculo', () => {
-    it('con otro nombre, cuelga una sede con el nombre del albarán y lo que trajo la entrega', () => {
-        const plan = planDeVinculo(pendiente, ficha, 1000);
+    it('con otro nombre, lo apunta en «Otros nombres» y rellena los huecos de la madre; no crea sede', () => {
+        const plan = planDeVinculo(pendiente, ficha);
 
         expect(plan.posible).toBe(true);
-        expect(plan.sedeNueva).toBe(true);
-        expect(plan.sedeId).toBe('branch_1000');
-        // A la madre sólo se le escriben las sedes: nombre, tarifa y número no se tocan.
-        expect(Object.keys(plan.cambios)).toEqual(['branches']);
-        expect(plan.cambios.branches).toHaveLength(1);
-        expect(plan.cambios.branches[0]).toMatchObject({
-            id: 'branch_1000',
-            name: 'FERRETERIA EL REPUESTO, S.L.',
-            address: 'GRANADILLOS DE MEDINA, 22',
-            city: 'CASTRO DEL RIO',
-            zip: '14840',
-            coordinates: '37.690619, -4.478713',
-            receivers: [{ name: 'Joaquín', dni: '12345678A', at: '2026-09-16' }],
-        });
-        expect(plan.hereda).toEqual(['coordinates', 'address', 'city', 'zip', 'receivers']);
+        expect(plan.otroNombre).toBe(true);
+        expect(plan.sedeId).toBeNull();
+        expect(plan.cambios.branches).toBeUndefined();
+        expect(plan.cambios.otrosNombres).toEqual(['FERRETERIA EL REPUESTO, S.L.']);
+        // El GPS y quién recibió sí; la dirección de la madre es la suya y no se toca.
+        expect(plan.cambios.coordinates).toBe('37.690619, -4.478713');
+        expect(plan.cambios.receivers).toEqual([{ name: 'Joaquín', dni: '12345678A', at: '2026-09-16' }]);
+        expect(plan.cambios.address).toBeUndefined();
+        expect(plan.cambios.phone).toBeUndefined();
+        expect(Object.keys(plan.cambios).sort()).toEqual(['coordinates', 'lastReceiver', 'otrosNombres', 'receivers']);
+        expect(plan.hereda).toEqual(['coordinates', 'receivers']);
     });
 
-    it('la sede nueva toma de la madre la dirección que la pendiente no trae', () => {
-        const escueta = { id: 1, name: 'EL REPUESTO SL', coordinates: '37.6, -4.4' };
-        const plan = planDeVinculo(escueta, ficha, 1);
+    it('conserva los otros nombres que ya tenía y no repite uno que ya está', () => {
+        const conNombres = { ...ficha, otrosNombres: ['EL REPUESTO'] };
+        expect(planDeVinculo(pendiente, conNombres).cambios.otrosNombres).toEqual(['EL REPUESTO', 'FERRETERIA EL REPUESTO, S.L.']);
 
-        expect(plan.cambios.branches[0]).toMatchObject({
-            address: 'C/ Granadillos de Medina 22',
-            city: 'Castro del Río',
-            zip: '14840',
-            coordinates: '37.6, -4.4',
-        });
-        expect(plan.cambios.branches[0].receivers).toBeUndefined();
-    });
-
-    it('conserva las sedes que ya tenía la ficha', () => {
-        const conSede = { ...ficha, branches: [{ id: 'branch_1', name: 'ALMACEN', address: 'Pol. 3' }] };
-        const plan = planDeVinculo(pendiente, conSede, 2);
-
-        expect(plan.cambios.branches.map(s => s.name)).toEqual(['ALMACEN', 'FERRETERIA EL REPUESTO, S.L.']);
+        const repetido = { ...pendiente, name: 'el repuesto' };
+        const plan = planDeVinculo(repetido, conNombres);
+        expect(plan.otroNombre).toBe(false);
+        expect(plan.cambios.otrosNombres).toBeUndefined();
     });
 
     it('si ya se llama igual que la madre (sin tildes ni mayúsculas), sólo rellena huecos', () => {
         const igual = { ...pendiente, name: 'ferretería el repuesto joaquin salido' };
-        const sinGps = { ...ficha, coordinates: '', address: '' };
+        const sinGps = { ...ficha, coordinates: '', phone: '' };
         const plan = planDeVinculo(igual, sinGps);
 
-        expect(plan.sedeNueva).toBe(false);
+        expect(plan.otroNombre).toBe(false);
         expect(plan.sedeId).toBeNull();
         expect(plan.cambios).toEqual({
             coordinates: '37.690619, -4.478713',
-            address: 'GRANADILLOS DE MEDINA, 22',
             receivers: [{ name: 'Joaquín', dni: '12345678A', at: '2026-09-16' }],
             lastReceiver: null,
         });
-        // Lo que la madre ya tenía no se pisa.
-        expect(plan.cambios.phone).toBeUndefined();
-        expect(plan.cambios.zip).toBeUndefined();
     });
 
     it('si coincide con la razón social también es la madre', () => {
         const plan = planDeVinculo({ id: 2, name: 'El Repuesto S.L.', phone: '600111222' }, { ...ficha, legalName: 'EL REPUESTO S.L.', phone: '' });
 
-        expect(plan.sedeNueva).toBe(false);
+        expect(plan.otroNombre).toBe(false);
         expect(plan.cambios).toEqual({ phone: '600111222' });
     });
 
-    it('si coincide con una sede que ya existe, rellena esa sede y ata los albaranes a ella', () => {
+    it('si coincide con una sede, rellena esa sede (también la dirección) y ata los albaranes a ella', () => {
         const conSede = { ...ficha, branches: [{ id: 'branch_7', name: 'FERRETERIA EL REPUESTO, S.L.', address: 'Otra calle', coordinates: '' }] };
         const plan = planDeVinculo(pendiente, conSede);
 
-        expect(plan.sedeNueva).toBe(false);
+        expect(plan.otroNombre).toBe(false);
         expect(plan.sedeId).toBe('branch_7');
+        expect(Object.keys(plan.cambios)).toEqual(['branches']);
         expect(plan.cambios.branches).toHaveLength(1);
         // La calle que ya tenía la sede no se pisa; lo que le faltaba, sí.
         expect(plan.cambios.branches[0]).toMatchObject({ id: 'branch_7', address: 'Otra calle', coordinates: '37.690619, -4.478713', city: 'CASTRO DEL RIO', zip: '14840' });
@@ -107,9 +90,8 @@ describe('planDeVinculo', () => {
     });
 
     it('quien recibió en la pendiente va delante de los que ya conocía la ficha', () => {
-        const igual = { ...pendiente, name: ficha.name };
         const conReceptores = { ...ficha, receivers: [{ name: 'Manuel', dni: '', at: '2026-01-01' }] };
-        const plan = planDeVinculo(igual, conReceptores);
+        const plan = planDeVinculo(pendiente, conReceptores);
 
         expect(plan.cambios.receivers.map(r => r.name)).toEqual(['Joaquín', 'Manuel']);
     });
@@ -142,9 +124,9 @@ describe('enviosQueSeVinculan', () => {
 
 describe('enlaceDelEnvio', () => {
     it('ata el albarán a la ficha y a la sede del plan, y deja constancia de que fue a mano', () => {
-        expect(enlaceDelEnvio(ficha, { sedeId: 'branch_1000' })).toEqual({
+        expect(enlaceDelEnvio(ficha, { sedeId: 'branch_7' })).toEqual({
             destinatarioId: 26,
-            destinatarioSedeId: 'branch_1000',
+            destinatarioSedeId: 'branch_7',
             destinatarioEmparejadoPor: 'vinculo',
         });
         expect(enlaceDelEnvio(ficha, { sedeId: null }).destinatarioSedeId).toBeNull();
@@ -152,13 +134,14 @@ describe('enlaceDelEnvio', () => {
 });
 
 describe('explicarElVinculo', () => {
-    it('dice qué ficha se queda, que se le añade una sede, cuántos albaranes y que la solicitud se borra', () => {
-        const plan = planDeVinculo(pendiente, ficha, 1);
+    it('dice qué ficha se queda, que se le apunta otro nombre, cuántos albaranes y que la solicitud se borra', () => {
+        const plan = planDeVinculo(pendiente, ficha);
         const texto = explicarElVinculo(pendiente, ficha, plan, 2);
 
         expect(texto).toContain('«FERRETERIA EL REPUESTO JOAQUIN SALIDO» (nº P-26)');
-        expect(texto).toContain('se le añade una sede llamada «FERRETERIA EL REPUESTO, S.L.»');
-        expect(texto).toContain('el GPS');
+        expect(texto).toContain('se le apunta «FERRETERIA EL REPUESTO, S.L.» en «Otros nombres»');
+        expect(texto).toContain('No es una sede');
+        expect(texto).toContain('Se le copia el GPS, quién ha recibido.');
         expect(texto).toContain('2 albaranes pasan a apuntar');
         expect(texto).toContain('La solicitud «FERRETERIA EL REPUESTO, S.L.» se borra');
         expect(texto).toContain('¿Vincular?');

@@ -11,8 +11,11 @@ import { validarNuevaGhostPassword, LONGITUD_MINIMA_GHOST } from '../../utils/gh
  *   'cambiar' → pide la actual antes de la nueva (si `tieneActual`).
  *
  * `onSubmit` devuelve el mensaje de error a mostrar, o null si todo fue bien.
+ *
+ * Los borrados importantes la reutilizan: `detalle` dice qué se va a borrar y
+ * `textoBoton` cambia el "Desbloquear" por "Borrar".
  */
-export default function GhostPasswordModal({ mode, tieneActual = true, onSubmit, onCancel }) {
+export default function GhostPasswordModal({ mode, tieneActual = true, onSubmit, onCancel, detalle, textoBoton }) {
     const [actual, setActual] = useState('');
     const [nueva, setNueva] = useState('');
     const [repetida, setRepetida] = useState('');
@@ -83,6 +86,12 @@ export default function GhostPasswordModal({ mode, tieneActual = true, onSubmit,
                     </button>
                 </div>
 
+                {detalle && (
+                    <p className="mb-4 text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2 whitespace-pre-line">
+                        {detalle}
+                    </p>
+                )}
+
                 <div className="space-y-3">
                     {pideActual && (
                         <div>
@@ -147,7 +156,7 @@ export default function GhostPasswordModal({ mode, tieneActual = true, onSubmit,
                         disabled={enviando}
                         className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-slate-900 hover:bg-slate-800 transition-colors disabled:opacity-50"
                     >
-                        {enviando ? 'Comprobando...' : esDesbloqueo ? 'Desbloquear' : 'Guardar'}
+                        {enviando ? 'Comprobando...' : textoBoton || (esDesbloqueo ? 'Desbloquear' : 'Guardar')}
                     </button>
                 </div>
             </form>
