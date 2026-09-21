@@ -254,6 +254,14 @@ function leerRemitente(textoColumna) {
     return '';
 }
 
+// Un peso impreso: "21,00" (TXT) o "220.00" (XPO). Con punto y dos decimales el
+// punto es la coma decimal; leerNumero lo tomaría por separador de miles (22000).
+function leerPeso(texto) {
+    const s = String(texto || '').trim();
+    if (/^\d+\.\d{1,2}$/.test(s)) return parseFloat(s);
+    return leerNumero(s);
+}
+
 function leerNumero(texto) {
     if (!texto) return null;
     const n = parseFloat(String(texto).replace(/\./g, '').replace(',', '.'));
@@ -306,6 +314,13 @@ export function interpretarAlbaran(entrada) {
         m = plano.match(/(?:kilos|peso)\W{0,10}(\d{1,5}(?:[.,]\d{1,3})?)/i);
         kilos = m ? leerNumero(m[1]) : null;
     }
+    // XPO trae varios pesos ("Kgs. Netos 220.00", "Kgs. Brutos 250.00",
+    // "Kgs. Convertidos 250.00"). La agencia cobra el mayor: el convertido es el
+    // volumétrico y puede ser 200 aunque el paquete pese 1.
+    const pesos = [...plano.matchAll(/\bkgs?\.?\s*(?:netos|brutos|reales|convertidos|volumetricos?)\s*:?\s*(\d{1,5}(?:[.,]\d{1,3})?)/gi)]
+        .map(p => leerPeso(p[1]))
+        .filter(n => n !== null);
+    if (pesos.length) kilos = Math.max(kilos || 0, ...pesos);
 
     let porte = '';
     m = plano.match(/portes?\W{0,15}(?:p\.?\s*)?(pagad|debid)/i);
@@ -318,10 +333,11 @@ export function interpretarAlbaran(entrada) {
     else if (/\bdebidos\b/i.test(plano)) porte = 'Debido';
 
     // La agencia pide que le devolvamos el albarán firmado: TXT lo marca con
-    // "DAC" y XPO lo escribe ("devolver albarán firmado"). La casilla "Recibí
-    // (Sello, Firma y D.N.I.)" la llevan todos y no cuenta.
+    // "DAC" y XPO imprime "DEVOLVER ALBARÁN" (el "firmado" lo añaden a mano y el
+    // lector no siempre lo coge). La casilla "Recibí (Sello, Firma y D.N.I.)" la
+    // llevan todos y no cuenta, ni "Dev. Alb. Rtte", que es un rótulo de XPO.
     const devolverFirmado = /\bDAC\b/.test(plano)
-        || /devol\w*\s+(?:el\s+|la\s+)?(?:albaran|documentacion)\s+firmad/i.test(plano)
+        || /devol\w*\s+(?:el\s+|la\s+)?(?:albaran|documentacion)\b/i.test(plano)
         || /retorno\s+(?:de[l]?\s+)?albaran\s+firmad/i.test(plano);
 
     m = plano.match(/reembolso\w*\s*:?\s*(\d{1,6}[.,]\d{2})\s*(?:€|eur)?/i);

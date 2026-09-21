@@ -258,6 +258,35 @@ describe('inclinacionDeLineas', () => {
     });
 });
 
+// Texto de un albarán XPO real (21/09/2026), como lo deja el lector.
+const XPO_TEXTO = `XPOLogistics
+Nº Expedición 12430300 Ruta CTR. MALAGA
+Remitente KE CONSTRUCTION CHEMICAL SPAIN
+Destinatario ANTONIO MARTINEZ MIRANDA, S
+CAMINO DE LA GARGUEROSA S/N
+14520 FERNAN NUÑEZ CORDOBA ES
+Nº Paletas/Bultos 1 Tipo de U.M. 1/4 PALET
+Kgs. Netos 220.00 Tipo de Mercancía
+Kgs. Brutos 250.00 Fecha Concertada
+Kgs. Convertidos 250.00 Dest. Especial Dev. Alb. Rtte $1
+Nº Facturables .0000 Merc. Especial Dev. Id. Ticket
+Recibí Conforme (Nombre, DNI, Firma y Sello)
+DEVOLVER ALBARAN`;
+
+describe('kilos de XPO', () => {
+    it('coge el mayor de los pesos (netos, brutos, convertidos)', () => {
+        expect(interpretarAlbaran(XPO_TEXTO).kilos).toBe(250);
+    });
+
+    it('el volumétrico manda aunque el paquete pese poco', () => {
+        expect(interpretarAlbaran('Kgs. Netos 1.00\nKgs. Brutos 1.50\nKgs. Convertidos 200.00').kilos).toBe(200);
+    });
+
+    it('lee "220.00" como 220, no como 22000', () => {
+        expect(interpretarAlbaran('Kgs. Netos 220.00').kilos).toBe(220);
+    });
+});
+
 describe('devolver el albarán firmado', () => {
     it('TXT: "DAC" pide devolver la documentación firmada', () => {
         expect(interpretarAlbaran(`TXT
@@ -276,6 +305,14 @@ Observaciones: DEVOLVER ALBARÁN FIRMADO
     it('la casilla "Recibí (Sello, Firma y D.N.I.)" que llevan todos no cuenta', () => {
         const r = interpretarAlbaran({ izquierda: TXT_IZQUIERDA, derecha: TXT_DERECHA, todo: TXT_TODO });
         expect(r.devolverFirmado).toBe(false);
+    });
+
+    it('XPO real: "DEVOLVER ALBARÁN" impreso, con el "firmado" a mano que el lector no coge', () => {
+        expect(interpretarAlbaran(XPO_TEXTO).devolverFirmado).toBe(true);
+    });
+
+    it('el rótulo "Dev. Alb. Rtte" de XPO sólo no cuenta', () => {
+        expect(interpretarAlbaran('Dev. Alb. Rtte $1\nDev. Id. Ticket').devolverFirmado).toBe(false);
     });
 
     it('"dac" dentro de otra palabra o en minúsculas no cuenta', () => {
