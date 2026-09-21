@@ -104,6 +104,7 @@ function buildLabelHTML(shipment, client, bultoIndex, totalBultos) {
   </div>
   <div class="lbl-details">
     <div><p class="lbl-stitle">BULTOS</p><p class="lbl-dval">${bultoLabel}</p></div>
+    ${shipment.clientReference ? `<div><p class="lbl-stitle">REFERENCIA</p><p class="lbl-dval lbl-ref">${shipment.clientReference}</p></div>` : ''}
     ${shipment.observations ? `<div><p class="lbl-stitle">NOTAS</p><p class="lbl-dval lbl-obs">${shipment.observations}</p></div>` : ''}
     ${shipment.hasCod ? `<div><p class="lbl-stitle">REEMBOLSO</p><p class="lbl-dval lbl-cod">💰 ${parseFloat(shipment.codAmount || 0).toFixed(2)} €</p></div>` : ''}
   </div>
@@ -199,6 +200,7 @@ const LABEL_CSS = `
 /* ★ Valor de detalles — bultos, COD */
 .lbl-dval  { font-size: 10pt; font-weight: 800; }
 .lbl-obs   { font-size: 7pt;  font-weight: 400; max-width: 42mm; }
+.lbl-ref   { font-family: monospace; letter-spacing: 0.5px; }
 .lbl-cod   { color: #78350f; font-size: 11pt; }
 
 /* QR — más grande para mejor escaneo */
@@ -476,6 +478,7 @@ function buildLabelHTML75x52(shipment, client, bultoIndex, totalBultos) {
         <p class="l75-dest-city">${destCity || '—'}</p>
       </div>
       <p class="l75-origin"><b>REMITE:</b> ${origen || '—'}</p>
+      ${shipment.clientReference ? `<p class="l75-refcli"><b>REF:</b> ${shipment.clientReference}</p>` : ''}
       ${shipment.observations ? `<p class="l75-obs">${shipment.observations}</p>` : ''}
     </div>
     <div class="l75-side">
@@ -524,6 +527,7 @@ html, body { width: 75mm; margin: 0; padding: 0; background: #fff; }
 .l75-dest-city { font-size: 9pt; font-weight: 800; line-height: 1.15; margin-top: 0.5mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .l75-origin { font-size: 6pt; line-height: 1.2; margin-top: 1mm; color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.l75-refcli { font-size: 7pt; font-weight: 800; line-height: 1.2; margin-top: 0.6mm; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .l75-obs    { font-size: 6pt; line-height: 1.2; margin-top: 0.6mm; color: #000; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
 .l75-qr     { width: 20mm; height: 20mm; object-fit: contain; image-rendering: pixelated; }
