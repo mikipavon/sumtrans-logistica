@@ -4,6 +4,7 @@ import { uploadProof } from '../../utils/storage';
 import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 import { generarContrasena } from '../../utils/contrasenaSugerida';
 import { getAgencies } from '../../utils/agencyOwnership';
+import { prioridadDeCliente, cambiosAlPonerPrioridad, cambiosAlCambiarDeBase, COLOR_POR_PRIORIDAD } from '../../utils/prioridadDeFicha';
 import { esRegistroWeb } from '../../utils/altaClientes';
 import { primerCorreoDeFicha } from '../../utils/correosDeFicha';
 import { calcularComisionReembolso, COMISION_FIJA, COMISION_PORCENTAJE } from '../../utils/comisionReembolso';
@@ -179,7 +180,10 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
             setCredencialesNuevas(null);
             setCopiado(false);
             if (initialData) {
-                setFormData({ ...defaultForm, ...initialData });
+                // Una ficha sin prioridad grabada (las de agencia se crean solas
+                // al entregar) abre con la que le toca por su base de datos, en
+                // vez de con el Urgente de siempre. Ver utils/prioridadDeFicha.js
+                setFormData({ ...defaultForm, ...initialData, priority: prioridadDeCliente(initialData) });
             } else {
                 setFormData({ ...defaultForm });
             }
@@ -572,7 +576,8 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                             disabled={!!formData.isAgency}
                                             onChange={e => {
                                                 const picked = agencyOptions.find(a => String(a.id) === e.target.value);
-                                                set('ownerAgencyId', picked ? picked.id : null);
+                                                // La prioridad va con la base: agencia → Estándar, SUM → Urgente.
+                                                setFormData(prev => ({ ...prev, ...cambiosAlCambiarDeBase(prev, picked ? picked.id : null) }));
                                             }}>
                                             <option value="">🏠 Mis clientes (SUM)</option>
                                             {agencyOptions.map(a => (
@@ -590,8 +595,9 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                             <input type="checkbox" checked={!!formData.isAgency}
                                                 onChange={e => {
                                                     set('isAgency', e.target.checked);
-                                                    // Una agencia nunca pertenece a otra bolsa: es cliente directo de SUM.
-                                                    if (e.target.checked) set('ownerAgencyId', null);
+                                                    // Una agencia nunca pertenece a otra bolsa: es cliente directo
+                                                    // de SUM, y por eso va Urgente como el resto de la cartera propia.
+                                                    if (e.target.checked) setFormData(prev => ({ ...prev, ...cambiosAlCambiarDeBase(prev, null) }));
                                                 }}
                                                 className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
                                             <span className={`text-sm font-bold transition-colors ${formData.isAgency ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-600'}`}>
@@ -615,21 +621,19 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                     <Field label="Prioridad de Servicio">
                                         <div className="flex gap-4 mt-1">
                                             {[
-                                                { id: 'urgent', label: 'Urgente', color: '#ef4444' },
-                                                { id: 'normal', label: 'Estándar', color: '#64748b' }
+                                                { id: 'urgent', label: 'Urgente', color: COLOR_POR_PRIORIDAD.urgent },
+                                                { id: 'normal', label: 'Estándar', color: COLOR_POR_PRIORIDAD.normal }
                                             ].map(v => (
                                                 <label key={v.id} className="flex items-center gap-2 cursor-pointer group">
-                                                    <input 
-                                                        type="radio" 
-                                                        name="priority" 
+                                                    <input
+                                                        type="radio"
+                                                        name="priority"
                                                         value={v.id}
-                                                        checked={formData.priority === v.id} 
+                                                        checked={formData.priority === v.id}
                                                         onChange={e => {
-                                                            set('priority', e.target.value);
-                                                            // Sugerir color si el actual es el de otra prioridad
-                                                            if (formData.color === '#ef4444' || formData.color === '#64748b' || !formData.color) {
-                                                                set('color', v.color);
-                                                            }
+                                                            // Sugiere el color si el actual es el de otra prioridad.
+                                                            const prioridad = e.target.value;
+                                                            setFormData(prev => ({ ...prev, ...cambiosAlPonerPrioridad(prev, prioridad) }));
                                                         }}
                                                         className="text-blue-600 focus:ring-blue-500" 
                                                     />

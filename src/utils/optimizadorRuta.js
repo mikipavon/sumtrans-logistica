@@ -59,6 +59,7 @@
 import { normalizarPueblo, mejorPuebloParaCiudad } from './townMatch';
 import { ciudadDeEnvio, nombreDeParada } from './shipmentUtils';
 import { esDeAgencia } from './marca';
+import { esUrgente } from './prioridadDeFicha';
 import { turnoQueSeRepartaAhora } from './turnos';
 import {
     adaptarConocimiento,
@@ -632,7 +633,9 @@ export const optimizarRuta = ({
             coords: propias,
             coordsRef: propias || delPueblo,
             agencia: esDeAgencia(envio, cliente),
-            urgente: (cliente?.priority || 'urgent') === 'urgent',
+            // Sin prioridad grabada, decide la base de datos de la ficha: las de
+            // agencia van Estándar y las de SUM Urgente (utils/prioridadDeFicha.js).
+            urgente: esUrgente(cliente),
             ciudad,
             nombre: nombreDeParada(envio),
             direccion: envio.destinationAddress || '',

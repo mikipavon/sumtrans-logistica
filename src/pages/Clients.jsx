@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import AgencyDatabasesPanel from '../components/clients/AgencyDatabasesPanel';
 import { getOwnerLabel } from '../utils/agencyOwnership';
+import { esUrgente } from '../utils/prioridadDeFicha';
 import { SIN_FILTRO, TIPOS_DE_CLIENTE, tipoDeFacturacion } from '../utils/filtrosEnvios';
 import { normalizarTexto } from '../utils/busqueda';
 import { planDeNumeracion } from '../utils/numeracionCliente';
@@ -684,8 +685,8 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
                                         <div className="flex flex-col gap-1">
                                             <div className="flex items-center gap-2">
                                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider
-                                                    ${(client.priority || 'urgent') === 'urgent' ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
-                                                    {(client.priority || 'urgent') === 'urgent' ? 'Urgente' : 'Estándar'}
+                                                    ${esUrgente(client) ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
+                                                    {esUrgente(client) ? 'Urgente' : 'Estándar'}
                                                 </span>
                                             </div>
                                             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium

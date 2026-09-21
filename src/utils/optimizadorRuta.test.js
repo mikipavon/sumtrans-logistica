@@ -526,6 +526,24 @@ describe('en el polígono manda la cercanía', () => {
         expect(nombres(r)).toEqual(['urgente', 'normal']);
     });
 
+    // Las fichas de agencia se crean solas al entregar, sin prioridad grabada.
+    // Antes "sin prioridad" contaba como Urgente y los envíos de agencia iban
+    // por delante de los clientes de SUM. Ver utils/prioridadDeFicha.js
+    it('una ficha de agencia sin prioridad grabada cuenta como Estándar', () => {
+        contador = 0;
+        const envios = [
+            envio({ coords: punto(0.3), nombre: 'de_agencia' }),
+            envio({ coords: punto(0.32), nombre: 'de_sum' }),
+        ];
+        const r = optimizarRuta({
+            envios, rutas, conductorId: 7, ahora: MANANA, gps,
+            resolverCliente: (e) => e.destinationName === 'de_agencia'
+                ? { name: 'de_agencia', ownerAgencyId: 9 }
+                : { name: 'de_sum' },
+        });
+        expect(nombres(r)).toEqual(['de_sum', 'de_agencia']);
+    });
+
     it('el zigzag del polígono: siete naves en cruz salen encadenadas por cercanía', () => {
         contador = 0;
         // Parecido al reparto de Córdoba del 15/09/2026: dos naves pegadas a la

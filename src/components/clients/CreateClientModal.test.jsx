@@ -204,3 +204,70 @@ describe('CreateClientModal — pestaña Dirección', () => {
         expect(screen.getByPlaceholderText('14001').value).toBe('14940');
     });
 });
+
+// ── La prioridad va con la base de datos ──
+//
+// Los destinatarios de una agencia van Estándar y los clientes de SUM Urgente.
+// Antes todo abría Urgente, y como las fichas de agencia se crean solas sin
+// prioridad, al guardarlas se quedaban Urgente para siempre.
+describe('CreateClientModal — prioridad según la base de datos', () => {
+    const xpo = { id: 9, name: 'XPO', isAgency: true };
+    const urgente = () => screen.getByRole('radio', { name: /Urgente/i });
+    const estandar = () => screen.getByRole('radio', { name: /Estándar/i });
+    // La etiqueta "Base de Datos" no está enlazada al select: se llega por su opción.
+    const baseDeDatos = () => screen.getByRole('option', { name: /XPO/ }).closest('select');
+
+    function abrir(ficha) {
+        return render(
+            <CreateClientModal isOpen onClose={vi.fn()} onSave={vi.fn()} initialData={ficha}
+                articles={[]} tariffs={[]} allPoblaciones={[]} allClients={[ficha, xpo]} />
+        );
+    }
+
+    it('una ficha de agencia sin prioridad grabada abre en Estándar', () => {
+        abrir({ id: 1, name: 'Emilio José Páez', ownerAgencyId: 9 });
+        expect(estandar().checked).toBe(true);
+        expect(urgente().checked).toBe(false);
+    });
+
+    it('una ficha propia sin prioridad grabada sigue abriendo en Urgente', () => {
+        abrir({ id: 1, name: 'PROSERVICE' });
+        expect(urgente().checked).toBe(true);
+    });
+
+    it('la prioridad grabada a mano se respeta al abrir', () => {
+        abrir({ id: 1, name: 'Emilio José Páez', ownerAgencyId: 9, priority: 'urgent' });
+        expect(urgente().checked).toBe(true);
+    });
+
+    it('pasar la ficha a una agencia la pone Estándar, y volver a SUM la pone Urgente', () => {
+        abrir({ id: 1, name: 'PROSERVICE' });
+        expect(urgente().checked).toBe(true);
+
+        fireEvent.change(baseDeDatos(), { target: { value: '9' } });
+        expect(estandar().checked).toBe(true);
+
+        fireEvent.change(baseDeDatos(), { target: { value: '' } });
+        expect(urgente().checked).toBe(true);
+    });
+
+    it('marcarla como agencia la deja en Urgente: la agencia es cliente de SUM', () => {
+        abrir({ id: 1, name: 'TSB', ownerAgencyId: 9 });
+        expect(estandar().checked).toBe(true);
+
+        fireEvent.click(screen.getByRole('checkbox', { name: /trae carga de sus propios clientes/i }));
+        expect(urgente().checked).toBe(true);
+    });
+
+    it('lo que se guarda lleva la prioridad que se ve en pantalla', () => {
+        const onSave = vi.fn().mockResolvedValue({ ok: true });
+        render(
+            <CreateClientModal isOpen onClose={vi.fn()} onSave={onSave}
+                initialData={{ id: 1, name: 'Emilio José Páez', ownerAgencyId: 9 }}
+                articles={[]} tariffs={[]} allPoblaciones={[]}
+                allClients={[{ id: 1, name: 'Emilio José Páez', ownerAgencyId: 9 }, xpo]} />
+        );
+        fireEvent.click(screen.getByRole('button', { name: /Guardar Ficha/i }));
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ priority: 'normal', ownerAgencyId: 9 }));
+    });
+});
