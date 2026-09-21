@@ -317,6 +317,13 @@ export function interpretarAlbaran(entrada) {
     else if (/\bpagados\b/i.test(plano)) porte = 'Pagado';
     else if (/\bdebidos\b/i.test(plano)) porte = 'Debido';
 
+    // La agencia pide que le devolvamos el albarán firmado: TXT lo marca con
+    // "DAC" y XPO lo escribe ("devolver albarán firmado"). La casilla "Recibí
+    // (Sello, Firma y D.N.I.)" la llevan todos y no cuenta.
+    const devolverFirmado = /\bDAC\b/.test(plano)
+        || /devol\w*\s+(?:el\s+|la\s+)?(?:albaran|documentacion)\s+firmad/i.test(plano)
+        || /retorno\s+(?:de[l]?\s+)?albaran\s+firmad/i.test(plano);
+
     m = plano.match(/reembolso\w*\s*:?\s*(\d{1,6}[.,]\d{2})\s*(?:€|eur)?/i);
     const reembolso = m ? leerNumero(m[1]) : 0;
 
@@ -333,6 +340,7 @@ export function interpretarAlbaran(entrada) {
         kilos,
         porte,
         reembolso: reembolso || 0,
+        devolverFirmado,
     };
 }
 

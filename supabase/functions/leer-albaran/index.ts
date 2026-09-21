@@ -91,8 +91,15 @@ Devuelve SOLO un objeto JSON, sin texto alrededor, con estas claves:
   "bultos": número de bultos (entero) o null,
   "kilos": peso en kilos (número) o null,
   "porte": "Pagado" si el porte es pagado/pagados, "Debido" si es debido/debidos, "" si no se ve,
-  "reembolso": importe a cobrar contra reembolso en euros (número), 0 si no hay
+  "reembolso": importe a cobrar contra reembolso en euros (número), 0 si no hay,
+  "devolverFirmado": true si la agencia pide que le devolvamos el albarán o la documentación firmada por el destinatario, false si no
 }
+
+Cuándo "devolverFirmado" es true:
+- En TXT aparece "DAC" (Devolución de Albarán/Documentación firmada), normalmente junto al servicio.
+- En XPO aparece "devolver albarán firmado".
+- Cualquier otra agencia que diga lo mismo con otras palabras ("retorno de albarán firmado", "devolver documentación firmada", "albarán conformado").
+- La casilla "Recibí (Sello, Firma y D.N.I.)" la llevan TODOS los albaranes para que firme quien recibe: eso sola NO es devolver firmado.
 
 Cuidado:
 - La cabecera con el logo, la dirección, el teléfono, el NIF y el correo de la DELEGACIÓN de la agencia NO son del remitente ni del destinatario: ignóralos.

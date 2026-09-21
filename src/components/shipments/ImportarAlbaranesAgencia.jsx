@@ -5,6 +5,7 @@ import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 import { buscarArticuloBadi, baremoDelPunto, precioUnitarioParaCliente, prefijoSerieDelCliente, esPoblacionConocida } from '../../utils/importacionEnvios';
 import { hojasDeFichero, leerHoja, miniaturaDeLienzo, cerrarLector } from '../../utils/ocrAlbaran';
 import { leerHojaConIA } from '../../utils/iaAlbaran';
+import { cobraPorKilos, precioPorKilos, tramoDePeso } from '../../utils/precioPorKilos';
 import PanelConsumoIA from './PanelConsumoIA';
 
 // Importa albaranes de agencia (TXT, TSB, etc.) a partir de fotos o PDF.
@@ -23,8 +24,14 @@ let contadorHojas = 0;
 
 const inputCls = 'w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white';
 
+/** Kilos tecleados o leídos ("47", "12,5") → número, o null si no hay. */
+function kilosDe(valor) {
+    const n = parseFloat(String(valor ?? '').replace(',', '.'));
+    return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function camposVacios() {
-    return { expedicion: '', remitente: '', destinatario: '', direccion: '', poblacion: '', cp: '', telefono: '', bultos: null, kilos: null, porte: '', reembolso: 0 };
+    return { expedicion: '', remitente: '', destinatario: '', direccion: '', poblacion: '', cp: '', telefono: '', bultos: null, kilos: null, porte: '', reembolso: 0, devolverFirmado: false };
 }
 
 export default function ImportarAlbaranesAgencia({ client, onCreateShipment, allShipments, articles, tariffs, coverageZones, onClose, isAdmin }) {
@@ -118,9 +125,14 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
         if (bultos < 1) errores.push('Faltan los bultos');
         if (c.porte !== 'Pagado' && c.porte !== 'Debido') errores.push('Elige si el porte es pagado o debido');
         if ((c.poblacion || c.cp) && !esPoblacionConocida(c.poblacion, c.cp, { tariffs, coverageZones })) avisos.push('Población fuera del baremo: revisa el nombre');
+        // Sin kilos, a una agencia que cobra por peso el porte le saldría a 0.
+        const kilos = kilosDe(c.kilos);
+        const porKilos = cobraPorKilos(client);
+        if (porKilos && !kilos) errores.push('Faltan los kilos (esta agencia cobra por kilos)');
+        const porteKilos = porKilos && kilos ? { precio: precioPorKilos(kilos, client), tramo: tramoDePeso(kilos, client) } : null;
         const articulo = bultos > 0 ? buscarArticuloBadi(articles, bultos) : null;
-        return { ...h, errores, avisos, articulo };
-    }), [hojas, articles, tariffs, coverageZones]);
+        return { ...h, errores, avisos, articulo, porteKilos };
+    }), [hojas, articles, tariffs, coverageZones, client]);
 
     const validas = hojasRevisadas.filter(h => h.errores.length === 0);
     const conErrores = hojasRevisadas.filter(h => h.errores.length > 0);
@@ -143,14 +155,14 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                     const originBaremo = baremoDelPunto(client.city, client.zip, { tariffs, coverageZones });
                     const destBaremo = baremoDelPunto(c.poblacion, c.cp, { tariffs, coverageZones });
                     const baremo = (originBaremo === 2 || destBaremo === 2) ? 2 : 1;
-                    const unitPrice = precioUnitarioParaCliente(article, client, baremo);
+                    // Agencia "Por Kilos": el porte sale del peso y el artículo va a 0,
+                    // igual que en el alta (el artículo sólo dice cuántos bultos son).
+                    const porKilos = cobraPorKilos(client);
+                    const kilos = kilosDe(c.kilos);
+                    const unitPrice = porKilos ? 0 : precioUnitarioParaCliente(article, client, baremo);
+                    const porte = unitPrice + (porKilos ? precioPorKilos(kilos, client) : 0);
                     const codAmt = parseFloat(String(c.reembolso || 0).replace(',', '.')) || 0;
                     const codFee = calcularComisionReembolso(client, codAmt);
-                    const notas = [
-                        `Albarán agencia ${client.name}`,
-                        c.expedicion ? `Exp. ${c.expedicion}` : '',
-                        c.kilos ? `${c.kilos} kg` : '',
-                    ].filter(Boolean).join(' · ');
 
                     const shipmentData = {
                         id: `${prefix}-${numero}`,
@@ -172,11 +184,17 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                         createdAt: new Date().toISOString(),
                         status: 'Pendiente de asignar',
                         packages: bultos,
-                        observations: notas,
+                        // Vacías a propósito: la agencia y la expedición ya van en su sitio
+                        // (cliente y referencia) y los kilos en su casilla. Lo que se ponía
+                        // aquí ("Albarán agencia TXT · Exp. … · 47 kg") le llegaba al
+                        // repartidor como si fuera una indicación de la entrega.
+                        observations: '',
+                        weightKg: kilos,
+                        weightBracket: porKilos ? (tramoDePeso(kilos, client) || null) : null,
                         articles: article ? [{ ...article, uniqueId: Date.now() + numero, quantity: 1, unitPrice, totalPrice: unitPrice }] : [],
                         // La comisión del reembolso va dentro del porte, como en el alta de la oficina.
-                        amount: unitPrice > 0 ? (unitPrice + codFee).toFixed(2) : 'Pendiente',
-                        customAmount: unitPrice > 0 ? Math.round((unitPrice + codFee) * 100) / 100 : null,
+                        amount: porte > 0 ? (porte + codFee).toFixed(2) : 'Pendiente',
+                        customAmount: porte > 0 ? Math.round((porte + codFee) * 100) / 100 : null,
                         billingType: client.billingType || 'Clientes Habituales',
                         paymentStatus: 'Pending',
                         porteType: c.porte,
@@ -187,6 +205,8 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                         importedFromExcel: true,
                         excelFileName: hoja.fichero,
                         clientReference: (c.expedicion || '').trim() || null,
+                        // Al repartidor le sale "Recoger firma de vuelta" y se le pide la foto del papel firmado.
+                        needsSignatureReturn: !!c.devolverFirmado,
                     };
                     await onCreateShipment(shipmentData);
                     creados++;
@@ -348,6 +368,20 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                                                 <span className="text-[10px] font-bold uppercase text-slate-500">Artículo</span>
                                                 <span className={`px-2 py-1.5 rounded-lg text-xs font-bold ${h.articulo ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'}`}>{h.articulo?.name || '—'}</span>
                                             </div>
+                                            {h.porteKilos && (
+                                                <div className="col-span-2 md:col-span-4 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-1.5">
+                                                    Porte por kilos: {h.porteKilos.precio.toFixed(2)} €{h.porteKilos.tramo ? ` · ${h.porteKilos.tramo}` : ''}
+                                                </div>
+                                            )}
+                                            {/* DAC en TXT, "devolver albarán firmado" en XPO. Es el mismo aviso
+                                                "Recoger firma de vuelta" que se marca a mano en el alta. */}
+                                            <label className={`col-span-2 md:col-span-4 flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-xs font-bold ${h.campos.devolverFirmado ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-white border-slate-200 text-slate-500'}`}>
+                                                <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-emerald-600"
+                                                    checked={!!h.campos.devolverFirmado}
+                                                    onChange={(e) => editarCampo(h.id, 'devolverFirmado', e.target.checked)} />
+                                                <FileText size={14} className={h.campos.devolverFirmado ? 'text-emerald-600' : 'text-slate-300'} />
+                                                Devolver albarán firmado a la agencia (DAC en TXT, «devolver albarán firmado» en XPO)
+                                            </label>
                                         </div>
                                         {(h.errores.length > 0 || h.avisos.length > 0) && (
                                             <div className="flex flex-wrap gap-2">

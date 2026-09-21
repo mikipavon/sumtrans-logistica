@@ -11,8 +11,17 @@ describe('normalizarCamposIA', () => {
         expect(r).toEqual({
             expedicion: '999423323648', remitente: 'AKZO NOBEL INDUSTRIAL PAINTS, S.L.',
             destinatario: 'CARPINTERÍA FERAN HERM.ROMERO', direccion: 'C/PINTOR ZURBARÁN, 32.',
-            poblacion: 'FERNAN NUÑEZ', cp: '14520', telefono: '', bultos: 1, kilos: 5, porte: 'Pagado', reembolso: 0,
+            poblacion: 'FERNAN NUÑEZ', cp: '14520', telefono: '', bultos: 1, kilos: 5, porte: 'Pagado', reembolso: 0, devolverFirmado: false,
         });
+    });
+
+    it('devolverFirmado sólo es sí con un sí claro', () => {
+        expect(normalizarCamposIA({ devolverFirmado: true }).devolverFirmado).toBe(true);
+        expect(normalizarCamposIA({ devolverFirmado: 'true' }).devolverFirmado).toBe(true);
+        expect(normalizarCamposIA({ devolverFirmado: 'Sí' }).devolverFirmado).toBe(true);
+        expect(normalizarCamposIA({ devolverFirmado: false }).devolverFirmado).toBe(false);
+        expect(normalizarCamposIA({ devolverFirmado: 'no' }).devolverFirmado).toBe(false);
+        expect(normalizarCamposIA({}).devolverFirmado).toBe(false);
     });
 
     it('arregla la forma: números como texto, espacios, porte en plural y mayúsculas', () => {
