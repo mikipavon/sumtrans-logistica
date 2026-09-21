@@ -650,6 +650,16 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                             value={formData.agencyLabel || ''} onChange={e => set('agencyLabel', e.target.value)} />
                                         <p className="text-[10px] text-slate-400 mt-1">Si se rellena, sus envíos mostrarán esta marca en lugar del logo de SUM.</p>
                                     </Field>
+                                    <Field label="Formato de Etiqueta">
+                                        <select className={inputCls} value={formData.labelPrintMode || ''}
+                                            onChange={e => set('labelPrintMode', e.target.value || undefined)}>
+                                            <option value="">Sin fijar (el cliente elige al imprimir)</option>
+                                            <option value="a6">Etiquetadora A6 (105×148mm)</option>
+                                            <option value="a4">Folio A4 (4 etiquetas por hoja)</option>
+                                            <option value="75x52">Rollo 75×52mm (etiquetadora pequeña)</option>
+                                        </select>
+                                        <p className="text-[10px] text-slate-400 mt-1">Formato que sale preseleccionado cuando el cliente imprime etiquetas desde su portal.</p>
+                                    </Field>
                                     <Field label="Logo o Banner Personalizado">
                                         <div className="mt-1 flex items-center gap-4">
                                             <div className="w-20 h-20 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden relative group">
