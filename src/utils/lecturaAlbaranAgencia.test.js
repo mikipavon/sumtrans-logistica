@@ -258,6 +258,31 @@ describe('inclinacionDeLineas', () => {
     });
 });
 
+describe('devolver el albarán firmado', () => {
+    it('TXT: "DAC" pide devolver la documentación firmada', () => {
+        expect(interpretarAlbaran(`TXT
+Servicio: PAQUETERIA Oro DAC
+Destinatario
+PEPE
+14500 PUENTE GENIL`).devolverFirmado).toBe(true);
+    });
+
+    it('XPO: "devolver albarán firmado"', () => {
+        expect(interpretarAlbaran(`XPO LOGISTICS
+Observaciones: DEVOLVER ALBARÁN FIRMADO
+14900 LUCENA`).devolverFirmado).toBe(true);
+    });
+
+    it('la casilla "Recibí (Sello, Firma y D.N.I.)" que llevan todos no cuenta', () => {
+        const r = interpretarAlbaran({ izquierda: TXT_IZQUIERDA, derecha: TXT_DERECHA, todo: TXT_TODO });
+        expect(r.devolverFirmado).toBe(false);
+    });
+
+    it('"dac" dentro de otra palabra o en minúsculas no cuenta', () => {
+        expect(interpretarAlbaran('REDACCION DACIA dac').devolverFirmado).toBe(false);
+    });
+});
+
 describe('repartirEnColumnas', () => {
     it('separa las palabras de cada línea según su posición horizontal', () => {
         const palabra = (text, x0, x1) => ({ text, bbox: { x0, x1, y0: 0, y1: 10 } });

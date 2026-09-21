@@ -64,7 +64,15 @@ export function normalizarCamposIA(bruto) {
         kilos: kilos !== null && kilos > 0 ? kilos : null,
         porte: porte(b.porte),
         reembolso: reembolso !== null && reembolso > 0 ? Math.round(reembolso * 100) / 100 : 0,
+        // DAC en TXT, "devolver albarán firmado" en XPO: al repartidor le sale
+        // "Recoger firma de vuelta" y se le pide foto del papel firmado.
+        devolverFirmado: siONo(b.devolverFirmado),
     };
+}
+
+function siONo(v) {
+    if (typeof v === 'boolean') return v;
+    return /^(true|si|sí|yes|1)$/i.test(texto(v));
 }
 
 /**
