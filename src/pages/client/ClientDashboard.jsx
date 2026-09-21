@@ -1295,6 +1295,24 @@ export default function ClientDashboard({
                                             <p className="text-xs text-slate-500 mt-0.5 leading-snug">Divide el folio A4 en 4 etiquetas A6 (2×2). La app recuerda qué posición usaste para aprovechar el papel.</p>
                                         </div>
                                     </label>
+                                    <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                                        client.labelPrintMode === '75x52'
+                                            ? 'border-violet-500 bg-violet-50'
+                                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                                    }`}>
+                                        <input
+                                            type="radio"
+                                            name="labelPrintMode"
+                                            value="75x52"
+                                            checked={client.labelPrintMode === '75x52'}
+                                            onChange={() => onUpdateClient && onUpdateClient(client.id, { labelPrintMode: '75x52' })}
+                                            className="mt-0.5 text-violet-600 border-slate-300 focus:ring-violet-500"
+                                        />
+                                        <div>
+                                            <p className="font-bold text-slate-800 text-sm">🏷️ Rollo 75×52mm</p>
+                                            <p className="text-xs text-slate-500 mt-0.5 leading-snug">Etiqueta apaisada pequeña para etiquetadoras de rollo. Una etiqueta por bulto, con el destinatario grande y el QR al lado.</p>
+                                        </div>
+                                    </label>
                                 </div>
                                 <p className="text-xs text-slate-400 mt-3 flex items-center gap-1">
                                     <span>ℹ️</span>

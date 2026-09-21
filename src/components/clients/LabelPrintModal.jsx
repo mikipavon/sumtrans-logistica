@@ -3,6 +3,8 @@ import { X, Printer, Tag, FileText, ChevronRight, RotateCcw, Info } from 'lucide
 import {
     printLabelA6,
     printLabelA4,
+    printLabel75x52,
+    MODOS_DE_ETIQUETA,
     getNextA4Position,
     saveA4Position,
     getLabelCount,
@@ -15,11 +17,11 @@ import {
  *   isOpen        - boolean
  *   onClose       - fn
  *   shipment      - object
- *   client        - object (puede tener client.labelPrintMode = 'a6' | 'a4')
+ *   client        - object (puede tener client.labelPrintMode = 'a6' | 'a4' | '75x52')
  *   onUpdateClient - fn(clientId, updates) — para guardar preferencia
  */
 export default function LabelPrintModal({ isOpen, onClose, shipment, client, onUpdateClient }) {
-    // Modo: null (sin seleccionar), 'a6', 'a4'
+    // Modo: null (sin seleccionar), 'a6', 'a4', '75x52'
     const [mode, setMode] = useState(null);
     // Posición A4 seleccionada (1-4)
     const [a4Position, setA4Position] = useState(1);
@@ -34,7 +36,7 @@ export default function LabelPrintModal({ isOpen, onClose, shipment, client, onU
     useEffect(() => {
         if (!isOpen) { setMode(null); return; }
         const preferred = client?.labelPrintMode;
-        if (preferred === 'a6' || preferred === 'a4') {
+        if (MODOS_DE_ETIQUETA.includes(preferred)) {
             setMode(preferred);
         } else {
             setMode(null);
@@ -64,6 +66,12 @@ export default function LabelPrintModal({ isOpen, onClose, shipment, client, onU
             }
             const lastPos = printLabelA4(shipment, client, a4Position);
             saveA4Position(lastPos);
+            onClose();
+        } else if (mode === '75x52') {
+            if (savePreference && onUpdateClient) {
+                onUpdateClient(client.id, { labelPrintMode: '75x52' });
+            }
+            printLabel75x52(shipment, client);
             onClose();
         }
     };
@@ -114,7 +122,7 @@ export default function LabelPrintModal({ isOpen, onClose, shipment, client, onU
                     {/* Paso 1: selección de modo */}
                     <div>
                         <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest mb-2">Modo de Impresión</p>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-3 gap-2">
                             {/* A6 */}
                             <button
                                 onClick={() => handleSelectMode('a6')}
@@ -148,8 +156,38 @@ export default function LabelPrintModal({ isOpen, onClose, shipment, client, onU
                                 <p className="font-bold text-slate-800 mt-1.5 text-sm">Folio A4</p>
                                 <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">4 etiquetas por folio (2×2). Elige la posición para aprovechar el papel.</p>
                             </button>
+
+                            {/* 75×52 */}
+                            <button
+                                onClick={() => handleSelectMode('75x52')}
+                                className={`relative p-3 rounded-xl border-2 text-left transition-all ${
+                                    mode === '75x52'
+                                        ? 'border-violet-500 bg-violet-50 shadow-md shadow-violet-500/10'
+                                        : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                                }`}
+                            >
+                                {client?.labelPrintMode === '75x52' && (
+                                    <span className="absolute top-1.5 right-1.5 text-[9px] font-black text-violet-600 bg-violet-100 px-1.5 py-0.5 rounded-full uppercase">Por defecto</span>
+                                )}
+                                <Tag size={18} className={mode === '75x52' ? 'text-violet-600' : 'text-slate-400'} />
+                                <p className="font-bold text-slate-800 mt-1.5 text-sm">Rollo 75×52</p>
+                                <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">Etiqueta apaisada de 75×52mm. Para etiquetadoras de rollo.</p>
+                            </button>
                         </div>
                     </div>
+
+                    {/* Paso 2C: opciones 75×52 */}
+                    {mode === '75x52' && (
+                        <div className="bg-violet-50 border border-violet-100 rounded-xl p-3 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                            <p className="text-xs font-bold text-violet-700 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                                <Info size={12} /> Etiqueta de rollo 75×52
+                            </p>
+                            <p className="text-xs text-violet-600 leading-relaxed">
+                                Se imprimirán <strong>{totalLabels} etiqueta{totalLabels !== 1 ? 's' : ''}</strong>, una por bulto.
+                                La etiquetadora debe tener cargado rollo de <strong>75×52mm</strong> y el tamaño de papel ajustado a esa medida.
+                            </p>
+                        </div>
+                    )}
 
                     {/* Paso 2A: opciones A6 */}
                     {mode === 'a6' && (
@@ -306,6 +344,8 @@ export default function LabelPrintModal({ isOpen, onClose, shipment, client, onU
                                 ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20'
                                 : mode === 'a4'
                                 ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20'
+                                : mode === '75x52'
+                                ? 'bg-violet-600 hover:bg-violet-700 shadow-violet-500/20'
                                 : 'bg-slate-300 cursor-not-allowed shadow-none'
                         }`}
                     >
@@ -314,6 +354,8 @@ export default function LabelPrintModal({ isOpen, onClose, shipment, client, onU
                             ? `Imprimir en pos. ${a4Position}`
                             : mode === 'a6'
                             ? 'Imprimir A6'
+                            : mode === '75x52'
+                            ? 'Imprimir 75×52'
                             : 'Selecciona modo'
                         }
                         {mode && <ChevronRight size={14} />}

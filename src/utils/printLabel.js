@@ -56,6 +56,16 @@ export function getLabelCount(shipment) {
     return Math.max(1, count);
 }
 
+/**
+ * Imagen del QR de un bulto. Se pide grande (8 px por módulo) y con corrección
+ * de errores alta: con 3 px por módulo el navegador estiraba la imagen con
+ * bordes difuminados y las etiquetadoras térmicas los convertían en puntitos,
+ * y el QR salía borroso y no se leía (21/09/2026, etiqueta de rollo 75×52).
+ */
+function urlDelQR(texto) {
+    return `https://bwipjs-api.metafloor.com/?bcid=qrcode&text=${encodeURIComponent(texto)}&scale=8&eclevel=H&rotate=N`;
+}
+
 // ─── HTML de una etiqueta individual ────────────────────────────────────────
 
 function buildLabelHTML(shipment, client, bultoIndex, totalBultos) {
@@ -64,7 +74,7 @@ function buildLabelHTML(shipment, client, bultoIndex, totalBultos) {
     const hasClientLogo = !!clientLogo;
     const printDate    = new Date().toLocaleDateString('es-ES');
     const qrText       = `${shipment.id}-${bultoIndex}`;
-    const qrUrl        = `https://bwipjs-api.metafloor.com/?bcid=qrcode&text=${encodeURIComponent(qrText)}&scale=3&rotate=N`;
+    const qrUrl        = urlDelQR(qrText);
 
     const articleNames = shipment.articles && shipment.articles.length > 0
         ? shipment.articles.map(a => a.name).join(', ')
@@ -203,7 +213,8 @@ const LABEL_CSS = `
   gap: 4mm;
   flex-shrink: 0;
 }
-.lbl-qr-img { width: 38mm; height: 38mm; object-fit: contain; }
+/* Sin difuminar al escalar: las térmicas traman los bordes grises y el QR no se lee */
+.lbl-qr-img { width: 38mm; height: 38mm; object-fit: contain; image-rendering: pixelated; }
 .lbl-qr-text { display: flex; flex-direction: column; gap: 1mm; }
 .lbl-qr-ref { font-family: monospace; font-size: 11pt; font-weight: 800; letter-spacing: 2px; }
 .lbl-qr-sub { font-size: 8.5pt; color: #555; text-transform: uppercase; font-weight: 700; }
@@ -426,6 +437,126 @@ export function printLabelA4(shipment, client, startPosition = 1) {
 
     openPrintWindow(html);
     return lastUsed;
+}
+
+// ─── MODO 75×52 (etiquetadora de rollo) ──────────────────────────────────────
+
+/** Formatos que puede llevar la ficha en `labelPrintMode`. */
+export const MODOS_DE_ETIQUETA = ['a6', 'a4', '75x52'];
+
+/**
+ * Etiqueta apaisada de 75×52 mm para etiquetadoras de rollo (Zebra, Brother, etc.).
+ * Es mucho más pequeña que la A6, así que lleva su propia maqueta: referencia y
+ * bulto arriba, destinatario grande, remitente en una línea y el QR al lado.
+ */
+function buildLabelHTML75x52(shipment, client, bultoIndex, totalBultos) {
+    const clientLogo = client.agencyLogoUrl || client.customLogo;
+    const logoSrc    = clientLogo || '/logo-sum.svg';
+    const printDate  = new Date().toLocaleDateString('es-ES');
+    const qrText     = `${shipment.id}-${bultoIndex}`;
+    const qrUrl      = urlDelQR(qrText);
+    const destCity   = [shipment.destinationZip, shipment.destinationCity].filter(Boolean).join(' ');
+    const origen     = [shipment.originName || shipment.client, shipment.originCity].filter(Boolean).join(' · ');
+
+    return `
+<div class="l75">
+  <div class="l75-head">
+    <img src="${logoSrc}" class="l75-logo" alt="Logo" onerror="this.style.display='none'" />
+    <div class="l75-ref">
+      <strong>${shipment.id}</strong>
+      <span>Bulto ${bultoIndex} / ${totalBultos} · ${printDate}</span>
+    </div>
+  </div>
+  <div class="l75-body">
+    <div class="l75-main">
+      <div class="l75-dest">
+        <p class="l75-stitle">Destinatario</p>
+        <p class="l75-dest-name">${shipment.destinationName || '—'}</p>
+        <p class="l75-dest-addr">${shipment.destinationAddress || shipment.destination || '—'}</p>
+        <p class="l75-dest-city">${destCity || '—'}</p>
+      </div>
+      <p class="l75-origin"><b>REMITE:</b> ${origen || '—'}</p>
+      ${shipment.observations ? `<p class="l75-obs">${shipment.observations}</p>` : ''}
+    </div>
+    <div class="l75-side">
+      <img src="${qrUrl}" alt="QR" class="l75-qr" />
+      <p class="l75-qr-ref">${qrText}</p>
+      ${shipment.hasCod ? `<p class="l75-cod">REEMBOLSO<br/>${parseFloat(shipment.codAmount || 0).toFixed(2)} €</p>` : ''}
+    </div>
+  </div>
+</div>`;
+}
+
+const LABEL_75_CSS = `
+* { box-sizing: border-box; margin: 0; padding: 0; }
+@page { size: 75mm 52mm; margin: 0mm; }
+html, body { width: 75mm; margin: 0; padding: 0; background: #fff; }
+.page { width: 75mm; height: 52mm; overflow: hidden; page-break-after: always; }
+.page:last-child { page-break-after: auto; }
+
+.l75 {
+  width: 75mm; height: 52mm; padding: 2mm 2.5mm;
+  display: flex; flex-direction: column;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  color: #000; overflow: hidden;
+}
+
+/* Cabecera: logo pequeño + referencia grande */
+.l75-head {
+  display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 0.5mm solid #000; padding-bottom: 1mm; margin-bottom: 1.2mm; flex-shrink: 0;
+}
+.l75-logo { max-width: 22mm; max-height: 7mm; object-fit: contain; }
+.l75-ref  { text-align: right; line-height: 1.15; }
+.l75-ref strong { display: block; font-size: 12pt; font-weight: 900; letter-spacing: 0.3px; }
+/* Todo en negro puro: las térmicas convierten cualquier gris en trama de puntos ilegible */
+.l75-ref span   { font-size: 6pt; color: #000; font-weight: 700; }
+
+/* Cuerpo: destinatario a la izquierda, QR a la derecha */
+.l75-body { display: flex; gap: 2mm; flex: 1; min-height: 0; }
+.l75-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.l75-side { width: 21mm; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
+
+.l75-stitle { font-size: 5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #000; }
+.l75-dest { border: 0.4mm solid #000; border-radius: 1mm; padding: 1mm 1.5mm; }
+.l75-dest-name { font-size: 9pt; font-weight: 900; line-height: 1.1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.l75-dest-addr { font-size: 6.5pt; line-height: 1.2; margin-top: 0.5mm; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.l75-dest-city { font-size: 9pt; font-weight: 800; line-height: 1.15; margin-top: 0.5mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.l75-origin { font-size: 6pt; line-height: 1.2; margin-top: 1mm; color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.l75-obs    { font-size: 6pt; line-height: 1.2; margin-top: 0.6mm; color: #000; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+.l75-qr     { width: 20mm; height: 20mm; object-fit: contain; image-rendering: pixelated; }
+.l75-qr-ref { font-family: monospace; font-size: 6.5pt; font-weight: 800; letter-spacing: 0.5px; white-space: nowrap; }
+.l75-cod    { margin-top: 1mm; font-size: 7pt; font-weight: 900; line-height: 1.15; border: 0.4mm solid #000; padding: 0.6mm 1mm; border-radius: 1mm; }
+
+@media print {
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}`;
+
+/** Abre la ventana de impresión con una etiqueta de 75×52 mm por bulto. */
+export function printLabel75x52(shipment, client) {
+    const total = getLabelCount(shipment);
+
+    let labels = '';
+    for (let i = 1; i <= total; i++) {
+        labels += `<div class="page">${buildLabelHTML75x52(shipment, client, i, total)}</div>`;
+    }
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Etiqueta ${shipment.id}</title>
+  <style>${LABEL_75_CSS}</style>
+</head>
+<body>
+  ${labels}
+  ${WAIT_AND_PRINT_SCRIPT}
+</body>
+</html>`;
+
+    openPrintWindow(html);
 }
 
 // ─── Utilidad interna ─────────────────────────────────────────────────────────
