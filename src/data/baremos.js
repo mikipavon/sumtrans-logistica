@@ -14,7 +14,9 @@ export const BAREMO_1_PUEBLOS = [
     { name: "Córdoba", zip: "14012", baremo: 1 },
     { name: "Córdoba", zip: "14013", baremo: 1 },
     { name: "Córdoba", zip: "14014", baremo: 1 },
-    { name: "Aguilar de la Frontera", zip: "14900", baremo: 1 },
+    // 14900 es Lucena; Aguilar es 14920 (llevaba el de Lucena por error y por
+    // el CP nunca se encontraba el pueblo).
+    { name: "Aguilar de la Frontera", zip: "14920", baremo: 1 },
     { name: "Almedinilla", zip: "14812", baremo: 1 },
     { name: "Baena", zip: "14850", baremo: 1 },
     { name: "Benamejí", zip: "14910", baremo: 1 },
