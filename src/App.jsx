@@ -3978,7 +3978,15 @@ function App() {
 
       const { data, error } = await supabase.from('clients').update({ name: updated.name, data: datosDelCliente }).eq('id', clientId).select();
       if (error) throw error;
-      if (data && data[0]) setClients(prev => prev.map(item => item.id === clientId ? { ...data[0].data, id: data[0].id } : item));
+      // Sin una política que lo permita, Postgres no da error: devuelve 0 filas
+      // y la ficha se queda como estaba. Así se perdía el logo del portal hasta
+      // la fase 33: la app lo enseñaba y la base de datos nunca lo guardó. No
+      // se encola (volvería a dar 0 filas para siempre): queda rastro y se dice.
+      if (!data || data.length === 0) {
+        console.warn(`[Cliente] La base de datos no ha guardado la ficha ${clientId}: 0 filas (este rol no tiene permiso, o la ficha ya no existe)`);
+        return { ok: false, error: { message: 'la base de datos no ha aceptado el cambio' }, accesosCreados: [] };
+      }
+      setClients(prev => prev.map(item => item.id === clientId ? { ...data[0].data, id: data[0].id } : item));
 
       // Igual que en el alta: sólo cuando se toca la contraseña. Este handler se
       // usa mucho como efecto silencioso (GPS, logo del portal…) y esos guardados
