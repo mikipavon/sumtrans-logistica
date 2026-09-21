@@ -223,7 +223,6 @@ export default function ClientDashboard({
     // hasta que llega; si falla, se queda la local.
     const [agendaServidor, setAgendaServidor] = useState(null);
     const [showDestCitySuggestions, setShowDestCitySuggestions] = useState(false);
-    const [showOriginCitySuggestions, setShowOriginCitySuggestions] = useState(false);
 
     // Poblaciones únicas de baremos para autocompletado de ciudades
     const uniquePoblaciones = useMemo(() => {
@@ -255,11 +254,6 @@ export default function ClientDashboard({
         return uniquePoblaciones.filter(p => normalizarTexto(p.name).includes(q)).slice(0, 8);
     }, [uniquePoblaciones, newDestinationCity]);
 
-    const filteredOriginCities = useMemo(() => {
-        if (!newOriginCity || newOriginCity.length < 2) return [];
-        const q = normalizarTexto(newOriginCity);
-        return uniquePoblaciones.filter(p => normalizarTexto(p.name).includes(q)).slice(0, 8);
-    }, [uniquePoblaciones, newOriginCity]);
 
     // Available articles for clients: los asignados en su ficha (allowedArticles);
     // si no tiene ninguno configurado, se cae al default histórico BADI (Bultos) y MYM (Palets).
@@ -1060,52 +1054,9 @@ export default function ClientDashboard({
                         )}
                         
                         <div className="space-y-6">
-                            {/* Origin (Auto-filled but editable) */}
-                            <div>
-                                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-b border-slate-100 pb-2">Recogida (Mis Datos)</h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className="md:col-span-2">
-                                        <label className="block text-sm font-medium text-slate-700 mb-1">Dirección de Recogida</label>
-                                        <input required type="text" value={newOrigin} onChange={e=>setNewOrigin(e.target.value)} className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"/>
-                                    </div>
-                                    <div className="relative">
-                                        <label className="block text-sm font-medium text-slate-700 mb-1">Localidad de Recogida</label>
-                                        <input 
-                                            required type="text" 
-                                            value={newOriginCity} 
-                                            onChange={e => { setNewOriginCity(e.target.value); setShowOriginCitySuggestions(true); }}
-                                            onFocus={() => setShowOriginCitySuggestions(true)}
-                                            onBlur={() => setTimeout(() => setShowOriginCitySuggestions(false), 200)}
-                                            autoComplete="off"
-                                            className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                                            placeholder="Escribe para buscar..."
-                                        />
-                                        {showOriginCitySuggestions && filteredOriginCities.length > 0 && (
-                                            <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden max-h-[200px] overflow-y-auto">
-                                                {filteredOriginCities.map((p, i) => (
-                                                    <button
-                                                        key={`${p.name}-${p.zip}-${i}`}
-                                                        type="button"
-                                                        onMouseDown={() => {
-                                                            setNewOriginCity(p.name);
-                                                            if (p.zip) setNewOriginZip(p.zip);
-                                                            setShowOriginCitySuggestions(false);
-                                                        }}
-                                                        className="w-full text-left px-4 py-2.5 hover:bg-blue-50 transition-colors flex justify-between items-center border-b border-slate-50 last:border-0"
-                                                    >
-                                                        <span className="font-medium text-slate-800 text-sm">{p.name}</span>
-                                                        {p.zip && <span className="text-xs text-slate-400 font-mono">{p.zip}</span>}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 mb-1">Código Postal Recogida</label>
-                                        <input required type="text" value={newOriginZip} onChange={e=>setNewOriginZip(e.target.value)} className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"/>
-                                    </div>
-                                </div>
-                            </div>
+                            {/* La recogida no se pregunta: el cliente con portal es
+                                habitual y sus datos ya están en la ficha (newOrigin,
+                                newOriginZip y newOriginCity salen de client.*). */}
 
                             {/* Destination */}
                             <div>
@@ -1418,7 +1369,11 @@ export default function ClientDashboard({
                                                                 reader.onerror = reject;
                                                                 reader.readAsDataURL(file);
                                                             });
-                                                        onUpdateClient(client.id, { customLogo: dataUrl });
+                                                        // Si la base de datos no lo acepta (0 filas), decirlo:
+                                                        // hasta la fase 33 el logo se veía guardado y se perdía
+                                                        // en la siguiente recarga.
+                                                        const r = await onUpdateClient(client.id, { customLogo: dataUrl });
+                                                        if (r && r.ok === false) alert('No se ha podido guardar el logo en el servidor. Avisa a SUM.');
                                                     } catch (err) {
                                                         console.error('[Logo] No se pudo procesar la imagen:', err);
                                                         alert('No se ha podido procesar la imagen. Prueba con otra.');
@@ -1430,9 +1385,10 @@ export default function ClientDashboard({
                                         
                                         {client.customLogo && (
                                             <button 
-                                                onClick={() => {
+                                                onClick={async () => {
                                                     if (onUpdateClient && window.confirm("¿Seguro que quieres borrar tu logo? Volverá a salir el de la agencia.")) {
-                                                        onUpdateClient(client.id, { customLogo: null });
+                                                        const r = await onUpdateClient(client.id, { customLogo: null });
+                                                        if (r && r.ok === false) alert('No se ha podido borrar el logo en el servidor. Avisa a SUM.');
                                                     }
                                                 }}
                                                 className="mt-3 text-red-500 text-xs hover:underline font-medium"
