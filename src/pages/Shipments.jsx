@@ -733,17 +733,28 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             {(() => {
                                                 const origen = poblacionYCalle(shipment.origin, shipment.originCity);
                                                 const destino = poblacionYCalle(shipment.destination, shipment.destinationCity);
+                                                // En grande y en azul va la parada: el destino en una entrega y el
+                                                // ORIGEN en una recogida, que es a donde va el repartidor. Cuando la
+                                                // oficina apunta el destinatario en la recogida, el destino deja de
+                                                // ser «Almacén Central» y, en grande, parecía que la recogida era
+                                                // una entrega allí (REC-645, 22/09/2026).
+                                                const esRecogida = shipment.type === 'Recogida';
+                                                const parada = esRecogida ? origen : destino;
+                                                const otraPunta = esRecogida ? destino : origen;
+                                                const tituloParada = esRecogida ? shipment.origin : shipment.destination;
+                                                const tituloOtra = esRecogida ? shipment.destination : shipment.origin;
                                                 return (
                                             <div className="flex flex-col gap-1">
-                                                <div className="flex items-center gap-1.5 text-xs text-slate-500 min-w-0" title={shipment.origin}>
+                                                <div className="flex items-center gap-1.5 text-xs text-slate-500 min-w-0" title={tituloOtra}>
                                                     <div className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0"></div>
-                                                    <span className="font-semibold text-slate-600 shrink-0">{origen.ciudad}</span>
-                                                    {origen.calle && <span className="truncate text-slate-400">· {origen.calle}</span>}
+                                                    <span className="font-semibold text-slate-600 shrink-0">{otraPunta.ciudad}</span>
+                                                    {otraPunta.calle && <span className="truncate text-slate-400">· {otraPunta.calle}</span>}
                                                 </div>
-                                                <div className="flex items-center gap-1.5 text-xs text-slate-900 min-w-0" title={shipment.destination}>
-                                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"></div>
-                                                    <span className="font-bold text-sm shrink-0">{destino.ciudad}</span>
-                                                    {destino.calle && <span className="truncate text-slate-500">· {destino.calle}</span>}
+                                                <div className="flex items-center gap-1.5 text-xs text-slate-900 min-w-0" title={tituloParada}>
+                                                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${esRecogida ? 'bg-purple-500' : 'bg-blue-500'}`}></div>
+                                                    <span className="font-bold text-sm shrink-0">{parada.ciudad}</span>
+                                                    {parada.calle && <span className="truncate text-slate-500">· {parada.calle}</span>}
+                                                    {esRecogida && <span className="text-[9px] font-bold text-purple-600 shrink-0">RECOGER</span>}
                                                 </div>
                                             </div>
                                                 );
