@@ -147,7 +147,9 @@ export const ladosDelEnvio = (stop, clientes) => {
         },
         {
             papel: 'Destinatario',
-            nombre: (stop.destinationName || !esRecogida) ? nombreDestinatarioEnRuta(stop, clientes) : '',
+            // En una recogida nombreDestinatarioEnRuta devuelve la parada (el remitente):
+            // el destinatario, si la oficina lo apuntó, se lee tal cual.
+            nombre: esRecogida ? (stop.destinationName || '') : nombreDestinatarioEnRuta(stop, clientes),
             telefono: stop.destinationPhone,
         },
     ];

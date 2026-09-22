@@ -41,7 +41,9 @@ export const mensajeDelJustificante = (shipment, clients = [], { paga = null } =
 
     const date = envio.date || new Date().toLocaleDateString('es-ES');
     const origin = envio.originName || envio.client;
-    const dest = nombreDestinatarioEnRuta(envio, clients);
+    // En una recogida nombreDestinatarioEnRuta es la parada (el remitente): el
+    // destinatario es el que apuntó la oficina o, si no lo hay, el almacén.
+    const dest = isPickup ? (envio.destinationName || envio.destination || '') : nombreDestinatarioEnRuta(envio, clients);
 
     const originClient = fichaPorNombre(envio.originName || envio.client, clients);
     const destClient = fichaDelDestinatario(envio, clients)?.client

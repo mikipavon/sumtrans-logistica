@@ -258,16 +258,22 @@ export const fichaDelDestinatario = (shipment, clients = []) => {
 };
 
 /**
- * El nombre del destinatario tal y como lo tiene que ver EL REPARTIDOR.
+ * El nombre de la parada tal y como lo tiene que ver EL REPARTIDOR.
  *
  * El envío guarda el texto que tecleó quien lo creó, y en el portal el cliente
  * ve eso. Pero la oficina pone en el nombre comercial de la ficha sus propias
  * señas ("la del polígono, preguntar por Juan"), y eso es lo que le sirve al
  * conductor en la calle. Si el envío está enlazado con una ficha nuestra, manda
  * el nombre de la ficha (el de la sede si es una sede); si no, el del envío.
+ *
+ * En una recogida la parada es SIEMPRE el remitente: es a su casa a donde va el
+ * repartidor. La oficina puede dejar apuntado el destinatario en la recogida
+ * (CreatePickupModal) y aquí no puede mandar, o la tarjeta de reparto enseñaba
+ * a quién va el paquete en vez de a quién hay que ir a buscarlo (22/09/2026).
  */
 export const nombreDestinatarioEnRuta = (shipment, clients = []) => {
     if (!shipment) return '';
+    if (shipment.type === 'Recogida') return shipment.originName || shipment.client || '';
     const ficha = fichaDelDestinatario(shipment, clients);
     const deLaFicha = String(ficha?.branch?.name || ficha?.client?.name || '').trim();
     return deLaFicha || shipment.destinationName || shipment.client || '';

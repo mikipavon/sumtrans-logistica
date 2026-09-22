@@ -707,7 +707,9 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 w-[30%] max-w-0 min-w-[170px]">
-                                            {shipment.porteType === 'Debido' ? (
+                                            {/* En una recogida el remitente va siempre en grande, pague quien pague:
+                                                es a donde se va. El destinatario, si la oficina lo apuntó, debajo. */}
+                                            {shipment.porteType === 'Debido' && shipment.type !== 'Recogida' ? (
                                                 <div className="flex flex-col">
                                                     <span className="text-slate-500 font-medium block text-[11px] flex items-center gap-1 mb-0.5">
                                                         <div className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0"></div>

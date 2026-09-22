@@ -89,7 +89,10 @@ export const guardarTelefonoTecleado = async ({
     const isPickup = papel ? papel === 'Remitente' : esRecogida;
     const targetName = isPickup
         ? (shipment.originName || (esRecogida ? shipment.client : ''))
-        : nombreDestinatarioEnRuta(shipment, clients);
+        // En una recogida nombreDestinatarioEnRuta es la parada (el remitente); el
+        // destinatario que apuntó la oficina se lee tal cual, o el número tecleado
+        // para él acabaría en la ficha del remitente.
+        : (esRecogida ? (shipment.destinationName || '') : nombreDestinatarioEnRuta(shipment, clients));
     const targetPhone = isPickup ? shipment.originPhone : shipment.destinationPhone;
 
     // 1) La ficha del cliente. Va primero: es el dato que hay que conservar.

@@ -236,7 +236,10 @@ export const ShipmentCardUI = React.memo(({
                         backgroundColor: (() => {
                             if (stop.color) return stop.color;
                             if (!clients) return '#3b82f6';
-                            const client = fichaDelDestinatario(stop, clients)?.client || clients.find(c => c && c.name === (stop.destinationName || stop.client));
+                            // El color es el de la ficha de la parada: en una recogida, la del remitente.
+                            const client = stop.type === 'Recogida'
+                                ? clients.find(c => c && c.name === (stop.originName || stop.client))
+                                : (fichaDelDestinatario(stop, clients)?.client || clients.find(c => c && c.name === (stop.destinationName || stop.client)));
                             return client?.color || '#3b82f6';
                         })()
                     }}

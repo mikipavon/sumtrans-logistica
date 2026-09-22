@@ -509,6 +509,14 @@ describe('fichaDelDestinatario / nombreDestinatarioEnRuta', () => {
         expect(nombreDestinatarioEnRuta(envio, cartera)).toBe('Ferretería Pérez');
     });
 
+    // La oficina puede dejar el destinatario apuntado en la recogida; la parada
+    // del repartidor sigue siendo el remitente, que es a donde va a buscarla.
+    it('en una recogida la parada es el remitente, aunque traiga destinatario (incluso enlazado)', () => {
+        const recogida = { type: 'Recogida', client: 'Remitente S.A.', destinationName: 'Ferretería Pérez', destinatarioId: 101 };
+        expect(nombreDestinatarioEnRuta(recogida, cartera)).toBe('Remitente S.A.');
+        expect(nombreDestinatarioEnRuta({ ...recogida, originName: 'Sede del remitente' }, cartera)).toBe('Sede del remitente');
+    });
+
     it('con enlace, el repartidor ve el nombre comercial de la ficha', () => {
         const envio = { destinationName: 'Ferretería Pérez', destinatarioId: 101 };
         expect(fichaDelDestinatario(envio, cartera)).toEqual({ client: cartera[0], branch: null });
