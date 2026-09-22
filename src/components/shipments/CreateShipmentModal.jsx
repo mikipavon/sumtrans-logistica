@@ -176,6 +176,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     };
     const [showPaymentAlert, setShowPaymentAlert] = useState(false);
     const [pendingSubmitData, setPendingSubmitData] = useState(null);
+    // El albarán montado y a la espera de que se confirme el aviso de
+    // "población fuera de baremo" (null = sin aviso abierto).
+    const [avisoFueraDeBaremo, setAvisoFueraDeBaremo] = useState(null);
     const [gettingOriginGps, setGettingOriginGps] = useState(false);
     const [gettingDestGps, setGettingDestGps] = useState(false);
 
@@ -1222,10 +1225,24 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 requireWeight: clientRules.requireWeight,
             }
         };
+        setIsUploadingPhoto(false);
+
+        // Población fuera del Baremo 1 y del 2 (22/09/2026): antes de seguir (y
+        // antes de la ventana de cobro) se para a quien da el alta para que
+        // consulte con la oficina el precio, el peso y las medidas. El albarán
+        // ya está montado; "Continuar" retoma exactamente donde se quedó.
+        if (getEffectiveBaremo().fueraDeBaremo) {
+            setAvisoFueraDeBaremo(shipmentData);
+            return;
+        }
+        await seguirTrasElAviso(shipmentData);
+    };
+
+    // Lo que viene después de montar el albarán: la ventana de cobro al contado
+    // si el que paga es habitual, o guardar directamente si no.
+    const seguirTrasElAviso = async (shipmentData) => {
         const shipmentModel = new Shipment(shipmentData);
         const needsAlert = shipmentModel.needsPaymentAlert();
-
-        setIsUploadingPhoto(false);
 
         if (needsAlert) {
             setPendingSubmitData(shipmentData);
@@ -2169,6 +2186,42 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 ))}
             </datalist>
         </div>
+
+        {/* Aviso a pantalla completa, calcado del "Papel Firmado" de la entrega
+            (DeliveryConfirmationModal): color plano, icono que bota, título en
+            mayúsculas y un botón grande de ENTENDIDO. Miguel lo pidió así el
+            22/09/2026 para que no pase desapercibido en el móvil. */}
+        {avisoFueraDeBaremo && (
+            <div role="alertdialog" aria-labelledby="aviso-fuera-de-baremo-titulo" className="absolute inset-0 bg-amber-500 z-[100] flex items-center justify-center p-8 animate-in fade-in duration-300">
+                <div className="flex flex-col items-center gap-6 text-white max-w-xs text-center">
+                    <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center animate-bounce">
+                        <MapPin size={40} className="text-white" />
+                    </div>
+                    <div className="space-y-2">
+                        <h2 id="aviso-fuera-de-baremo-titulo" className="text-3xl font-black uppercase tracking-tighter">¡Fuera de Baremo!</h2>
+                        <p className="text-amber-50 font-medium">Este destino no está en el Baremo 1 ni en el 2. Tarifa mínima de <strong>{PRECIO_MINIMO_FUERA_DE_BAREMO} €</strong>.</p>
+                    </div>
+                    <div className="w-full bg-white/15 border-2 border-white/40 rounded-2xl p-4 text-left">
+                        <p className="text-[11px] font-black uppercase tracking-widest text-amber-50 mb-2">Preguntar a la oficina</p>
+                        <ul className="text-lg font-black uppercase space-y-1 tracking-tight">
+                            <li>• Precio</li>
+                            <li>• Peso</li>
+                            <li>• Medidas</li>
+                        </ul>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => { const datos = avisoFueraDeBaremo; setAvisoFueraDeBaremo(null); seguirTrasElAviso(datos); }}
+                        className="w-full bg-white text-amber-600 py-4 rounded-2xl font-black shadow-xl shadow-amber-900/20 active:scale-95 transition-all text-sm tracking-widest"
+                    >
+                        ENTENDIDO, CONTINUAR
+                    </button>
+                    <button type="button" onClick={() => setAvisoFueraDeBaremo(null)} className="text-amber-50 font-bold text-sm underline underline-offset-4">
+                        Volver al albarán
+                    </button>
+                </div>
+            </div>
+        )}
 
         {showPaymentAlert && (() => {
             // Calcular deudas del remitente

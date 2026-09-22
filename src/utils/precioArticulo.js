@@ -81,10 +81,11 @@ export function pueblosQueCasan(city, zip, lista) {
  * Ajustes) gana Baremo 2, que es lo mismo que hace "AUTO-CORREGIR BAREMOS".
  * La etiqueta (`source`) dice qué fila decidió, para poder encontrarla.
  *
- * `fueraDeBaremo` avisa de que el punto ha caído al escalón 4: la población no
- * está en ninguna tarifa ni en ninguna lista, así que el baremo es un supuesto
- * y el precio del catálogo no vale (ver `conMinimoFueraDeBaremo`). Sin pueblo
- * ni C.P. todavía no hay nada que decidir y no cuenta como fuera.
+ * `fueraDeBaremo` lo decide el C.P. (Miguel, 22/09/2026): sólo cuenta como
+ * fuera un punto que no está en ninguna tarifa ni lista Y cuyo C.P. es de
+ * fuera de Córdoba. Un pueblo de la provincia (14xxx) que no esté en las
+ * listas es Baremo 1 de pleno derecho y no avisa. Sin C.P. tampoco: no hay
+ * con qué decidirlo (ver `conMinimoFueraDeBaremo`).
  */
 export function baremoDelPunto(city, zip, { tariffs = null, coverageZones = [] } = {}) {
     const cleanCity = String(city || '').trim().toLowerCase();
@@ -121,17 +122,15 @@ export function baremoDelPunto(city, zip, { tariffs = null, coverageZones = [] }
         } else if (maestra) {
             baremo = Number(maestra.baremo);
             source = `Listado Maestro (Sistema): ${etiqueta(maestra)}`;
+        } else if (cleanZip.startsWith('14')) {
+            baremo = 1;
+            source = 'C.P. Córdoba (14xxx)';
         } else {
+            baremo = 2;
+            source = 'Fuera de Córdoba (B2)';
             // Una zona con tarifa (aunque no traiga baremo) tiene sus precios
             // por zona en los artículos: ese pueblo sí está tarifado.
-            fueraDeBaremo = !tariffId;
-            if (cleanZip.startsWith('14')) {
-                baremo = 1;
-                source = 'C.P. Córdoba (14xxx)';
-            } else {
-                baremo = 2;
-                source = 'Fuera de Córdoba (B2)';
-            }
+            fueraDeBaremo = !tariffId && !!cleanZip;
         }
     }
 

@@ -105,10 +105,12 @@ describe('baremoDelEnvio', () => {
 // porte no baja de 12 € y al cliente que paga en mano se le manda a preguntar
 // a la oficina.
 describe('fuera de baremo', () => {
-    it('un pueblo que no está en ninguna lista queda marcado, esté donde esté su C.P.', () => {
+    it('lo decide el C.P.: fuera sólo si no está en ninguna lista y el C.P. es de fuera de Córdoba', () => {
         expect(baremoDelPunto('Pueblo Inventado', '29999').fueraDeBaremo).toBe(true);
-        expect(baremoDelPunto('Pueblo Inventado', '14999').fueraDeBaremo).toBe(true);
-        expect(baremoDelPunto('Pueblo Inventado', '').fueraDeBaremo).toBe(true);
+        // Un pueblo de la provincia que no esté en las listas es Baremo 1 y no avisa.
+        expect(baremoDelPunto('Pueblo Inventado', '14999')).toMatchObject({ baremo: 1, fueraDeBaremo: false });
+        // Sin C.P. no hay con qué decidirlo.
+        expect(baremoDelPunto('Pueblo Inventado', '').fueraDeBaremo).toBe(false);
     });
 
     it('un pueblo del listado maestro o de Ajustes no lo está', () => {

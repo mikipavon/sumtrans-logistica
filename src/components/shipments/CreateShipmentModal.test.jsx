@@ -273,3 +273,65 @@ describe('CreateShipmentModal — alta desde una recogida con destinatario y pre
         expect(screen.queryByText('REC-600')).not.toBeInTheDocument();
     });
 });
+
+// ── Población fuera de baremo: aviso antes de la ventana de cobro (22/09/2026) ──
+//
+// Un destino que no sale en el Baremo 1 ni en el 2 se para al generar el
+// albarán: hay que preguntar a la oficina el precio, el peso y las medidas.
+// "Continuar" sigue con la ventana de cobro; "Volver" deja el alta como estaba.
+describe('CreateShipmentModal — aviso de población fuera de baremo', () => {
+    const fueraDeBaremo = { ...RECOGIDA_COMPLETA, porteType: 'Pagado', destinationCity: 'Pueblo Inventado', destinationZip: '29999' };
+    const abrir = () => render(
+        <CreateShipmentModal
+            isOpen
+            isDriver
+            onClose={vi.fn()}
+            onSave={vi.fn()}
+            clients={[]}
+            allPoblaciones={['Montilla', 'Lucena']}
+            tariffs={[]}
+            articles={ARTICULOS}
+            defaultCodFee={0}
+            familyOrder={[]}
+            coverageZones={[]}
+            allShipments={[]}
+            prefillData={fueraDeBaremo}
+        />
+    );
+    const generar = () => {
+        fireEvent.change(screen.getByPlaceholderText('Instrucciones adicionales...'), { target: { value: '1 caja' } });
+        fireEvent.submit(screen.getByText('Generar Albarán').closest('form'));
+    };
+
+    it('al generar sale el aviso con lo que hay que preguntar, y todavía no la ventana de cobro', async () => {
+        abrir();
+        expect(screen.getByText('FUERA DE BAREMO · MÍN. 12 €')).toBeInTheDocument();
+        generar();
+        await waitFor(() => expect(screen.getByText('¡Fuera de Baremo!')).toBeInTheDocument());
+        const aviso = screen.getByRole('alertdialog');
+        expect(aviso.textContent).toContain('Preguntar a la oficina');
+        expect(aviso.textContent).toContain('Precio');
+        expect(aviso.textContent).toContain('Peso');
+        expect(aviso.textContent).toContain('Medidas');
+        expect(screen.queryByText('Atribución de Cobro al Contado')).not.toBeInTheDocument();
+    });
+
+    it('ENTENDIDO pasa a la ventana de cobro con el albarán que ya estaba montado', async () => {
+        abrir();
+        generar();
+        await waitFor(() => expect(screen.getByText('¡Fuera de Baremo!')).toBeInTheDocument());
+        fireEvent.click(screen.getByText('ENTENDIDO, CONTINUAR'));
+        await waitFor(() => expect(screen.getByText('Atribución de Cobro al Contado')).toBeInTheDocument());
+        expect(screen.queryByText('¡Fuera de Baremo!')).not.toBeInTheDocument();
+    });
+
+    it('Volver cierra el aviso y no abre nada más', async () => {
+        abrir();
+        generar();
+        await waitFor(() => expect(screen.getByText('¡Fuera de Baremo!')).toBeInTheDocument());
+        fireEvent.click(screen.getByText('Volver al albarán'));
+        expect(screen.queryByText('¡Fuera de Baremo!')).not.toBeInTheDocument();
+        expect(screen.queryByText('Atribución de Cobro al Contado')).not.toBeInTheDocument();
+        expect(screen.getByText('Generar Albarán')).toBeInTheDocument();
+    });
+});
