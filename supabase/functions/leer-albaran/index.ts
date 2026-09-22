@@ -111,6 +111,8 @@ Cuidado:
 - Casi todo lo que repartimos va a pueblos de la provincia de Córdoba: la delegación de destino pone "CORDOBA" aunque el paquete vaya a Aguilar de la Frontera, Montilla o Lucena. La población es el PUEBLO que acompaña al código postal en la casilla del destinatario (14920 → Aguilar de la Frontera), no la capital ni la provincia.
 - Si la población viene con la provincia detrás ("AGUILAR DE LA FRONTERA (CÓRDOBA)", "MONTILLA - CORDOBA"), quédate sólo con el pueblo.
 - El "porte" del papel sólo se copia: a nosotros nos lo paga siempre la agencia, sea pagado o debido.
+- Reembolso: es el dinero que el repartidor tiene que cobrar al destinatario al entregar. Busca "Reembolso", "Contra reembolso", "R.E." o "COD" con un importe al lado.
+- En TXT el reembolso NO va escrito junto a la palabra: abajo a la izquierda, junto a "TIPO DE PORTES", hay un recuadro grande con una letra. Si esa letra es "R", el importe de la casilla "TOTAL" es el reembolso a cobrar (aunque el porte diga "P. Pagados"). Si el recuadro está vacío o lleva otra letra, el TOTAL es sólo el precio del transporte y el reembolso es 0.
 - Una casilla de reembolso vacía o a cero es 0.
 - Si un dato no se lee con seguridad, déjalo vacío ("" o null). No te lo inventes.
 - Copia los nombres y direcciones tal cual, con sus tildes y eñes.`
