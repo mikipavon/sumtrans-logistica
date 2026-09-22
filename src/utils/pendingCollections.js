@@ -50,6 +50,11 @@ export const importeSinValorar = (value) => {
 // facturación, y la ficha no puede pisarlo.
 export const lineasDeCobro = (s, clients) => {
     if (!s || s.status === 'Anulado') return [];
+    // Una recogida no es un cobro aunque la oficina le haya dejado el precio
+    // fijado: ese precio es el del albarán que nacerá cuando el repartidor la
+    // termine, y el cobro vive en ese albarán. Antes daba igual porque todas
+    // las recogidas nacían «Por valorar».
+    if (s.type === 'Recogida') return [];
 
     const esRecibo = s.type === 'Recibo';
     const senderClient = esRecibo ? null : clients?.find(c => normalizeName(c.name) === normalizeName(s.client) || normalizeName(c.legalName) === normalizeName(s.client));

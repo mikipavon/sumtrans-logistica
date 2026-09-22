@@ -149,3 +149,67 @@ describe('CreateShipmentModal — qué fichas ofrece el buscador', () => {
         expect(screen.queryByText('ADAMUZ RECIEN DADO DE ALTA')).not.toBeInTheDocument();
     });
 });
+
+// ── Terminar una recogida que ya trae destinatario y precio ──
+//
+// La oficina puede dejar apuntados en la recogida el destinatario y el precio
+// (CreatePickupModal). Al terminarla, el repartidor abre este alta rellenada con
+// la recogida: remitente, destinatario y precio tienen que salir puestos. El
+// precio viene como «€12.00» (formato de los albaranes) y la casilla es numérica:
+// hay que pasárselo en número o se queda en blanco.
+
+import { precioDeLaRecogida } from '../../utils/precioDeLaRecogida';
+
+const RECOGIDA_COMPLETA = {
+    id: 'REC-600',
+    type: 'Recogida',
+    client: 'AGRICOLA CASTILLERO',
+    originAddress: 'Ctra. Vieja 1',
+    originCity: 'Montilla',
+    originZip: '14550',
+    originPhone: '957650000',
+    destinationName: 'FERRETERIA LUCENA',
+    destinationAddress: 'C/ Ancha 4',
+    destinationCity: 'Lucena',
+    destinationZip: '14900',
+    destinationPhone: '600500500',
+    amount: '€12.00',
+    customAmount: 12,
+    porteType: 'Debido'
+};
+
+describe('CreateShipmentModal — alta desde una recogida con destinatario y precio', () => {
+    it('sale con remitente, destinatario y precio ya puestos', () => {
+        render(
+            <CreateShipmentModal
+                isOpen
+                isDriver
+                onClose={vi.fn()}
+                onSave={vi.fn()}
+                clients={[]}
+                allPoblaciones={['Montilla', 'Lucena']}
+                tariffs={[]}
+                articles={[]}
+                defaultCodFee={0}
+                familyOrder={[]}
+                coverageZones={[]}
+                allShipments={[]}
+                prefillData={RECOGIDA_COMPLETA}
+            />
+        );
+
+        expect(screen.getByPlaceholderText('Buscar cliente...').value).toBe('AGRICOLA CASTILLERO');
+        expect(screen.getByPlaceholderText('Buscar destino...').value).toBe('FERRETERIA LUCENA');
+        expect(screen.getByDisplayValue('C/ Ancha 4')).toBeInTheDocument();
+        expect(screen.getByDisplayValue('600500500')).toBeInTheDocument();
+        expect(screen.getByDisplayValue('12')).toBeInTheDocument();
+    });
+
+    it('el precio de la recogida se traduce a número para la casilla; sin precio queda vacío', () => {
+        expect(precioDeLaRecogida({ amount: '€12.00', customAmount: 12 })).toBe('12');
+        expect(precioDeLaRecogida({ amount: '€7.50' })).toBe('7.5');
+        expect(precioDeLaRecogida({ amount: 'Por valorar', customAmount: null })).toBe('');
+        expect(precioDeLaRecogida({ amount: 'Por valorar', customAmount: 0 })).toBe('');
+        expect(precioDeLaRecogida(undefined)).toBe('');
+    });
+});

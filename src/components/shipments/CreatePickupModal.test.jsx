@@ -329,3 +329,105 @@ describe('CreatePickupModal — teléfono del remitente', () => {
         expect(campoTelefono().value).toBe('957111111');
     });
 });
+
+// ── Destinatario y precio apuntados por la oficina ──
+//
+// Si al apuntar la recogida ya se sabe a quién va y cuánto vale, la oficina lo
+// deja puesto. Va dentro de la recogida con los mismos nombres que en el
+// albarán, así que el alta que se abre al terminarla (CreateShipmentModal, que
+// se rellena con la recogida entera) sale con remitente, destinatario y precio.
+// Si no se pone nada, la recogida sale como siempre: «Almacén Central» y «Por
+// valorar».
+
+describe('CreatePickupModal — destinatario y precio desde la oficina', () => {
+    beforeEach(() => {
+        reservar.mockReset();
+        reservar.mockResolvedValue({ primero: 600, reservado: true });
+    });
+
+    const DESTINATARIOS = [{
+        id: 3, name: 'FERRETERIA LUCENA', address: 'C/ Ancha 4', city: 'Lucena', zip: '14900', phone: '957500000', mobile: '600500500', coordinates: '37.40, -4.48'
+    }];
+
+    it('sin destinatario ni precio la recogida sale como siempre', async () => {
+        const onSave = vi.fn().mockResolvedValue(true);
+        abrirConGuardado({ onSave });
+
+        rellenarYEnviar();
+
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        const recogida = onSave.mock.calls[0][0];
+        expect(recogida.destination).toBe('Almacén Central');
+        expect(recogida.destinationName).toBe('');
+        expect(recogida.amount).toBe('Por valorar');
+        expect(recogida.customAmount).toBeNull();
+        expect(recogida.porteType).toBe('Pagado');
+    });
+
+    it('el destinatario elegido de una ficha se guarda con su dirección, CP, población, teléfono y GPS', async () => {
+        const onSave = vi.fn().mockResolvedValue(true);
+        render(
+            <CreatePickupModal
+                isOpen
+                onClose={vi.fn()}
+                onSave={onSave}
+                clients={DESTINATARIOS}
+                allPoblaciones={['Montilla', 'Lucena']}
+                allShipments={[]}
+            />
+        );
+
+        fireEvent.change(screen.getByPlaceholderText('Buscar destinatario...'), { target: { value: 'FERRE' } });
+        fireEvent.mouseDown(screen.getByText('FERRETERIA LUCENA'));
+        rellenarYEnviar();
+
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        const recogida = onSave.mock.calls[0][0];
+        expect(recogida.destinationName).toBe('FERRETERIA LUCENA');
+        expect(recogida.destinationAddress).toBe('C/ Ancha 4');
+        expect(recogida.destinationZip).toBe('14900');
+        expect(recogida.destinationCity).toBe('Lucena');
+        expect(recogida.destinationPhone).toBe('600500500');
+        expect(recogida.destinationCoordinates).toBe('37.40, -4.48');
+        expect(recogida.destination).toBe('C/ Ancha 4, 14900 Lucena');
+    });
+
+    it('el precio fijado se guarda como en el albarán: «€12.00» y el número en customAmount, con quién paga', async () => {
+        const onSave = vi.fn().mockResolvedValue(true);
+        abrirConGuardado({ onSave });
+
+        fireEvent.change(screen.getByPlaceholderText('Por valorar'), { target: { value: '12' } });
+        fireEvent.change(screen.getByDisplayValue('Pagado (remitente)'), { target: { value: 'Debido' } });
+        rellenarYEnviar();
+
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        const recogida = onSave.mock.calls[0][0];
+        expect(recogida.amount).toBe('€12.00');
+        expect(recogida.customAmount).toBe(12);
+        expect(recogida.porteType).toBe('Debido');
+    });
+
+    it('la población de entrega rellena su CP igual que la de recogida', () => {
+        abrirRecogida();
+
+        fireEvent.change(screen.getByPlaceholderText('Población de entrega'), { target: { value: 'Luce' } });
+        fireEvent.click(screen.getByText('Lucena'));
+
+        expect(screen.getByPlaceholderText('Población de entrega').value).toBe('Lucena');
+        expect(screen.getByText('CP de Entrega').nextElementSibling.value).toBe('14900');
+    });
+
+    it('al repartidor no se le enseña nada de esto y su recogida sale igual que antes', async () => {
+        const onSave = vi.fn().mockResolvedValue(true);
+        abrirConGuardado({ onSave, isDriver: true });
+
+        expect(screen.queryByPlaceholderText('Buscar destinatario...')).toBeNull();
+        expect(screen.queryByPlaceholderText('Por valorar')).toBeNull();
+
+        rellenarYEnviar();
+
+        await waitFor(() => expect(onSave).toHaveBeenCalled());
+        expect(onSave.mock.calls[0][0].destination).toBe('Almacén Central');
+        expect(onSave.mock.calls[0][0].amount).toBe('Por valorar');
+    });
+});

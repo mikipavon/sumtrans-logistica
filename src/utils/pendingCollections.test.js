@@ -153,6 +153,12 @@ describe('lineasDeCobro · la regla única', () => {
     it('una recogida sin valorar todavía no es un cobro; un porte por Tarifa sí', () => {
         expect(lineasDeCobro({ ...albaranBase, amount: 'Por valorar' }, clientes)).toHaveLength(0);
 
+        // La oficina puede dejar el precio fijado en la recogida (CreatePickupModal):
+        // sigue sin ser un cobro, porque el cobro nace con el albarán que sale de ella.
+        const recogidaConPrecio = { ...albaranBase, id: 'REC-9', type: 'Recogida', amount: '€12.00', customAmount: 12 };
+        expect(lineasDeCobro(recogidaConPrecio, clientes)).toHaveLength(0);
+        expect(isPendingCollection(recogidaConPrecio, clientes)).toBe(false);
+
         const porTarifa = lineasDeCobro({ ...albaranBase, amount: 'Tarifa' }, clientes);
         expect(porTarifa).toHaveLength(1);
         expect(porTarifa[0].amountDisplay).toBe('Tarifa');

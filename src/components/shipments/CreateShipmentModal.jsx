@@ -12,6 +12,7 @@ import CityAutocomplete from '../CityAutocomplete';
 import { supabase } from '../../lib/supabase';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
+import { precioDeLaRecogida } from '../../utils/precioDeLaRecogida';
 import { ahoraParaInputLocal, conHoraRapida, HORAS_RAPIDAS_DE_ASIGNACION } from '../../utils/horaDeAsignacion';
 
 // El nombre de quien crea la ficha lo pone App.jsx, que sabe caer en la sesión
@@ -501,7 +502,10 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                     destinationPhone: prefillData.destinationPhone || '',
                     destinationCoordinates: prefillData.destinationCoordinates || '',
 
-                    amount: prefillData.amount || '',
+                    // Una recogida con precio fijado por la oficina lo trae como
+                    // «€12.00» (y el número en customAmount); la casilla de precio
+                    // es numérica y con el símbolo se quedaba en blanco.
+                    amount: prefillData.type === 'Recogida' ? precioDeLaRecogida(prefillData) : (prefillData.amount || ''),
                     porteType: prefillData.porteType || '',
                     assignedDriverId: prefillData.assignedDriverId || '',
                     scheduledDate: prefillData.scheduledDate || '',

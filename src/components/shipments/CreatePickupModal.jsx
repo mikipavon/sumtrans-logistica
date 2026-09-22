@@ -1,4 +1,4 @@
-import { X, Building2, Package, FileText, MapPin, Loader2, Mic, MicOff, Truck, Phone } from 'lucide-react';
+import { X, Building2, Package, FileText, MapPin, Loader2, Mic, MicOff, Truck, Phone, Euro, User } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import CityAutocomplete from '../CityAutocomplete';
@@ -8,20 +8,35 @@ import { ahoraParaInputLocal, conHoraRapida, HORAS_RAPIDAS_DE_ASIGNACION } from 
 // Serie de las recogidas. REC- desde 2026-08-20; las anteriores conservan su PU-.
 const SERIE_RECOGIDAS = 'REC';
 
+const FORMULARIO_VACIO = {
+    clientName: '',
+    originAddress: '',
+    originZip: '',
+    originCity: '',
+    originPhone: '', // Teléfono del remitente: es el que llama el repartidor desde la parada.
+    observations: '',
+    originCoordinates: '',
+    branchId: null,
+    _parentClientId: null,
+    assignedDriverId: '',
+    scheduledDate: '', // Hora a la que le sale al conductor. Solo la pone la oficina.
+
+    // Destinatario y precio, si la oficina ya los sabe al apuntar la recogida.
+    // Van con los mismos nombres que en el albarán: cuando el repartidor termina
+    // la recogida, el alta de albarán (CreateShipmentModal) se abre rellenada con
+    // la recogida entera y estos campos salen puestos sin teclear nada.
+    destinationName: '',
+    destinationAddress: '',
+    destinationZip: '',
+    destinationCity: '',
+    destinationPhone: '',
+    destinationCoordinates: '',
+    precio: '',           // Precio del porte, en número. Vacío = «Por valorar», como siempre.
+    porteType: 'Pagado'   // Quién paga el porte. 'Pagado' es lo que ya tenían todas las recogidas.
+};
+
 export default function CreatePickupModal({ isOpen, onClose, onSave, clients, allPoblaciones, allShipments, drivers = [], driverNamePreference = 'both', isDriver, coverageZones = [] }) {
-    const [formData, setFormData] = useState({
-        clientName: '',
-        originAddress: '',
-        originZip: '',
-        originCity: '',
-        originPhone: '', // Teléfono del remitente: es el que llama el repartidor desde la parada.
-        observations: '',
-        originCoordinates: '',
-        branchId: null,
-        _parentClientId: null,
-        assignedDriverId: '',
-        scheduledDate: '' // Hora a la que le sale al conductor. Solo la pone la oficina.
-    });
+    const [formData, setFormData] = useState(FORMULARIO_VACIO);
 
     const [gettingGps, setGettingGps] = useState(false);
 
@@ -37,6 +52,8 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
 
     const [filteredClients, setFilteredClients] = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
+    const [filteredDestinations, setFilteredDestinations] = useState([]);
+    const [showDestSuggestions, setShowDestSuggestions] = useState(false);
     const [listeningField, setListeningField] = useState(null);
 
     const startListening = (field, targetKey) => {
@@ -64,6 +81,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                     if (targetKey === 'clientName') {
                         setTimeout(() => updateSuggestions(newValue), 50);
                     }
+                    if (targetKey === 'destinationName') {
+                        setTimeout(() => updateDestSuggestions(newValue), 50);
+                    }
                     
                     return {
                         ...prev,
@@ -81,20 +101,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
 
     useEffect(() => {
         if (!isOpen) {
-            setFormData({
-                clientName: '',
-                originAddress: '',
-                originZip: '',
-                originCity: '',
-                originPhone: '',
-                observations: '',
-                originCoordinates: '',
-                branchId: null,
-                _parentClientId: null,
-                assignedDriverId: '',
-                scheduledDate: ''
-            });
+            setFormData(FORMULARIO_VACIO);
             setShowSuggestions(false);
+            setShowDestSuggestions(false);
             setAvisoGuardado(null);
             setGuardando(false);
             numeroReservadoRef.current = null;
@@ -140,20 +149,24 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
     // rellena la población. Sin esto el CP se quedaba vacío al elegir del desplegable.
     const normalizeCity = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 
-    const handleCityChange = (city) => {
+    // `lado` es 'origin' (remitente) o 'destination' (destinatario): los dos pares
+    // población/CP se rellenan con la misma regla.
+    const handleCityChange = (city, lado = 'origin') => {
         const zoneMatch = (coverageZones || []).find(z => z.zip && normalizeCity(z.name) === normalizeCity(city));
         const baremoMatch = zoneMatch ? null : ALL_BAREMO_PUEBLOS.find(p => p.zip && normalizeCity(p.name) === normalizeCity(city));
         const matchedZip = (zoneMatch && zoneMatch.zip) || (baremoMatch && baremoMatch.zip) || null;
-        setFormData(prev => ({ ...prev, originCity: city, ...(matchedZip ? { originZip: matchedZip } : {}) }));
+        setFormData(prev => ({ ...prev, [`${lado}City`]: city, ...(matchedZip ? { [`${lado}Zip`]: matchedZip } : {}) }));
     };
 
-    const handleZipChange = (zip) => {
+    const handleZipChange = (zip, lado = 'origin') => {
         const match = zip.length >= 4 ? ALL_BAREMO_PUEBLOS.find(p => p.zip === zip) : null;
-        setFormData(prev => ({ ...prev, originZip: zip, ...(match ? { originCity: match.name } : {}) }));
+        setFormData(prev => ({ ...prev, [`${lado}Zip`]: zip, ...(match ? { [`${lado}City`]: match.name } : {}) }));
     };
 
-    const updateSuggestions = (value) => {
-        if (!clients) return;
+    // Las fichas (y sus sedes) que casan con lo tecleado. Sirve para el remitente
+    // y para el destinatario, que buscan en la misma lista.
+    const buscarFichas = (value) => {
+        if (!clients) return null;
         const search = normalizeForSearch(value);
         const sortedClients = [...clients].sort((a, b) => {
             // Priority 1: Approved users first
@@ -188,11 +201,58 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
             results.push(...matchingBranches);
         });
 
+        return results;
+    };
+
+    const updateSuggestions = (value) => {
+        const results = buscarFichas(value);
+        if (!results) return;
         setFilteredClients(results);
         setShowSuggestions(results.length > 0);
     };
 
+    const updateDestSuggestions = (value) => {
+        const results = buscarFichas(value);
+        if (!results) return;
+        setFilteredDestinations(results);
+        setShowDestSuggestions(results.length > 0);
+    };
+
     const handleFocus = () => updateSuggestions(formData.clientName);
+    const handleDestFocus = () => updateDestSuggestions(formData.destinationName);
+
+    const handleDestinationNameChange = (e) => {
+        setFormData(prev => ({ ...prev, destinationName: e.target.value }));
+        updateDestSuggestions(e.target.value);
+    };
+
+    // Mismo relleno que al elegir el destinatario en el alta de albaranes:
+    // dirección, CP, población, teléfono y coordenadas de la ficha o de la sede.
+    const selectDestination = (item) => {
+        if (item._type === 'branch' && item._branch) {
+            const branch = item._branch;
+            setFormData(prev => ({
+                ...prev,
+                destinationName: item._displayName || item.name,
+                destinationAddress: branch.address || item.address || '',
+                destinationZip: branch.zip || item.zip || '',
+                destinationCity: branch.city || item.city || '',
+                destinationPhone: branch.mobile || branch.phone || item.mobile || item.phone || '',
+                destinationCoordinates: branch.coordinates || item.coordinates || ''
+            }));
+        } else {
+            setFormData(prev => ({
+                ...prev,
+                destinationName: item.name,
+                destinationAddress: item.address || '',
+                destinationZip: item.zip || '',
+                destinationCity: item.city || '',
+                destinationPhone: item.mobile || item.phone || '',
+                destinationCoordinates: item.coordinates || ''
+            }));
+        }
+        setShowDestSuggestions(false);
+    };
 
     const handleClientNameChange = (e) => {
         const value = e.target.value;
@@ -244,6 +304,16 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
         // For Pickups, origin is the relevant address
         const fullOrigin = `${formData.originAddress}, ${formData.originZip} ${formData.originCity}`.trim();
 
+        // Destinatario y precio sólo los apunta la oficina. Si no se ponen, la
+        // recogida sale como siempre: destino «Almacén Central» y «Por valorar».
+        const destinatario = !isDriver ? String(formData.destinationName || '').trim() : '';
+        const hayDestinatario = destinatario !== '';
+        const fullDestination = hayDestinatario
+            ? [formData.destinationAddress, [formData.destinationZip, formData.destinationCity].filter(Boolean).join(' ')].filter(Boolean).join(', ')
+            : '';
+        const precio = !isDriver ? parseFloat(String(formData.precio || '').replace(',', '.')) : NaN;
+        const hayPrecio = Number.isFinite(precio) && precio > 0;
+
         try {
             // El número lo reserva el servidor (reservar_numeros_albaran), que ve
             // TODAS las recogidas y atiende de una en una. Antes se calculaba con la
@@ -271,8 +341,15 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 originPhone: String(formData.originPhone || '').trim(),
                 originCoordinates: formData.originCoordinates,
 
-                // Destination is generic for Pickups until processed
-                destination: 'Almacén Central',
+                // Destino: el destinatario si la oficina ya lo sabe; si no, el
+                // almacén, hasta que el repartidor haga el albarán.
+                destination: hayDestinatario ? (fullDestination || destinatario) : 'Almacén Central',
+                destinationName: destinatario,
+                destinationAddress: hayDestinatario ? String(formData.destinationAddress || '').trim() : '',
+                destinationZip: hayDestinatario ? String(formData.destinationZip || '').trim() : '',
+                destinationCity: hayDestinatario ? String(formData.destinationCity || '').trim() : '',
+                destinationPhone: hayDestinatario ? String(formData.destinationPhone || '').trim() : '',
+                destinationCoordinates: hayDestinatario ? (formData.destinationCoordinates || '') : '',
 
                 address: fullOrigin, // Main display address for functionality
                 // Si la oficina ya eligió conductor aquí mismo, la recogida nace igual que
@@ -282,7 +359,13 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 assignedDriverId: (!isDriver && formData.assignedDriverId) ? Number(formData.assignedDriverId) : null,
                 scheduledDate: (!isDriver && formData.assignedDriverId && formData.scheduledDate) ? formData.scheduledDate : null,
                 date: new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }),
-                amount: 'Por valorar',
+                // Con el mismo formato que guarda el alta de albaranes («€12.00» y
+                // el número aparte en customAmount) para que los listados lo pinten
+                // igual. Una recogida con precio NO es un cobro pendiente (ver
+                // lineasDeCobro): el cobro nace con el albarán que sale de ella.
+                amount: hayPrecio ? `€${precio.toFixed(2)}` : 'Por valorar',
+                customAmount: hayPrecio ? precio : null,
+                porteType: (!isDriver && formData.porteType) || 'Pagado',
                 observations: formData.observations,
 
                 // Will be handled by parent to assign to creator or pool
@@ -360,7 +443,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                         <div className="bg-amber-50/50 p-3 rounded-lg border border-amber-100 mb-4">
                             <p className="text-xs text-amber-800 flex gap-2">
                                 <Building2 size={14} className="shrink-0 mt-0.5" />
-                                Solo se requiere información del remitente. El destino será el almacén por defecto.
+                                {isDriver
+                                    ? 'Solo se requiere información del remitente. El destino será el almacén por defecto.'
+                                    : 'Solo hace falta el remitente. Si ya se sabe el destinatario o el precio, se apuntan abajo y salen puestos en el albarán cuando el repartidor termine la recogida.'}
                             </p>
                         </div>
 
@@ -521,6 +606,146 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                                 onChange={(e) => setFormData({ ...formData, observations: e.target.value })}
                             ></textarea>
                         </div>
+
+                        {/* ── DESTINATARIO Y PRECIO (solo oficina, opcionales) ──
+                            Lo que se apunte aquí viaja dentro de la recogida y el alta
+                            de albarán lo carga tal cual cuando el repartidor la termina.
+                            Al repartidor no se le enseña: su recogida sigue siendo rápida. */}
+                        {!isDriver && (
+                            <div className="pt-2 border-t border-slate-100 space-y-3">
+                                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
+                                    <User size={14} className="text-amber-600" />
+                                    Destinatario
+                                    <span className="font-medium normal-case tracking-normal text-[10px] text-slate-400">(opcional, si ya se sabe)</span>
+                                </h4>
+                                <div className="relative">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <label className={labelClass + " mb-0"}>Nombre del destinatario</label>
+                                        <button
+                                            type="button"
+                                            onClick={() => startListening('destination', 'destinationName')}
+                                            className={`p-1 rounded-md transition-colors ${listeningField === 'destination' ? 'bg-red-100 text-red-600 animate-pulse' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
+                                            title="Hablar para escribir"
+                                        >
+                                            {listeningField === 'destination' ? <MicOff size={14} /> : <Mic size={14} />}
+                                        </button>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        placeholder="Buscar destinatario..."
+                                        className={inputClass}
+                                        value={formData.destinationName}
+                                        onChange={handleDestinationNameChange}
+                                        onFocus={handleDestFocus}
+                                        onBlur={() => setTimeout(() => setShowDestSuggestions(false), 150)}
+                                    />
+                                    {showDestSuggestions && filteredDestinations.length > 0 && (
+                                        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-100 rounded-lg shadow-xl z-[100] max-h-40 overflow-y-auto">
+                                            {filteredDestinations.map(item => (
+                                                <button
+                                                    key={item.id}
+                                                    type="button"
+                                                    className={`w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-50 last:border-0 ${item._type === 'branch' ? 'bg-blue-50/30' : ''}`}
+                                                    onMouseDown={(e) => { e.preventDefault(); selectDestination(item); }}
+                                                >
+                                                    <div className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                                                        {item._type === 'branch' && <span className="text-blue-500 text-[10px]">📍</span>}
+                                                        {item._displayName || item.name}
+                                                    </div>
+                                                    <div className="text-[10px] text-slate-500 truncate">
+                                                        {item._type === 'branch' && item._branch ? (item._branch.address || item._branch.city || '') : item.address}
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                                <div>
+                                    <label className={labelClass}>Dirección de Entrega</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Dirección del destinatario"
+                                        className={inputClass}
+                                        value={formData.destinationAddress}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, destinationAddress: e.target.value }))}
+                                    />
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className={labelClass}>Población de Entrega</label>
+                                        <CityAutocomplete
+                                            className={inputClass}
+                                            value={formData.destinationCity}
+                                            poblaciones={allPoblaciones || []}
+                                            placeholder="Población de entrega"
+                                            onChange={(e) => handleCityChange(e.target.value, 'destination')}
+                                            onSelect={(val) => handleCityChange(val, 'destination')}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className={labelClass}>CP de Entrega</label>
+                                        <input
+                                            type="text"
+                                            className={inputClass}
+                                            value={formData.destinationZip}
+                                            onChange={(e) => handleZipChange(e.target.value, 'destination')}
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className={labelClass}>Teléfono del Destinatario</label>
+                                    <div className="relative">
+                                        <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                        <input
+                                            type="tel"
+                                            inputMode="tel"
+                                            placeholder="Teléfono del destinatario..."
+                                            className={inputClass + " pl-9"}
+                                            value={formData.destinationPhone}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, destinationPhone: e.target.value }))}
+                                        />
+                                    </div>
+                                </div>
+
+                                <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2 pt-1">
+                                    <Euro size={14} className="text-amber-600" />
+                                    Precio del Porte
+                                    <span className="font-medium normal-case tracking-normal text-[10px] text-slate-400">(opcional, si ya está fijado)</span>
+                                </h4>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className={labelClass}>Precio (€)</label>
+                                        <div className="relative">
+                                            <Euro size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                inputMode="decimal"
+                                                placeholder="Por valorar"
+                                                className={inputClass + " pl-9"}
+                                                value={formData.precio}
+                                                onChange={(e) => setFormData(prev => ({ ...prev, precio: e.target.value }))}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className={labelClass}>Quién paga</label>
+                                        <select
+                                            className={inputClass}
+                                            value={formData.porteType}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, porteType: e.target.value }))}
+                                        >
+                                            <option value="Pagado">Pagado (remitente)</option>
+                                            <option value="Debido">Debido (destinatario)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <p className="text-[10px] text-slate-400 leading-tight">
+                                    Sin precio, el albarán sale «Por valorar» y lo pone el repartidor al hacerlo.
+                                </p>
+                            </div>
+                        )}
 
                         {/* ── PROGRAMAR LA ASIGNACIÓN (solo oficina) ──
                             Mismo par conductor + fecha/hora que el cuadro «Programar
