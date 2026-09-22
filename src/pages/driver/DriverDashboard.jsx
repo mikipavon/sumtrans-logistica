@@ -3727,6 +3727,9 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
             const otherPendingShipments = (allShipments || []).filter(s => {
                 if (!s || s.id === deliveryModalShipment.id) return false;
                 if (idsParadasDeHoyMismoCliente.has(s.id)) return false;
+                // Una recogida no es una deuda aunque la oficina le haya fijado el
+                // precio: se cobra en el albarán que nace de ella (lineasDeCobro).
+                if (s.type === 'Recogida') return false;
 
                 // Simple status check first
                 const isPending = s.status === 'Entrega aplazada' || s.status === 'Pendiente de asignar' || s.status === 'Entregado' || s.paymentStatus === 'Pending';

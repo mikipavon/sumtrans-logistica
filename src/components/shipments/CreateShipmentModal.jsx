@@ -196,6 +196,11 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     // Date.now() como id repetía el número si entraban dos en el mismo milisegundo,
     // y la papelera de uno se llevaba los dos.
     const contadorArticulosRef = useRef(0);
+    // Precio que la oficina dejó fijado en la recogida que se está convirtiendo.
+    // Mientras esté puesto, los artículos no lo pisan: se apuntan para las
+    // etiquetas y el detalle, pero el porte es el que se acordó en la recogida.
+    // La casilla de precio sigue pudiendo cambiarse a mano.
+    const precioFijadoEnRecogidaRef = useRef(false);
 
     // Weight-based pricing state (for agencies like XPO, TSB, TXT)
     const [weightKg, setWeightKg] = useState('');
@@ -464,6 +469,13 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         return (articlesTotal + portePorPeso + commission).toFixed(2);
     };
 
+    // Lo que los artículos (o los kilos) le ponen a la casilla de precio. Con el
+    // precio fijado en la recogida no la tocan: el 22/09/2026 una recogida a 50 €
+    // se convirtió, el repartidor apuntó un bulto de 7 € y el albarán salió a
+    // 7 € con los 50 € perdidos.
+    const importeSegunArticulos = (prev, articulos, kilos) =>
+        precioFijadoEnRecogidaRef.current ? prev.amount : calcularImporteTotal(articulos, kilos);
+
     useEffect(() => {
         if (isOpen) {
             cancelarAltaArticuloPendiente(); // Que no entre un artículo de la sesión anterior
@@ -479,6 +491,11 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
 
             if (prefillData) {
                 // Pre-fill from Pickup (Recogida), Return or other source
+                // Una recogida con precio fijado por la oficina lo trae como
+                // «€12.00» (y el número en customAmount); la casilla de precio
+                // es numérica y con el símbolo se quedaba en blanco.
+                const precioRecogida = prefillData.type === 'Recogida' ? precioDeLaRecogida(prefillData) : '';
+                precioFijadoEnRecogidaRef.current = precioRecogida !== '';
                 setFormData({
                     clientName: prefillData.clientName || prefillData.client || '',
                     payerName: prefillData.payerName || '',
@@ -502,10 +519,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                     destinationPhone: prefillData.destinationPhone || '',
                     destinationCoordinates: prefillData.destinationCoordinates || '',
 
-                    // Una recogida con precio fijado por la oficina lo trae como
-                    // «€12.00» (y el número en customAmount); la casilla de precio
-                    // es numérica y con el símbolo se quedaba en blanco.
-                    amount: prefillData.type === 'Recogida' ? precioDeLaRecogida(prefillData) : (prefillData.amount || ''),
+                    amount: prefillData.type === 'Recogida' ? precioRecogida : (prefillData.amount || ''),
                     porteType: prefillData.porteType || '',
                     assignedDriverId: prefillData.assignedDriverId || '',
                     scheduledDate: prefillData.scheduledDate || '',
@@ -522,6 +536,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 setPagaOtroCliente(!!prefillData.payerName);
             } else {
                 // Reset clean
+                precioFijadoEnRecogidaRef.current = false;
                 setPagaOtroCliente(false);
                 setFormData({
                     clientName: '',
@@ -861,7 +876,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         if (cambiaron) {
             console.log("💰 [Precios] Actualizando precios de artículos por cambio de zona:", articulos);
             setSelectedArticles(articulos);
-            setFormData(prev => ({ ...prev, amount: calcularImporteTotal(articulos) }));
+            setFormData(prev => ({ ...prev, amount: importeSegunArticulos(prev, articulos) }));
         }
     }, [formData.porteType, formData.clientName, formData.payerName, formData._payerParentClientId, formData.destinationName, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip, tariffs, coverageZones, selectedArticles]);
 
@@ -897,7 +912,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         selectedArticlesRef.current = updatedList;
         setSelectedArticles(updatedList);
 
-        setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedList) }));
+        setFormData(prev => ({ ...prev, amount: importeSegunArticulos(prev, updatedList) }));
         setTempArticleId('');
     };
 
@@ -934,7 +949,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         const updatedList = selectedArticles.filter(item => item.uniqueId !== uniqueId);
         setSelectedArticles(updatedList);
 
-        setFormData(prev => ({ ...prev, amount: calcularImporteTotal(updatedList) }));
+        setFormData(prev => ({ ...prev, amount: importeSegunArticulos(prev, updatedList) }));
     };
 
     useEffect(() => {
@@ -1952,7 +1967,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                                     const val = e.target.value;
                                                     setWeightKg(val);
                                                     if (weightClientData) {
-                                                        setFormData(prev => ({ ...prev, amount: calcularImporteTotal(selectedArticles, val) }));
+                                                        setFormData(prev => ({ ...prev, amount: importeSegunArticulos(prev, selectedArticles, val) }));
                                                     }
                                                 }}
                                             />
@@ -2153,6 +2168,10 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
             const clientName = (pendingSubmitData?.client || '').trim().toLowerCase();
             const debts = clientName ? (allShipments || []).filter(s => {
                 if (!s) return false;
+                // Una recogida no es una deuda aunque lleve el precio fijado: ese
+                // precio es el del albarán que nace de ella (puede ser este mismo,
+                // que todavía no la ha retirado). La misma regla que lineasDeCobro.
+                if (s.type === 'Recogida') return false;
                 const hasPendingPorte = parseFloat(String(s.amount || '0').replace(/[^0-9.]/g, '')) > 0 && !s.portePaid;
                 const hasPendingCod = s.hasCod && parseFloat(s.codAmount || 0) > 0 && !s.codPaid;
                 if (!hasPendingPorte && !hasPendingCod) return false;

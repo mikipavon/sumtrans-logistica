@@ -7,7 +7,7 @@
 // Ahora el alta espera a que el desplegable se quede quieto y sólo entra el
 // último valor; al salir del desplegable entra al momento.
 
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import CreateShipmentModal from './CreateShipmentModal';
 
@@ -211,5 +211,65 @@ describe('CreateShipmentModal — alta desde una recogida con destinatario y pre
         expect(precioDeLaRecogida({ amount: 'Por valorar', customAmount: null })).toBe('');
         expect(precioDeLaRecogida({ amount: 'Por valorar', customAmount: 0 })).toBe('');
         expect(precioDeLaRecogida(undefined)).toBe('');
+    });
+
+    const abrirDesdeRecogida = (recogida, allShipments = []) => render(
+        <CreateShipmentModal
+            isOpen
+            isDriver
+            onClose={vi.fn()}
+            onSave={vi.fn()}
+            clients={[]}
+            allPoblaciones={['Montilla', 'Lucena']}
+            tariffs={[]}
+            articles={ARTICULOS}
+            defaultCodFee={0}
+            familyOrder={[]}
+            coverageZones={[]}
+            allShipments={allShipments}
+            prefillData={recogida}
+        />
+    );
+    const precio = () => screen.getByPlaceholderText('PRECIO FINAL 0.00').value;
+
+    // El 22/09/2026 una recogida a 50 € se convirtió, el repartidor apuntó un
+    // bulto de 7 € y la casilla pasó a 7 €: los 50 € acordados se perdieron. El
+    // precio fijado en la recogida manda; los artículos sólo se apuntan.
+    it('apuntar o quitar un artículo no pisa el precio fijado en la recogida', () => {
+        abrirDesdeRecogida(RECOGIDA_COMPLETA);
+        expect(precio()).toBe('12');
+
+        const sel = desplegable();
+        fireEvent.change(sel, { target: { value: '1774442159060' } });
+        fireEvent.blur(sel);
+        expect(lineas('BLT_1')).toHaveLength(1);
+        expect(precio()).toBe('12');
+
+        fireEvent.click(lineas('BLT_1')[0].closest('.justify-between').querySelector('button'));
+        expect(lineas('BLT_1')).toHaveLength(0);
+        expect(precio()).toBe('12');
+    });
+
+    it('una recogida sin precio («Por valorar») deja que los artículos pongan el precio', () => {
+        abrirDesdeRecogida({ ...RECOGIDA_COMPLETA, amount: 'Por valorar', customAmount: null });
+        const sel = desplegable();
+        fireEvent.change(sel, { target: { value: '1774442159060' } });
+        fireEvent.blur(sel);
+        expect(precio()).toBe('5.00');
+    });
+
+    // La recogida sigue en la lista de envíos hasta que el albarán se guarda, y
+    // con el precio fijado salía en «Cobros pendientes» del aviso de cobro como
+    // una deuda más (REC-651, 50 €). Una recogida no es una deuda.
+    it('el aviso de cobro no ofrece la propia recogida como cobro pendiente', async () => {
+        const recogidaPagada = { ...RECOGIDA_COMPLETA, porteType: 'Pagado' };
+        const deudaDeVerdad = { id: 'HAB-9', type: 'Envío', client: 'AGRICOLA CASTILLERO', porteType: 'Pagado', amount: '€5.00', portePaid: false, status: 'Entregado' };
+        abrirDesdeRecogida(recogidaPagada, [recogidaPagada, deudaDeVerdad]);
+        fireEvent.change(screen.getByPlaceholderText('Instrucciones adicionales...'), { target: { value: '1 caja' } });
+        fireEvent.submit(screen.getByText('Generar Albarán').closest('form'));
+
+        await waitFor(() => expect(screen.getByText('Atribución de Cobro al Contado')).toBeInTheDocument());
+        expect(screen.getByText('HAB-9')).toBeInTheDocument();
+        expect(screen.queryByText('REC-600')).not.toBeInTheDocument();
     });
 });
