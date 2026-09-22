@@ -996,6 +996,33 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     </div>
                     )}
 
+                    {/* Bultos y artículos en el portal del cliente: en lectura y sin precios.
+                        El bloque de importes de arriba va escondido en el portal a propósito
+                        (los importes son de quien paga), pero eso dejaba el detalle sin
+                        decir qué lleva el envío: para verlo había que darle al lápiz
+                        (Miguel, 22/09/2026). */}
+                    {isClientView && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1 border-b border-slate-100 pb-2"><Package size={12} /> Bultos y Artículos</span>
+                            {(shipment.articles || []).length > 0 ? (
+                                <div className="bg-white border border-slate-100 rounded-lg p-2">
+                                    {(shipment.articles || []).map((item, i) => (
+                                        <div key={item.uniqueId || i} className="py-1 text-sm border-b border-slate-50 last:border-0 font-medium text-slate-800">
+                                            {item.quantity || 1}x {item.name}
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-gray-800 font-medium text-sm break-words whitespace-pre-wrap">
+                                    {shipment.packages || <span className="text-gray-300 italic">No especificado</span>}
+                                </p>
+                            )}
+                            {parseFloat(shipment.weightKg) > 0 && (
+                                <p className="text-sm font-bold text-indigo-700">⚖️ {shipment.weightKg} kg</p>
+                            )}
+                        </div>
+                    )}
+
                     {/* Factura Simplificada: fuera del modo edición a propósito, para que se
                         pueda marcar también desde vistas de solo lectura (p.ej. al pinchar un
                         cobro en la Caja del conductor), que es justo donde hace falta reclasificar

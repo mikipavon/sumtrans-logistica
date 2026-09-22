@@ -124,3 +124,40 @@ describe('ShipmentDetailsModal: la documentación firmada', () => {
         expect(screen.getByText(/Devolver Documentación Firmada/)).toBeInTheDocument();
     });
 });
+
+// ── El portal del cliente enseña qué lleva el envío sin tener que editar ──
+//
+// SUM-2067, 22/09/2026: en el detalle del portal no salían los bultos ni los
+// artículos, porque el bloque de importes va escondido para el cliente. Los
+// artículos se enseñan en lectura y sin precios (los importes son de quien paga).
+describe('ShipmentDetailsModal: bultos y artículos en el portal del cliente', () => {
+    const abrirEnElPortal = (extra = {}) => render(
+        <ShipmentDetailsModal
+            isOpen={true}
+            onClose={() => {}}
+            shipment={{ ...sum258, ...extra }}
+            isReadOnly={true}
+            isClientView={true}
+            clientePortal={{ id: 1, name: 'COMERCIAL BADI S.A.' }}
+            allPoblaciones={[]}
+            clients={[]}
+            articles={[BLT_5]}
+            tariffs={null}
+            coverageZones={[]}
+        />
+    );
+
+    it('enseña los artículos sin precio', () => {
+        abrirEnElPortal({ articles: [{ ...BLT_5, quantity: 2, unitPrice: 21.5, totalPrice: 43, uniqueId: 'a1' }] });
+        expect(screen.getByText('Bultos y Artículos')).toBeInTheDocument();
+        expect(screen.getByText('2x BLT_5')).toBeInTheDocument();
+        expect(screen.queryByText('43.00€')).not.toBeInTheDocument();
+        expect(screen.queryByText('Precio Final Porte')).not.toBeInTheDocument();
+    });
+
+    it('sin artículos enseña el texto de bultos, y los kilos si los hay', () => {
+        abrirEnElPortal({ articles: [], packages: '3', weightKg: 12 });
+        expect(screen.getByText('3')).toBeInTheDocument();
+        expect(screen.getByText('⚖️ 12 kg')).toBeInTheDocument();
+    });
+});
