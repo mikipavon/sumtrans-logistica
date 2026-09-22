@@ -444,14 +444,16 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
     // de miles de albaranes por cada una de las 500 fichas dejaría la lista
     // pegada al desplazarse.
     const quienMandoPorCliente = useMemo(() => {
-        const indice = indexarEnviosPorCliente(shipments);
+        // La cartera entera va también: si el porte lo paga una agencia (TSB,
+        // TXT, XPO) se enseña la agencia y no el remitente de Barcelona.
+        const indice = indexarEnviosPorCliente(shipments, clients);
         const mapa = new Map();
         pendingClients.forEach(p => {
             const mando = quienMandoLaMercancia(p, indice);
             if (mando) mapa.set(p.id, mando);
         });
         return mapa;
-    }, [pendingClients, shipments]);
+    }, [pendingClients, shipments, clients]);
 
     // ── Fichas de cartera que se parecen a cada solicitud ──
     // El registro web nunca toca una ficha existente, así que la empresa que ya

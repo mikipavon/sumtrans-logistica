@@ -2,7 +2,7 @@ import { X, Truck, Package, Euro, Map as MapIcon, Building2, FileText, UserPlus,
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Shipment from '../../models/Shipment';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
-import { baremoDelPunto, baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, pueblosQueCasan } from '../../utils/precioArticulo';
+import { baremoDelPunto, baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, pueblosQueCasan, conMinimoFueraDeBaremo, PRECIO_MINIMO_FUERA_DE_BAREMO } from '../../utils/precioArticulo';
 import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import CameraCaptureModal from '../CameraCaptureModal';
@@ -466,7 +466,9 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         const portePorPeso = weightClientData
             ? calculateWeightPrice(kilos, weightClientData.tariff, weightClientData.client)
             : 0;
-        return (articlesTotal + portePorPeso + commission).toFixed(2);
+        // Población fuera de los baremos: el porte no baja de 12 € (22/09/2026).
+        const porte = conMinimoFueraDeBaremo(articlesTotal + portePorPeso, getEffectiveBaremo().fueraDeBaremo);
+        return (porte + commission).toFixed(2);
     };
 
     // Lo que los artículos (o los kilos) le ponen a la casilla de precio. Con el
@@ -2035,12 +2037,17 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                 </div>
                                 <div className="flex justify-between items-center px-1">
                                     {(() => {
-                                        const { baremo, source } = getEffectiveBaremo();
+                                        const { baremo, source, fueraDeBaremo } = getEffectiveBaremo();
                                         return (
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-2 flex-wrap">
                                                 <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${baremo === 2 ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
                                                     BAREMO {baremo}
                                                 </span>
+                                                {fueraDeBaremo && (
+                                                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-100 text-amber-700" title="La población no está en el Baremo 1 ni en el 2: el precio del catálogo es un supuesto. Mínimo 12 €.">
+                                                        FUERA DE BAREMO · MÍN. {PRECIO_MINIMO_FUERA_DE_BAREMO} €
+                                                    </span>
+                                                )}
                                                 <span className="text-[9px] text-slate-400 font-medium italic">
                                                     Origen: {source || 'Autocalculado'}
                                                 </span>

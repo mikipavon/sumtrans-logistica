@@ -80,16 +80,22 @@ export function pueblosQueCasan(city, zip, lista) {
  * no se ponen de acuerdo (el mismo pueblo repetido en las dos columnas de
  * Ajustes) gana Baremo 2, que es lo mismo que hace "AUTO-CORREGIR BAREMOS".
  * La etiqueta (`source`) dice qué fila decidió, para poder encontrarla.
+ *
+ * `fueraDeBaremo` avisa de que el punto ha caído al escalón 4: la población no
+ * está en ninguna tarifa ni en ninguna lista, así que el baremo es un supuesto
+ * y el precio del catálogo no vale (ver `conMinimoFueraDeBaremo`). Sin pueblo
+ * ni C.P. todavía no hay nada que decidir y no cuenta como fuera.
  */
 export function baremoDelPunto(city, zip, { tariffs = null, coverageZones = [] } = {}) {
     const cleanCity = String(city || '').trim().toLowerCase();
     const cleanZip = String(zip || '').trim();
-    if (!cleanCity && !cleanZip) return { baremo: 1, tariffId: null, source: 'General' };
+    if (!cleanCity && !cleanZip) return { baremo: 1, tariffId: null, source: 'General', fueraDeBaremo: false };
 
     const normCity = normalizarPoblacion(cleanCity);
     let tariffId = null;
     let baremo = 1;
     let source = 'General';
+    let fueraDeBaremo = false;
 
     if (tariffs) {
         const porNombre = tariffs.find(t => t.match && normCity && normalizarPoblacion(t.match) === normCity);
@@ -115,22 +121,28 @@ export function baremoDelPunto(city, zip, { tariffs = null, coverageZones = [] }
         } else if (maestra) {
             baremo = Number(maestra.baremo);
             source = `Listado Maestro (Sistema): ${etiqueta(maestra)}`;
-        } else if (cleanZip.startsWith('14')) {
-            baremo = 1;
-            source = 'C.P. Córdoba (14xxx)';
         } else {
-            baremo = 2;
-            source = 'Fuera de Córdoba (B2)';
+            // Una zona con tarifa (aunque no traiga baremo) tiene sus precios
+            // por zona en los artículos: ese pueblo sí está tarifado.
+            fueraDeBaremo = !tariffId;
+            if (cleanZip.startsWith('14')) {
+                baremo = 1;
+                source = 'C.P. Córdoba (14xxx)';
+            } else {
+                baremo = 2;
+                source = 'Fuera de Córdoba (B2)';
+            }
         }
     }
 
-    return { baremo, tariffId, source };
+    return { baremo, tariffId, source, fueraDeBaremo };
 }
 
 /**
  * Baremo del envío entero: si el origen O el destino son Baremo 2, todo el
  * envío va a Baremo 2. La zona (`tariffId`) es la del destino, que es donde se
- * definen los precios por zona de los artículos.
+ * definen los precios por zona de los artículos. Basta con que un punto esté
+ * fuera de baremo para que lo esté el envío.
  */
 export function baremoDelEnvio({ originCity, originZip, destinationCity, destinationZip } = {}, opciones = {}) {
     const origen = baremoDelPunto(originCity, originZip, opciones);
@@ -138,7 +150,23 @@ export function baremoDelEnvio({ originCity, originZip, destinationCity, destina
     const baremo = (Number(origen.baremo) === 2 || Number(destino.baremo) === 2) ? 2 : 1;
     let source = origen.baremo === 2 ? origen.source : destino.source;
     if (origen.baremo === 2 && destino.baremo === 2) source = `${origen.source} + ${destino.source}`;
-    return { baremo, tariffId: destino.tariffId, source };
+    const fueraDeBaremo = !!(origen.fueraDeBaremo || destino.fueraDeBaremo);
+    return { baremo, tariffId: destino.tariffId, source, fueraDeBaremo };
+}
+
+// ── Población fuera de los baremos ──
+//
+// Decidido por Miguel el 22/09/2026: un envío cuya población no sale en el
+// Baremo 1 ni en el 2 se cobra como mínimo a 12 €, y al cliente que no es de
+// Facturación se le avisa de que pregunte el precio en la oficina (el portal
+// enseña el aviso; ver ClientDashboard). El mínimo es del porte (artículos o
+// kilos), antes de sumar la comisión del reembolso.
+export const PRECIO_MINIMO_FUERA_DE_BAREMO = 12;
+
+export function conMinimoFueraDeBaremo(importeDelPorte, fueraDeBaremo) {
+    const n = Number(importeDelPorte) || 0;
+    if (!fueraDeBaremo) return n;
+    return Math.max(n, PRECIO_MINIMO_FUERA_DE_BAREMO);
 }
 
 /**

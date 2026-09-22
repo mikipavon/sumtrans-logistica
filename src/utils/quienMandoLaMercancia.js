@@ -20,6 +20,7 @@
 // vez de escribir "se desconoce".
 
 import { normalizarNombreCliente } from './altaClientes';
+import { findAgencyByName } from './agencyOwnership';
 
 // `date` es texto en español ("7 sept 2026") y Date no sabe leerlo: para ordenar
 // se usa `createdAt`, que es ISO. Sin él, el envío cuenta como el más antiguo.
@@ -34,6 +35,28 @@ const momentoDelEnvio = (envio) => {
 const nombreDelRemitente = (envio) => String(envio?.originName || envio?.client || '').trim();
 const nombreDelDestinatario = (envio) => String(envio?.destinationName || '').trim();
 
+// Las mismas tres de marca.js, por si la agencia no tiene ficha marcada.
+const AGENCIAS_CONOCIDAS = ['tsb', 'txt', 'xpo'];
+
+// La agencia que paga el porte, o '' si lo paga cualquier otro. Se mira por la
+// ficha (isAgency, con razón social y sedes) y, de respaldo, por la palabra
+// suelta en el nombre; palabra entera, para que EXPODISEÑO no cuente como XPO.
+// Se devuelve el nombre de la ficha, para que "TSB Córdoba" y "T.S.B." salgan
+// como una sola agencia en el desplegable.
+const agenciaQuePaga = (envio, clients) => {
+    const pagador = String(envio?.client || '').trim();
+    if (!pagador) return '';
+    const ficha = findAgencyByName(pagador, clients);
+    if (ficha) return String(ficha.name || pagador).trim();
+    const palabras = pagador.toLowerCase().split(/[^a-z0-9]+/);
+    return palabras.some(p => AGENCIAS_CONOCIDAS.includes(p)) ? pagador : '';
+};
+
+// Lo que se enseña como "quién mandó": si el porte lo paga una agencia, la
+// agencia. A la oficina lo que le dice algo es que el paquete llegó por TSB o
+// por XPO, no el nombre del taller de Barcelona que se lo entregó a la agencia.
+const nombreDeQuienManda = (envio, clients) => agenciaQuePaga(envio, clients) || nombreDelRemitente(envio);
+
 const apuntar = (mapa, clave, envio) => {
     if (!clave) return;
     const lista = mapa.get(clave);
@@ -46,7 +69,7 @@ const apuntar = (mapa, clave, envio) => {
  * para toda la pantalla: recorrer los envíos por cada una de las 500 fichas
  * pendientes deja la lista pegada al desplazarse.
  */
-export function indexarEnviosPorCliente(shipments = []) {
+export function indexarEnviosPorCliente(shipments = [], clients = []) {
     const porDestinatario = new Map();
     const porRemitente = new Map();
     const porFichaDestino = new Map();
@@ -55,6 +78,12 @@ export function indexarEnviosPorCliente(shipments = []) {
         if (!envio) continue;
         apuntar(porDestinatario, normalizarNombreCliente(nombreDelDestinatario(envio)), envio);
         apuntar(porRemitente, normalizarNombreCliente(nombreDelRemitente(envio)), envio);
+        // La agencia que paga también cuenta como quien manda, para que una
+        // ficha de tipo Remitente que sea la agencia encuentre sus albaranes.
+        const agencia = agenciaQuePaga(envio, clients);
+        if (agencia && normalizarNombreCliente(agencia) !== normalizarNombreCliente(nombreDelRemitente(envio))) {
+            apuntar(porRemitente, normalizarNombreCliente(agencia), envio);
+        }
         // El enlace a nuestra ficha lo escribe la base de datos al guardar el
         // envío, así que ata la ficha a su albarán aunque el nombre se haya
         // corregido a mano después.
@@ -63,7 +92,7 @@ export function indexarEnviosPorCliente(shipments = []) {
         }
     }
 
-    return { porDestinatario, porRemitente, porFichaDestino };
+    return { porDestinatario, porRemitente, porFichaDestino, clients: clients || [] };
 }
 
 const sinRepetir = (...listas) => {
@@ -107,7 +136,7 @@ export function quienMandoLaMercancia(client, indice) {
     const deInteres = [];
     const nombres = new Map();
     for (const envio of candidatos) {
-        const nombre = esRemitente ? nombreDelDestinatario(envio) : nombreDelRemitente(envio);
+        const nombre = esRemitente ? nombreDelDestinatario(envio) : nombreDeQuienManda(envio, indice.clients);
         const suClave = normalizarNombreCliente(nombre);
         // Sin nombre no hay nada que enseñar, y un envío de uno a sí mismo
         // (remitente y destinatario iguales) sólo repetiría la propia ficha.

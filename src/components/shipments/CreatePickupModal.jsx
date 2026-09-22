@@ -228,15 +228,21 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
 
     // Mismo relleno que al elegir el destinatario en el alta de albaranes:
     // dirección, CP, población, teléfono y coordenadas de la ficha o de la sede.
+    //
+    // La "Dirección Operativa (Sede Física)" de la ficha manda sobre la fiscal,
+    // igual que en el alta de albaranes. Hasta el 22/9/2026 la recogida cogía
+    // sólo la fiscal: LEKUE factura en Sevilla (41006) pero se recoge en Córdoba,
+    // y la recogida salía con origen Sevilla. Al terminarla, el albarán se abría
+    // con ese origen y todo el envío se iba a Baremo 2.
     const selectDestination = (item) => {
         if (item._type === 'branch' && item._branch) {
             const branch = item._branch;
             setFormData(prev => ({
                 ...prev,
                 destinationName: item._displayName || item.name,
-                destinationAddress: branch.address || item.address || '',
-                destinationZip: branch.zip || item.zip || '',
-                destinationCity: branch.city || item.city || '',
+                destinationAddress: branch.address || item.opAddress || item.address || '',
+                destinationZip: branch.zip || item.opZip || item.zip || '',
+                destinationCity: branch.city || item.opCity || item.city || '',
                 destinationPhone: branch.mobile || branch.phone || item.mobile || item.phone || '',
                 destinationCoordinates: branch.coordinates || item.coordinates || ''
             }));
@@ -244,9 +250,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
             setFormData(prev => ({
                 ...prev,
                 destinationName: item.name,
-                destinationAddress: item.address || '',
-                destinationZip: item.zip || '',
-                destinationCity: item.city || '',
+                destinationAddress: item.opAddress || item.address || '',
+                destinationZip: item.opZip || item.zip || '',
+                destinationCity: item.opCity || item.city || '',
                 destinationPhone: item.mobile || item.phone || '',
                 destinationCoordinates: item.coordinates || ''
             }));
@@ -270,9 +276,9 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                 // "AGROCOR MONTILLA" la recogida no puede salir a nombre de
                 // "AGROCOR TORRECILLA" (mismo criterio que al crear un albaran).
                 clientName: item._displayName || item.name,
-                originAddress: branch.address || item.address || '',
-                originZip: branch.zip || item.zip || '',
-                originCity: branch.city || item.city || '',
+                originAddress: branch.address || item.opAddress || item.address || '',
+                originZip: branch.zip || item.opZip || item.zip || '',
+                originCity: branch.city || item.opCity || item.city || '',
                 // Móvil antes que fijo: es a quien hay que localizar para recoger.
                 originPhone: branch.mobile || branch.phone || item.mobile || item.phone || '',
                 originCoordinates: branch.coordinates || '',
@@ -283,9 +289,10 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
             setFormData(prev => ({
                 ...prev,
                 clientName: item.name,
-                originAddress: item.address || '',
-                originZip: item.zip || '',
-                originCity: item.city || '',
+                // Sede física antes que fiscal (ver selectDestination).
+                originAddress: item.opAddress || item.address || '',
+                originZip: item.opZip || item.zip || '',
+                originCity: item.opCity || item.city || '',
                 originPhone: item.mobile || item.phone || '',
                 originCoordinates: item.coordinates || '',
                 branchId: null,

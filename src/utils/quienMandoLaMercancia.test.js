@@ -23,6 +23,33 @@ describe('quienMandoLaMercancia', () => {
         expect(quienMandoLaMercancia({ name: 'José López', type: 'Destinatario' }, indice).nombre).toBe('TALLERES SUR');
     });
 
+    it('si el porte lo paga una agencia enseña la agencia, no al remitente', () => {
+        const TSB = { id: 1, name: 'TSB', isAgency: true, branches: [{ id: 'b1', name: 'TSB Córdoba' }] };
+        const indice = indexarEnviosPorCliente([
+            envio({ client: 'TSB Córdoba', originName: 'TALLERES SUR' }),
+        ], [TSB]);
+        const quien = quienMandoLaMercancia({ name: 'José López', type: 'Destinatario' }, indice);
+        expect(quien.nombre).toBe('TSB');
+        expect(quien.todos).toEqual([{ clave: expect.any(String), nombre: 'TSB' }]);
+    });
+
+    it('reconoce la agencia por el nombre aunque no tenga ficha marcada', () => {
+        const indice = indexarEnviosPorCliente([
+            envio({ client: 'XPO Logistics', originName: 'TALLERES SUR' }),
+            envio({ id: 'SUM-2', client: 'EXPODISEÑO', originName: 'EXPODISEÑO', createdAt: '2026-09-09T08:00:00.000Z' }),
+        ]);
+        const quien = quienMandoLaMercancia({ name: 'José López', type: 'Destinatario' }, indice);
+        expect(quien.nombre).toBe('XPO Logistics');
+        expect(quien.todos.map(r => r.nombre)).toEqual(['XPO Logistics', 'EXPODISEÑO']);
+    });
+
+    it('una ficha de remitente que es la agencia encuentra lo que pagó', () => {
+        const TSB = { id: 1, name: 'TSB', isAgency: true };
+        const indice = indexarEnviosPorCliente([envio({ client: 'TSB', originName: 'TALLERES SUR' })], [TSB]);
+        const quien = quienMandoLaMercancia({ name: 'TSB', type: 'Remitente' }, indice);
+        expect(quien).toMatchObject({ sentido: 'manda', nombre: 'José López' });
+    });
+
     it('con varios remitentes enseña el último y cuenta los demás', () => {
         const indice = indexarEnviosPorCliente([
             envio(),

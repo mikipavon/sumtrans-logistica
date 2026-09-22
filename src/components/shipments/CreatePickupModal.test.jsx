@@ -330,6 +330,68 @@ describe('CreatePickupModal — teléfono del remitente', () => {
     });
 });
 
+// ── La sede física manda sobre la dirección fiscal ──
+//
+// LEKUE factura en Sevilla (41006) pero se le recoge en Córdoba, que está en
+// la "Dirección Operativa (Sede Física)" de su ficha. El alta de albaranes ya
+// la prefería; la recogida cogía la fiscal y, al terminarla, el albarán nacía
+// con origen Sevilla y el envío entero se iba a Baremo 2.
+
+describe('CreatePickupModal — sede física antes que dirección fiscal', () => {
+    const LEKUE = {
+        id: 9, name: 'LEKUE',
+        address: 'POL.IND. EL REFUGIO, S/N', city: 'SEVILLA', zip: '41006',
+        opAddress: '', opCity: 'Córdoba', opZip: '14000'
+    };
+    const campoDireccion = () => screen.getByPlaceholderText('Dirección completa');
+
+    function abrirConLekue({ branches } = {}) {
+        render(
+            <CreatePickupModal
+                isOpen
+                onClose={vi.fn()}
+                onSave={vi.fn()}
+                clients={[{ ...LEKUE, ...(branches ? { branches } : {}) }]}
+                allPoblaciones={['Córdoba', 'Montilla']}
+                allShipments={[]}
+            />
+        );
+    }
+
+    it('el remitente se rellena con la población y CP operativos, no con los fiscales', () => {
+        abrirConLekue();
+
+        fireEvent.change(screen.getByPlaceholderText('Buscar cliente...'), { target: { value: 'LEK' } });
+        fireEvent.click(screen.getByText('LEKUE'));
+
+        expect(campoPoblacion().value).toBe('Córdoba');
+        expect(campoCP().value).toBe('14000');
+        // Sin domicilio operativo se queda el fiscal, como en el albarán.
+        expect(campoDireccion().value).toBe('POL.IND. EL REFUGIO, S/N');
+    });
+
+    it('el destinatario también prefiere la sede física', () => {
+        abrirConLekue();
+
+        fireEvent.change(screen.getByPlaceholderText('Buscar destinatario...'), { target: { value: 'LEK' } });
+        fireEvent.mouseDown(screen.getByText('LEKUE'));
+
+        expect(screen.getByPlaceholderText('Población de entrega').value).toBe('Córdoba');
+        expect(screen.getByText('CP de Entrega').nextElementSibling.value).toBe('14000');
+    });
+
+    it('una sede sin población cae en la operativa de la ficha madre antes que en la fiscal', () => {
+        abrirConLekue({ branches: [{ id: 1, name: 'LEKUE ALMACÉN', address: 'Nave 3' }] });
+
+        fireEvent.change(screen.getByPlaceholderText('Buscar cliente...'), { target: { value: 'ALMAC' } });
+        fireEvent.click(screen.getByText('LEKUE ALMACÉN'));
+
+        expect(campoDireccion().value).toBe('Nave 3');
+        expect(campoPoblacion().value).toBe('Córdoba');
+        expect(campoCP().value).toBe('14000');
+    });
+});
+
 // ── Destinatario y precio apuntados por la oficina ──
 //
 // Si al apuntar la recogida ya se sabe a quién va y cuánto vale, la oficina lo

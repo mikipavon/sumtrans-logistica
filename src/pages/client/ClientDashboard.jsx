@@ -4,10 +4,11 @@ import { coincideEnCampos, normalizarTexto, CAMPOS_BUSCABLES_ENVIO } from '../..
 import ShipmentDetailsModal from '../../components/shipments/ShipmentDetailsModal';
 import { printShipmentTicket } from '../../utils/printShipment';
 import { generateDeliveryPDF, generateDeliveryNotesPDF } from '../../utils/deliveryPdf';
+import { enviosDelManifiesto, descargarManifiesto } from '../../utils/manifiestoDeCarga';
 import LabelPrintModal from '../../components/clients/LabelPrintModal';
 
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
-import { baremoDelEnvio, precioUnitarioArticulo } from '../../utils/precioArticulo';
+import { baremoDelEnvio, precioUnitarioArticulo, conMinimoFueraDeBaremo, PRECIO_MINIMO_FUERA_DE_BAREMO } from '../../utils/precioArticulo';
 import { construirAgendaDestinatarios, filtrarAgendaDestinatarios, agendaDesdeServidor, juntarAgendas } from '../../utils/agendaDestinatarios';
 import { cargarAgendaDelServidor } from '../../utils/agendaDestinatariosServidor';
 import { getPackagesCount, envioEsDelCliente, papelDelClienteEnElEnvio, quienPagaElPorte } from '../../utils/shipmentUtils';
@@ -170,6 +171,27 @@ export default function ClientDashboard({
         }
     };
 
+    // Manifiesto de carga: la hoja que el cliente le da a firmar al conductor con
+    // lo que se lleva. Sin fechas puestas son los envíos de hoy; con fechas, lo
+    // que hay en pantalla. Sólo lo que MANDA él y nada de importes.
+    const enviosParaManifiesto = useMemo(
+        () => enviosDelManifiesto(clientShipments, client, { hayFiltroDeFechas: Boolean(dateFrom || dateTo) }),
+        [clientShipments, client, dateFrom, dateTo]
+    );
+
+    const [descargandoManifiesto, setDescargandoManifiesto] = useState(false);
+    const descargarManifiestoDeCarga = async () => {
+        if (descargandoManifiesto || enviosParaManifiesto.length === 0) return;
+        setDescargandoManifiesto(true);
+        try {
+            await descargarManifiesto({ client, envios: enviosParaManifiesto });
+        } catch (err) {
+            alert('Error al generar el manifiesto: ' + err.message);
+        } finally {
+            setDescargandoManifiesto(false);
+        }
+    };
+
     const requestSort = (key) => {
         let direction = 'asc';
         if (sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -219,6 +241,21 @@ export default function ClientDashboard({
     // La ficha nuestra a la que apunta el destinatario elegido en la agenda
     // ({ id, sedeId }), o null si el cliente lo ha tecleado a mano. Ver fase 26.
     const [destinatarioEnlazado, setDestinatarioEnlazado] = useState(null);
+    // Población fuera del Baremo 1 y del 2 (22/09/2026): el porte no baja de
+    // 12 € y, si el cliente no es de Facturación (paga en mano), se le avisa
+    // bajo la localidad de que pregunte el precio en la oficina. Al de
+    // Facturación no se le dice nada: la oficina le pone el precio al revisar.
+    const envioFueraDeBaremo = useMemo(
+        () => baremoDelEnvio({
+            originCity: newOriginCity,
+            originZip: newOriginZip,
+            destinationCity: newDestinationCity,
+            destinationZip: newDestinationZip,
+        }, { tariffs, coverageZones }).fueraDeBaremo,
+        [newOriginCity, newOriginZip, newDestinationCity, newDestinationZip, tariffs, coverageZones]
+    );
+    const clienteDeFacturacion = String(client.billingType || '').toLowerCase().includes('factur');
+    const avisarPrecioEnOficina = envioFueraDeBaremo && !clienteDeFacturacion;
     // La agenda calculada por el servidor (todos sus envíos, con ficha). null
     // hasta que llega; si falla, se queda la local.
     const [agendaServidor, setAgendaServidor] = useState(null);
@@ -382,16 +419,18 @@ export default function ClientDashboard({
         // Hasta el 18/9/2026 aqu\u00ed viv\u00eda una copia que cog\u00eda la primera fila de
         // Ajustes que casara por nombre o C.P., y si no ten\u00eda baremo la daba
         // por Baremo 1: un env\u00edo del cliente a Antequera sal\u00eda a precio B1.
-        const { baremo, tariffId } = baremoDelEnvio({
+        const { baremo, tariffId, fueraDeBaremo } = baremoDelEnvio({
             originCity: newOriginCity,
             originZip: newOriginZip,
             destinationCity: newDestinationCity,
             destinationZip: newDestinationZip,
         }, { tariffs, coverageZones });
-        const { articles: articulosDelEnvio, total: totalPrice } = valorarLineas(
+        const { articles: articulosDelEnvio, total: totalArticulos } = valorarLineas(
             lineas, availableArticles,
             (articulo) => precioUnitarioArticulo(articulo, { baremo, tariffId, cliente: client })
         );
+        // Población fuera de los baremos: el porte no baja de 12 € (22/09/2026).
+        const totalPrice = conMinimoFueraDeBaremo(totalArticulos, fueraDeBaremo);
         const numPackages = bultosDeLosArticulos(articulosDelEnvio);
 
         const amountNum = parseFloat(codAmount) || 0;
@@ -829,9 +868,28 @@ export default function ClientDashboard({
                             )}
 
                             <button
+                                onClick={descargarManifiestoDeCarga}
+                                disabled={descargandoManifiesto || enviosParaManifiesto.length === 0}
+                                className="ml-auto flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors bg-blue-900 text-white hover:bg-blue-800 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                title={enviosParaManifiesto.length === 0
+                                    ? ((dateFrom || dateTo)
+                                        ? 'No hay envíos tuyos en las fechas seleccionadas'
+                                        : 'Hoy no has creado ningún envío. Pon fechas para hacer el manifiesto de otro día')
+                                    : ((dateFrom || dateTo)
+                                        ? 'PDF con los envíos de las fechas seleccionadas para que te lo firme el conductor'
+                                        : 'PDF con los envíos de hoy para que te lo firme el conductor')}
+                            >
+                                {descargandoManifiesto
+                                    ? <Loader2 size={16} className="animate-spin" />
+                                    : <FileText size={16} />
+                                }
+                                {`Manifiesto de carga (${enviosParaManifiesto.length})`}
+                            </button>
+
+                            <button
                                 onClick={descargarAlbaranesDelFiltro}
                                 disabled={descargandoAlbaranes || albaranesDelFiltro.length === 0}
-                                className="ml-auto flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                className="flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
                                 title={albaranesDelFiltro.length === 0
                                     ? 'No hay albaranes entregados en las fechas seleccionadas'
                                     : 'Descarga en un solo PDF todos los albaranes de las fechas seleccionadas'}
@@ -1137,6 +1195,18 @@ export default function ClientDashboard({
                                         <label className="block text-sm font-medium text-slate-700 mb-1">Código Postal Destino</label>
                                         <input required type="text" value={newDestinationZip} onChange={e=>setNewDestinationZip(e.target.value)} className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"/>
                                     </div>
+                                    {avisarPrecioEnOficina && (
+                                        <div role="alert" className="md:col-span-2 flex items-start gap-3 p-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-900">
+                                            <span className="text-xl leading-none" aria-hidden="true">⚠️</span>
+                                            <div className="text-sm">
+                                                <p className="font-bold">Población fuera de nuestras tarifas</p>
+                                                <p className="mt-1">
+                                                    El precio mínimo de este porte es de <strong>{PRECIO_MINIMO_FUERA_DE_BAREMO} €</strong>.
+                                                    Antes de enviarlo, consulta el precio en la oficina: <a href="tel:957245221" className="font-bold underline">957 245 221</a>.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 

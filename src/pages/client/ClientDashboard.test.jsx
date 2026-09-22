@@ -7,7 +7,7 @@
 // columna de destinatario sin saber por qué.
 
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import ClientDashboard from './ClientDashboard';
 
 // Todo esto arrastra medio proyecto (PDF, impresión, Supabase) y aquí no se abre.
@@ -16,6 +16,11 @@ vi.mock('../../components/clients/LabelPrintModal', () => ({ default: () => null
 vi.mock('../../components/clients/ImportExcelShipments', () => ({ default: () => null }));
 vi.mock('../../utils/deliveryPdf', () => ({ generateDeliveryPDF: vi.fn(), generateDeliveryNotesPDF: vi.fn() }));
 vi.mock('../../utils/printShipment', () => ({ printShipmentTicket: vi.fn() }));
+// El manifiesto se calcula de verdad (qué envíos entran) y sólo se ahorra la descarga.
+vi.mock('../../utils/manifiestoDeCarga', async (importOriginal) => ({
+    ...(await importOriginal()),
+    descargarManifiesto: vi.fn(),
+}));
 vi.mock('../../utils/numeracionAlbaran', () => ({ reservarNumerosAlbaran: vi.fn() }));
 vi.mock('../../utils/ventanaPadre', () => ({ avisarAlPadre: vi.fn(), estamosEmbebidos: () => false }));
 // La agenda del servidor (fase 26): por defecto no contesta nada, y cada test
@@ -24,6 +29,7 @@ vi.mock('../../utils/agendaDestinatariosServidor', () => ({ cargarAgendaDelServi
 
 import { cargarAgendaDelServidor } from '../../utils/agendaDestinatariosServidor';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
+import { descargarManifiesto } from '../../utils/manifiestoDeCarga';
 
 const ESMEBRA = { id: 42, name: 'ESMEBRA', address: 'C/ Real 1', zip: '14940', city: 'Cabra' };
 
@@ -336,6 +342,82 @@ describe('ClientDashboard · precio del envío por baremo', () => {
     });
 });
 
+// ── Población fuera de los baremos (22/09/2026) ──
+//
+// Un destino que no sale en el Baremo 1 ni en el 2 se cobra como mínimo a 12 €.
+// Al cliente que paga en mano (no es de Facturación) se le avisa bajo la
+// localidad de que pregunte el precio en la oficina; al de Facturación no.
+describe('ClientDashboard · población fuera de baremo', () => {
+    const BLT_1 = { id: '1774442159060', name: 'BLT_1', category: 'BADI', price: '4.30', priceB2: '6.00' };
+    const AVISO = 'Población fuera de nuestras tarifas';
+
+    const pintarAlta = (cliente) => {
+        const onCreateShipment = vi.fn();
+        render(
+            <ClientDashboard client={cliente} onLogout={() => {}} allShipments={[enviado]} drivers={[]}
+                allClients={[cliente]} articles={[BLT_1]} tariffs={[]} coverageZones={[]}
+                onCreateShipment={onCreateShipment} onUpdateClient={vi.fn()} onDeleteShipment={vi.fn()} />
+        );
+        fireEvent.click(screen.getByText('Crear Nuevo Envío'));
+        return onCreateShipment;
+    };
+
+    const tecleaDestino = (poblacion, cp) => {
+        fireEvent.change(screen.getByPlaceholderText('Escribe para buscar...'), { target: { value: poblacion } });
+        const cpInput = screen.getByText('Código Postal Destino').parentElement.querySelector('input');
+        fireEvent.change(cpInput, { target: { value: cp } });
+    };
+
+    it('cliente que paga en mano: ve el aviso de preguntar en la oficina y el envío sale a 12 €', async () => {
+        reservarNumerosAlbaran.mockResolvedValueOnce({ primero: 503 });
+        const onCreateShipment = pintarAlta({ ...ESMEBRA, billingType: 'Clientes Habituales' });
+
+        expect(screen.queryByText(AVISO)).toBeNull();
+        tecleaDestino('Pueblo Inventado', '29999');
+        expect(screen.getByText(AVISO)).toBeTruthy();
+        expect(screen.getByRole('alert').textContent).toContain('957 245 221');
+
+        fireEvent.change(document.querySelector('select[required]'), { target: { value: BLT_1.id } });
+        fireEvent.click(document.querySelector('input[name="porteType"][value="Pagado"]'));
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalled());
+        const envio = onCreateShipment.mock.calls[0][0];
+        expect(envio.articles[0].unitPrice).toBe(6); // el B2 del catálogo, que se queda por debajo del mínimo
+        expect(envio.amount).toBe('12.00');
+    });
+
+    it('cliente de Facturación: mismo mínimo de 12 € pero sin aviso', async () => {
+        reservarNumerosAlbaran.mockResolvedValueOnce({ primero: 504 });
+        const onCreateShipment = pintarAlta({ ...ESMEBRA, billingType: 'Facturación' });
+
+        tecleaDestino('Pueblo Inventado', '29999');
+        expect(screen.queryByText(AVISO)).toBeNull();
+
+        fireEvent.change(document.querySelector('select[required]'), { target: { value: BLT_1.id } });
+        fireEvent.click(document.querySelector('input[name="porteType"][value="Pagado"]'));
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalled());
+        expect(onCreateShipment.mock.calls[0][0].amount).toBe('12.00');
+    });
+
+    it('un pueblo de los baremos no avisa ni sube el precio', async () => {
+        reservarNumerosAlbaran.mockResolvedValueOnce({ primero: 505 });
+        const onCreateShipment = pintarAlta({ ...ESMEBRA, billingType: 'Clientes Habituales' });
+
+        tecleaDestino('Lucena', '14900');
+        expect(screen.queryByText(AVISO)).toBeNull();
+
+        fireEvent.change(document.querySelector('select[required]'), { target: { value: BLT_1.id } });
+        fireEvent.click(document.querySelector('input[name="porteType"][value="Pagado"]'));
+        fireEvent.submit(document.querySelector('form'));
+
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalled());
+        expect(onCreateShipment.mock.calls[0][0].amount).toBe('4.30');
+    });
+});
+
 // ── Modificar o borrar: sólo lo suyo y sólo hasta que pasamos el escáner ──
 //
 // El cliente puede cambiar o quitar un envío mientras siga pendiente y ningún
@@ -578,5 +660,50 @@ describe('ClientDashboard · varios artículos con cantidad', () => {
         expect(cambios.articles.map(a => [a.name, a.quantity])).toEqual([['TURISMO', 4], ['BLT_5', 1]]);
         expect(cambios.packages).toBe(9);
         expect(cambios.amount).toBe('18.30');
+    });
+});
+
+// ── Manifiesto de carga ──
+//
+// La hoja que el cliente le da a firmar al conductor con lo que se lleva. Sin
+// fechas puestas es lo de hoy; con fechas, lo que hay en pantalla. Nunca entra
+// lo que le llega a él (no se lo lleva nadie de su nave) ni los anulados.
+describe('ClientDashboard · manifiesto de carga', () => {
+    const boton = () => screen.getByRole('button', { name: /Manifiesto de carga/ });
+
+    afterEach(() => { vi.useRealTimers(); descargarManifiesto.mockClear(); });
+
+    it('sin fechas puestas cuenta sólo lo que ha mandado hoy y lo descarga al pulsar', () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 1, 17, 0)); // el día del enviado
+        pintar();
+        expect(boton().textContent).toContain('(1)');
+        fireEvent.click(boton());
+        expect(descargarManifiesto).toHaveBeenCalledTimes(1);
+        const { client, envios } = descargarManifiesto.mock.calls[0][0];
+        expect(client).toBe(ESMEBRA);
+        expect(envios.map(s => s.id)).toEqual(['SUM-100']);
+    });
+
+    it('un día sin envíos deja el botón cerrado y explica que se pongan fechas', () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 22, 17, 0));
+        pintar();
+        expect(boton().textContent).toContain('(0)');
+        expect(boton().disabled).toBe(true);
+        expect(boton().title).toMatch(/Pon fechas/);
+        fireEvent.click(boton());
+        expect(descargarManifiesto).not.toHaveBeenCalled();
+    });
+
+    it('con fechas puestas entra lo que manda en ese rango, y sigue sin entrar lo que recibe', () => {
+        pintar();
+        const [desde, hasta] = document.querySelectorAll('input[type="date"]');
+        fireEvent.change(desde, { target: { value: '2026-09-01' } });
+        fireEvent.change(hasta, { target: { value: '2026-09-02' } });
+        expect(screen.getByText('SUM-101')).toBeTruthy(); // el recibido está en pantalla...
+        expect(boton().textContent).toContain('(1)');        // ...pero no en el manifiesto
+        fireEvent.click(boton());
+        expect(descargarManifiesto.mock.calls[0][0].envios.map(s => s.id)).toEqual(['SUM-100']);
     });
 });

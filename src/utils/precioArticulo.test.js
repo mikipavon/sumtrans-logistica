@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizarPoblacion, pueblosQueCasan, baremoDelPunto, baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos } from './precioArticulo';
+import { normalizarPoblacion, pueblosQueCasan, baremoDelPunto, baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, conMinimoFueraDeBaremo, PRECIO_MINIMO_FUERA_DE_BAREMO } from './precioArticulo';
 
 const BLT_5 = { id: 'blt5', name: 'BLT_5', price: '18.00', priceB2: '21.50' };
 
@@ -95,6 +95,51 @@ describe('baremoDelEnvio', () => {
     it('la zona es la del destino', () => {
         const tariffs = [{ id: 'zOrigen', match: 'Córdoba' }, { id: 'zDestino', match: 'Cabra' }];
         expect(baremoDelEnvio({ originCity: 'Córdoba', destinationCity: 'Cabra' }, { tariffs }).tariffId).toBe('zDestino');
+    });
+});
+
+// ── Población fuera de los baremos (22/09/2026) ──
+//
+// Si el pueblo no sale en el Baremo 1 ni en el 2, el baremo que se le pone es
+// un supuesto (14xxx → B1, el resto → B2) y el precio del catálogo no vale: el
+// porte no baja de 12 € y al cliente que paga en mano se le manda a preguntar
+// a la oficina.
+describe('fuera de baremo', () => {
+    it('un pueblo que no está en ninguna lista queda marcado, esté donde esté su C.P.', () => {
+        expect(baremoDelPunto('Pueblo Inventado', '29999').fueraDeBaremo).toBe(true);
+        expect(baremoDelPunto('Pueblo Inventado', '14999').fueraDeBaremo).toBe(true);
+        expect(baremoDelPunto('Pueblo Inventado', '').fueraDeBaremo).toBe(true);
+    });
+
+    it('un pueblo del listado maestro o de Ajustes no lo está', () => {
+        expect(baremoDelPunto('Casariche', '41580').fueraDeBaremo).toBe(false);
+        expect(baremoDelPunto('Cabra', '').fueraDeBaremo).toBe(false);
+        const coverageZones = [{ name: 'Mi Pueblo', zip: '29999', baremo: 2 }];
+        expect(baremoDelPunto('Mi Pueblo', '29999', { coverageZones }).fueraDeBaremo).toBe(false);
+    });
+
+    it('una zona con tarifa cuenta como tarifada aunque no traiga baremo', () => {
+        const tariffs = [{ id: 'z1', match: 'Mi Zona' }];
+        expect(baremoDelPunto('Mi Zona', '29999', { tariffs }).fueraDeBaremo).toBe(false);
+    });
+
+    it('sin pueblo ni C.P. todavía no hay nada que decidir', () => {
+        expect(baremoDelPunto('', '').fueraDeBaremo).toBe(false);
+    });
+
+    it('el envío está fuera si lo está el origen o el destino', () => {
+        expect(baremoDelEnvio({ originCity: 'Cabra', originZip: '14940', destinationCity: 'Pueblo Inventado', destinationZip: '29999' }).fueraDeBaremo).toBe(true);
+        expect(baremoDelEnvio({ originCity: 'Pueblo Inventado', originZip: '29999', destinationCity: 'Cabra', destinationZip: '14940' }).fueraDeBaremo).toBe(true);
+        expect(baremoDelEnvio({ originCity: 'Cabra', originZip: '14940', destinationCity: 'Casariche', destinationZip: '41580' }).fueraDeBaremo).toBe(false);
+    });
+
+    it('el porte no baja de 12 € fuera de baremo, y dentro no se toca', () => {
+        expect(PRECIO_MINIMO_FUERA_DE_BAREMO).toBe(12);
+        expect(conMinimoFueraDeBaremo(4.3, true)).toBe(12);
+        expect(conMinimoFueraDeBaremo(0, true)).toBe(12);
+        expect(conMinimoFueraDeBaremo(21.5, true)).toBe(21.5);
+        expect(conMinimoFueraDeBaremo(4.3, false)).toBe(4.3);
+        expect(conMinimoFueraDeBaremo(0, false)).toBe(0);
     });
 });
 

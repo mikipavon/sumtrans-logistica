@@ -14,7 +14,7 @@ import { getPackagesCount } from '../../utils/shipmentUtils';
 
 import { Trash2, Plus } from 'lucide-react';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
-import { baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos } from '../../utils/precioArticulo';
+import { baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, conMinimoFueraDeBaremo } from '../../utils/precioArticulo';
 export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1 }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
@@ -115,7 +115,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         const portePorPeso = weightClientData
             ? calculateWeightPrice(kilos, weightClientData.tariff, weightClientData.client)
             : 0;
-        return (articlesTotal + portePorPeso + commission).toFixed(2);
+        // Población fuera de los baremos: el porte no baja de 12 € (22/09/2026).
+        const porte = conMinimoFueraDeBaremo(articlesTotal + portePorPeso, baremoActual().fueraDeBaremo);
+        return (porte + commission).toFixed(2);
     };
 
     const addArticle = (articleId) => {
@@ -337,9 +339,18 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     }
                 }
 
-                // Si hay una foto nueva seleccionada, la subimos
+                // Si hay una foto nueva seleccionada, la subimos. Si falla, se dice
+                // que ha sido la foto (y no "los cambios" en general): el resto de
+                // la edición se queda en pantalla para reintentar.
                 if (newPhoto && newPhoto.startsWith('data:image')) {
-                    const uploadedUrl = await uploadProof(shipment.id, newPhoto, 'merchandise_photos');
+                    let uploadedUrl;
+                    try {
+                        uploadedUrl = await uploadProof(shipment.id, newPhoto, 'merchandise_photos');
+                    } catch (err) {
+                        console.error('[Foto mercancia] No se pudo subir la foto:', err);
+                        alert(`No se ha podido subir la foto de la mercancía (${err?.message || 'sin conexión'}).\n\nLos cambios no se han guardado: vuelve a pulsar Guardar cuando tengas cobertura, o quita la foto y guarda sin ella.`);
+                        return;
+                    }
                     if (uploadedUrl) {
                         finalFormData.merchandisePhoto = uploadedUrl;
                     }
@@ -1314,7 +1325,13 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                         {renderField("Observaciones", formData.observations, "observations", <FileText />, "textarea", true)}
                     </div>
 
-                    {/* Foto de la Mercancía */}
+                    {/* Foto de la Mercancía.
+                        El repartidor la hace desde aquí (Editar) para que la oficina vea qué
+                        lleva y le ponga precio. Hasta el 22/9/2026 el único mando era un
+                        "Añadir" de 10 px arriba a la derecha y el recuadro grande no hacía
+                        nada al tocarlo: en el móvil nadie lo encontraba. Ahora, al editar,
+                        el recuadro entero es el botón de hacer la foto, y con foto hay un
+                        botón claro de Cambiar encima de ella. */}
                     {(shipment.merchandisePhoto || isEditing) && (
                         <div className={`p-4 rounded-xl border ${isEditing ? 'bg-white border-blue-100 ring-2 ring-blue-500/5' : 'bg-white border-gray-200'} space-y-3 shadow-sm transition-all`}>
                             <div className="flex items-center justify-between border-b border-gray-100 pb-2">
@@ -1324,26 +1341,19 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                 </h3>
                                 {isEditing && (
                                     <div className="flex gap-2">
-                                        <input 
-                                            type="file" 
-                                            ref={fileInputRef} 
-                                            className="hidden" 
-                                            accept="image/*" 
+                                        <input
+                                            type="file"
+                                            ref={fileInputRef}
+                                            className="hidden"
+                                            accept="image/*"
                                             capture="environment"
                                             onChange={handlePhotoChange}
                                         />
-                                        <button
-                                            type="button"
-                                            onClick={() => setCamaraAbierta('mercancia')}
-                                            className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                                        >
-                                            <ImageIcon size={12} /> {shipment.merchandisePhoto || newPhoto ? 'Cambiar' : 'Añadir'}
-                                        </button>
                                         {(shipment.merchandisePhoto || newPhoto) && newPhoto !== 'REMOVE' && (
                                             <button
                                                 type="button"
                                                 onClick={() => setNewPhoto('REMOVE')}
-                                                className="text-[10px] font-bold text-red-500 hover:text-red-600"
+                                                className="text-xs font-bold text-red-500 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50"
                                             >
                                                 Quitar
                                             </button>
@@ -1352,6 +1362,21 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                 )}
                             </div>
 
+                            {isEditing && (newPhoto === 'REMOVE' || (!newPhoto && !shipment.merchandisePhoto)) ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setCamaraAbierta('mercancia')}
+                                    className="w-full py-6 border-2 border-dashed border-blue-200 rounded-xl bg-blue-50/50 text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition-all flex flex-col items-center justify-center gap-2 active:scale-95"
+                                >
+                                    <div className="p-3 bg-white rounded-full shadow-sm">
+                                        <Camera size={26} className="text-blue-500" />
+                                    </div>
+                                    <span className="text-sm font-bold">Hacer foto de la mercancía</span>
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400">
+                                        {newPhoto === 'REMOVE' ? 'Foto quitada · toca para hacer otra' : 'Toca para abrir la cámara'}
+                                    </span>
+                                </button>
+                            ) : (
                             <div className="relative group bg-slate-50 border border-gray-100 rounded-xl overflow-hidden aspect-video flex items-center justify-center p-1">
                                 {newPhoto === 'REMOVE' ? (
                                     <div className="text-center p-4">
@@ -1380,6 +1405,15 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                                 NUEVA SELECCIÓN
                                             </div>
                                         )}
+                                        {isEditing && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setCamaraAbierta('mercancia')}
+                                                className="absolute bottom-2 right-2 px-3 py-2 rounded-lg bg-white/95 text-slate-800 text-xs font-bold shadow-lg flex items-center gap-1.5 hover:bg-white active:scale-95"
+                                            >
+                                                <Camera size={14} className="text-blue-500" /> Cambiar foto
+                                            </button>
+                                        )}
                                     </>
                                 ) : (
                                     <div className="text-center p-4">
@@ -1388,6 +1422,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     </div>
                                 )}
                             </div>
+                            )}
                         </div>
                     )}
 
