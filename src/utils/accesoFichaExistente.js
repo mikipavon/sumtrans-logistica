@@ -100,7 +100,12 @@ export function planDeAcceso(solicitud, ficha) {
 // El texto del aviso que se le enseña al administrativo antes de hacerlo. Se
 // escribe aquí, junto a la decisión, para que lo que se le promete en pantalla
 // sea exactamente lo que se va a escribir.
-export function explicarElAcceso(solicitud, ficha, plan) {
+//
+// `soloPorParecido`: la ficha se propuso sólo porque el nombre se parece, sin
+// CIF ni correo que lo confirme. Ahí no hay nada que "comprobar contra el
+// CIF": lo que hay es un nombre parecido, y el aviso lo dice sin rodeos, porque
+// acertar la ficha equivocada mete a una empresa en los envíos de otra.
+export function explicarElAcceso(solicitud, ficha, plan, { soloPorParecido = false } = {}) {
     if (!plan?.posible) return '';
 
     const nombreFicha = `«${ficha?.name || 'la ficha'}»${ficha?.clientNumber ? ` (nº ${ficha.clientNumber})` : ''}`;
@@ -118,7 +123,9 @@ export function explicarElAcceso(solicitud, ficha, plan) {
         `De la ficha no se toca nada más: dirección, tarifa, teléfono y número siguen igual.`,
         `La solicitud de «${solicitud?.name || 'la web'}» se borra, así que no queda una segunda ficha.`,
         ``,
-        `Comprueba antes que quien se ha registrado es de verdad de esa empresa: el CIF es público.`,
+        soloPorParecido
+            ? `⚠️ OJO: sólo se parecen los nombres. Ni el CIF ni el correo coinciden con esa ficha. Si «${solicitud?.name || 'quien se ha registrado'}» es otra empresa, con esto vería los envíos de ${nombreFicha}.`
+            : `Comprueba antes que quien se ha registrado es de verdad de esa empresa: el CIF es público.`,
         ``,
         `¿Darle el acceso?`,
     ].join('\n');

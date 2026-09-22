@@ -249,12 +249,16 @@ function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, vinculand
                                 )}
                                 {/* Lo que casi siempre hay que hacer con un registro web en rojo:
                                     no es un cliente nuevo, es el de siempre pidiendo entrar.
-                                    Con un nombre parecido a secas no se ofrece: darle el acceso
-                                    a la ficha equivocada mete a una empresa en los envíos de
-                                    otra, y eso no se arregla borrando nada. */}
-                                {emailDeAcceso(client) && !soloPorParecido && (
+                                    Se ofrece también con un nombre sólo parecido: el caso
+                                    típico es otra persona de la misma empresa registrándose
+                                    con su propio correo (FRANALMCE / ACTIVA LA MEJOR COMPRA,
+                                    22/09/2026), y el acceso se le AÑADE a la ficha, no se
+                                    pisa el que ya entraba. Darlo a la ficha equivocada mete a
+                                    una empresa en los envíos de otra, así que la confirmación
+                                    lo dice más alto que cuando coincide el CIF o el correo. */}
+                                {emailDeAcceso(client) && (
                                     <button
-                                        onClick={() => onDarAcceso(client, ficha)}
+                                        onClick={() => onDarAcceso(client, ficha, { soloPorParecido })}
                                         disabled={dandoAcceso}
                                         className="mt-1.5 w-full flex items-center justify-center gap-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold rounded-lg text-xs transition-colors"
                                     >
@@ -285,7 +289,9 @@ function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, vinculand
                         {nacioEnLaApp && onVincular
                             ? `${todoSonParecidos ? 'Sólo se parecen los nombres, así que no se da por hecho nada: compruébalo tú. ' : ''}Si es la misma empresa, con el botón se queda la ficha de siempre con el GPS y los albaranes de ésta, y ésta se borra. Aprobarla crea una segunda ficha; rechazarla tira el GPS del conductor.`
                             : todoSonParecidos
-                                ? 'Sólo se parecen los nombres, así que no se da por hecho nada: compruébalo tú. Si es la misma empresa, aprobarla crea una segunda ficha y el cliente entrará a la nueva —vacía—, no a la suya.'
+                                ? `Sólo se parecen los nombres, así que no se da por hecho nada: compruébalo tú. ${emailDeAcceso(client)
+                                    ? 'Si es la misma empresa, con el botón ese correo se le añade a la ficha de siempre como un acceso más —el que ya entraba sigue entrando— y la solicitud se borra. Aprobarla, en cambio, crea una segunda ficha y el cliente entrará a la nueva —vacía—, no a la suya.'
+                                    : 'Si es la misma empresa, aprobarla crea una segunda ficha y el cliente entrará a la nueva —vacía—, no a la suya.'}`
                                 : emailDeAcceso(client)
                                     ? 'Con el botón, la ficha de siempre se queda como está y sólo se le pone el acceso: la solicitud se borra y no queda una segunda ficha. Aprobarla, en cambio, crea la segunda y el cliente entrará a la nueva —vacía—, no a la suya.'
                                     : 'Aprobarla crea una segunda ficha, y el cliente entrará a la nueva —vacía—, no a la suya.'}
@@ -560,14 +566,14 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
     // acceso y borra la solicitud.
     const [dandoAccesoId, setDandoAccesoId] = useState(null);
 
-    const handleDarAcceso = async (solicitud, ficha) => {
+    const handleDarAcceso = async (solicitud, ficha, { soloPorParecido = false } = {}) => {
         const plan = planDeAcceso(solicitud, ficha);
         if (!plan.posible) {
             alert(`Esta solicitud no trae acceso que dar: ${plan.motivo}.`);
             return;
         }
 
-        if (!window.confirm(explicarElAcceso(solicitud, ficha, plan))) return;
+        if (!window.confirm(explicarElAcceso(solicitud, ficha, plan, { soloPorParecido }))) return;
 
         setDandoAccesoId(solicitud.id);
         try {

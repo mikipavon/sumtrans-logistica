@@ -222,9 +222,9 @@ describe('Validar Clientes — vincular la ficha del reparto con la de siempre',
 
         expect(screen.getAllByText(/un nombre casi igual/)).toHaveLength(2);
         expect(screen.getAllByRole('button', { name: 'Es esta ficha: vincular' })).toHaveLength(1);
-        // El registro web no tiene botón de vincular: lo suyo es dar el acceso,
-        // y con un nombre sólo parecido ni eso.
-        expect(screen.queryByRole('button', { name: /Dar el acceso/ })).not.toBeInTheDocument();
+        // El registro web no tiene botón de vincular: lo suyo es dar el acceso
+        // (ver «otra persona de la misma empresa» más abajo).
+        expect(screen.getAllByRole('button', { name: /Dar el acceso/ })).toHaveLength(1);
     });
 
     it('sin la función de App no se ofrece el botón', () => {
@@ -258,6 +258,86 @@ describe('Validar Clientes — vincular la ficha del reparto con la de siempre',
 
         fireEvent.click(screen.getByRole('button', { name: 'Es esta ficha: vincular' }));
         expect(onVincularFichaPendiente).not.toHaveBeenCalled();
+        confirm.mockRestore();
+    });
+});
+
+// ── Otra persona de la misma empresa registrándose con su propio correo ──
+//
+// FRANALMCE (AHORA LA MEJOR COMPRA DE ELECTRODOMESTICOS S.L.) se registró en la
+// web el 22/09/2026 y lo único que lo unía a la ficha nº 45 (ACTIVA LA MEJOR
+// COMPRA DE ELECTRODOMESTICOS S.L., que ya entraba en el portal) era el nombre:
+// ni el CIF ni el correo. Hasta entonces, con un parecido a secas no se ofrecía
+// dar el acceso, y aprobarla dejaba dos fichas. Miguel quiso que se ofreciera:
+// si es la misma empresa, ese correo se le AÑADE a la ficha de siempre como un
+// acceso más, sin quitarle el suyo al que ya entraba.
+describe('Validar Clientes — un registro web con nombre sólo parecido a una ficha con acceso', () => {
+    const franalmce = {
+        id: 700,
+        name: 'FRANALMCE',
+        legalName: 'AHORA LA MEJOR COMPRA DE ELECTRODOMESTICOS S.L.',
+        status: 'pending',
+        type: 'Remitente',
+        createdFrom: 'web-registro',
+        createdAt: '2026-09-22T12:16:00.000Z',
+        email: 'comercialcordoba@ahoralamejorcompra.com',
+        cif: 'B11111111',
+        contactPerson: 'FRANCISCO JOSE CAÑAS GONZALEZ',
+        city: 'CORDOBA',
+    };
+    // La razón social sin el "ACTIVA" es lo que hace que el nombre se parezca:
+    // "AHORA" y "ACTIVA" no son una errata la una de la otra.
+    const activa = {
+        id: 45,
+        name: 'ACTIVA LA MEJOR COMPRA DE ELECTRODOMESTICOS S.L.',
+        legalName: 'LA MEJOR COMPRA DE ELECTRODOMESTICOS S.L.',
+        clientNumber: '45',
+        status: 'approved',
+        type: 'Remitente',
+        city: 'CORDOBA',
+        cif: 'B22222222',
+        email: 'admin@activa.com',
+        tieneAccesoPortal: true,
+    };
+
+    it('ofrece darle el acceso a la ficha parecida, y el pie dice que el correo se añade', () => {
+        render(<ClientValidation clients={[franalmce, activa]} {...props} onGrantAccessToExisting={vi.fn()} />);
+        fireEvent.click(screen.getByRole('button', { name: /Registrados en la web/ }));
+
+        expect(screen.getByText('Se parece a una ficha que ya tienes')).toBeInTheDocument();
+        expect(screen.getByText('Esa ficha ya entra en el portal')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Dar el acceso a esta ficha' })).toBeInTheDocument();
+        expect(screen.getByText(/ese correo se le añade a la ficha de siempre como un acceso más/)).toBeInTheDocument();
+    });
+
+    it('al pinchar avisa de que sólo se parecen los nombres y de que el acceso se añade; si se confirma, lo da', async () => {
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const alerta = vi.spyOn(window, 'alert').mockImplementation(() => {});
+        const onGrantAccessToExisting = vi.fn().mockResolvedValue(true);
+        render(<ClientValidation clients={[franalmce, activa]} {...props} onGrantAccessToExisting={onGrantAccessToExisting} />);
+        fireEvent.click(screen.getByRole('button', { name: /Registrados en la web/ }));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Dar el acceso a esta ficha' }));
+
+        const texto = confirm.mock.calls[0][0];
+        expect(texto).toContain('«ACTIVA LA MEJOR COMPRA DE ELECTRODOMESTICOS S.L.» (nº 45)');
+        expect(texto).toContain('Entrará con: comercialcordoba@ahoralamejorcompra.com');
+        expect(texto).toContain('éste se le añade: entrarán los dos');
+        expect(texto).toContain('sólo se parecen los nombres');
+        await vi.waitFor(() => expect(onGrantAccessToExisting).toHaveBeenCalledWith(franalmce, activa));
+
+        confirm.mockRestore();
+        alerta.mockRestore();
+    });
+
+    it('si no se confirma, no se da ningún acceso', () => {
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+        const onGrantAccessToExisting = vi.fn();
+        render(<ClientValidation clients={[franalmce, activa]} {...props} onGrantAccessToExisting={onGrantAccessToExisting} />);
+        fireEvent.click(screen.getByRole('button', { name: /Registrados en la web/ }));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Dar el acceso a esta ficha' }));
+        expect(onGrantAccessToExisting).not.toHaveBeenCalled();
         confirm.mockRestore();
     });
 });

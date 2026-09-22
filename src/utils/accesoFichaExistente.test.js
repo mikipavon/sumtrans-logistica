@@ -120,4 +120,28 @@ describe('explicarElAcceso', () => {
     it('sin plan no hay texto', () => {
         expect(explicarElAcceso(solicitud(), {}, { posible: false })).toBe('');
     });
+
+    // FRANALMCE (AHORA LA MEJOR COMPRA) se registró el 22/09/2026 y la ficha
+    // propuesta era ACTIVA LA MEJOR COMPRA (nº 45), que ya entraba en el portal:
+    // otra persona de la misma empresa con su propio correo. Con un parecido de
+    // nombre a secas el aviso tiene que decir que no hay nada que lo confirme.
+    it('con un nombre sólo parecido avisa de que ni el CIF ni el correo coinciden, y de que el acceso se añade', () => {
+        const ficha = { id: 45, name: 'ACTIVA LA MEJOR COMPRA DE ELECTRODOMESTICOS S.L.', clientNumber: '45', accessEmail: 'admin@activa.com', tieneAccesoPortal: true };
+        const s = solicitud({ name: 'FRANALMCE', cif: 'B99999999', email: 'comercialcordoba@ahoralamejorcompra.com' });
+        const texto = explicarElAcceso(s, ficha, planDeAcceso(s, ficha), { soloPorParecido: true });
+
+        expect(texto).toContain('sólo se parecen los nombres');
+        expect(texto).toContain('Ni el CIF ni el correo coinciden');
+        expect(texto).toContain('«FRANALMCE» es otra empresa');
+        expect(texto).toContain('éste se le añade: entrarán los dos');
+        expect(texto).not.toContain('el CIF es público');
+    });
+
+    it('con el CIF o el correo coincidiendo, el aviso es el de siempre', () => {
+        const ficha = { id: 10, name: 'ACTIVA CORDOBA' };
+        const texto = explicarElAcceso(solicitud(), ficha, planDeAcceso(solicitud(), ficha), { soloPorParecido: false });
+
+        expect(texto).toContain('el CIF es público');
+        expect(texto).not.toContain('sólo se parecen los nombres');
+    });
 });
