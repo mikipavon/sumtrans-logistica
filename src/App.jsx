@@ -67,7 +67,7 @@ import { darDeAltaSinPisar } from './utils/numeracionAlbaran';
 import { createdAtDeFechaContable } from './utils/reciboDeDeuda';
 import { prefijoDeCliente, siguienteNumeroDeCliente, numeroQueLeFalta } from './utils/numeracionCliente';
 import { uploadProof } from './utils/storage';
-import { AVISO_ENVIO_YA_ES_NUESTRO } from './utils/envioDelPortal';
+import { AVISO_ENVIO_YA_ES_NUESTRO, ESTADO_PENDIENTE, tieneBultosEscaneados } from './utils/envioDelPortal';
 
 
 
@@ -3440,7 +3440,9 @@ function App() {
     }
   }
 
-  const handleDeleteShipment = async (shipmentId) => {
+  // `pedirContrasena: false` sólo lo usa la oficina dentro del portal para un
+  // envío que todavía no es nuestro (ver handleDeleteShipmentDesdeElPortal).
+  const handleDeleteShipment = async (shipmentId, { pedirContrasena = true } = {}) => {
     try {
       const shipmentToDelete = shipmentsRef.current.find(s => s.id === shipmentId);
 
@@ -3490,7 +3492,7 @@ function App() {
           }
       }
 
-      if (!(await autorizarBorrado(`Vas a borrar el albarán ${shipmentId}.`))) return;
+      if (pedirContrasena && !(await autorizarBorrado(`Vas a borrar el albarán ${shipmentId}.`))) return;
 
       if (presupuestosARevertir.length > 0) {
           const updatesArray = presupuestosARevertir.map(s => ({
@@ -3510,6 +3512,19 @@ function App() {
       console.error(e);
     }
   }
+
+  // ── La oficina dentro del portal: un envío pendiente se borra sin contraseña ──
+  //
+  // El portal sólo enseña la papelera en "Pendiente de asignar" y sin bultos
+  // escaneados: lo que el cliente dio de alta por error y todavía no es
+  // nuestro. Ahí no hay cobros ni reparto que perder, así que pedir la
+  // contraseña de administrador no protege nada y sólo estorba (Miguel,
+  // 22/09/2026). Cualquier otro estado, por si llegara, sigue pidiéndola.
+  const handleDeleteShipmentDesdeElPortal = (shipmentId) => {
+    const envio = shipmentsRef.current.find(s => s.id === shipmentId);
+    const todaviaNoEsNuestro = envio?.status === ESTADO_PENDIENTE && !tieneBultosEscaneados(envio);
+    return handleDeleteShipment(shipmentId, { pedirContrasena: !todaviaNoEsNuestro });
+  };
 
   // ── El portal del cliente: borrar y modificar sólo lo que aún no hemos recogido ──
   //
@@ -4976,6 +4991,24 @@ function App() {
     setCurrentView(vistaDeVuelta)
   }
 
+  // ── La ventana de la contraseña de borrado ──
+  //
+  // Se pinta en la administración Y en el portal cuando la oficina entra en él
+  // como el cliente: ahí borra con sus propios manejadores, que piden la
+  // contraseña, pero la ventana sólo existía en la pantalla de administración.
+  // `autorizarBorrado` se quedaba esperando una respuesta que nadie podía dar y
+  // la papelera del portal no hacía nada (SUM-2039 y SUM-2040, 22/09/2026).
+  const modalContrasenaBorrado = borradoPrompt && (
+    <GhostPasswordModal
+      mode={borradoPrompt.mode}
+      tieneActual={borradoPrompt.tieneActual}
+      detalle={borradoPrompt.detalle}
+      textoBoton="Borrar"
+      onSubmit={handleBorradoPasswordSubmit}
+      onCancel={cancelarBorrado}
+    />
+  );
+
   // Client View
   if (userRole === 'client') {
     // ── Emparejar la ficha con la cuenta que acaba de entrar ──
@@ -5017,11 +5050,12 @@ function App() {
           coverageZones={coverageZones}
           onCreateShipment={handleAddShipment}
           onUpdateClient={handleUpdateClient}
-          onDeleteShipment={suplantandoCliente ? handleDeleteShipment : handleClientDeleteShipment}
+          onDeleteShipment={suplantandoCliente ? handleDeleteShipmentDesdeElPortal : handleClientDeleteShipment}
           onUpdateShipment={suplantandoCliente ? handleUpdateShipment : handleClientUpdateShipment}
           pendingQueueCount={pendingQueueCount}
           isSyncingQueue={isSyncingQueue}
         />
+        {modalContrasenaBorrado}
       </Suspense>
     )
   }
@@ -5638,16 +5672,7 @@ function App() {
         />
       )}
 
-      {borradoPrompt && (
-        <GhostPasswordModal
-          mode={borradoPrompt.mode}
-          tieneActual={borradoPrompt.tieneActual}
-          detalle={borradoPrompt.detalle}
-          textoBoton="Borrar"
-          onSubmit={handleBorradoPasswordSubmit}
-          onCancel={cancelarBorrado}
-        />
-      )}
+      {modalContrasenaBorrado}
     </Layout>
   )
 }
