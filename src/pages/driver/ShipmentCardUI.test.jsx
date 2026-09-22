@@ -160,3 +160,47 @@ describe('ShipmentCardUI: etiqueta COBRAR', () => {
         expect(screen.queryByText(/COBRAR/)).toBeNull();
     });
 });
+
+// ── El destinatario apuntado en la recogida ──
+//
+// La parada de una recogida es el remitente (es a donde se va), pero si la
+// oficina dejó apuntado a quién va lo que se recoge, al repartidor le vale
+// verlo desde la tarjeta, parpadeando igual que las observaciones, que es donde
+// antes se apuntaba a mano.
+describe('ShipmentCardUI: destinatario de una recogida', () => {
+    const recogida = (props = {}) => envio({
+        id: 'REC-645',
+        type: 'Recogida',
+        client: 'AGRICOLA CASTILLERO',
+        originAddress: 'Ctra. Vieja 1',
+        originCity: 'Montilla',
+        destinationName: '',
+        destinationCity: '',
+        destinationAddress: '',
+        ...props,
+    });
+
+    it('con destinatario, la tarjeta lo avisa parpadeando y la parada sigue siendo el remitente', () => {
+        pintar(recogida({ destinationName: 'FERRETERIA LUCENA', destinationCity: 'Lucena', destinationAddress: 'C/ Ancha 4' }));
+        const aviso = screen.getByText('Entregar a:');
+        expect(aviso.closest('.animate-pulse')).not.toBeNull();
+        expect(screen.getByText('FERRETERIA LUCENA')).toBeInTheDocument();
+        // El destinatario sale UNA vez, en el aviso: la dirección de la parada sigue
+        // siendo la de recogida (antes la tarjeta pintaba la calle y el pueblo del
+        // destino y mandaba al repartidor a casa del destinatario).
+        expect(screen.getAllByText('C/ Ancha 4')).toHaveLength(1);
+        expect(screen.getByText('Ctra. Vieja 1')).toBeInTheDocument();
+        expect(screen.getByText(/Montilla/)).toBeInTheDocument();
+        expect(screen.getByRole('heading', { level: 4 }).textContent).toBe('AGRICOLA CASTILLERO');
+    });
+
+    it('sin destinatario no hay aviso', () => {
+        pintar(recogida());
+        expect(screen.queryByText('Entregar a:')).toBeNull();
+    });
+
+    it('en una entrega nunca sale, aunque tenga destinatario', () => {
+        pintar(envio());
+        expect(screen.queryByText('Entregar a:')).toBeNull();
+    });
+});

@@ -455,15 +455,30 @@ export const ShipmentCardUI = React.memo(({
                         </div>
 
                         <div className="space-y-1 mb-3 pr-36">
-                            <p className="text-sm text-slate-600 flex items-start gap-2">
-                                <MapIcon size={16} className="shrink-0 mt-0.5 text-slate-400" />
-                                <span className="line-clamp-2">{stop.destinationAddress || stop.address}</span>
-                            </p>
-                            {stop.destinationCity && (
-                                <p className="text-xs text-slate-500 pl-6 mb-1">
-                                    {stop.destinationCity} {stop.destinationZip && `(${stop.destinationZip})`}
-                                </p>
-                            )}
+                            {/* La dirección de la parada: la de entrega, o la de recogida en una
+                                recogida. Antes se pintaba siempre la de destino y en las recogidas
+                                salía bien sólo porque estaba vacía y caía en `address` (el origen);
+                                con el destinatario apuntado por la oficina, la tarjeta mandaba al
+                                repartidor a casa del destinatario (REC-645, 22/09/2026). */}
+                            {(() => {
+                                const esRecogida = stop.type === 'Recogida';
+                                const calle = esRecogida ? (stop.originAddress || stop.address) : (stop.destinationAddress || stop.address);
+                                const pueblo = esRecogida ? stop.originCity : stop.destinationCity;
+                                const cp = esRecogida ? stop.originZip : stop.destinationZip;
+                                return (
+                                    <>
+                                        <p className="text-sm text-slate-600 flex items-start gap-2">
+                                            <MapIcon size={16} className="shrink-0 mt-0.5 text-slate-400" />
+                                            <span className="line-clamp-2">{calle}</span>
+                                        </p>
+                                        {pueblo && (
+                                            <p className="text-xs text-slate-500 pl-6 mb-1">
+                                                {pueblo} {cp && `(${cp})`}
+                                            </p>
+                                        )}
+                                    </>
+                                );
+                            })()}
                             {/* BULTOS / ARTÍCULOS — una píldora por unidad, inline con wrap */}
                             {(() => {
                                 const arts = stop.articles || [];
@@ -563,6 +578,22 @@ export const ShipmentCardUI = React.memo(({
                                     </div>
                                 );
                             })()}
+                            {/* Destinatario apuntado por la oficina en la recogida: la parada es el
+                                remitente, pero al repartidor le vale saber a quién va lo que recoge.
+                                Parpadea igual que las observaciones, que es donde antes se apuntaba. */}
+                            {stop.type === 'Recogida' && String(stop.destinationName || '').trim() && (
+                                <div className="mx-3 mb-2 mt-1 px-3 py-2 bg-purple-50 border-l-4 border-purple-400 rounded-r-xl shadow-sm animate-pulse duration-[2000ms]">
+                                    <div className="flex items-center gap-1.5 mb-0.5">
+                                        <Truck size={12} className="text-purple-600" />
+                                        <p className="text-[9px] font-extrabold text-purple-700 uppercase tracking-tight">Entregar a:</p>
+                                    </div>
+                                    <p className="text-xs font-bold text-purple-900 leading-tight">
+                                        {stop.destinationName}
+                                        {stop.destinationCity && <span className="font-medium text-purple-700"> · {stop.destinationCity}</span>}
+                                    </p>
+                                    {stop.destinationAddress && <p className="text-[11px] text-purple-800 leading-tight">{stop.destinationAddress}</p>}
+                                </div>
+                            )}
                         </div>
 
                         {!dragOverlay && (
@@ -5004,6 +5035,19 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                     </div>
                                                 );
                                             })()}
+                                            {/* Mismo aviso que en la tarjeta de ruta: a quién va lo que se recoge. */}
+                                            {shipment.type === 'Recogida' && String(shipment.destinationName || '').trim() && (
+                                                <div className="mb-2 p-2 bg-purple-50 border-l-4 border-purple-400 rounded-r-xl shadow-sm animate-pulse duration-[3000ms]">
+                                                    <div className="flex items-center gap-1.5 mb-1">
+                                                        <Truck size={12} className="text-purple-600" />
+                                                        <p className="text-[10px] font-extrabold text-purple-700 uppercase">Entregar a:</p>
+                                                    </div>
+                                                    <p className="text-xs font-bold text-purple-900 leading-tight">
+                                                        {shipment.destinationName}
+                                                        {shipment.destinationCity && <span className="font-medium text-purple-700"> · {shipment.destinationCity}</span>}
+                                                    </p>
+                                                </div>
+                                            )}
                                             <div className="flex items-center justify-between pt-2 border-t border-slate-50 gap-2">
                                                 <div className="flex flex-wrap gap-1 items-center flex-1">
                                                     {(() => {
