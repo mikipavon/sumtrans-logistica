@@ -1,13 +1,14 @@
 // ── Diálogo con la web que nos embebe en un iframe ──
 //
 // El portal de clientes vive dentro de un iframe en sumtransportes.com. Hasta
-// ahora las credenciales llegaban en la barra de direcciones
+// el 22/09/2026 las credenciales llegaban en la barra de direcciones
 // (?autoLogin=true&username=...&password=...), que es el peor sitio posible:
 // las URLs quedan en el historial del navegador, en los registros de acceso del
-// alojamiento y se filtran a terceros en la cabecera Referer.
+// alojamiento y se filtran a terceros en la cabecera Referer. Ese canal ya no
+// existe: la web se actualizó ese día y el portal dejó de leerlo.
 //
-// Este módulo centraliza el canal alternativo — postMessage — y, de paso, deja
-// de mandar los avisos de vuelta con destino '*', que se los entregaba a
+// Este módulo centraliza el único canal que queda — postMessage — y, de paso,
+// deja de mandar los avisos de vuelta con destino '*', que se los entregaba a
 // cualquier página que nos tuviera embebidos.
 //
 // ── Lo que hay que poner en sumtransportes.com (la web padre) ──
@@ -42,9 +43,8 @@
 //     });
 //   </script>
 //
-// Mientras la web padre no se actualice sigue funcionando el canal viejo de la
-// URL, pero el portal borra usuario y contraseña de la barra de direcciones
-// nada más arrancar (ver src/pages/Login.jsx).
+// Así está montado en la web desde el 22/09/2026 (proyecto PAGINAWEBSUM,
+// src/App.jsx), que además enseña e.data.mensaje en su formulario.
 
 const ORIGENES_POR_DEFECTO = [
   'https://www.sumtransportes.com',
@@ -88,19 +88,12 @@ export const esOrigenPadrePermitido = (origen) => ORIGENES_PADRE.includes(origen
  * albaranes de otra empresa mientras la web avisaba de que el acceso había
  * fallado. Ver restoreSession en App.jsx.
  *
- * Estar embebidos basta: este portal no se mete en el iframe de nadie más, y
- * ante la duda lo seguro es no dar por buena una sesión que no ha pedido quien
- * nos abre.
+ * Estar embebidos es la única señal: este portal no se mete en el iframe de
+ * nadie más, y ante la duda lo seguro es no dar por buena una sesión que no ha
+ * pedido quien nos abre. Un ?autoLogin= en la URL ya no cuenta: ese canal se
+ * borró el 22/09/2026.
  */
-export const hayAutoLoginPendiente = () => {
-  if (estamosEmbebidos()) return true;
-  try {
-    // El canal viejo, mientras siga vivo: las credenciales en la URL.
-    return new URLSearchParams(window.location.search).get('autoLogin') === 'true';
-  } catch {
-    return false;
-  }
-};
+export const hayAutoLoginPendiente = () => estamosEmbebidos();
 
 /**
  * Manda un aviso a la web que nos embebe, uno por cada origen permitido.

@@ -131,41 +131,27 @@ export default function Login({ onLogin, onCerrarSesionPrevia, onRecuperarContra
     }, []);
 
     // Auto-fill on mount
+    //
+    // Por la URL sólo se admite `?tab=`: la pestaña con la que se abre el
+    // portal (la web lo embebe con ?tab=client, y a mano se abre igual para
+    // probar). Las credenciales NO: hasta el 22/09/2026 también llegaban por
+    // aquí (?autoLogin=true&username=...&password=...) y ese canal se ha
+    // borrado. Sólo entran por postMessage desde la web padre (efecto de
+    // arriba). Una URL con usuario y contraseña ya no hace nada.
     useEffect(() => {
         setTimeout(() => {
-            // ── Canal antiguo: credenciales en la URL ──
-            // OBSOLETO. Se mantiene sólo mientras sumtransportes.com siga usándolo;
-            // en cuanto la web padre pase a postMessage, este bloque se borra.
-            const params = new URLSearchParams(window.location.search);
-            const isAutoLogin = params.get('autoLogin') === 'true';
-            const urlUser = params.get('username');
-            const urlPass = params.get('password');
-            const urlTab = params.get('tab');
-
-            if (isAutoLogin && urlUser && urlPass) {
-                console.warn(
-                    '[AutoLogin] Credenciales recibidas por la URL (obsoleto e inseguro). ' +
-                    'La web padre debería mandarlas por postMessage: ver src/utils/ventanaPadre.js'
-                );
-
-                // Quitarlas de la barra de direcciones cuanto antes: así no quedan
-                // en el historial ni viajan en el Referer de las peticiones siguientes.
-                try {
-                    const limpia = new URL(window.location.href);
-                    limpia.searchParams.delete('username');
-                    limpia.searchParams.delete('password');
-                    limpia.searchParams.delete('autoLogin');
-                    window.history.replaceState({}, '', limpia.toString());
-                } catch (_) {}
-
-                if (urlTab) {
-                    setActiveTab(urlTab);
-                    activeTabRef.current = urlTab; // update ref immediately
-                }
-                // Esperar un poco antes del primer intento (dar tiempo al arranque inicial)
-                setTimeout(() => intentarAutoLogin(urlUser, urlPass), 300);
-                return;
+            let urlTab = null;
+            try {
+                urlTab = new URLSearchParams(window.location.search).get('tab');
+            } catch (_) {}
+            if (urlTab && ['client', 'driver', 'admin'].includes(urlTab)) {
+                setActiveTab(urlTab);
+                activeTabRef.current = urlTab; // update ref immediately
             }
+
+            // Si la web padre ya ha mandado las credenciales, el auto-login está
+            // en marcha con el usuario puesto en el campo: no se le pisa.
+            if (initializedRef.current) return;
 
             // Cargar usuario guardado si existe (la contraseña la gestiona el propio navegador)
             if (activeTabRef.current && emailRef.current) {

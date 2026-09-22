@@ -20,6 +20,18 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "../PAGINAWEBSUM", "run", "dev", "--", "--port", "5180", "--strictPort"],
       "port": 5180
+    },
+    {
+      "name": "portal-embebido",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set VITE_ORIGENES_PADRE=http://localhost:5180&& npm run dev -- --port 5175 --strictPort"],
+      "port": 5175
+    },
+    {
+      "name": "web-con-portal-local",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set VITE_PORTAL_ORIGIN=http://localhost:5175&& npm --prefix ../PAGINAWEBSUM run dev -- --port 5180 --strictPort"],
+      "port": 5180
     }
   ]
 }

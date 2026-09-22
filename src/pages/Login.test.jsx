@@ -27,12 +27,20 @@ vi.mock('../utils/ventanaPadre', () => ({
 
 const INTENTOS = 8;
 
-// Las credenciales entran por la barra de direcciones, que es el canal viejo
-// pero el que se puede montar en un test sin un iframe de verdad.
+// Las credenciales entran como las manda la web de verdad: por postMessage,
+// una vez montada la pantalla. El origen lo da por bueno el mock de arriba.
+const mandarCredenciales = (datos) => {
+    window.dispatchEvent(new MessageEvent('message', {
+        origin: 'https://www.sumtransportes.com',
+        data: { type: 'SUM_CLIENT_CREDENTIALS', username: 'cliente@empresa.com', password: 'secreta', tab: 'client', ...datos },
+    }));
+};
+
 const arrancarConAutoLogin = async (onLogin, onCerrarSesionPrevia) => {
-    window.history.replaceState({}, '', '/?autoLogin=true&username=cliente@empresa.com&password=secreta&tab=client');
+    window.history.replaceState({}, '', '/?tab=client');
     render(<Login onLogin={onLogin} onCerrarSesionPrevia={onCerrarSesionPrevia} />);
-    // Los 100 ms del arranque + los 300 antes del primer intento.
+    await act(async () => { mandarCredenciales(); });
+    // Los 100 ms del arranque, con holgura.
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 };
 
@@ -160,6 +168,31 @@ describe('auto-login y la sesión que ya había', () => {
         await arrancarConAutoLogin(onLogin, undefined);
 
         expect(onLogin).toHaveBeenCalledTimes(1);
+    });
+});
+
+// ── El canal viejo por la URL ya no existe ──
+//
+// Hasta el 22/09/2026 el portal también aceptaba ?autoLogin=true&username=...
+// &password=... en la barra de direcciones. La web ya no lo usa y el portal ya
+// no lo lee: una URL con credenciales no intenta entrar con ellas.
+describe('credenciales en la URL', () => {
+    it('no se intenta entrar con ellas', async () => {
+        const onLogin = vi.fn().mockResolvedValue(true);
+        window.history.replaceState({}, '', '/?autoLogin=true&username=cliente@empresa.com&password=secreta&tab=client');
+        render(<Login onLogin={onLogin} />);
+        await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+
+        expect(onLogin).not.toHaveBeenCalled();
+        expect(avisoDeFallo()).toBeUndefined();
+    });
+
+    it('el ?tab= sí se respeta: la web embebe el portal con la pestaña de cliente', async () => {
+        window.history.replaceState({}, '', '/?tab=driver');
+        const { getByText } = render(<Login onLogin={vi.fn()} />);
+        await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+
+        expect(getByText('Email o Usuario')).toBeTruthy();
     });
 });
 

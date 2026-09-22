@@ -31,10 +31,12 @@ describe('hayAutoLoginPendiente', () => {
         expect(hayAutoLoginPendiente()).toBe(true);
     });
 
-    it('con las credenciales en la URL también, aunque no haya iframe', () => {
+    it('un ?autoLogin= en la URL ya no cuenta: ese canal se borró el 22/09/2026', () => {
+        // Si contara, bastaría con pegar eso en la barra de direcciones para
+        // cerrarle la sesión guardada a quien abra el portal directo.
         fingirVentanaSuelta();
         window.history.replaceState({}, '', '/?autoLogin=true&username=x&password=y');
-        expect(hayAutoLoginPendiente()).toBe(true);
+        expect(hayAutoLoginPendiente()).toBe(false);
     });
 
     it('en una ventana normal no: ahí la sesión guardada es la de quien está delante', () => {
