@@ -346,3 +346,25 @@ describe('plegarParecidos', () => {
         expect(agenda[0].veces).toBe(7);
     });
 });
+
+describe('agenda · teléfono del destinatario', () => {
+    const envio = (extra) => ({ destinationName: 'Bar Pepe', destinationCity: 'Lucena', ...extra });
+
+    it('se queda con el último teléfono puesto, y uno vacío no lo borra', () => {
+        const [entrada] = construirAgendaDestinatarios([
+            envio({ destinationPhone: '600111222', createdAt: '2026-09-01T10:00:00Z' }),
+            envio({ destinationPhone: '600333444', createdAt: '2026-09-10T10:00:00Z' }),
+            envio({ destinationPhone: '', createdAt: '2026-09-20T10:00:00Z' })
+        ]);
+        expect(entrada.phone).toBe('600333444');
+    });
+
+    it('la entrada del servidor toma prestado el teléfono de los envíos cargados', () => {
+        const servidor = agendaDesdeServidor([{ nombre: 'Bar Pepe', poblacion: 'Lucena', veces: 3, ficha_id: 'c1' }]);
+        const local = construirAgendaDestinatarios([envio({ destinationPhone: '600333444', createdAt: '2026-09-10T10:00:00Z' })]);
+        const agenda = juntarAgendas(servidor, local);
+        expect(agenda).toHaveLength(1);
+        expect(agenda[0].destinatarioId).toBe('c1');
+        expect(agenda[0].phone).toBe('600333444');
+    });
+});

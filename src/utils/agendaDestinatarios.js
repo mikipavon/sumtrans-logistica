@@ -24,7 +24,7 @@
  * servidor no contesta) y para lo que el cliente acaba de crear en esta sesión.
  * Las dos producen entradas con la misma forma:
  *
- *   { clave, name, address, zip, city, veces, ultimoEnvio,
+ *   { clave, name, address, zip, city, phone, veces, ultimoEnvio,
  *     destinatarioId, destinatarioSedeId }        // los dos últimos a null si no hay enlace
  *
  * ── Lo que no cubre ───────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ const ordenDeAgenda = (a, b) =>
  *
  * @param {Array} envios  Envíos del cliente (sin filtrar por fechas: la agenda no
  *                        debe encogerse porque esté puesto un filtro en pantalla).
- * @returns {Array<{clave, name, address, zip, city, veces, ultimoEnvio, destinatarioId, destinatarioSedeId}>}
+ * @returns {Array<{clave, name, address, zip, city, phone, veces, ultimoEnvio, destinatarioId, destinatarioSedeId}>}
  */
 export const construirAgendaDestinatarios = (envios = []) => {
     const porNombre = new Map();
@@ -91,6 +91,7 @@ export const construirAgendaDestinatarios = (envios = []) => {
         const direccion = primerValor(envio?.destinationAddress, envio?.destination);
         const cp = primerValor(envio?.destinationZip);
         const poblacion = primerValor(envio?.destinationCity);
+        const telefono = primerValor(envio?.destinationPhone);
 
         let ficha = porNombre.get(clave);
         if (!ficha) {
@@ -100,6 +101,7 @@ export const construirAgendaDestinatarios = (envios = []) => {
                 address: direccion,
                 zip: cp,
                 city: poblacion,
+                phone: telefono,
                 veces: 1,
                 ultimoEnvio: momento,
                 destinatarioId: null,
@@ -119,10 +121,12 @@ export const construirAgendaDestinatarios = (envios = []) => {
                 if (direccion) ficha.address = direccion;
                 if (cp) ficha.zip = cp;
                 if (poblacion) ficha.city = poblacion;
+                if (telefono) ficha.phone = telefono;
             } else {
                 if (!ficha.address) ficha.address = direccion;
                 if (!ficha.zip) ficha.zip = cp;
                 if (!ficha.city) ficha.city = poblacion;
+                if (!ficha.phone) ficha.phone = telefono;
             }
         }
 
@@ -163,6 +167,8 @@ export const agendaDesdeServidor = (filas = []) => {
             address: primerValor(fila?.direccion),
             zip: primerValor(fila?.cp),
             city: primerValor(fila?.poblacion),
+            // La función del servidor aún no devuelve teléfono; lo pone juntarAgendas.
+            phone: primerValor(fila?.telefono),
             veces: Number(fila?.veces) || 0,
             ultimoEnvio: momentoDelEnvio({ createdAt: fila?.ultimo_envio }),
             destinatarioId: hayId(fila?.ficha_id) ? fila.ficha_id : null,
@@ -186,6 +192,7 @@ export const agendaDesdeServidor = (filas = []) => {
             address: manda.address || otra.address,
             zip: manda.zip || otra.zip,
             city: manda.city || otra.city,
+            phone: manda.phone || otra.phone,
             veces: entrada.veces + previa.veces,
             ultimoEnvio: Math.max(entrada.ultimoEnvio, previa.ultimoEnvio)
         });
@@ -251,6 +258,7 @@ export const plegarParecidos = (agenda = []) => {
         if (!ficha.address) ficha.address = suelta.address;
         if (!ficha.zip) ficha.zip = suelta.zip;
         if (!ficha.city) ficha.city = suelta.city;
+        if (!ficha.phone) ficha.phone = suelta.phone;
     }
 
     return [...fichas, ...sueltas].sort(ordenDeAgenda);
@@ -261,13 +269,20 @@ export const plegarParecidos = (agenda = []) => {
  * sólo entra lo que el servidor no conoce (lo recién creado en esta sesión). Si la
  * del servidor está vacía —no ha contestado aún, o ha fallado— queda la local.
  *
+ * El teléfono sí lo presta la local: la función del servidor no lo devuelve, y
+ * sin esto el cliente lo tendría que volver a teclear en cada envío.
+ *
  * Y al final se pliegan los parecidos (plegarParecidos), venga cada uno de donde
  * venga.
  */
 export const juntarAgendas = (servidor = [], local = []) => {
     const conocidas = new Set((servidor || []).map(c => c.clave));
+    const localPorClave = new Map((local || []).filter(c => c && c.clave).map(c => [c.clave, c]));
+    const delServidor = (servidor || []).map(c => (c.phone || !localPorClave.get(c.clave)?.phone)
+        ? c
+        : { ...c, phone: localPorClave.get(c.clave).phone });
     const nuevas = (local || []).filter(c => c && c.clave && !conocidas.has(c.clave));
-    return plegarParecidos([...(servidor || []), ...nuevas]);
+    return plegarParecidos([...delServidor, ...nuevas]);
 };
 
 /**

@@ -222,6 +222,7 @@ export default function ClientDashboard({
     const [newDestinationZip, setNewDestinationZip] = useState('');
     const [newDestinationCity, setNewDestinationCity] = useState('');
     const [newDestinationName, setNewDestinationName] = useState('');
+    const [newDestinationPhone, setNewDestinationPhone] = useState('');
     const [selectedArticleId, setSelectedArticleId] = useState('');
     // Con el interruptor "varios artículos" de la ficha, el cliente va añadiendo
     // líneas { articleId, quantity } (ver utils/articulosDelPortal.js). Sin él,
@@ -360,6 +361,7 @@ export default function ClientDashboard({
         setNewDestination(contact.address || '');
         setNewDestinationZip(contact.zip || '');
         setNewDestinationCity(contact.city || '');
+        setNewDestinationPhone(contact.phone || '');
         // Si la entrada viene de una ficha nuestra, el envío nacerá apuntando a
         // ella (fase 26). Si el cliente retoca el nombre después, se suelta.
         setDestinatarioEnlazado(
@@ -452,7 +454,8 @@ export default function ClientDashboard({
             destinationAddress: newDestination,
             destinationZip: newDestinationZip,
             destinationCity: newDestinationCity,
-            origin: `${newOriginZip} ${newOriginCity}, ES`.trim(),
+            destinationPhone: newDestinationPhone.trim(),
+            origin:`${newOriginZip} ${newOriginCity}, ES`.trim(),
             destination: `${newDestinationZip} ${newDestinationCity}, ES`.trim(),
             packages: numPackages,
             weightKg: weightKg && parseFloat(weightKg) > 0 ? parseFloat(weightKg) : null,
@@ -521,6 +524,7 @@ export default function ClientDashboard({
         setNewDestination(s.destinationAddress || '');
         setNewDestinationZip(s.destinationZip || '');
         setNewDestinationCity(s.destinationCity || '');
+        setNewDestinationPhone(s.destinationPhone || '');
         setDestinatarioEnlazado(null);
         const articulo = Array.isArray(s.articles) && s.articles[0] ? s.articles[0] : null;
         setSelectedArticleId(articulo && articulo.id !== undefined && articulo.id !== null ? String(articulo.id) : '');
@@ -547,6 +551,7 @@ export default function ClientDashboard({
         setNewDestinationZip('');
         setNewDestinationCity('');
         setNewDestinationName('');
+        setNewDestinationPhone('');
         setDestinatarioEnlazado(null);
         setNewOrigin(client.address || '');
         setNewOriginZip(client.zip || '');
@@ -609,6 +614,7 @@ export default function ClientDashboard({
                         <p class="text-bold">${shipment.destinationName || 'Destinatario'}</p>
                         <p class="text-normal">${shipment.destinationAddress || shipment.destination || 'Dirección destino'}</p>
                         <p class="text-normal">${shipment.destinationCity || 'Ciudad destino'}</p>
+                        ${shipment.destinationPhone ? `<p class="text-normal">Tel. ${shipment.destinationPhone}</p>` : ''}
                         <div class="details">
                             <div>
                                 <p class="section-title">Bultos / Palets</p>
@@ -1194,6 +1200,12 @@ export default function ClientDashboard({
                                     <div>
                                         <label className="block text-sm font-medium text-slate-700 mb-1">Código Postal Destino</label>
                                         <input required type="text" value={newDestinationZip} onChange={e=>setNewDestinationZip(e.target.value)} className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"/>
+                                    </div>
+                                    {/* Va a destinationPhone, el mismo campo que teclea la oficina:
+                                        el repartidor lo ve en su botón de llamar y sale en el albarán. */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">Teléfono del Destinatario <span className="text-[10px] text-slate-400 font-normal">(Opcional)</span></label>
+                                        <input type="tel" inputMode="tel" autoComplete="off" value={newDestinationPhone} onChange={e=>setNewDestinationPhone(e.target.value)} placeholder="Para que el repartidor pueda avisar" className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"/>
                                     </div>
                                     {avisarPrecioEnOficina && (
                                         <div role="alert" className="md:col-span-2 flex items-start gap-3 p-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-900">
