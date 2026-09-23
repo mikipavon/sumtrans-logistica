@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador, getPackagesCount } from './shipmentUtils';
+import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador, getPackagesCount, recogidaDelEnvio } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -644,5 +644,26 @@ describe('getPackagesCount', () => {
     it('sin artículos, lo que diga el texto; sin nada, uno', () => {
         expect(getPackagesCount({ packages: '3 cajas' })).toBe(3);
         expect(getPackagesCount({})).toBe(1);
+    });
+});
+
+describe('recogidaDelEnvio', () => {
+    it('un envío del portal se recoge cuando el conductor escanea, no cuando se crea', () => {
+        const envio = { createdBy: 'ClienteWeb: ACTIVA', createdAt: '2026-09-22T17:00:00Z', pickedUpBy: 'Cond. Paco', pickedUpAt: '2026-09-23T09:15:00Z' };
+        expect(recogidaDelEnvio(envio)).toEqual({ quien: 'Cond. Paco', cuando: '2026-09-23T09:15:00Z' });
+    });
+
+    it('un envío del portal sin escanear no está recogido', () => {
+        expect(recogidaDelEnvio({ createdBy: 'ClienteWeb: ACTIVA', createdAt: '2026-09-22T17:00:00Z' })).toBeNull();
+    });
+
+    it('lo que crea el conductor se recoge al crearlo', () => {
+        expect(recogidaDelEnvio({ createdBy: 'Cond.Paco ', createdAt: '2026-09-22T17:00:00Z' }))
+            .toEqual({ quien: 'Cond.Paco', cuando: '2026-09-22T17:00:00Z' });
+    });
+
+    it('escaneado antes de guardarse la hora: dice quién pero no inventa cuándo', () => {
+        expect(recogidaDelEnvio({ createdBy: 'Administrador', pickedUpBy: 'Cond. Paco' }))
+            .toEqual({ quien: 'Cond. Paco', cuando: null });
     });
 });

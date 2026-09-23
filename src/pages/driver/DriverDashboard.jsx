@@ -6283,6 +6283,10 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                         await onUpdateShipment(ship.id, {
                             pickedUpBy: `Cond. ${driverName}`,
                             pickedUpById: currentDriverId,
+                            // La hora de recogida es la del PRIMER bulto escaneado: los
+                            // siguientes no la mueven. Un envío del portal se crea un día y
+                            // se recoge otro, y sin esto no quedaba cuándo se recogió.
+                            pickedUpAt: ship.pickedUpAt || new Date().toISOString(),
                             scannedPackages: currentScannedPackages,
                             status: shouldResetStatus ? 'Pendiente de asignar' : ship.status,
                             incidentStatus: 'resolved',

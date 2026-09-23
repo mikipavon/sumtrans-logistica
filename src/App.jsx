@@ -3191,6 +3191,9 @@ function App() {
       createdAt: createdAtDeFechaContable(newShipment.fechaContable) || new Date().toISOString(),
       createdBy: creatorName,
       createdById: creatorId,
+      // Lo que hace el conductor lo hace con la mercancía delante: se recoge al
+      // crearlo. Lo del portal o la oficina se sella al escanear el primer bulto.
+      pickedUpAt: newShipment.pickedUpAt || (userRole === 'driver' ? new Date().toISOString() : null),
       assignedDriverId: newShipment.assignedDriverId,
       isTest: activeTestMode
     });

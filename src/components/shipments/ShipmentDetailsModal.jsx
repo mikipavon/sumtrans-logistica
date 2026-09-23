@@ -10,7 +10,7 @@ import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import CameraCaptureModal from '../CameraCaptureModal';
 import CityAutocomplete from '../CityAutocomplete';
-import { getPackagesCount } from '../../utils/shipmentUtils';
+import { getPackagesCount, recogidaDelEnvio } from '../../utils/shipmentUtils';
 
 
 import { Trash2, Plus } from 'lucide-react';
@@ -1559,8 +1559,13 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     <Truck size={10} /> Recogido por
                                 </span>
                                 <p className="text-sm font-semibold text-purple-700">
-                                    {shipment.pickedUpBy || <span className="text-slate-300 italic text-xs">—</span>}
+                                    {recogidaDelEnvio(shipment)?.quien || <span className="text-slate-300 italic text-xs">—</span>}
                                 </p>
+                                {recogidaDelEnvio(shipment)?.cuando && (
+                                    <p className="text-xs font-semibold text-slate-500 mt-0.5">
+                                        {formatDate(recogidaDelEnvio(shipment).cuando)}
+                                    </p>
+                                )}
                             </div>
                             {/* Delivery */}
                             <div className={`bg-white rounded-lg border p-3 ${shipment.status === 'Entregado' ? 'border-emerald-100' : 'border-slate-100'}`}>

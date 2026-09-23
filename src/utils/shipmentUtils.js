@@ -146,6 +146,22 @@ export const vieneDelPortal = (shipment) => {
     return creador.startsWith('ClienteWeb:') || creador === 'Portal Cliente';
 };
 
+/**
+ * Quién recogió la mercancía y cuándo. Un envío del portal se crea un día y se
+ * recoge cuando el conductor le pasa el escáner, que puede ser al día siguiente:
+ * la hora buena es pickedUpAt, que se sella en el primer escaneo. Un albarán que
+ * hizo el propio conductor se recogió al crearlo, y los de antes de sellarse
+ * pickedUpAt tiran de createdAt. Devuelve null si aún no lo ha recogido nadie.
+ */
+export const recogidaDelEnvio = (shipment) => {
+    const creador = String(shipment?.createdBy || '').trim();
+    const loCreoUnConductor = creador.startsWith('Cond.');
+    const quien = shipment?.pickedUpBy || (loCreoUnConductor ? creador : null);
+    const cuando = shipment?.pickedUpAt || (loCreoUnConductor ? shipment?.createdAt : null) || null;
+    if (!quien && !cuando) return null;
+    return { quien, cuando };
+};
+
 export const getIrregularReasons = (shipment) => {
     if (!shipment || shipment.notificationDismissed) return [];
     const reasons = [];
