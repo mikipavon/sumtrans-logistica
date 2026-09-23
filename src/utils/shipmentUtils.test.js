@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador } from './shipmentUtils';
+import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador, getPackagesCount } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -623,5 +623,26 @@ describe('yaLeSaleAlConductor', () => {
     it('sólo con el día: le sale ese día, no antes', () => {
         expect(yaLeSaleAlConductor({ scheduledDate: '2026-09-23' }, ahora)).toBe(true);
         expect(yaLeSaleAlConductor({ scheduledDate: '2026-09-24' }, ahora)).toBe(false);
+    });
+});
+
+describe('getPackagesCount', () => {
+    const BLT_7 = { name: 'BLT_7', category: 'BADI', quantity: 1 };
+    it('la ficha guarda "1x BLT_7" y son siete bultos, no uno (manifiesto de DISFER)', () => {
+        expect(getPackagesCount({ packages: '1x BLT_7', articles: [BLT_7] })).toBe(7);
+        expect(getPackagesCount({ packages: '2x BLT_5\n3x TURISMO', articles: [
+            { name: 'BLT_5', category: 'BADI', quantity: 2 }, { name: 'TURISMO', quantity: 3 },
+        ] })).toBe(13);
+    });
+    it('un número limpio manda, aunque haya un artículo (importaciones)', () => {
+        expect(getPackagesCount({ packages: 5, articles: [{ name: 'BLT_1', quantity: 1 }] })).toBe(5);
+        expect(getPackagesCount({ packages: '5', articles: [{ name: 'BLT_1', quantity: 1 }] })).toBe(5);
+    });
+    it('un artículo con cifras en el nombre que no es de bultos cuenta por unidad', () => {
+        expect(getPackagesCount({ articles: [{ name: '4X4', quantity: 2 }] })).toBe(2);
+    });
+    it('sin artículos, lo que diga el texto; sin nada, uno', () => {
+        expect(getPackagesCount({ packages: '3 cajas' })).toBe(3);
+        expect(getPackagesCount({})).toBe(1);
     });
 });

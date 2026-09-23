@@ -1,29 +1,27 @@
 export const getPackagesCount = (shipment) => {
     if (!shipment) return 1;
     
-    let count = parseInt(shipment.packages) || 0;
-    if (count > 0) return count;
-    
+    // Sólo un número limpio es el total de bultos (el portal y las importaciones lo
+    // guardan así). La ficha del albarán guarda el texto de los artículos, "1x BLT_7",
+    // y parseInt de eso daba 1: el manifiesto de DISFER contaba 1 bulto donde iban 7.
+    const texto = String(shipment.packages ?? '').trim();
+    if (/^\d+$/.test(texto) && parseInt(texto, 10) > 0) return parseInt(texto, 10);
+
     if (shipment.articles && shipment.articles.length > 0) {
-        const badiArticle = shipment.articles.find(a => 
-            (a.category === 'BADI') || 
-            (a.name && String(a.name).includes('BLT_')) || 
-            (a.name && String(a.name).toLowerCase().includes('bulto')) ||
-            (a.name && String(a.name).includes('BADI')) ||
-            a.id === 'BADI'
-        );
-        
-        if (badiArticle) {
-            const parsed = parseInt(String(badiArticle.name).replace(/\D/g, ''));
-            if (!isNaN(parsed) && parsed > 0) {
-                return parsed * (parseInt(badiArticle.quantity) || 1);
-            }
-            return parseInt(badiArticle.quantity) || 1;
-        } else {
-            return shipment.articles.reduce((sum, art) => sum + (parseInt(art.quantity) || 1), 0);
-        }
+        // Un BLT_n son n bultos por unidad; cualquier otro artículo, uno por unidad.
+        return shipment.articles.reduce((sum, a) => {
+            const cantidad = parseInt(a.quantity) || 1;
+            const nombre = String(a.name || '');
+            const esDeBultos = a.category === 'BADI' || a.id === 'BADI' ||
+                nombre.includes('BLT_') || nombre.includes('BADI') || nombre.toLowerCase().includes('bulto');
+            const n = esDeBultos ? parseInt(nombre.replace(/\D/g, ''), 10) : NaN;
+            return sum + (n > 0 ? n * cantidad : cantidad);
+        }, 0);
     }
-    
+
+    const count = parseInt(texto) || 0;
+    if (count > 0) return count;
+
     return 1;
 };
 
