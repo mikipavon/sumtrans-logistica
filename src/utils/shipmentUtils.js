@@ -75,6 +75,24 @@ export const estaEnElRepartoDe = (shipment, driverId) => {
 };
 
 /**
+ * Si la hora programada de un albarán ya ha llegado, es decir, si ya le sale al
+ * conductor en su reparto.
+ *
+ * La oficina puede asignarlo ahora para que le aparezca más tarde: 'YYYY-MM-DD'
+ * (ese día) o 'YYYY-MM-DDTHH:mm' en hora local (ese día a esa hora). El Mapa en
+ * Vivo sólo miraba el día y pintaba como parada lo programado para las 14:00
+ * desde primera hora (23/09/2026); por eso los dos usan esta misma regla.
+ */
+export const yaLeSaleAlConductor = (shipment, ahora = new Date()) => {
+    const programado = shipment?.scheduledDate;
+    if (!programado) return true;
+
+    const ahoraLocal = new Date(ahora.getTime() - ahora.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    if (programado.length === 10) return programado <= ahoraLocal.slice(0, 10);
+    return programado.slice(0, 16) <= ahoraLocal;
+};
+
+/**
  * Si un albarán entregado lo entregó ESTE conductor.
  *
  * La pestaña Entregas es lo que cada uno entrega, no lo que tocó. Antes contaba

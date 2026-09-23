@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador } from './shipmentUtils';
+import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -600,5 +600,28 @@ describe('fichaDelPagador', () => {
         expect(fichaDelPagador({ porteType: 'Debido' }, cartera)).toBeNull();
         expect(fichaDelPagador(null, cartera)).toBeNull();
         expect(fichaDelPagador({ porteType: 'Debido', destinationName: 'X' }, null)).toBeNull();
+    });
+});
+
+describe('yaLeSaleAlConductor', () => {
+    // 23/09/2026 a las 11:30 hora local
+    const ahora = new Date(2026, 8, 23, 11, 30);
+
+    it('sin programar le sale ya', () => {
+        expect(yaLeSaleAlConductor({ scheduledDate: null }, ahora)).toBe(true);
+    });
+
+    it('programado para las 14:00 de hoy no le sale todavía (caso del Mapa en Vivo)', () => {
+        expect(yaLeSaleAlConductor({ scheduledDate: '2026-09-23T14:00' }, ahora)).toBe(false);
+        expect(yaLeSaleAlConductor({ scheduledDate: '2026-09-23T14:00' }, new Date(2026, 8, 23, 14, 0))).toBe(true);
+    });
+
+    it('programado para una hora que ya pasó le sale', () => {
+        expect(yaLeSaleAlConductor({ scheduledDate: '2026-09-23T09:00' }, ahora)).toBe(true);
+    });
+
+    it('sólo con el día: le sale ese día, no antes', () => {
+        expect(yaLeSaleAlConductor({ scheduledDate: '2026-09-23' }, ahora)).toBe(true);
+        expect(yaLeSaleAlConductor({ scheduledDate: '2026-09-24' }, ahora)).toBe(false);
     });
 });

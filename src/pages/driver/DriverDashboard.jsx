@@ -42,7 +42,7 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { agregarReceptor, leerReceptores, direccionPorNombre, direccionDeLaChuleta } from '../../utils/receptoresHabituales';
-import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
+import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
 import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, motivoSinJornada, puedeFicharAutomaticamente, textoSinJornada, MOTIVOS_BLOQUEO } from '../../utils/normasFichaje';
 import { esElMismoPueblo, normalizarPueblo, puebloDeRutaParaEnvio, estaEnBaremo } from '../../utils/townMatch';
@@ -3017,24 +3017,12 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
         if (!allShipments) return;
 
         const now = new Date();
-        const localCurrentStr = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
         const assigned = allShipments.filter(s => {
             if (!estaEnElRepartoDe(s, currentDriverId)) return false;
             if (s.status === 'Entregado' || s.status === 'Entrega aplazada') return false;
             if (s.type === 'Recibo') return false; // Solo mostrar en cobros pendientes
-            
-            if (s.scheduledDate) {
-                if (s.scheduledDate.length === 10) {
-                    // It's a pure date "YYYY-MM-DD"
-                    const todayStr = localCurrentStr.split('T')[0];
-                    if (s.scheduledDate > todayStr) return false;
-                } else {
-                    // It's a datetime "YYYY-MM-DDTHH:mm"
-                    if (s.scheduledDate > localCurrentStr) return false;
-                }
-            }
-            return true;
+            return yaLeSaleAlConductor(s, now);
         });
         
         if (!isInitialized) {

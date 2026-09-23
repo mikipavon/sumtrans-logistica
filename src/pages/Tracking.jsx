@@ -4,6 +4,7 @@ import { Truck, Phone, Navigation, Clock, CheckCircle, Package, Zap, MapPin, Lay
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import { geocodificarDireccion } from '../utils/geocodificar';
+import { estaEnElRepartoDe, yaLeSaleAlConductor } from '../utils/shipmentUtils';
 
 // ─── Fix Leaflet icons ────────────────────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -172,20 +173,23 @@ export default function Tracking({ drivers, shipments = [], onRequestGps }) {
     const activeDrivers = useMemo(() => [...drivers], [drivers]);
 
     // ── Envíos pendientes — mismo filtro que usa el conductor ─────────────────
-    const todayStr = new Date().toISOString().split('T')[0];
+    // Lo programado para más tarde entra en el mapa cuando le llega la hora, sin
+    // tener que recargar: por eso el reloj avanza cada 30 s.
+    const [ahoraMs, setAhoraMs] = useState(Date.now());
+    useEffect(() => {
+        const t = setInterval(() => setAhoraMs(Date.now()), 30000);
+        return () => clearInterval(t);
+    }, []);
     const pendingByDriver = useMemo(() => {
+        const ahora = new Date(ahoraMs);
         const result = {};
         activeDrivers.forEach(driver => {
             const pending = shipments.filter(s => {
                 if (!s) return false;
-                if (Number(s.assignedDriverId) !== Number(driver.id)) return false;
+                if (!estaEnElRepartoDe(s, driver.id)) return false;
                 if (s.status === 'Entregado' || s.status === 'Entrega aplazada') return false;
                 if (s.type === 'Recibo') return false;
-                if (s.scheduledDate) {
-                    const sch = s.scheduledDate.slice(0, 10);
-                    if (sch > todayStr) return false;
-                }
-                return true;
+                return yaLeSaleAlConductor(s, ahora);
             });
             if (driver.routeOrder?.length > 0) {
                 const orderMap = new Map(driver.routeOrder.map((id, i) => [String(id), i]));
@@ -198,7 +202,7 @@ export default function Tracking({ drivers, shipments = [], onRequestGps }) {
             result[driver.id] = pending;
         });
         return result;
-    }, [activeDrivers, shipments, todayStr]);
+    }, [activeDrivers, shipments, ahoraMs]);
 
     // ── Entregas completadas (para marcar en el mapa + timeline) ──────────────
     const coordsFromShipment = (s) => {
