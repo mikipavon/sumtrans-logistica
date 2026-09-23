@@ -745,7 +745,9 @@ function App() {
   // necesita; si es la oficina "entrando como" cliente, sí se pide.
   const [borradoPrompt, setBorradoPrompt] = useState(null);
 
-  const autorizarBorrado = useCallback(async (detalle) => {
+  // `textoBoton` sirve para reutilizarla en lo que no es un borrado pero
+  // tampoco debe hacerse sin la clave (quitar el FACT de un albarán).
+  const autorizarBorrado = useCallback(async (detalle, { textoBoton = 'Borrar' } = {}) => {
     if (userRole !== 'admin' && !suplantandoCliente) return true;
     let hash;
     try {
@@ -755,7 +757,7 @@ function App() {
       return false;
     }
     return new Promise((resolve) => {
-      setBorradoPrompt({ mode: hash ? 'unlock' : 'crear', tieneActual: !!hash, detalle, resolve });
+      setBorradoPrompt({ mode: hash ? 'unlock' : 'crear', tieneActual: !!hash, detalle, textoBoton, resolve });
     });
   }, [userRole, suplantandoCliente, leerGhostHash]);
 
@@ -5003,7 +5005,7 @@ function App() {
       mode={borradoPrompt.mode}
       tieneActual={borradoPrompt.tieneActual}
       detalle={borradoPrompt.detalle}
-      textoBoton="Borrar"
+      textoBoton={borradoPrompt.textoBoton}
       onSubmit={handleBorradoPasswordSubmit}
       onCancel={cancelarBorrado}
     />
@@ -5129,7 +5131,7 @@ function App() {
                     </div>
                 )}
       {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onReassignCollection={handleReassignPendingCollection} onReassignCollections={handleReassignPendingCollections} onUpdateShipment={handleUpdateShipment} onCreateShipment={handleAddShipment} articles={articles} isGhostModeUnlocked={isGhostModeUnlocked} driverNamePreference={driverNamePreference} />}
-      {currentView === 'shipments' && <Shipments shipments={visibleShipments} allShipments={shipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} />}
+      {currentView === 'shipments' && <Shipments shipments={visibleShipments} allShipments={shipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} onAutorizarConContrasena={autorizarBorrado} />}
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
       {currentView === 'maintenance-history' && <MaintenanceHistory vehicles={vehicles} onUpdateVehicle={handleUpdateVehicle} onNavigateToFleet={() => setCurrentView('fleet')} />}
       {currentView === 'fuel' && <FuelManagement fuelLogs={fuelLogs} onAddFuelLog={handleAddFuelLog} drivers={drivers} shipments={visibleShipments} />}

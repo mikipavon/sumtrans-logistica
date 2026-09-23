@@ -21,7 +21,7 @@ import { Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 const { utils, writeFile } = XLSX;
 
-export default function Shipments({ shipments, allShipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, onUpdateClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both' }) {
+export default function Shipments({ shipments, allShipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, onUpdateClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both', onAutorizarConContrasena }) {
     const getDriverDisplayName = (driver) => {
         if (!driver) return '';
         const name = driver.name || '';
@@ -99,7 +99,18 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     };
 
     // Export Modal State
-    const [exportModal, setExportModal] = useState({ isOpen: false, startDate: '', endDate: '', onlyFacturacion: true, excludeExported: true, specificId: '' });
+    const [exportModal, setExportModal] = useState({ isOpen: false, startDate: '', endDate: '', excludeExported: true, specificId: '' });
+
+    // Quitar el FACT de un albarán facturado por error. Pide la Contraseña SUM,
+    // como los borrados: sin FACT, un porte de pago en mano vuelve a la cuenta
+    // pendiente del transportista y el albarán vuelve a entrar al facturar.
+    const quitarFacturado = async (shipment) => {
+        if (!onUpdateShipment || !shipment?.exportedAt) return;
+        const fecha = new Date(shipment.exportedAt).toLocaleDateString('es-ES');
+        if (!window.confirm(`¿Quitar el FACT de ${shipment.id} (facturado el ${fecha})?\n\nÚsalo sólo si se facturó por error. Si es de pago en mano, el porte vuelve a la cuenta pendiente del transportista.`)) return;
+        if (onAutorizarConContrasena && !(await onAutorizarConContrasena(`Vas a quitar el FACT de ${shipment.id}.`, { textoBoton: 'Quitar FACT' }))) return;
+        await onUpdateShipment(shipment.id, { ...shipment, exportedAt: null });
+    };
 
     // Filters State
     const [searchTerm, setSearchTerm] = useState('');
@@ -547,7 +558,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors border border-emerald-200 text-xs font-bold"
                         >
                             <FileText size={15} />
-                            Excel
+                            Facturar
                         </button>
 
                         {isGhostModeUnlocked && (
@@ -690,7 +701,12 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             <div className="flex items-center gap-2">
                                                 <span className="font-bold text-slate-900 tracking-tight">{shipment.id}</span>
                                                 {shipment.exportedAt && (
-                                                    <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[8px] font-bold rounded-full uppercase tracking-wider" title={`Exportado: ${new Date(shipment.exportedAt).toLocaleString('es-ES')}`}>FACT</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); quitarFacturado(shipment); }}
+                                                        className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[8px] font-bold rounded-full uppercase tracking-wider hover:bg-red-100 hover:text-red-700 transition-colors"
+                                                        title={`Facturado: ${new Date(shipment.exportedAt).toLocaleString('es-ES')} · pulsa para quitar el FACT`}
+                                                    >FACT</button>
                                                 )}
                                                 {shipment.hasSimplifiedInvoice && (
                                                     <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 text-[8px] font-bold rounded-full uppercase tracking-wider" title="Factura Simplificada emitida — No se exporta a Factusol">SIMPLIFICADA</span>
@@ -1284,18 +1300,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                     className="w-full text-sm border-2 border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 focus:outline-none font-semibold text-slate-700"
                                 />
                             </div>
-                            <label className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer">
-                                <input 
-                                    type="checkbox" 
-                                    className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                                    checked={exportModal.onlyFacturacion}
-                                    onChange={(e) => setExportModal(prev => ({ ...prev, onlyFacturacion: e.target.checked }))}
-                                />
-                                <div className="flex flex-col">
-                                    <span className="text-sm font-bold text-slate-800">Solo Facturación</span>
-                                    <span className="text-[10px] text-slate-500">Excluye presupuestos/habituales</span>
-                                </div>
-                            </label>
+                            <p className="text-[11px] text-slate-500">Por fechas sólo se facturan clientes de facturación. Para facturar un albarán de otro cliente, escribe su número abajo.</p>
                             <label className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100 cursor-pointer">
                                 <input 
                                     type="checkbox" 
@@ -1319,7 +1324,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                     onChange={(e) => setExportModal(prev => ({ ...prev, specificId: e.target.value.toUpperCase() }))}
                                     className="w-full text-sm border-2 border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-orange-500 focus:outline-none font-bold text-slate-700 placeholder:font-normal placeholder:text-slate-400"
                                 />
-                                <p className="text-[9px] text-slate-400">Si rellenas este campo, se exportará SOLO este albarán (ignora los demás filtros)</p>
+                                <p className="text-[9px] text-slate-400">Si rellenas este campo, se facturará SOLO este albarán, sea del cliente que sea (ignora los demás filtros)</p>
                             </div>
                         </div>
                         <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
@@ -1402,17 +1407,26 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 const found = (shipments || []).filter(s => s.id === specificId);
                                                 if (found.length === 0) {
                                                     alert(`No se encontró el albarán "${specificId}".`);
-                                                    return [];
+                                                    return null;
+                                                }
+                                                // Esta casilla se salta "Excluir ya facturados":
+                                                // avisar antes de meterlo dos veces en Factusol.
+                                                const yaFacturado = found[0].exportedAt;
+                                                if (yaFacturado && !window.confirm(`${specificId} ya se facturó el ${new Date(yaFacturado).toLocaleDateString('es-ES')}.\n\n¿Facturarlo otra vez?`)) {
+                                                    return null;
                                                 }
                                                 return found;
                                             }
 
-                                            // Filtro normal
+                                            // Por fechas sólo se facturan clientes de facturación.
+                                            // Un albarán de pago en mano sólo se factura a propósito,
+                                            // con su número en "Albarán específico": la etiqueta FACT
+                                            // lo saca de la cuenta pendiente del transportista.
                                             return filteredShipments.filter(s => {
                                                 const bType = getBillingType(s).toLowerCase();
                                                 const isFacturacion = bType.includes('factur') && !bType.includes('presupuesto');
 
-                                                if (exportModal.onlyFacturacion && !isFacturacion) return false;
+                                                if (!isFacturacion) return false;
                                                 if (exportModal.excludeExported && s.exportedAt) return false;
                                                 if (s.hasSimplifiedInvoice) return false; // Ya facturada como simplificada — no exportar a Factusol
 
@@ -1427,6 +1441,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             });
                                         })();
 
+                                        if (!shipmentsToExport) return;
                                         if (shipmentsToExport.length === 0) {
                                             alert("No hay envíos que coincidan con la selección de fechas y facturación para exportar.");
                                             setExportModal(prev => ({ ...prev, isOpen: false }));
@@ -1625,7 +1640,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                 className="flex-[2] py-3 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 flex items-center justify-center gap-2"
                             >
                                 <FileText size={16} />
-                                Exportar
+                                Facturar
                             </button>
                         </div>
                     </div>

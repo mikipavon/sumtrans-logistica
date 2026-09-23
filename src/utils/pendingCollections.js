@@ -80,13 +80,20 @@ export const lineasDeCobro = (s, clients) => {
     const esTarifa = !customAmount && String(s.amount || '').trim().toLowerCase() === 'tarifa';
     const hayPorte = importePorte > 0 || esTarifa;
     const porteSinCobrar = !s.portePaid && s.paymentStatus !== 'Paid';
+    // Un porte facturado (etiqueta FACT, exportado a Factusol) se cobra con la
+    // factura, no en mano: pedirlo también al repartidor sería cobrarlo dos veces.
+    // La facturación por fechas sólo lleva clientes de facturación; un albarán de
+    // pago en mano sólo llega aquí facturado a propósito, escribiendo su número
+    // en "Albarán específico" (HAB-409, 23/09/2026). El reembolso no se toca: es
+    // dinero del remitente y la factura del porte no lo paga.
+    const porteFacturado = !!s.exportedAt;
     const pagadorEnMano = esDebido
         ? !model.isInvoiceBilling(model.destinationBillingType)
         : model.isCashBilling(model.billingType);
     // Un porte pagado en origen se debe desde que nace; uno debido, sólo al entregar.
     const tocaCobrarlo = !esDebido || s.status === 'Entregado';
 
-    if (hayPorte && porteSinCobrar && pagadorEnMano && tocaCobrarlo) {
+    if (hayPorte && porteSinCobrar && !porteFacturado && pagadorEnMano && tocaCobrarlo) {
         lineas.push({
             parte: 'porte',
             type: esDebido ? 'Portes (Debido)' : 'Portes (Pagado)',

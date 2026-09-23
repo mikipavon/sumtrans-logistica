@@ -145,6 +145,23 @@ describe('lineasDeCobro · la regla única', () => {
         expect(lineasDeCobro(ahoraFactura, clientes)).toHaveLength(0);
     });
 
+    it('un porte facturado (FACT) ya no se cobra en mano, pero el reembolso sí', () => {
+        // HAB-409: estaba en la cuenta de Francis y la oficina lo facturó a mano
+        // escribiéndolo en "Albarán específico".
+        const entregado = {
+            ...albaranBase, status: 'Entregado', assignedDriverId: 7,
+            hasCod: true, codAmount: '40.00'
+        };
+        expect(lineasDeCobro(entregado, clientes).map(l => l.parte)).toEqual(['porte', 'reembolso']);
+
+        const facturado = { ...entregado, exportedAt: '2026-09-23T09:00:00.000Z' };
+        expect(lineasDeCobro(facturado, clientes).map(l => l.parte)).toEqual(['reembolso']);
+        expect(isPendingCollection({ ...facturado, hasCod: false }, clientes)).toBe(false);
+
+        // Quitar el FACT por error lo devuelve a la cuenta.
+        expect(lineasDeCobro({ ...facturado, exportedAt: null }, clientes)).toHaveLength(2);
+    });
+
     it('un Recibo de oficina conserva su tipo de cobro aunque la ficha sea de facturación', () => {
         const recibo = { ...albaranBase, type: 'Recibo', client: 'Gran Cuenta SL', billingType: 'Clientes Habituales' };
         expect(lineasDeCobro(recibo, clientes)).toHaveLength(1);
