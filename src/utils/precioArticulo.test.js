@@ -105,12 +105,13 @@ describe('baremoDelEnvio', () => {
 // porte no baja de 12 € y al cliente que paga en mano se le manda a preguntar
 // a la oficina.
 describe('fuera de baremo', () => {
-    it('lo decide el C.P.: fuera sólo si no está en ninguna lista y el C.P. es de fuera de Córdoba', () => {
+    it('lo que no está en ninguna lista está fuera, sea cual sea el C.P.', () => {
         expect(baremoDelPunto('Pueblo Inventado', '29999').fueraDeBaremo).toBe(true);
-        // Un pueblo de la provincia que no esté en las listas es Baremo 1 y no avisa.
-        expect(baremoDelPunto('Pueblo Inventado', '14999')).toMatchObject({ baremo: 1, fueraDeBaremo: false });
-        // Sin C.P. no hay con qué decidirlo.
-        expect(baremoDelPunto('Pueblo Inventado', '').fueraDeBaremo).toBe(false);
+        // SUM-2256 (23/09/2026): Santaella es de la provincia pero no está en las
+        // listas; el 14xxx sólo le pone Baremo 1 de supuesto.
+        expect(baremoDelPunto('Santaella', '14546')).toMatchObject({ baremo: 1, fueraDeBaremo: true });
+        expect(baremoDelPunto('Santaella', '')).toMatchObject({ fueraDeBaremo: true });
+        expect(baremoDelEnvio({ originCity: 'CORDOBA', originZip: '14014', destinationCity: 'Santaella', destinationZip: '14546' }).fueraDeBaremo).toBe(true);
     });
 
     it('un pueblo del listado maestro o de Ajustes no lo está', () => {
