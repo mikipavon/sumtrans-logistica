@@ -130,7 +130,34 @@ function extraerJson(texto: string): Record<string, unknown> | null {
   }
 }
 
+// Si el modelo de siempre contesta algo que no es el JSON (respuesta cortada,
+// vacía o en bucle), se prueba una vez con uno más fuerte antes de rendirse:
+// si no, la hoja cae al lector gratuito, que con fotos de móvil lee fatal.
+const MODELO_DE_REPUESTO = 'google/gemini-2.5-flash'
+
 async function leer(imagen: string, modelo: string): Promise<Response> {
+  const primero = await preguntar(imagen, modelo)
+  if (primero instanceof Response) return primero
+  if (primero.campos) return json({ campos: primero.campos, modelo: primero.modelo, coste: primero.coste })
+
+  console.error('leer-albaran: sin JSON', modelo, primero.fin, primero.contenido.slice(0, 1000))
+  if (modelo === MODELO_DE_REPUESTO) {
+    return json({ error: `La IA no devolvió datos legibles (${primero.fin || 'sin motivo'})`, respuesta: primero.contenido.slice(0, 500) }, 502)
+  }
+
+  const segundo = await preguntar(imagen, MODELO_DE_REPUESTO)
+  if (segundo instanceof Response) return segundo
+  // Lo que costó el intento fallido también se paga: se suma para el panel.
+  const coste = primero.coste === null && segundo.coste === null ? null : (primero.coste || 0) + (segundo.coste || 0)
+  if (segundo.campos) return json({ campos: segundo.campos, modelo: segundo.modelo, coste })
+
+  console.error('leer-albaran: sin JSON', MODELO_DE_REPUESTO, segundo.fin, segundo.contenido.slice(0, 1000))
+  return json({ error: `La IA no devolvió datos legibles (${primero.fin || '?'} / ${segundo.fin || '?'})`, respuesta: segundo.contenido.slice(0, 500) }, 502)
+}
+
+type Contestacion = { campos: Record<string, unknown> | null; contenido: string; fin: string; modelo: string; coste: number | null }
+
+async function preguntar(imagen: string, modelo: string): Promise<Contestacion | Response> {
   const respuesta = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -142,7 +169,8 @@ async function leer(imagen: string, modelo: string): Promise<Response> {
     body: JSON.stringify({
       model: modelo,
       temperature: 0,
-      max_tokens: 800,
+      // El JSON ocupa unos 300; con 800 una respuesta que se enrollaba se cortaba antes del cierre.
+      max_tokens: 1500,
       response_format: { type: 'json_object' },
       // Los albaranes llevan nombres, direcciones y teléfonos de clientes: sólo
       // proveedores que no guardan ni entrenan con lo que se les manda.
@@ -167,15 +195,15 @@ async function leer(imagen: string, modelo: string): Promise<Response> {
     return json({ error: sinSaldo ? 'Se ha acabado el saldo de OpenRouter. Hay que recargar en openrouter.ai/settings/credits.' : motivo, sinSaldo }, 502)
   }
 
-  const contenido = cuerpo?.choices?.[0]?.message?.content || ''
-  const campos = extraerJson(contenido)
-  if (!campos) return json({ error: 'La IA no devolvió datos legibles', respuesta: String(contenido).slice(0, 500) }, 502)
-
-  return json({
-    campos,
+  const contenido = String(cuerpo?.choices?.[0]?.message?.content || '')
+  return {
+    campos: extraerJson(contenido),
+    contenido,
+    // 'length' = se quedó sin sitio a medias; 'content_filter'/'SAFETY' = el proveedor la bloqueó.
+    fin: String(cuerpo?.choices?.[0]?.native_finish_reason || cuerpo?.choices?.[0]?.finish_reason || ''),
     modelo: cuerpo?.model || modelo,
     coste: typeof cuerpo?.usage?.cost === 'number' ? cuerpo.usage.cost : null,
-  })
+  }
 }
 
 async function saldo(): Promise<Response> {
