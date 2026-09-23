@@ -76,12 +76,17 @@ describe('registrarError', () => {
     });
 
     it('no intenta nada sin conexión', async () => {
-        const original = Object.getOwnPropertyDescriptor(navigator, 'onLine');
-        Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
-
-        await expect(registrarError(new Error('sin red'))).resolves.toBeUndefined();
-
-        if (original) Object.defineProperty(navigator, 'onLine', original);
+        // Con un espía, no con defineProperty: onLine vive en el prototipo de
+        // navigator, así que no había nada propio que guardar y el false se
+        // quedaba puesto para los ficheros siguientes (comparten entorno, ver
+        // vitest.config.js). useVersionNueva dejaba de preguntar y sus pruebas
+        // fallaban a ratos, según el orden.
+        const espia = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+        try {
+            await expect(registrarError(new Error('sin red'))).resolves.toBeUndefined();
+        } finally {
+            espia.mockRestore();
+        }
     });
 
     it('acepta el contexto de sesión sin romperse', async () => {

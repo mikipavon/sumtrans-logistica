@@ -6,8 +6,7 @@
 // recuadro grande no hacía nada al tocarlo: en el móvil nadie lo encontraba.
 
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
-import ShipmentDetailsModal from './ShipmentDetailsModal';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 
 vi.mock('../../utils/printShipment', () => ({ printShipmentTicket: vi.fn() }));
 vi.mock('../../utils/printSimplifiedInvoice', () => ({ printSimplifiedInvoice: vi.fn() }));
@@ -21,7 +20,18 @@ vi.mock('../CameraCaptureModal', () => ({
         : null,
 }));
 
-import { uploadProof } from '../../utils/storage';
+// La ventana del albarán se carga aquí, de nuevo, y no con un import arriba. Los
+// ficheros de test comparten módulos (isolate: false, ver vitest.config.js) y
+// otros cuatro simulan la cámara como `() => null`: si uno corría antes, la
+// ventana se quedaba con esa cámara, el "Disparar" no salía nunca y estas pruebas
+// fallaban a ratos, según el orden.
+let ShipmentDetailsModal;
+let uploadProof;
+beforeAll(async () => {
+    vi.resetModules();
+    ShipmentDetailsModal = (await import('./ShipmentDetailsModal')).default;
+    ({ uploadProof } = await import('../../utils/storage'));
+});
 
 const enReparto = {
     id: 'SUM-990',

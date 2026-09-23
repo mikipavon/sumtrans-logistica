@@ -73,7 +73,12 @@ describe('con el nombre comercial del cliente', () => {
     it('sigue sin repetirse entre clientes con el mismo nombre', () => {
         const vistas = new Set();
         for (let i = 0; i < 2000; i++) vistas.add(generarContrasena('PROSERVICE'));
-        expect(vistas.size).toBe(2000);
+        // Con el nombre fijo quedan ~640 millones de combinaciones (253 × 252
+        // palabras × 10.000 cifras): entre 2000, que dos coincidan por pura
+        // casualidad pasa un 0,3 % de las veces, y la prueba fallaba a ratos
+        // sin que el generador tuviera nada. Se admite UNA; un generador roto
+        // de verdad repetiría muchas más.
+        expect(vistas.size).toBeGreaterThanOrEqual(1999);
     });
 
     it('nunca deja tildes ni eñes, que no se dictan ni se teclean bien', () => {
