@@ -4508,7 +4508,9 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
             <IncidentModal
                 isOpen={isIncidentModalOpen}
                 onClose={() => setIsIncidentModalOpen(false)}
-                onConfirm={onStatusChange}
+                // Quién la reporta de verdad: el que cubre la ruta de otro no es el asignado.
+                onConfirm={(id, status, coords, reason, photo, proof, extra = {}) =>
+                    onStatusChange(id, status, coords, reason, photo, proof, { ...extra, incidentReportedById: currentDriverId ?? null })}
                 shipment={incidentShipment}
                 initialReason={incidentInitialReason}
             />

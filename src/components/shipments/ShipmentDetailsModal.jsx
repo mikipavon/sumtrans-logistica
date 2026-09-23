@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, MapPin, Map as MapIcon, Calendar, Clock, Package, User, Phone, FileText, Euro, CreditCard, Save, Edit2, Truck, Printer, Shield, Fingerprint, Image as ImageIcon, ExternalLink, Download, Loader2, MessageSquare, Camera, Wallet } from 'lucide-react';
 
 import { printShipmentTicket } from '../../utils/printShipment';
+import { estadoAlReportarIncidencia } from '../../models/Shipment';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { generateDeliveryPDF } from '../../utils/deliveryPdf';
 import { uploadProof } from '../../utils/storage';
@@ -1440,6 +1441,14 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                             <h3 className={`font-bold ${c.titulo} text-[10px] uppercase tracking-wider flex items-center gap-2 border-b ${c.linea} pb-2`}>
                                 <Shield size={14} className={c.icono} />
                                 {abierta ? 'INCIDENCIA REPORTADA' : 'INCIDENCIA RESUELTA'}
+                                {(() => {
+                                    const estado = estadoAlReportarIncidencia(shipment);
+                                    return estado && (
+                                        <span className={`${estado.clases} ml-auto px-2 py-0.5 rounded-full normal-case tracking-normal`} title="Estado del albarán cuando se reportó la incidencia">
+                                            Estaba: {estado.texto}
+                                        </span>
+                                    );
+                                })()}
                             </h3>
                             <div className="space-y-4">
                                 <div>

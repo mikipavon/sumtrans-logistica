@@ -102,6 +102,12 @@ export default class Shipment {
     // reutilizara deliveryCoordinates, una incidencia pisaría el sitio donde de
     // verdad se entregó el albarán.
     this.incidentCoordinates = data.incidentCoordinates || null;
+    // Estado que tenía el albarán cuando se reportó. Hace falta guardarlo: al reportar
+    // pasa a 'Pendiente de asignar' y ya no se sabe si iba en reparto o entregado.
+    this.incidentPrevStatus = data.incidentPrevStatus || null;
+    // Quién la reportó. Campo propio: returnedToAssignById también se sella al reportar,
+    // pero se borra en cuanto la oficina reasigna el albarán.
+    this.incidentReportedById = data.incidentReportedById ?? null;
     this.incidentStatus = data.incidentStatus || 'none'; // 'none', 'active', 'resolved'
     this.incidentReply = data.incidentReply || ''; // Response from admin
     // La oficina la quita de su panel sin resolverla: el cliente la sigue viendo abierta.
@@ -302,6 +308,9 @@ export default class Shipment {
       // Sellamos quién la reporta para que reaparezca en SU pestaña de Asignar
       // (misma lógica que handleUnassignShipment), y no en la de quien lo creó.
       this.returnedToAssignById = this.assignedDriverId;
+      this.incidentPrevStatus = this.status;
+      // Lo trae ya puesto el panel del repartidor; si no, el que lo llevaba asignado.
+      this.incidentReportedById = this.incidentReportedById ?? this.assignedDriverId;
       this.status = 'Pendiente de asignar';
       this.assignedDriverId = null;
       this.incidentStatus = 'active';
@@ -421,4 +430,21 @@ export default class Shipment {
   toJSON() {
     return { ...this };
   }
+}
+
+// Conductor que reportó la incidencia. En las anteriores a incidentReportedById se tira
+// de returnedToAssignById, que la incidencia sella y sigue ahí mientras nadie reasigne.
+export function quienReportoIncidencia(shipment) {
+  return shipment?.incidentReportedById ?? shipment?.returnedToAssignById ?? null;
+}
+
+// Etiqueta y colores del estado que tenía el albarán al reportar la incidencia.
+// null si la incidencia es anterior a que se guardara (no se puede deducir).
+export function estadoAlReportarIncidencia(shipment) {
+  const estado = shipment?.incidentPrevStatus;
+  if (!estado) return null;
+  if (estado === 'Pendiente de asignar') return { texto: 'Pendiente', clases: 'bg-amber-100 text-amber-700' };
+  if (estado === 'En reparto' || estado === 'En Ruta') return { texto: 'En reparto', clases: 'bg-blue-100 text-blue-700' };
+  if (estado === 'Entregado') return { texto: 'Entregado', clases: 'bg-emerald-100 text-emerald-700' };
+  return { texto: estado, clases: 'bg-slate-100 text-slate-600' };
 }

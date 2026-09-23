@@ -4,6 +4,7 @@ import { AlertTriangle, Calendar, Truck, MapPin, CheckCircle, Search, Filter, Me
 import { incidenciaAbierta, incidenciaAparcada } from '../utils/incidenciasAparcadas';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { normalizarTexto } from '../utils/busqueda';
+import { estadoAlReportarIncidencia, quienReportoIncidencia as quienLaReporto } from '../models/Shipment';
 
 export default function Incidents({ shipments, onUpdateStatus, onResolve, onPark, onReply, onUpdateShipment, drivers, clients = [], allPoblaciones = [], articles = [], tariffs = null, coverageZones = [], familyOrder = [], driverNamePreference = 'both' }) {
     const [detalleId, setDetalleId] = useState(null);
@@ -24,7 +25,8 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onPark
         const filtered = (shipments || []).filter(s => {
             const isIncident = incidenciaAbierta(s) && incidenciaAparcada(s) === verAparcadas;
             const matchesDriver = filterDriver ? (
-                s.assignedDriverId?.toString() === filterDriver || 
+                s.assignedDriverId?.toString() === filterDriver ||
+                quienLaReporto(s)?.toString() === filterDriver ||
                 // Sin tildes: la incidencia guarda el nombre escrito, y si la ficha
                 // del conductor pone "Martín" y el texto "Martin" se perdía el filtro.
                 (s.createdBy && normalizarTexto(s.createdBy).includes(normalizarTexto(drivers.find(d => d.id.toString() === filterDriver)?.name)))
@@ -56,9 +58,10 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onPark
     }, [shipments, filterDriver, filterDate, sortConfig, drivers, verAparcadas]);
 
 
-    const getDriverName = (id) => {
-        const driver = drivers.find(d => d.id === id);
-        if (!driver) return 'Sin Asignar';
+    const getDriverName = (id, sinConductor = 'Sin Asignar') => {
+        // Por texto: el id llega como número o como cadena según quién lo grabó.
+        const driver = id == null ? null : drivers.find(d => String(d.id) === String(id));
+        if (!driver) return sinConductor;
         const name = driver.name || '';
         const alias = driver.alias || '';
         if (driverNamePreference === 'alias' && alias) return alias;
@@ -144,6 +147,14 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onPark
                                                 </span>
                                             )}
                                             <span className="text-xs text-slate-500 font-mono bg-slate-100 px-2 py-1 rounded-md border border-slate-200">#{shipment.id}</span>
+                                            {(() => {
+                                                const estado = estadoAlReportarIncidencia(shipment);
+                                                return estado && (
+                                                    <span className={`${estado.clases} text-xs font-bold px-2 py-1 rounded-full uppercase`} title="Estado del albarán cuando se reportó la incidencia">
+                                                        Estaba: {estado.texto}
+                                                    </span>
+                                                );
+                                            })()}
                                             {shipment.hasCod && (
                                                 <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2 py-1 rounded-full uppercase flex items-center gap-1">
                                                     <Euro size={12} /> Reembolso: {shipment.codAmount}€
@@ -182,12 +193,23 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onPark
                                         </div>
                                         
                                         <div className="flex flex-col gap-1 mt-2 pt-3 border-t border-slate-200">
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Conductor Asignado</span>
+                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Reportada por</span>
                                             <div className="flex items-center gap-2 text-slate-700 font-medium">
                                                 <Truck size={16} className="text-slate-400 shrink-0" />
-                                                <span className="truncate">{getDriverName(shipment.assignedDriverId)}</span>
+                                                <span className="truncate">{getDriverName(quienLaReporto(shipment), 'Desconocido')}</span>
                                             </div>
                                         </div>
+
+                                        {/* Al reportarla el albarán se desasigna; sólo sale si la oficina ya se lo ha dado a alguien. */}
+                                        {shipment.assignedDriverId != null && (
+                                            <div className="flex flex-col gap-1 pt-3 border-t border-slate-200">
+                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Conductor Asignado</span>
+                                                <div className="flex items-center gap-2 text-slate-700 font-medium">
+                                                    <Truck size={16} className="text-slate-400 shrink-0" />
+                                                    <span className="truncate">{getDriverName(shipment.assignedDriverId)}</span>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="space-y-3">
                                         <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
