@@ -2,6 +2,7 @@ import Sidebar from './Sidebar';
 import OfflineBanner from './OfflineBanner';
 import { Bell, Moon, Sun, Package, Euro, AlertTriangle, Truck, X, CheckCheck, PlayCircle, StopCircle, RefreshCw, Trash2 } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
+import { incidenciaEnPanel } from '../../utils/incidenciasAparcadas';
 
 export default function Layout({ children, onLogout, currentView, onNavigate, pendingClientsCount, pendingIncidentsCount, irregularCount = 0, shipments = [], collections = [], incidents = [], vehicles = [], onSecretUnlock, isTestMode, setIsTestMode, onResetToZero, isOnline = true, justReconnected = false, pendingQueueCount = 0, isSyncingQueue = false }) {
     const [showNotifications, setShowNotifications] = useState(false);
@@ -94,7 +95,7 @@ export default function Layout({ children, onLogout, currentView, onNavigate, pe
         }
 
         // 4. Incidencias abiertas
-        const openIncidents = shipments.filter(s => s.incidentStatus === 'active' || s.status === 'Incidencia');
+        const openIncidents = shipments.filter(incidenciaEnPanel);
         if (openIncidents.length > 0) {
             notifs.push({
                 id: `incidents-${openIncidents.length}`,

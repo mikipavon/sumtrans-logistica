@@ -104,6 +104,8 @@ export default class Shipment {
     this.incidentCoordinates = data.incidentCoordinates || null;
     this.incidentStatus = data.incidentStatus || 'none'; // 'none', 'active', 'resolved'
     this.incidentReply = data.incidentReply || ''; // Response from admin
+    // La oficina la quita de su panel sin resolverla: el cliente la sigue viendo abierta.
+    this.incidentParkedAt = data.incidentParkedAt || null;
     
     // Entrega (Pruebas)
     this.deliverySignature = data.deliverySignature || null; // URL de la firma
@@ -304,6 +306,8 @@ export default class Shipment {
       this.assignedDriverId = null;
       this.incidentStatus = 'active';
       this.incidentReply = '';
+      // Una incidencia nueva no puede nacer aparcada por la anterior.
+      this.incidentParkedAt = null;
       if (comment) this.incidentReason = comment;
       if (photo) this.incidentPhoto = photo;
       return result;

@@ -67,6 +67,7 @@ import { darDeAltaSinPisar } from './utils/numeracionAlbaran';
 import { createdAtDeFechaContable } from './utils/reciboDeDeuda';
 import { prefijoDeCliente, siguienteNumeroDeCliente, numeroQueLeFalta } from './utils/numeracionCliente';
 import { uploadProof } from './utils/storage';
+import { incidenciaEnPanel } from './utils/incidenciasAparcadas';
 import { AVISO_ENVIO_YA_ES_NUESTRO, ESTADO_PENDIENTE, tieneBultosEscaneados } from './utils/envioDelPortal';
 
 
@@ -3908,12 +3909,25 @@ function App() {
   const handleResolveIncident = async (id) => {
     const s = shipments.find(item => item.id === id);
     if (!s) return;
-    const updated = { ...s, incidentStatus: 'resolved' };
+    const updated = { ...s, incidentStatus: 'resolved', incidentParkedAt: null };
     try {
       const { data, error } = await supabase.from('shipments').update({ data: updated }).eq('id', id).select();
       if (error) throw error;
       setShipments(prev => prev.map(item => item.id === id ? { ...data[0].data, id: data[0].id } : item));
     } catch (e) { alert('Error al resolver incidencia'); console.error(e); }
+  };
+
+  // Quita la incidencia del panel de la oficina sin resolverla: sigue activa para
+  // el cliente y el repartidor. aparcar=false la devuelve a la lista.
+  const handleParkIncident = async (id, aparcar = true) => {
+    const s = shipmentsRef.current.find(item => item.id === id);
+    if (!s) return;
+    const updated = { ...s, incidentParkedAt: aparcar ? new Date().toISOString() : null };
+    try {
+      const { data, error } = await supabase.from('shipments').update({ data: updated }).eq('id', id).select();
+      if (error) throw error;
+      setShipments(prev => prev.map(item => item.id === id ? { ...data[0].data, id: data[0].id } : item));
+    } catch (e) { alert('Error al aparcar la incidencia'); console.error(e); }
   };
 
   const handleIncidentReply = async (id, reply) => {
@@ -4834,7 +4848,7 @@ function App() {
 
   // Count pending items for badges
   const pendingClientsCount = visibleClients.filter(c => c.status === 'pending').length;
-  const pendingIncidentsCount = shipments.filter(s => s.incidentStatus === 'active' || s.status === 'Incidencia').length;
+  const pendingIncidentsCount = shipments.filter(incidenciaEnPanel).length;
   const irregularCount = visibleShipments.filter(s => getIrregularReasons(s).length > 0).length;
 
   const handleConfirmRestore = async () => {
@@ -5108,7 +5122,7 @@ function App() {
       currentView={currentView}
       onNavigate={(view, filtro) => { setShipmentStatusFilter(filtro || null); setCurrentView(view); }}
       pendingClientsCount={pendingClientsCount}
-      pendingIncidentsCount={visibleShipments.filter(s => s.incidentStatus === 'active' || s.status === 'Incidencia').length}
+      pendingIncidentsCount={visibleShipments.filter(incidenciaEnPanel).length}
       irregularCount={irregularCount}
       shipments={visibleShipments}
       vehicles={vehicles}
@@ -5163,7 +5177,7 @@ function App() {
         onUpdateFamilyOrder={handleUpdateFamilyOrder} 
         onRenameCategory={handleRenameCategory} 
       />}
-      {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onReply={handleIncidentReply} onUpdateShipment={handleUpdateShipment} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} articles={articles} tariffs={tariffs} coverageZones={coverageZones} familyOrder={familyOrder} driverNamePreference={driverNamePreference} />}
+      {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onPark={handleParkIncident} onReply={handleIncidentReply} onUpdateShipment={handleUpdateShipment} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} articles={articles} tariffs={tariffs} coverageZones={coverageZones} familyOrder={familyOrder} driverNamePreference={driverNamePreference} />}
       {currentView === 'notifications' && <NotificationCenter shipments={visibleShipments} drivers={drivers} clients={visibleClients} onUpdateShipment={handleUpdateShipment} articles={articles} tariffs={tariffs} defaultCodFee={defaultCodFee} familyOrder={familyOrder} coverageZones={coverageZones} />}
       {currentView === 'clientValidation' && <ClientValidation clients={clients} shipments={shipments} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} onDeleteClients={handleDeleteClients} onGrantAccessToExisting={handleDarAccesoAFichaExistente} onVincularFichaPendiente={handleVincularFichaPendiente} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
       </Suspense>

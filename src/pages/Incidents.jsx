@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 
-import { AlertTriangle, Calendar, Truck, MapPin, CheckCircle, Search, Filter, MessageSquare, Send, User, Package, Euro, Clock, Eye } from 'lucide-react';
+import { AlertTriangle, Calendar, Truck, MapPin, CheckCircle, Search, Filter, MessageSquare, Send, User, Package, Euro, Clock, Eye, EyeOff, Undo2 } from 'lucide-react';
+import { incidenciaAbierta, incidenciaAparcada } from '../utils/incidenciasAparcadas';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import { normalizarTexto } from '../utils/busqueda';
 
-export default function Incidents({ shipments, onUpdateStatus, onResolve, onReply, onUpdateShipment, drivers, clients = [], allPoblaciones = [], articles = [], tariffs = null, coverageZones = [], familyOrder = [], driverNamePreference = 'both' }) {
+export default function Incidents({ shipments, onUpdateStatus, onResolve, onPark, onReply, onUpdateShipment, drivers, clients = [], allPoblaciones = [], articles = [], tariffs = null, coverageZones = [], familyOrder = [], driverNamePreference = 'both' }) {
     const [detalleId, setDetalleId] = useState(null);
     // Se busca por id en cada render para que el modal vea los cambios que llegan por sincronizacion
     const detalle = detalleId ? (shipments || []).find(s => s.id === detalleId) || null : null;
@@ -13,12 +14,15 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
     const [filterDate, setFilterDate] = useState('');
     const [replyState, setReplyState] = useState({}); // Local text for inputs
     const [sortConfig, setSortConfig] = useState({ key: 'createdAt', direction: 'desc' });
+    // Las aparcadas siguen abiertas para el cliente; aquí sólo se ven si se piden.
+    const [verAparcadas, setVerAparcadas] = useState(false);
+    const numAparcadas = useMemo(() => (shipments || []).filter(incidenciaAparcada).length, [shipments]);
 
 
     // Filter and Sort shipments with active incident status
     const incidents = useMemo(() => {
         const filtered = (shipments || []).filter(s => {
-            const isIncident = s.incidentStatus === 'active' || s.status === 'Incidencia';
+            const isIncident = incidenciaAbierta(s) && incidenciaAparcada(s) === verAparcadas;
             const matchesDriver = filterDriver ? (
                 s.assignedDriverId?.toString() === filterDriver || 
                 // Sin tildes: la incidencia guarda el nombre escrito, y si la ficha
@@ -49,7 +53,7 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
             });
         }
         return filtered;
-    }, [shipments, filterDriver, filterDate, sortConfig, drivers]);
+    }, [shipments, filterDriver, filterDate, sortConfig, drivers, verAparcadas]);
 
 
     const getDriverName = (id) => {
@@ -74,7 +78,16 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
                     <p className="text-slate-500 text-sm">Resuelve y gestiona los envíos con problemas reportados.</p>
                 </div>
 
-                <div className="flex gap-2 w-full md:w-auto">
+                <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                    <button
+                        type="button"
+                        onClick={() => setVerAparcadas(v => !v)}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors flex items-center gap-2 ${verAparcadas ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                        title="Incidencias quitadas de la lista que el cliente sigue viendo abiertas"
+                    >
+                        <EyeOff size={16} />
+                        {verAparcadas ? 'Ver las de la lista' : `Aparcadas (${numAparcadas})`}
+                    </button>
                     <div className="relative">
                         <UserFilter drivers={drivers} value={filterDriver} onChange={setFilterDriver} driverNamePreference={driverNamePreference} />
                     </div>
@@ -106,8 +119,8 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
                 {incidents.length === 0 ? (
                     <div className="bg-white rounded-xl p-12 text-center border border-dashed border-slate-300">
                         <CheckCircle className="mx-auto h-12 w-12 text-green-500 mb-4" />
-                        <h3 className="text-lg font-medium text-slate-900">Sin Incidencias Activas</h3>
-                        <p className="text-slate-500">No hay envíos reportados con incidencias en este momento.</p>
+                        <h3 className="text-lg font-medium text-slate-900">{verAparcadas ? 'Sin Incidencias Aparcadas' : 'Sin Incidencias Activas'}</h3>
+                        <p className="text-slate-500">{verAparcadas ? 'No hay incidencias quitadas de la lista.' : 'No hay envíos reportados con incidencias en este momento.'}</p>
                     </div>
                 ) : (
                     incidents.map((shipment) => (
@@ -125,6 +138,11 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
                                     <div className="flex-1">
                                         <div className="flex flex-wrap items-center gap-2 mb-2">
                                             <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-1 rounded-full uppercase">Incidencia</span>
+                                            {shipment.incidentParkedAt && (
+                                                <span className="bg-slate-200 text-slate-700 text-xs font-bold px-2 py-1 rounded-full uppercase" title="Quitada de la lista; el cliente la sigue viendo abierta">
+                                                    Aparcada el {new Date(shipment.incidentParkedAt).toLocaleDateString('es-ES')}
+                                                </span>
+                                            )}
                                             <span className="text-xs text-slate-500 font-mono bg-slate-100 px-2 py-1 rounded-md border border-slate-200">#{shipment.id}</span>
                                             {shipment.hasCod && (
                                                 <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2 py-1 rounded-full uppercase flex items-center gap-1">
@@ -238,6 +256,24 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onRepl
                                         <Eye size={16} />
                                         Ver Detalles
                                     </button>
+                                    {shipment.incidentParkedAt ? (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); onPark(shipment.id, false); }}
+                                            className="px-4 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2"
+                                        >
+                                            <Undo2 size={16} />
+                                            Volver a la lista
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); onPark(shipment.id, true); }}
+                                            className="px-4 py-2 bg-slate-600 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors flex items-center gap-2"
+                                            title="La quita de esta lista, pero el cliente y el repartidor la siguen viendo como incidencia"
+                                        >
+                                            <EyeOff size={16} />
+                                            Aparcar
+                                        </button>
+                                    )}
                                     <button
                                         onClick={(e) => { e.stopPropagation(); onResolve(shipment.id); }}
                                         className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-500/30 flex items-center gap-2"
