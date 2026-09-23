@@ -1036,6 +1036,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
             )}
 
             <ShipmentDetailsModal
+                showAdminControls
                 isOpen={isDetailsModalOpen}
                 onClose={() => setIsDetailsModalOpen(false)}
                 shipment={selectedShipment}

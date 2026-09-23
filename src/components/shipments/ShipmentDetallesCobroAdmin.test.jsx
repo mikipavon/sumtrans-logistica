@@ -158,3 +158,33 @@ describe('ShipmentDetailsModal: quitar un cobro con factura simplificada', () =>
         expect(screen.queryByTitle('Editar')).not.toBeInTheDocument();
     });
 });
+
+// 23/09/2026: la oficina quiere ver los controles sin pulsar el lápiz, pero
+// sin poder tocarlos hasta pulsarlo. El repartidor sigue sin verlos si no edita.
+describe('ShipmentDetailsModal: controles de administración a la vista', () => {
+    const abrir = (extra = {}) => render(
+        <ShipmentDetailsModal
+            isOpen={true} onClose={() => {}} shipment={sum1204} onUpdate={vi.fn()}
+            drivers={[ANTONIO]} allPoblaciones={[]} clients={[]} articles={[]} tariffs={null} coverageZones={[]}
+            {...extra}
+        />
+    );
+
+    it('en la oficina se ven bloqueados y el lápiz los desbloquea', () => {
+        abrir({ showAdminControls: true });
+        expect(screen.getByText('Controles de Administración Remota')).toBeInTheDocument();
+        expect(screen.getByRole('checkbox', { name: /Porte Cobrado/ })).toBeDisabled();
+        fireEvent.click(screen.getByTitle('Editar'));
+        expect(screen.getByRole('checkbox', { name: /Porte Cobrado/ })).toBeEnabled();
+    });
+
+    it('sin la marca de oficina no salen hasta editar', () => {
+        abrir();
+        expect(screen.queryByText('Controles de Administración Remota')).not.toBeInTheDocument();
+    });
+
+    it('en sólo lectura no salen aunque sea la oficina', () => {
+        abrir({ showAdminControls: true, isReadOnly: true });
+        expect(screen.queryByText('Controles de Administración Remota')).not.toBeInTheDocument();
+    });
+});

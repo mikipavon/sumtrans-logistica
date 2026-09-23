@@ -965,6 +965,7 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                 guardar; si no, sólo lectura. */}
             {isDetailsModalOpen && selectedShipment && (
                 <ShipmentDetailsModal
+                    showAdminControls
                     isOpen={isDetailsModalOpen}
                     onClose={() => {
                         setIsDetailsModalOpen(false);

@@ -374,6 +374,7 @@ export default function NotificationCenter({ shipments, drivers, clients, onUpda
             {/* Modal de Detalles */}
             {selectedShipment && (
                 <ShipmentDetailsModal
+                    showAdminControls
                     isOpen={!!selectedShipment}
                     onClose={() => setSelectedShipment(null)}
                     shipment={selectedShipment}

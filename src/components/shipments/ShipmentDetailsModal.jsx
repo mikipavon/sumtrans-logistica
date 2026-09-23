@@ -16,7 +16,7 @@ import { getPackagesCount } from '../../utils/shipmentUtils';
 import { Trash2, Plus } from 'lucide-react';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 import { baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, conMinimoFueraDeBaremo } from '../../utils/precioArticulo';
-export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1 }) {
+export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1, showAdminControls = false }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -1634,14 +1634,20 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                         )}
                     </div>
 
-                    {/* Controles de Administración (Modo Edición) */}
-                    {isEditing && !isReadOnly && (
+                    {/* Controles de Administración: en la oficina se ven siempre, pero
+                        bloqueados hasta pulsar el lápiz. El repartidor sólo los ve al editar. */}
+                    {!isReadOnly && (isEditing || (showAdminControls && onUpdate)) && (
                         <div className="bg-orange-50 border-2 border-orange-200 rounded-2xl p-5 space-y-4 shadow-sm mt-6 animate-in slide-in-from-bottom-2">
                             <h3 className="font-bold text-orange-800 text-xs uppercase tracking-widest flex items-center gap-2 border-b border-orange-100 pb-3">
                                 <Shield size={16} className="text-orange-500" />
                                 Controles de Administración Remota
+                                {!isEditing && (
+                                    <span className="ml-auto flex items-center gap-1 normal-case tracking-normal font-semibold text-[10px] text-orange-500">
+                                        <Edit2 size={11} /> Pulsa el lápiz para cambiarlos
+                                    </span>
+                                )}
                             </h3>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                            <fieldset disabled={!isEditing} className={`grid grid-cols-1 sm:grid-cols-2 gap-6 min-w-0 ${!isEditing ? '[&_*]:!cursor-default [&_select]:appearance-none' : ''}`}>
                                 <div className="space-y-2">
                                     <span className="text-[10px] font-bold text-orange-600 uppercase tracking-wider block">Revertir o Alterar Estado</span>
                                     <select 
@@ -1774,7 +1780,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                         </div>
                                     )}
                                 </div>
-                            </div>
+                            </fieldset>
                         </div>
                     )}
 

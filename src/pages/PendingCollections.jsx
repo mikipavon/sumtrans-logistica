@@ -273,6 +273,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
             <ShipmentDetailsModal
+                showAdminControls
                 isOpen={isDetailsModalOpen}
                 onClose={() => { setIsDetailsModalOpen(false); setSelectedShipment(null); }}
                 shipment={selectedShipment}

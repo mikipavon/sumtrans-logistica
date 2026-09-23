@@ -311,6 +311,7 @@ export default function Incidents({ shipments, onUpdateStatus, onResolve, onPark
             </div>
 
             <ShipmentDetailsModal
+                showAdminControls
                 isOpen={!!detalle}
                 onClose={() => setDetalleId(null)}
                 shipment={detalle}
