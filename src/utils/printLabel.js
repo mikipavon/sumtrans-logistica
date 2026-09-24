@@ -56,6 +56,63 @@ export function getLabelCount(shipment) {
     return Math.max(1, count);
 }
 
+/** Uno o varios envíos, siempre como lista. */
+const listaDeEnvios = (envios) => (Array.isArray(envios) ? envios : [envios]).filter(Boolean);
+
+/** Bultos (etiquetas) que suman varios envíos. */
+export function getLabelCountTotal(envios) {
+    return listaDeEnvios(envios).reduce((suma, s) => suma + getLabelCount(s), 0);
+}
+
+/**
+ * Una entrada por etiqueta a imprimir, en el orden en que salen: los bultos del
+ * primer envío, luego los del segundo... Cada una sabe de qué envío es y qué
+ * bulto de cuántos, que es lo que lleva escrito y en el QR.
+ *
+ * Un cliente pidió imprimir de una vez las etiquetas de todos los envíos del
+ * día en vez de ir albarán por albarán (24/09/2026): por eso las tres funciones
+ * de imprimir aceptan un envío o una lista.
+ */
+export function etiquetasDeLosEnvios(envios) {
+    const etiquetas = [];
+    listaDeEnvios(envios).forEach((shipment) => {
+        const total = getLabelCount(shipment);
+        for (let bulto = 1; bulto <= total; bulto++) etiquetas.push({ shipment, bulto, total });
+    });
+    return etiquetas;
+}
+
+/** Título de la ventana de impresión: el albarán si es uno, cuántos si son varios. */
+function tituloDeVentana(envios) {
+    const lista = listaDeEnvios(envios);
+    return lista.length === 1 ? `Etiqueta ${lista[0].id}` : `Etiquetas de ${lista.length} envíos`;
+}
+
+/**
+ * Reparte N etiquetas en folios de 4 cuadrantes empezando en startPosition.
+ * Devuelve los folios (cada uno, 4 huecos con el índice de la etiqueta que va
+ * en él o null) y la última posición usada, que es la que se guarda para que
+ * el siguiente folio empiece donde este acabó.
+ */
+export function repartirEnFolios(numEtiquetas, startPosition = 1) {
+    const folios = [];
+    let pos = startPosition;
+    let folio = Array(4).fill(null);
+    for (let i = 0; i < numEtiquetas; i++) {
+        folio[pos - 1] = i;
+        if (pos === 4 || i === numEtiquetas - 1) {
+            folios.push(folio);
+            folio = Array(4).fill(null);
+            pos = 1;
+        } else {
+            pos++;
+        }
+    }
+    const ultimo = folios[folios.length - 1] || [];
+    const lastUsed = ultimo.reduce((max, idx, p) => (idx !== null ? p + 1 : max), 0);
+    return { folios, lastUsed };
+}
+
 /**
  * Imagen del QR de un bulto. Se pide grande (8 px por módulo) y con corrección
  * de errores alta: con 3 px por módulo el navegador estiraba la imagen con
@@ -254,20 +311,17 @@ const WAIT_AND_PRINT_SCRIPT = `
  * Abre una ventana de impresión con una etiqueta A6 por bulto.
  * Requiere que la impresora esté configurada en A6 (o "Sin márgenes" A6).
  */
-export function printLabelA6(shipment, client) {
-    const total = getLabelCount(shipment);
-
+export function printLabelA6(envios, client) {
     // Una etiqueta por página: usamos page-break-after entre ellas
-    let labels = '';
-    for (let i = 1; i <= total; i++) {
-        labels += `<div class="page">${buildLabelHTML(shipment, client, i, total)}</div>`;
-    }
+    const labels = etiquetasDeLosEnvios(envios)
+        .map((e) => `<div class="page">${buildLabelHTML(e.shipment, client, e.bulto, e.total)}</div>`)
+        .join('');
 
     const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Etiqueta ${shipment.id}</title>
+  <title>${tituloDeVentana(envios)}</title>
   <style>
     ${LABEL_CSS}
     @page { size: 105mm 148mm; margin: 0mm; }
@@ -304,29 +358,11 @@ export function printLabelA6(shipment, client) {
  *   [1=top-left ][2=top-right ]
  *   [3=bot-left ][4=bot-right ]
  */
-export function printLabelA4(shipment, client, startPosition = 1) {
-    const total = getLabelCount(shipment);
-
-    // Distribuir bultos en folios y posiciones
-    // Cada folio tiene slots 1-4; el primer folio empieza en startPosition
-    const folios = [];         // array de folios; cada folio es un array [null|{bulto,pos}] x4
-    let pos    = startPosition;
-    let folio  = Array(4).fill(null); // índices 0-3 = posiciones 1-4
-
-    for (let i = 1; i <= total; i++) {
-        folio[pos - 1] = { bulto: i, pos };
-        if (pos === 4 || i === total) {
-            folios.push([...folio]);
-            folio = Array(4).fill(null);
-            pos   = 1;
-        } else {
-            pos++;
-        }
-    }
-
-    // Última posición usada
-    const lastFolio   = folios[folios.length - 1];
-    const lastUsed    = lastFolio.reduce((max, slot) => slot ? Math.max(max, slot.pos) : max, 0);
+export function printLabelA4(envios, client, startPosition = 1) {
+    // Los bultos de todos los envíos, seguidos, repartidos en cuadrantes:
+    // cada folio tiene huecos 1-4 y el primero empieza en startPosition.
+    const etiquetas = etiquetasDeLosEnvios(envios);
+    const { folios, lastUsed } = repartirEnFolios(etiquetas.length, startPosition);
 
     // Coordenadas absolutas de cada posición (en mm)
     const posCoords = {
@@ -343,12 +379,13 @@ export function printLabelA4(shipment, client, startPosition = 1) {
         // Las etiquetas se colocan en posición absoluta
         let labels = '';
         for (let p = 1; p <= 4; p++) {
-            const slot   = folioSlots[p - 1];
+            const idx    = folioSlots[p - 1];
             const coords = posCoords[p];
-            if (slot) {
+            if (idx !== null) {
+                const e = etiquetas[idx];
                 labels += `
 <div class="a4-slot" style="top:${coords.top}mm; left:${coords.left}mm;">
-  ${buildLabelHTML(shipment, client, slot.bulto, total)}
+  ${buildLabelHTML(e.shipment, client, e.bulto, e.total)}
 </div>`;
             }
             // Slot vacío: se muestra como zona punteada (cortar aquí)
@@ -364,7 +401,7 @@ export function printLabelA4(shipment, client, startPosition = 1) {
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Etiqueta ${shipment.id}</title>
+  <title>${tituloDeVentana(envios)}</title>
   <style>
     ${LABEL_CSS}
     @page { size: 210mm 297mm; margin: 0mm; }
@@ -551,19 +588,16 @@ html, body { width: 75mm; margin: 0; padding: 0; background: #fff; }
 }`;
 
 /** Abre la ventana de impresión con una etiqueta de 75×52 mm por bulto. */
-export function printLabel75x52(shipment, client) {
-    const total = getLabelCount(shipment);
-
-    let labels = '';
-    for (let i = 1; i <= total; i++) {
-        labels += `<div class="page">${buildLabelHTML75x52(shipment, client, i, total)}</div>`;
-    }
+export function printLabel75x52(envios, client) {
+    const labels = etiquetasDeLosEnvios(envios)
+        .map((e) => `<div class="page">${buildLabelHTML75x52(e.shipment, client, e.bulto, e.total)}</div>`)
+        .join('');
 
     const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Etiqueta ${shipment.id}</title>
+  <title>${tituloDeVentana(envios)}</title>
   <style>${LABEL_75_CSS}</style>
 </head>
 <body>
