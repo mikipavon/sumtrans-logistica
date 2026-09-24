@@ -170,7 +170,8 @@ export default function Tracking({ drivers, shipments = [], onRequestGps }) {
     const [pendingSegStats, setPendingSegStats]   = useState({});
     const [pendingLoading, setPendingLoading]     = useState(false);
 
-    const activeDrivers = useMemo(() => [...drivers], [drivers]);
+    // Los dados de baja no salen en el mapa: su última posición es de cuando trabajaban.
+    const activeDrivers = useMemo(() => (drivers || []).filter(d => d && d.isActive !== false), [drivers]);
 
     // ── Envíos pendientes — mismo filtro que usa el conductor ─────────────────
     // Lo programado para más tarde entra en el mapa cuando le llega la hora, sin
