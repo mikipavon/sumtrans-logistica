@@ -530,3 +530,26 @@ describe('Validar Clientes — quién le mandó la mercancía', () => {
         expect(screen.queryByText(/Mercancía de:/)).not.toBeInTheDocument();
     });
 });
+
+describe('Validar Clientes — botón provisional de las revisadas con Google Maps', () => {
+    // Talleres Clavellinas, una de las de la lista del 24/09/2026.
+    const revisada = { id: 1789977593840, name: 'Talleres clavellinas', status: 'pending', type: 'Destinatario', createdFrom: 'Reparto (Driver)', city: 'Puente Genil' };
+
+    it('filtra y deja sólo las revisadas, y al volver a pulsarlo salen todas', () => {
+        render(<ClientValidation clients={[creadoEnAlbaran, revisada]} {...props} />);
+        const boton = screen.getByRole('button', { name: /revisadas con Google Maps/ });
+        expect(boton).toHaveTextContent('1');
+
+        fireEvent.click(boton);
+        expect(screen.getByText('Talleres clavellinas')).toBeInTheDocument();
+        expect(screen.queryByText('FERRETERÍA EL TORNILLO')).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: /revisadas con Google Maps/ }));
+        expect(screen.getByText('FERRETERÍA EL TORNILLO')).toBeInTheDocument();
+    });
+
+    it('cuando ya están aprobadas, el botón desaparece solo', () => {
+        render(<ClientValidation clients={[creadoEnAlbaran, { ...revisada, status: 'approved' }]} {...props} />);
+        expect(screen.queryByRole('button', { name: /revisadas con Google Maps/ })).not.toBeInTheDocument();
+    });
+});
