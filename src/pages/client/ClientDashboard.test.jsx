@@ -12,7 +12,17 @@ import ClientDashboard from './ClientDashboard';
 
 // Todo esto arrastra medio proyecto (PDF, impresión, Supabase) y aquí no se abre.
 vi.mock('../../components/shipments/ShipmentDetailsModal', () => ({ default: () => null }));
-vi.mock('../../components/clients/LabelPrintModal', () => ({ default: () => null }));
+// El modal de etiquetas se sustituye por una caja que dice qué envíos le han
+// llegado y un botón que hace lo que hace el suyo de Imprimir: avisar de que
+// se imprimieron.
+vi.mock('../../components/clients/LabelPrintModal', () => ({
+    default: ({ isOpen, shipments, onPrinted }) => isOpen ? (
+        <div data-testid="modal-etiquetas">
+            <span>{shipments.map(s => s.id).join(',')}</span>
+            <button onClick={() => onPrinted(shipments)}>imprimir-de-mentira</button>
+        </div>
+    ) : null,
+}));
 vi.mock('../../components/clients/ImportExcelShipments', () => ({ default: () => null }));
 vi.mock('../../utils/deliveryPdf', () => ({ generateDeliveryPDF: vi.fn(), generateDeliveryNotesPDF: vi.fn() }));
 vi.mock('../../utils/printShipment', () => ({ printShipmentTicket: vi.fn() }));
@@ -705,5 +715,77 @@ describe('ClientDashboard · manifiesto de carga', () => {
         expect(boton().textContent).toContain('(1)');        // ...pero no en el manifiesto
         fireEvent.click(boton());
         expect(descargarManifiesto.mock.calls[0][0].envios.map(s => s.id)).toEqual(['SUM-100']);
+    });
+});
+
+// ── Etiquetas por imprimir ──
+//
+// Un cliente pidió imprimir de una vez las etiquetas de todos los envíos del
+// día. Como crea por la mañana, recogemos a media mañana y por la tarde crea
+// más, el botón saca sólo las que faltan: cada envío apunta cuándo se
+// imprimieron, y lo ya recogido no entra. Para repetir, la impresora de la fila.
+describe('ClientDashboard · etiquetas por imprimir', () => {
+    const boton = () => screen.getByRole('button', { name: /Etiquetas por imprimir/ });
+    const modal = () => screen.getByTestId('modal-etiquetas');
+    const pintarCon = (envios, props = {}) => render(
+        <ClientDashboard client={ESMEBRA} onLogout={() => {}} allShipments={envios} drivers={[]}
+            allClients={[ESMEBRA]} articles={[]} tariffs={[]} coverageZones={[]}
+            onCreateShipment={vi.fn()} onUpdateClient={vi.fn()} onDeleteShipment={vi.fn()}
+            onUpdateShipment={vi.fn(async () => true)} {...props} />
+    );
+    const deHoy = (id, extra = {}) => ({
+        ...enviado, id, createdAt: '2026-09-24T07:30:00.000Z', ...extra,
+    });
+
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('cuenta sólo los de hoy que faltan y, al imprimir, apunta la hora en cada uno', () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 24, 16, 0));
+        const onUpdateShipment = vi.fn(async () => true);
+        pintarCon([
+            deHoy('SUM-700', { labelsPrintedAt: '2026-09-24T07:35:00.000Z' }),   // de la mañana, ya impreso
+            deHoy('SUM-701', { scannedPackages: [1] }),                          // ya recogido
+            deHoy('SUM-702'),                                                    // de la tarde
+            deHoy('SUM-703'),
+            recibido,                                                            // le llega a él
+        ], { onUpdateShipment });
+        expect(boton().textContent).toContain('(2)');
+        fireEvent.click(boton());
+        expect(modal().textContent).toContain('SUM-702,SUM-703');
+
+        fireEvent.click(screen.getByText('imprimir-de-mentira'));
+        expect(onUpdateShipment.mock.calls.map(([id]) => id).sort()).toEqual(['SUM-702', 'SUM-703']);
+        onUpdateShipment.mock.calls.forEach(([, cambios]) => {
+            expect(Object.keys(cambios)).toEqual(['labelsPrintedAt']);
+            expect(cambios.labelsPrintedAt).toMatch(/^2026-09-24T/);
+        });
+    });
+
+    it('cuando no falta ninguna el botón se cierra y manda a la impresora de la fila', () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(2026, 8, 24, 16, 0));
+        pintarCon([deHoy('SUM-700', { labelsPrintedAt: '2026-09-24T07:35:00.000Z' })]);
+        expect(boton().textContent).toContain('(0)');
+        expect(boton().disabled).toBe(true);
+        expect(boton().title).toMatch(/impresora de su fila/);
+    });
+
+    it('la impresora de la fila abre el modal con ese envío solo, aunque ya esté impreso, y también lo apunta', () => {
+        const onUpdateShipment = vi.fn(async () => true);
+        pintarCon([deHoy('SUM-700', { labelsPrintedAt: '2026-09-24T07:35:00.000Z' })], { onUpdateShipment });
+        fireEvent.click(within(filaDe('SUM-700')).getByTitle(/^Imprimir Etiqueta/));
+        expect(modal().textContent).toContain('SUM-700');
+        fireEvent.click(screen.getByText('imprimir-de-mentira'));
+        expect(onUpdateShipment).toHaveBeenCalledTimes(1);
+        expect(onUpdateShipment.mock.calls[0][0]).toBe('SUM-700');
+    });
+
+    it('un envío que ya hemos recogido se imprime desde la fila sin intentar apuntarlo (la base de datos no dejaría)', () => {
+        const onUpdateShipment = vi.fn(async () => true);
+        pintarCon([deHoy('SUM-701', { scannedPackages: [1] })], { onUpdateShipment });
+        fireEvent.click(within(filaDe('SUM-701')).getByTitle('Imprimir Etiqueta'));
+        fireEvent.click(screen.getByText('imprimir-de-mentira'));
+        expect(onUpdateShipment).not.toHaveBeenCalled();
     });
 });

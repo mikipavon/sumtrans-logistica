@@ -5,6 +5,7 @@ import ShipmentDetailsModal from '../../components/shipments/ShipmentDetailsModa
 import { printShipmentTicket } from '../../utils/printShipment';
 import { generateDeliveryPDF, generateDeliveryNotesPDF } from '../../utils/deliveryPdf';
 import { enviosDelManifiesto, descargarManifiesto } from '../../utils/manifiestoDeCarga';
+import { enviosPendientesDeEtiqueta } from '../../utils/etiquetasPendientes';
 import LabelPrintModal from '../../components/clients/LabelPrintModal';
 
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
@@ -50,7 +51,9 @@ export default function ClientDashboard({
 }) {
     const [activeTab, setActiveTab] = useState('shipments'); // 'shipments', 'create'
     const [selectedShipment, setSelectedShipment] = useState(null);
-    const [labelPrintShipment, setLabelPrintShipment] = useState(null);
+    // Envíos cuyas etiquetas se van a imprimir: uno desde la impresora de su
+    // fila, o todos los que faltan por imprimir desde el botón de arriba.
+    const [enviosParaEtiquetas, setEnviosParaEtiquetas] = useState(null);
     // El envío cargado en el formulario para modificarlo. Null = alta nueva.
     const [envioEnEdicion, setEnvioEnEdicion] = useState(null);
 
@@ -190,6 +193,28 @@ export default function ClientDashboard({
         } finally {
             setDescargandoManifiesto(false);
         }
+    };
+
+    // Etiquetas de todos los envíos del día de una vez (lo pidió un cliente,
+    // 24/09/2026). Sólo las que faltan: el cliente crea por la mañana e imprime,
+    // recogemos a media mañana, por la tarde crea más y al volver a pulsar no le
+    // salen otra vez las de la mañana. Cada envío guarda cuándo se imprimieron
+    // (labelsPrintedAt), y lo que ya hemos recogido tampoco entra: esa mercancía
+    // ya se fue. Para repetir una etiqueta está la impresora de su fila.
+    const enviosPendientesDeImprimir = useMemo(
+        () => enviosPendientesDeEtiqueta(clientShipments, client, { hayFiltroDeFechas: Boolean(dateFrom || dateTo) }),
+        [clientShipments, client, dateFrom, dateTo]
+    );
+
+    // Se apunta al mandar a imprimir, tanto desde el botón de arriba como desde
+    // la fila. Sólo en los que el cliente aún puede tocar: en los demás la base
+    // de datos no deja escribir (fase 31) y saltaría el aviso de "ya es nuestro".
+    const marcarEtiquetasImpresas = (envios) => {
+        if (!onUpdateShipment) return;
+        const ahora = new Date().toISOString();
+        envios
+            .filter((s) => elClientePuedeTocarlo(s, client))
+            .forEach((s) => { onUpdateShipment(s.id, { labelsPrintedAt: ahora }); });
     };
 
     const requestSort = (key) => {
@@ -893,6 +918,20 @@ export default function ClientDashboard({
                             </button>
 
                             <button
+                                onClick={() => setEnviosParaEtiquetas(enviosPendientesDeImprimir)}
+                                disabled={enviosPendientesDeImprimir.length === 0}
+                                className="flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors bg-slate-700 text-white hover:bg-slate-800 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                                title={enviosPendientesDeImprimir.length === 0
+                                    ? ((dateFrom || dateTo)
+                                        ? 'No queda ninguna etiqueta por imprimir en las fechas seleccionadas. Para repetir una, usa la impresora de su fila'
+                                        : 'Hoy no queda ninguna etiqueta por imprimir. Para repetir una, usa la impresora de su fila; para otro día, pon fechas')
+                                    : 'Imprime de una vez las etiquetas de los envíos que aún no has impreso y que todavía no hemos recogido'}
+                            >
+                                <Printer size={16} />
+                                {`Etiquetas por imprimir (${enviosPendientesDeImprimir.length})`}
+                            </button>
+
+                            <button
                                 onClick={descargarAlbaranesDelFiltro}
                                 disabled={descargandoAlbaranes || albaranesDelFiltro.length === 0}
                                 className="flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
@@ -1088,9 +1127,11 @@ export default function ClientDashboard({
                                                         )}
 
                                                         <button 
-                                                            onClick={() => setLabelPrintShipment(s)}
+                                                            onClick={() => setEnviosParaEtiquetas([s])}
                                                             className="p-2 text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
-                                                            title="Imprimir Etiqueta"
+                                                            title={s.labelsPrintedAt
+                                                                ? `Imprimir Etiqueta (ya impresa el ${new Date(s.labelsPrintedAt).toLocaleString('es-ES')})`
+                                                                : 'Imprimir Etiqueta'}
                                                         >
                                                             <Printer size={16} />
                                                         </button>
@@ -1576,11 +1617,12 @@ export default function ClientDashboard({
             )}
 
             <LabelPrintModal
-                isOpen={!!labelPrintShipment}
-                onClose={() => setLabelPrintShipment(null)}
-                shipment={labelPrintShipment}
+                isOpen={!!enviosParaEtiquetas}
+                onClose={() => setEnviosParaEtiquetas(null)}
+                shipments={enviosParaEtiquetas}
                 client={client}
                 onUpdateClient={onUpdateClient}
+                onPrinted={marcarEtiquetasImpresas}
             />
         </div>
     );

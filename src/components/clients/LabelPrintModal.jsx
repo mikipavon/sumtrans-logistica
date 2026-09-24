@@ -7,7 +7,7 @@ import {
     MODOS_DE_ETIQUETA,
     getNextA4Position,
     saveA4Position,
-    getLabelCount,
+    getLabelCountTotal,
 } from '../../utils/printLabel';
 
 /**
@@ -15,12 +15,16 @@ import {
  *
  * Props:
  *   isOpen        - boolean
+ *   shipment      - object: un solo envío
+ *   shipments     - array: varios envíos de una vez (todas sus etiquetas seguidas
+ *                   en la misma ventana de impresión). Manda sobre `shipment`.
  *   onClose       - fn
- *   shipment      - object
  *   client        - object (puede tener client.labelPrintMode = 'a6' | 'a4' | '75x52')
  *   onUpdateClient - fn(clientId, updates) — para guardar preferencia
+ *   onPrinted     - fn(envios) — se llama al mandar a imprimir, con los envíos
+ *                   impresos, para que quien abrió el modal los apunte.
  */
-export default function LabelPrintModal({ isOpen, onClose, shipment, client, onUpdateClient }) {
+export default function LabelPrintModal({ isOpen, onClose, shipment, shipments, client, onUpdateClient, onPrinted }) {
     // Modo: null (sin seleccionar), 'a6', 'a4', '75x52'
     const [mode, setMode] = useState(null);
     // Posición A4 seleccionada (1-4)
@@ -30,7 +34,8 @@ export default function LabelPrintModal({ isOpen, onClose, shipment, client, onU
     // Información sobre el folio actual
     const [posInfo, setPosInfo] = useState({ next: 1, isNewSheet: true });
 
-    const totalLabels = shipment ? getLabelCount(shipment) : 1;
+    const envios = shipments ?? (shipment ? [shipment] : []);
+    const totalLabels = getLabelCountTotal(envios);
 
     // Al abrir el modal, inicializar con la preferencia del cliente
     useEffect(() => {
@@ -49,31 +54,25 @@ export default function LabelPrintModal({ isOpen, onClose, shipment, client, onU
         setSavePreference(!!preferred);
     }, [isOpen, client?.labelPrintMode]);
 
-    if (!isOpen || !shipment) return null;
+    if (!isOpen || envios.length === 0) return null;
 
     const handleSelectMode = (m) => setMode(m);
 
     const handlePrint = () => {
-        if (mode === 'a6') {
-            if (savePreference && onUpdateClient) {
-                onUpdateClient(client.id, { labelPrintMode: 'a6' });
-            }
-            printLabelA6(shipment, client);
-            onClose();
-        } else if (mode === 'a4') {
-            if (savePreference && onUpdateClient) {
-                onUpdateClient(client.id, { labelPrintMode: 'a4' });
-            }
-            const lastPos = printLabelA4(shipment, client, a4Position);
-            saveA4Position(lastPos);
-            onClose();
-        } else if (mode === '75x52') {
-            if (savePreference && onUpdateClient) {
-                onUpdateClient(client.id, { labelPrintMode: '75x52' });
-            }
-            printLabel75x52(shipment, client);
-            onClose();
+        if (!MODOS_DE_ETIQUETA.includes(mode)) return;
+        if (savePreference && onUpdateClient) {
+            onUpdateClient(client.id, { labelPrintMode: mode });
         }
+        if (mode === 'a6') {
+            printLabelA6(envios, client);
+        } else if (mode === 'a4') {
+            const lastPos = printLabelA4(envios, client, a4Position);
+            saveA4Position(lastPos);
+        } else if (mode === '75x52') {
+            printLabel75x52(envios, client);
+        }
+        if (onPrinted) onPrinted(envios);
+        onClose();
     };
 
     // Calcula qué posiciones se van a usar para este envío
@@ -108,8 +107,10 @@ export default function LabelPrintModal({ isOpen, onClose, shipment, client, onU
                             <Printer size={16} className="text-blue-600" />
                         </div>
                         <div>
-                            <h3 className="font-bold text-slate-800 text-sm leading-tight">Imprimir Etiqueta</h3>
-                            <p className="text-[11px] text-slate-500">{shipment.id} · {totalLabels} bulto{totalLabels !== 1 ? 's' : ''}</p>
+                            <h3 className="font-bold text-slate-800 text-sm leading-tight">{envios.length > 1 ? 'Imprimir Etiquetas' : 'Imprimir Etiqueta'}</h3>
+                            <p className="text-[11px] text-slate-500">
+                                {envios.length > 1 ? `${envios.length} envíos` : envios[0].id} · {totalLabels} bulto{totalLabels !== 1 ? 's' : ''}
+                            </p>
                         </div>
                     </div>
                     <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
