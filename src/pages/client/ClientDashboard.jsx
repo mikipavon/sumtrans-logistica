@@ -953,30 +953,30 @@ export default function ClientDashboard({
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-sm">
-                                <thead className="bg-slate-50 text-slate-600 font-medium select-none whitespace-nowrap">
+                                <thead className="bg-slate-50 text-slate-600 font-medium select-none">
                                     <tr>
-                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('id')}>
+                                        <th className="px-3 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('id')}>
                                             ID Envío {sortConfig.key === 'id' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
-                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('date')}>
+                                        <th className="px-3 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('date')}>
                                             Fecha {sortConfig.key === 'date' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
-                                        <th className="px-4 py-4 text-slate-500">
+                                        <th className="px-3 py-4 text-slate-500">
                                             🔖 Referencia
                                         </th>
-                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destinationName')}>
+                                        <th className="px-3 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destinationName')}>
                                             Remitente / Destinatario {sortConfig.key === 'destinationName' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
-                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destination')}>
+                                        <th className="px-3 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('destination')}>
                                             Destino {sortConfig.key === 'destination' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
-                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('porte')}>
+                                        <th className="px-3 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('porte')}>
                                             Porte {sortConfig.key === 'porte' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
-                                        <th className="px-4 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('status')}>
+                                        <th className="px-3 py-4 cursor-pointer hover:bg-slate-100 transition-colors" onClick={() => requestSort('status')}>
                                             Estado {sortConfig.key === 'status' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}
                                         </th>
-                                        <th className="px-4 py-4 text-right sticky right-0 bg-slate-50">Acciones</th>
+                                        <th className="px-3 py-4 text-right sticky right-0 bg-slate-50 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.18)]">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -993,15 +993,15 @@ export default function ClientDashboard({
                                     ) : (
                                         enviosVisibles.map(s => (
                                             <tr key={s.id} className="group border-t border-slate-100 hover:bg-slate-50">
-                                                <td className="px-4 py-4 font-bold text-slate-800 whitespace-nowrap">{s.id}</td>
-                                                <td className="px-4 py-4 text-slate-600 whitespace-nowrap">{new Date(s.createdAt || s.date).toLocaleDateString('es-ES')}</td>
-                                                <td className="px-4 py-4">
+                                                <td className="px-3 py-4 font-bold text-slate-800 whitespace-nowrap">{s.id}</td>
+                                                <td className="px-3 py-4 text-slate-600 whitespace-nowrap">{new Date(s.createdAt || s.date).toLocaleDateString('es-ES')}</td>
+                                                <td className="px-3 py-4">
                                                     {s.clientReference
                                                         ? <span className="font-mono text-xs bg-violet-50 text-violet-700 border border-violet-200 px-2 py-1 rounded-lg whitespace-nowrap">{s.clientReference}</span>
                                                         : <span className="text-slate-300 text-xs">—</span>
                                                     }
                                                 </td>
-                                                <td className="px-4 py-4 font-medium text-slate-700">
+                                                <td className="px-3 py-4 font-medium text-slate-700">
                                                     <div className="flex items-center gap-2">
                                                         {esRecibido(s, client) && (
                                                             <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0"
@@ -1012,16 +1012,16 @@ export default function ClientDashboard({
                                                         <span>{laOtraParte(s, client)}</span>
                                                     </div>
                                                 </td>
-                                                <td className="px-4 py-4 text-slate-500">{s.destinationCity || s.destination || '-'}</td>
+                                                <td className="px-3 py-4 text-slate-500">{s.destinationCity || s.destination || '-'}</td>
                                                 {/* Sólo la etiqueta: el importe del porte no se enseña en el portal */}
-                                                <td className="px-4 py-4">
+                                                <td className="px-3 py-4">
                                                     {quienPagaElPorte(s) === 'Destinatario'
                                                         ? <span className="px-3 py-1 rounded-full text-xs font-bold border whitespace-nowrap bg-amber-50 text-amber-700 border-amber-200">Debido</span>
                                                         : <span className="px-3 py-1 rounded-full text-xs font-bold border whitespace-nowrap bg-blue-50 text-blue-700 border-blue-200">Pagado</span>
                                                     }
                                                 </td>
-                                                <td className="px-4 py-4">
-                                                    <div className="flex flex-wrap items-center gap-2">
+                                                <td className="px-3 py-4">
+                                                    <div className="flex flex-wrap items-center gap-2 max-w-[210px]">
                                                         <span className={`px-3 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${getStatusColor(s.status)}`}>
                                                             {s.status}
                                                         </span>
@@ -1066,8 +1066,8 @@ export default function ClientDashboard({
                                                     </div>
                                                 </td>
 
-                                                <td className="px-4 py-4 text-right sticky right-0 bg-white group-hover:bg-slate-50">
-                                                    <div className="flex justify-end gap-2">
+                                                <td className="px-3 py-4 text-right sticky right-0 bg-white group-hover:bg-slate-50 shadow-[-6px_0_8px_-6px_rgba(15,23,42,0.18)]">
+                                                    <div className="flex justify-end gap-1.5">
                                                         {/* Modificar y borrar: sólo lo suyo, y sólo hasta que escaneamos los
                                                             bultos. Un pendiente ya recogido enseña un candado que dice por qué. */}
                                                         {s.status === 'Pendiente de asignar' && !esRecibido(s, client) && (
