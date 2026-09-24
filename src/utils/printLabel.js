@@ -466,7 +466,8 @@ function buildLabelHTML75x52(shipment, client, bultoIndex, totalBultos) {
     <img src="${logoSrc}" class="l75-logo" alt="Logo" onerror="this.style.display='none'" />
     <div class="l75-ref">
       <strong>${shipment.id}</strong>
-      <span>Bulto ${bultoIndex} / ${totalBultos} · ${printDate}</span>
+      <span>Bulto ${bultoIndex} / ${totalBultos}</span>
+      <span>${printDate}</span>
     </div>
   </div>
   <div class="l75-body">
@@ -477,9 +478,11 @@ function buildLabelHTML75x52(shipment, client, bultoIndex, totalBultos) {
         <p class="l75-dest-addr">${shipment.destinationAddress || shipment.destination || '—'}</p>
         <p class="l75-dest-city">${destCity || '—'}</p>
       </div>
-      <p class="l75-origin"><b>REMITE:</b> ${origen || '—'}</p>
-      ${shipment.clientReference ? `<p class="l75-refcli"><b>REF:</b> ${shipment.clientReference}</p>` : ''}
-      ${shipment.observations ? `<p class="l75-obs">${shipment.observations}</p>` : ''}
+      <div class="l75-pie">
+        <p class="l75-origin"><b>REMITE:</b> ${origen || '—'}</p>
+        ${shipment.clientReference ? `<p class="l75-refcli"><b>REF:</b> ${shipment.clientReference}</p>` : ''}
+        ${shipment.observations ? `<p class="l75-obs">${shipment.observations}</p>` : ''}
+      </div>
     </div>
     <div class="l75-side">
       <img src="${qrUrl}" alt="QR" class="l75-qr" />
@@ -498,22 +501,27 @@ html, body { width: 75mm; margin: 0; padding: 0; background: #fff; }
 .page:last-child { page-break-after: auto; }
 
 .l75 {
-  width: 75mm; height: 52mm; padding: 2mm 2.5mm;
+  width: 75mm; height: 52mm; padding: 2mm;
   display: flex; flex-direction: column;
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   color: #000; overflow: hidden;
 }
 
-/* Cabecera: logo pequeño + referencia grande */
+/* Cabecera: logo del cliente grande + referencia en columna estrecha.
+   La etiqueta sobraba por abajo y Velasco pidió verse más grande (24/09/2026): la
+   referencia se apila en tres líneas (número, bulto, fecha) para dejarle al logo casi
+   dos tercios del ancho, y la cabecera crece con él empujando el cuerpo hacia abajo. */
 .l75-head {
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex; justify-content: space-between; align-items: center; gap: 1.5mm;
   border-bottom: 0.5mm solid #000; padding-bottom: 1mm; margin-bottom: 1.2mm; flex-shrink: 0;
 }
-.l75-logo { max-width: 22mm; max-height: 7mm; object-fit: contain; }
-.l75-ref  { text-align: right; line-height: 1.15; }
-.l75-ref strong { display: block; font-size: 12pt; font-weight: 900; letter-spacing: 0.3px; }
+/* Sin ancho fijo: el logo se queda con todo lo que la referencia no ocupa (el flex lo encoge
+   guardando la proporción), hasta 12mm de alto. */
+.l75-logo { max-height: 12mm; min-width: 0; object-fit: contain; object-position: left center; }
+.l75-ref  { text-align: right; line-height: 1.15; flex-shrink: 0; }
+.l75-ref strong { display: block; font-size: 10.5pt; font-weight: 900; }
 /* Todo en negro puro: las térmicas convierten cualquier gris en trama de puntos ilegible */
-.l75-ref span   { font-size: 6pt; color: #000; font-weight: 700; }
+.l75-ref span   { display: block; font-size: 6pt; color: #000; font-weight: 700; }
 
 /* Cuerpo: destinatario a la izquierda, QR a la derecha */
 .l75-body { display: flex; gap: 2mm; flex: 1; min-height: 0; }
@@ -525,6 +533,10 @@ html, body { width: 75mm; margin: 0; padding: 0; background: #fff; }
 .l75-dest-name { font-size: 9pt; font-weight: 900; line-height: 1.1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .l75-dest-addr { font-size: 6.5pt; line-height: 1.2; margin-top: 0.5mm; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .l75-dest-city { font-size: 9pt; font-weight: 800; line-height: 1.15; margin-top: 0.5mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Remitente, referencia y observaciones van pegados al pie: si el albarán es corto, el
+   hueco que sobra queda entre el destinatario y ellos, no como un filo blanco abajo. */
+.l75-pie { margin-top: auto; }
 
 .l75-origin { font-size: 6pt; line-height: 1.2; margin-top: 1mm; color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .l75-refcli { font-size: 7pt; font-weight: 800; line-height: 1.2; margin-top: 0.6mm; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
