@@ -1,3 +1,4 @@
+import { observacionesVisibles } from './shipmentUtils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -277,7 +278,7 @@ const renderDeliveryPage = async (doc, shipment, cliente = null) => {
   curY += boxH + 16;
 
   // ── OBSERVACIONES ──
-  if (shipment.observations) {
+  if (observacionesVisibles(shipment.observations)) {
     doc.setFillColor(...LGRAY);
     doc.setDrawColor(...MGRAY);
     doc.setLineWidth(0.3);
@@ -290,7 +291,7 @@ const renderDeliveryPage = async (doc, shipment, cliente = null) => {
     doc.setFont('helvetica', 'italic');
     doc.setTextColor(...DGRAY);
     doc.setFontSize(8.5);
-    const lines = doc.splitTextToSize(shipment.observations, pW - 2 * M);
+    const lines = doc.splitTextToSize(observacionesVisibles(shipment.observations), pW - 2 * M);
     doc.text(lines, M, curY);
   }
 

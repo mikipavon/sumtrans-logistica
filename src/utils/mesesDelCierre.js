@@ -39,5 +39,20 @@ export const nombreDelPeriodo = (meses) => {
     return texto.charAt(0).toUpperCase() + texto.slice(1);
 };
 
+// Hasta qué día del mes la ventana del cierre abre en el mes anterior.
+export const DIAS_PARA_CERRAR_EL_MES_ANTERIOR = 10;
+
+/**
+ * El mes con el que abre la ventana del cierre ('YYYY-MM', hora local). Los
+ * primeros días se cierra el mes que acaba de terminar: abriendo en el mes en
+ * curso, un cierre de septiembre hecho el 2 de octubre arrastraba también los
+ * albaranes del 1 y el 2 de octubre (Miguel, 25/09/2026).
+ */
+export const mesPorDefectoDelCierre = (hoy = new Date()) => {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+    if (hoy.getDate() <= DIAS_PARA_CERRAR_EL_MES_ANTERIOR) d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+
 /** El mes en que se cerró un recibo: el más reciente de sus albaranes. */
 export const mesDelCierre = (meses) => [...(meses || [])].filter(Boolean).sort().pop() || '';

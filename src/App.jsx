@@ -1245,7 +1245,7 @@ function App() {
         const queryNames = [
           'drivers', 'shipments_active', 'shipments_finished', 'clients',
           'articles', 'vehicles', 'fuel_logs', 'tariffs',
-          'settings', 'coverage_zones'
+          'settings', 'coverage_zones', 'presupuestos_sin_cerrar'
         ];
 
         const results = await Promise.allSettled([
@@ -1264,6 +1264,17 @@ function App() {
           fetchAllRows(() => supabase.from('tariffs').select('id, data').order('id'), { label: 'tariffs' }),
           fetchAllRows(() => supabase.from('settings').select('key, value').order('key'), { label: 'settings' }),
           fetchAllRows(() => supabase.from('coverage_zones').select('id, data').order('id'), { label: 'coverage_zones' }),
+          // 3 - Presupuesto sin cerrar, de antes de los 90 días. El cierre de
+          // presupuestos arrastra todo lo pendiente de meses anteriores, pero sólo
+          // puede sumar lo que la app ha cargado: un albarán en papel de junio
+          // apuntado en septiembre (HAB-686, 25/09/2026) se quedaba sin cobrar.
+          // Al liquidarse deja de cargarse, así que la lista no crece.
+          fetchAllRows(() => supabase.from('shipments').select('id, data')
+            .in('status', ['Entregado', 'Anulado'])
+            .lt('data->>createdAt', cutoffISO)
+            .eq('data->>billingType', 'Presupuesto')
+            .or('data->>budgetLiquidated.is.null,data->>budgetLiquidated.neq.true')
+            .order('id'), { label: 'presupuestos_sin_cerrar' }),
         ]);
 
         // Helper to safely extract data from settled results
@@ -1291,6 +1302,7 @@ function App() {
         const trf = getData(7);
         const allSettings = getData(8);
         const covZones = getData(9);
+        const shpPresupuestoViejo = getData(10);
 
         // ── Helper to get a setting value by key from the single settings query ──
         const getSetting = (key) => {
@@ -1313,7 +1325,11 @@ function App() {
         // reintento, que le recolocaba todas las paradas de golpe.
         const fotoIncompleta = activeShipmentsTimedOut && habraReintento;
         if (!fotoIncompleta && (shpActive || shpFinished)) {
-          const allShp = [...(shpActive || []), ...(shpFinished || [])];
+          // Los de presupuesto viejos no se solapan con los recientes (createdAt
+          // antes del corte), pero por si acaso no se repite ningún id.
+          const idsCargados = new Set([...(shpActive || []), ...(shpFinished || [])].map(s => s.id));
+          const allShp = [...(shpActive || []), ...(shpFinished || []),
+            ...(shpPresupuestoViejo || []).filter(s => !idsCargados.has(s.id))];
           let loadedShipments = allShp.map(s => ({ ...s.data, id: s.id }));
           
           // ── Apply pending queue operations over fresh Supabase data ──
@@ -3532,6 +3548,34 @@ function App() {
     return handleDeleteShipment(shipmentId, { pedirContrasena: !todaviaNoEsNuestro });
   };
 
+  // ── El transportista borra una recogida de su reparto ──
+  //
+  // Una recogida no factura: es el aviso de "pásate por aquí", y el albarán de
+  // verdad nace al convertirla. La oficina apunta recogidas en clientes que ya
+  // mandan sus envíos con etiqueta, y el conductor tenía que llamar para que se
+  // la quitaran (Miguel, 24/09/2026). Sólo recogidas: un albarán de entrega o un
+  // recibo llevan cobros y siguen siendo cosa de la oficina con su contraseña.
+  // No pasa por la cola sin red: si no hay cobertura, la recogida se queda y se
+  // avisa, que borrar dos veces no es problema y borrar a ciegas sí.
+  const handleDeleteRecogidaDesdeElReparto = async (shipmentId) => {
+    const envio = shipmentsRef.current.find(s => s.id === shipmentId);
+    if (!envio || envio.type !== 'Recogida') {
+      alert('Sólo se puede borrar una recogida. Para un albarán, avisa a la oficina.');
+      return false;
+    }
+    try {
+      const { error } = await supabase.from('shipments').delete().eq('id', shipmentId);
+      if (error) throw error;
+      setShipments(prev => prev.filter(s => s.id !== shipmentId));
+      await purgeCollectionsForShipments([shipmentId]);
+      return true;
+    } catch (e) {
+      console.error('[handleDeleteRecogidaDesdeElReparto]', e);
+      alert('No se ha podido borrar la recogida. Comprueba la cobertura e inténtalo otra vez.');
+      return false;
+    }
+  };
+
   // ── El portal del cliente: borrar y modificar sólo lo que aún no hemos recogido ──
   //
   // El cliente no pasa por la contraseña de borrado ni por la cola de reintentos
@@ -5096,6 +5140,7 @@ function App() {
           clients={clients}
           allPoblaciones={allPoblaciones}
           onCreateShipment={handleAddShipment}
+          onDeleteRecogida={handleDeleteRecogidaDesdeElReparto}
           onStatusChange={handleShipmentStatusChange}
           onUpdateShipment={handleUpdateShipment}
           onUpdateClient={handleUpdateClient}
@@ -5144,7 +5189,7 @@ function App() {
       <Suspense fallback={<PantallaCargando />}>
                 {currentView === 'dashboard' && (
                     <div className="animate-in fade-in duration-500">
-                        <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} vehicles={vehicles} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
+                        <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} vehicles={vehicles} drivers={drivers} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
                     </div>
                 )}
       {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onReassignCollection={handleReassignPendingCollection} onReassignCollections={handleReassignPendingCollections} onUpdateShipment={handleUpdateShipment} onCreateShipment={handleAddShipment} articles={articles} isGhostModeUnlocked={isGhostModeUnlocked} driverNamePreference={driverNamePreference} />}

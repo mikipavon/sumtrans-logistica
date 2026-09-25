@@ -52,6 +52,33 @@ export const puedeAsignarloEsteConductor = (shipment, driverId) => {
 };
 
 /**
+ * Orden de la pestaña "Asignar": lo último que el conductor ha creado o escaneado,
+ * arriba del todo. Cada albarán cuenta por lo más reciente entre su alta
+ * (createdAt) y el primer bulto escaneado (pickedUpAt): un envío del portal creado
+ * ayer y recogido ahora sube arriba al escanearlo.
+ *
+ * Antes la pestaña no ordenaba: lo recién creado salía arriba, pero al volver a la
+ * app la lista se recargaba ordenada por el número como texto (HAB antes que SUM,
+ * SUM-1000 antes que SUM-999) y el albarán se iba al fondo.
+ *
+ * Sin ninguna de las dos fechas va al final; a igualdad, el número más alto primero.
+ */
+const momentoEnAsignar = (shipment) => {
+    const t = (v) => {
+        const ms = v ? new Date(v).getTime() : NaN;
+        return Number.isNaN(ms) ? 0 : ms;
+    };
+    return Math.max(t(shipment?.createdAt), t(shipment?.pickedUpAt));
+};
+
+export const ordenarParaAsignar = (shipments) => {
+    const numero = (s) => parseInt(String(s?.id || '').replace(/\D/g, ''), 10) || 0;
+    return [...(shipments || [])].sort((a, b) =>
+        (momentoEnAsignar(b) - momentoEnAsignar(a)) || (numero(b) - numero(a))
+    );
+};
+
+/**
  * Si un albarán forma parte del reparto de un conductor.
  *
  * «Pendiente de asignar» no es el reparto de nadie, aunque al albarán le quede
@@ -162,6 +189,18 @@ export const recogidaDelEnvio = (shipment) => {
     return { quien, cuando };
 };
 
+// El alta de un porte debido antepone "[COBRO PENDIENTE]" a las observaciones.
+// Es una marca interna: nadie la debe leer (ni el cliente en su portal, ni el
+// POD, ni las etiquetas). El dato se queda guardado tal cual; esto sólo la
+// quita de lo que se pinta.
+const MARCA_COBRO_PENDIENTE = /\[COBRO PENDIENTE\]/gi;
+
+export const observacionesVisibles = (observaciones) =>
+    String(observaciones || '').replace(MARCA_COBRO_PENDIENTE, '').trim();
+
+export const llevaMarcaDeCobroPendiente = (observaciones) =>
+    /\[COBRO PENDIENTE\]/i.test(String(observaciones || ''));
+
 export const getIrregularReasons = (shipment) => {
     if (!shipment || shipment.notificationDismissed) return [];
     const reasons = [];
@@ -180,7 +219,7 @@ export const getIrregularReasons = (shipment) => {
     }
 
     // 1. Observaciones
-    if (shipment.observations && String(shipment.observations).replace(/\[COBRO PENDIENTE\]/gi, '').trim() !== '') {
+    if (observacionesVisibles(shipment.observations) !== '') {
         reasons.push('Tiene observaciones');
     }
 

@@ -10,13 +10,13 @@ import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import CameraCaptureModal from '../CameraCaptureModal';
 import CityAutocomplete from '../CityAutocomplete';
-import { getPackagesCount, recogidaDelEnvio } from '../../utils/shipmentUtils';
+import { getPackagesCount, recogidaDelEnvio, observacionesVisibles, llevaMarcaDeCobroPendiente } from '../../utils/shipmentUtils';
 
 
 import { Trash2, Plus } from 'lucide-react';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 import { baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, conMinimoFueraDeBaremo } from '../../utils/precioArticulo';
-export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1, showAdminControls = false }) {
+export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1, showAdminControls = false, onDelete = null }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -234,6 +234,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
             // selectedArticles y weightKg se gestionan en estado propio (fuera de
             // formData), así que hay que fusionarlos explícitamente antes de guardar.
             finalFormData.articles = selectedArticles;
+            if (finalFormData.clientReference !== undefined) {
+                finalFormData.clientReference = String(finalFormData.clientReference || '').trim() || null;
+            }
             if (weightKg !== '' && weightKg !== null && weightKg !== undefined) {
                 finalFormData.weightKg = weightKg;
             }
@@ -361,6 +364,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                 }
 
                 await onUpdate(shipment.id, finalFormData);
+                // El `shipment` que nos pasan es la foto de cuando se abrió la ficha
+                // y no se refresca: lo que se enseña al salir de Editar sale de formData.
+                setFormData(prev => ({ ...prev, clientReference: finalFormData.clientReference }));
                 setIsEditing(false);
                 setNewPhoto(null);
                 setCodReceiptPhoto(null);
@@ -1323,7 +1329,25 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
 
                     {/* Observations */}
                     <div className={`p-4 rounded-xl border ${isEditing ? 'bg-white border-gray-200' : 'bg-yellow-50 border-yellow-100'} transition-colors`}>
-                        {renderField("Observaciones", formData.observations, "observations", <FileText />, "textarea", true)}
+                        {/* La marca interna [COBRO PENDIENTE] no se enseña ni al editar;
+                            si la llevaba, se le vuelve a poner al texto que se teclee. */}
+                        {isEditing && !isReadOnly ? (
+                            <div className="space-y-1 col-span-full">
+                                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                                    <FileText size={12} />
+                                    Observaciones
+                                </span>
+                                <textarea
+                                    value={observacionesVisibles(formData.observations)}
+                                    onChange={(e) => handleChange('observations',
+                                        llevaMarcaDeCobroPendiente(formData.observations)
+                                            ? `[COBRO PENDIENTE] ${e.target.value}`
+                                            : e.target.value)}
+                                    className="w-full text-sm border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                    rows={3}
+                                />
+                            </div>
+                        ) : renderField("Observaciones", observacionesVisibles(formData.observations), "observations", <FileText />, "textarea", true)}
                     </div>
 
                     {/* Foto de la Mercancía.
@@ -1541,13 +1565,26 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                 </p>
                             </div>
                         </div>
-                        {/* Referencia Externa (SSCC / QR del cliente) */}
-                        {shipment.clientReference && (
+                        {/* Referencia Externa (SSCC / QR del cliente).
+                            Al editar sale siempre, aunque esté vacía, para poder ponerla
+                            en un albarán que la oficina dio de alta sin ella. */}
+                        {isEditing && !isReadOnly && !isClientView ? (
+                            <div className="mt-3 bg-indigo-50 rounded-lg border border-indigo-200 p-3">
+                                <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block mb-1">Ref. Externa Cliente (SSCC / QR)</span>
+                                <input
+                                    type="text"
+                                    value={formData.clientReference || ''}
+                                    onChange={(e) => handleChange('clientReference', e.target.value)}
+                                    placeholder="Nº pedido, código de barras, SSCC..."
+                                    className="w-full text-sm font-mono border border-indigo-200 rounded-lg p-2 bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                                />
+                            </div>
+                        ) : formData.clientReference && (
                             <div className="mt-3 bg-indigo-50 rounded-lg border border-indigo-200 p-3 flex items-center gap-3">
                                 <span className="text-lg">📎</span>
                                 <div>
                                     <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block mb-0.5">Ref. Externa Cliente (SSCC / QR)</span>
-                                    <p className="text-sm font-bold text-indigo-800 font-mono tracking-wide">{shipment.clientReference}</p>
+                                    <p className="text-sm font-bold text-indigo-800 font-mono tracking-wide">{formData.clientReference}</p>
                                 </div>
                             </div>
                         )}
@@ -1984,6 +2021,23 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                 {/* Footer Buttons */}
                 {isEditing ? (
                     <div className="border-t border-gray-100 p-4 bg-gray-50 shrink-0 flex gap-3 animate-in slide-in-from-bottom-2" style={{ zoom }}>
+                        {/* Borrar desde la edición. Sólo llega `onDelete` cuando quien abre
+                            la ficha puede borrar este envío (el repartidor, una recogida:
+                            no factura). Quien lo pasa pone la confirmación y devuelve true
+                            si de verdad se borró; entonces la ficha se cierra. */}
+                        {onDelete && (
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    const borrado = await onDelete(shipment.id);
+                                    if (borrado) onClose();
+                                }}
+                                className="py-3 px-4 text-sm font-bold text-red-600 bg-white border border-red-200 rounded-xl hover:bg-red-50 flex items-center justify-center gap-2"
+                            >
+                                <Trash2 size={18} />
+                                Borrar
+                            </button>
+                        )}
                         <button
                             onClick={() => {
                                 setFormData(shipment);

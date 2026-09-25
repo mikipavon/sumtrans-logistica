@@ -193,6 +193,50 @@ export const getSignedUrlForPath = async (bucketName, filePath, segundos = 60) =
   return data?.signedUrl || null;
 };
 
+/** Contenedor de los PDF de las facturas simplificadas (público, ver supabase/35). */
+export const FACTURAS_SIMPLIFICADAS_BUCKET = 'facturas_simplificadas';
+
+/**
+ * Sube el PDF de una factura simplificada y devuelve su enlace público, que es lo
+ * que viaja en el WhatsApp (un wa.me sólo lleva texto).
+ *
+ * El enlace tiene que abrirlo el cliente sin entrar en la aplicación, así que el
+ * contenedor es público; lo que lo protege es el nombre, con un UUID que no se
+ * puede adivinar, y que nadie puede listar el contenedor (supabase/35 no da
+ * permiso de leer). Cada envío sube un fichero nuevo: sin upsert, que pediría
+ * además ese permiso de leer (ver [[upsert-necesita-permiso-de-leer]]).
+ */
+export const subirFacturaSimplificada = async (pdf, ref) => {
+  const safeRef = String(ref || 'NUEVO').replace(/[^a-zA-Z0-9\-_]/g, '_');
+  const azar = globalThis.crypto?.randomUUID?.() ||
+    `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  const filePath = `FS-${safeRef}_${azar}.pdf`;
+
+  const { error } = await supabase.storage
+    .from(FACTURAS_SIMPLIFICADAS_BUCKET)
+    .upload(filePath, pdf, {
+      cacheControl: '31536000',
+      upsert: false,
+      contentType: 'application/pdf',
+    });
+
+  if (error) {
+    console.error(`ERROR SUPABASE STORAGE (${FACTURAS_SIMPLIFICADAS_BUCKET}):`, error);
+    let mensaje = error.message;
+    if (error.message?.includes('not found')) {
+      mensaje = `El contenedor '${FACTURAS_SIMPLIFICADAS_BUCKET}' no existe. Falta ejecutar supabase/35_facturas_simplificadas_en_pdf.sql.`;
+    } else if (error.message?.includes('row-level security') || error.statusCode === '403') {
+      mensaje = `Permiso denegado en '${FACTURAS_SIMPLIFICADAS_BUCKET}'.`;
+    }
+    throw new Error(mensaje);
+  }
+
+  const { data: { publicUrl } } = supabase.storage
+    .from(FACTURAS_SIMPLIFICADAS_BUCKET)
+    .getPublicUrl(filePath);
+  return publicUrl;
+};
+
 /** Borra un fichero de un contenedor privado. */
 export const deletePrivateFile = async (bucketName, filePath) => {
   if (!filePath) return;

@@ -1,4 +1,6 @@
 import { estilosDeHoja, scriptDeAjuste } from './hojaDeImpresion';
+import { datosDeFacturaSimplificada, mensajeDeFacturaSimplificada, EMPRESA, CIF, CORREO_FACTURAS } from './facturaSimplificada';
+import { prepararEnvioConPdf } from './enviarFacturaSimplificada';
 
 /**
  * Genera e imprime una Factura Simplificada en formato ticket (80mm).
@@ -6,56 +8,27 @@ import { estilosDeHoja, scriptDeAjuste } from './hojaDeImpresion';
  *
  * Va dentro de una hoja con la proporción de un folio (ver hojaDeImpresion) para
  * que salga siempre en una sola página, tenga una línea o veinte.
+ *
+ * El botón de WhatsApp manda la factura al móvil del destinatario con un enlace
+ * al PDF (ver enviarFacturaSimplificada). Si el PDF no se puede subir, sale el
+ * mensaje de texto de siempre.
  */
 export const printSimplifiedInvoice = (shipmentData) => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    const date = shipmentData.date || new Date().toLocaleDateString('es-ES');
-    const ref = shipmentData.id || 'NUEVO';
+    const datos = datosDeFacturaSimplificada(shipmentData);
+    const { ref, fecha: date, base, iva, total, movilWhatsApp: telefonoWhatsApp } = datos;
+    const { nombre: clientName, direccion: clientAddress, poblacion: clientCity, cp: clientZip, telefono: clientPhone } = datos.cliente;
 
-    const parseAmt = (val) => {
-        if (!val) return 0;
-        if (typeof val === 'number') return val;
-        const str = val.toString().replace(/[^0-9,.-]+/g, '');
-        const normalized = str.includes(',') && !str.includes('.') ? str.replace(',', '.') : str;
-        const num = parseFloat(normalized);
-        return isNaN(num) ? 0 : num;
-    };
+    const articlesHtml = datos.lineas.map(l => l.importe === null
+        ? `<tr><td colspan="2">${l.texto}</td></tr>`
+        : `<tr><td>${l.texto}</td><td style="text-align: right">${l.importe.toFixed(2)} €</td></tr>`
+    ).join('');
 
-    const base = parseAmt(shipmentData.amount);
-    const iva = +(base * 0.21).toFixed(2);
-    const total = +(base + iva).toFixed(2);
-
-    const articlesHtml = (shipmentData.articles && shipmentData.articles.length > 0)
-        ? shipmentData.articles.map(art => `
-            <tr>
-                <td>${art.quantity || 1}x ${art.name || 'Servicio'}</td>
-                <td style="text-align: right">${parseAmt(art.price).toFixed(2)} €</td>
-            </tr>
-        `).join('')
-        : `<tr><td>SERV. TRANSPORTE</td><td style="text-align: right">${base.toFixed(2)} €</td></tr>`;
-
-    const clientName = shipmentData.destinationName || shipmentData.client || '—';
-    const clientAddress = shipmentData.destinationAddress || '—';
-    const clientCity = shipmentData.destinationCity || '';
-    const clientZip = shipmentData.destinationZip || '';
-    const clientPhone = shipmentData.destinationPhone || '';
-
-    // WhatsApp share text
-    const waText = encodeURIComponent(
-        `📄 *FACTURA SIMPLIFICADA*\n` +
-        `SUMTRANS LOGISTICA S.L.\n` +
-        `CIF: B56131717\n` +
-        `Ref: ${ref}\n` +
-        `Fecha: ${date}\n\n` +
-        `Cliente: ${clientName}\n\n` +
-        `Base Imponible: ${base.toFixed(2)}€\n` +
-        `IVA 21%: ${iva.toFixed(2)}€\n` +
-        `━━━━━━━━━━━━\n` +
-        `*TOTAL: ${total.toFixed(2)}€*\n\n` +
-        `Para solicitar factura completa:\n📧 info@sumtransportes.com`
-    );
+    // Texto sin PDF: el de reserva si la ventana no tiene quien le suba el PDF.
+    const waText = encodeURIComponent(mensajeDeFacturaSimplificada(datos))
+        .replace(/'/g, '%27'); // va dentro de una cadena '...' del script de la ventana
 
     printWindow.document.write(`
         <html>
@@ -102,6 +75,11 @@ ${estilosDeHoja()}
                     .btn-whatsapp { background: #25D366; color: white; }
                     .btn-print { background: #3b82f6; color: white; }
                     .btn-close { background: #64748b; color: white; }
+                    .wa-box { text-align: left; margin-bottom: 8px; font-family: system-ui, sans-serif; }
+                    .wa-box label { display: block; font-size: 12px; font-weight: bold; color: #334155; margin-bottom: 4px; }
+                    .wa-box input { width: 100%; box-sizing: border-box; padding: 12px; font-size: 18px; font-weight: bold; border: 2px solid #25D366; border-radius: 8px; }
+                    .wa-aviso { color: #c2410c; font-size: 12px; font-weight: bold; margin-top: 4px; min-height: 14px; }
+                    .btn-whatsapp:disabled { opacity: .6; cursor: wait; }
 
                     @media print {
                         body { width: 80mm; }
@@ -113,8 +91,8 @@ ${estilosDeHoja()}
             <body>
               <div id="hoja"><div id="contenido">
                 <div class="header">
-                    <div class="logo">SUMTRANS LOGISTICA S.L.</div>
-                    <div class="cif">CIF: B56131717</div>
+                    <div class="logo">${EMPRESA}</div>
+                    <div class="cif">CIF: ${CIF}</div>
                     <div class="doc-type">FACTURA SIMPLIFICADA</div>
                 </div>
 
@@ -165,7 +143,7 @@ ${estilosDeHoja()}
 
                 <div class="email-box">
                     <strong>¿Necesita factura completa?</strong><br/>
-                    Solicítela en 📧 <strong>info@sumtransportes.com</strong>
+                    Solicítela en 📧 <strong>${CORREO_FACTURAS}</strong>
                 </div>
 
                 <div class="footer">
@@ -182,7 +160,13 @@ ${estilosDeHoja()}
               </div></div>
 
                 <div class="actions" id="no-print">
-                    <button class="btn-whatsapp" onclick="window.open('https://wa.me/?text=${waText}', '_blank')">
+                    <div class="wa-box">
+                        <label for="wa-tel">WhatsApp del destinatario${clientName !== '—' ? ` · ${clientName}` : ''}</label>
+                        <input id="wa-tel" type="tel" inputmode="tel" autocomplete="off"
+                               placeholder="Sin móvil: escríbelo aquí" value="${telefonoWhatsApp}" />
+                        <div id="wa-aviso" class="wa-aviso"></div>
+                    </div>
+                    <button id="wa-boton" class="btn-whatsapp" onclick="enviarPorWhatsApp()">
                         📲 Enviar por WhatsApp
                     </button>
                     <button class="btn-print" onclick="window.print()">
@@ -195,14 +179,48 @@ ${estilosDeHoja()}
 
                 <script>
 ${scriptDeAjuste()}
+                    // Al número del recuadro; si está vacío no se abre un chat sin
+                    // destinatario, se pide el móvil. Con el PDF se encarga la app
+                    // (__enviarFactura, lo pone quien abre esta ventana); sin ella,
+                    // sólo el texto.
+                    function enviarPorWhatsApp() {
+                        var campo = document.getElementById('wa-tel');
+                        var aviso = document.getElementById('wa-aviso');
+                        var num = (campo.value || '').replace(/[^0-9]/g, '');
+                        if (num.length === 9 && /^[67]/.test(num)) num = '34' + num;
+                        if (num.length < 9) {
+                            aviso.textContent = 'Escribe el móvil del destinatario';
+                            campo.focus();
+                            return;
+                        }
+                        if (/^(34)?[89][0-9]{8}$/.test(num)) {
+                            aviso.textContent = 'Ese es un fijo, no tiene WhatsApp';
+                            campo.focus();
+                            return;
+                        }
+                        aviso.textContent = '';
+                        if (typeof window.__enviarFactura === 'function') {
+                            window.__enviarFactura(num);
+                            return;
+                        }
+                        window.open('https://wa.me/' + num + '?text=${waText}', '_blank');
+                    }
                     // Aquí no se imprime solo: el botón de Imprimir puede pulsarse en
                     // cualquier momento, así que la hoja se cuadra al cargar y otra vez
                     // justo antes de imprimir.
-                    window.onload = function() { ajustarAlFolio(); };
+                    window.onload = function() {
+                        ajustarAlFolio();
+                        var campo = document.getElementById('wa-tel');
+                        if (campo && !campo.value) campo.focus();
+                    };
                     window.onbeforeprint = function() { ajustarAlFolio(); };
                 </script>
             </body>
         </html>
     `);
     printWindow.document.close();
+
+    // Después del close: document.write en una ventana nueva puede cambiarle el
+    // objeto window, y lo puesto antes se perdería.
+    printWindow.__enviarFactura = prepararEnvioConPdf(datos, printWindow);
 };

@@ -311,9 +311,6 @@ export const calculateDailyAccount = ({ allShipments, driverId, clients, collect
             !c.shipmentId || index === self.findIndex(t => t.shipmentId === c.shipmentId && t.type === c.type)
         );
 
-    console.log("📊 [AccountLogic] Filtered manual Porte:", manualPorteCollections.length);
-    console.log("📊 [AccountLogic] Filtered manual Reembolso:", collectedReembolsosRaw.length);
-
     // Un reembolso entra en la caja del día en que se COBRÓ EL REEMBOLSO (codPaidAt) o,
     // si el albarán no guardó esa hora, del día en que se ENTREGÓ (deliveredAt). Nunca
     // por updatedAt: cualquier retoque de la oficina al albarán (corregir un

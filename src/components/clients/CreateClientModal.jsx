@@ -707,6 +707,22 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                         </div>
                                         <p className="text-[10px] text-slate-400 mt-1">Influye en la optimización automática de la ruta del conductor.</p>
                                     </Field>
+                                    <Field label="No entregar antes de (Opcional)">
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <input type="time" className={`${inputCls} max-w-[140px]`}
+                                                value={formData.noAntesDe || ''} onChange={e => set('noAntesDe', e.target.value || undefined)} />
+                                            {formData.noAntesDe && (
+                                                <button type="button" onClick={() => set('noAntesDe', undefined)}
+                                                    className="text-xs font-bold text-slate-400 hover:text-red-600 transition-colors">
+                                                    Quitar
+                                                </button>
+                                            )}
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 mt-1">
+                                            Hora a la que abre. El optimizador deja la parada para después de esa hora.
+                                            Si se deja en blanco, lo va aprendiendo de las entregas y de las incidencias de "Local cerrado".
+                                        </p>
+                                    </Field>
                                     <Field label="Etiqueta de Marca (Opcional)">
                                         <input type="text" className={inputCls} placeholder="Ej: logistica_plus (dejar vacío para SUM)"
                                             value={formData.agencyLabel || ''} onChange={e => set('agencyLabel', e.target.value)} />

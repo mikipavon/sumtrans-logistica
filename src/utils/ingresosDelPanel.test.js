@@ -56,6 +56,11 @@ describe('categoriasMarcadas y tituloDeIngresos', () => {
             .toBe('Ingresos (Clientes Habituales + Presupuestos)');
         expect(tituloDeIngresos(categoriasMarcadas({}))).toBe('Ingresos (ninguna línea)');
     });
+
+    it('la Caja se nombra al final, sola o con otras líneas', () => {
+        expect(tituloDeIngresos(categoriasMarcadas({}), true)).toBe('Ingresos (Caja)');
+        expect(tituloDeIngresos(categoriasMarcadas({ facturacion: true }), true)).toBe('Ingresos (Facturación + Caja)');
+    });
 });
 
 describe('ingresosPorCliente', () => {

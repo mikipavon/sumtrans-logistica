@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { entraEnElCierre, nombreDelPeriodo, mesDelCierre } from './mesesDelCierre';
+import { entraEnElCierre, nombreDelPeriodo, mesDelCierre, mesPorDefectoDelCierre } from './mesesDelCierre';
 
 describe('mesesDelCierre', () => {
+    it('los primeros 10 días abre en el mes anterior; después, en el mes en curso', () => {
+        expect(mesPorDefectoDelCierre(new Date(2026, 9, 2))).toBe('2026-09');
+        expect(mesPorDefectoDelCierre(new Date(2026, 9, 10, 23, 59))).toBe('2026-09');
+        expect(mesPorDefectoDelCierre(new Date(2026, 9, 11))).toBe('2026-10');
+        expect(mesPorDefectoDelCierre(new Date(2026, 8, 25))).toBe('2026-09');
+        // En enero, diciembre del año anterior.
+        expect(mesPorDefectoDelCierre(new Date(2027, 0, 1, 0, 30))).toBe('2026-12');
+    });
+
     it('con arrastre entran el mes elegido y los anteriores, nunca los posteriores', () => {
         expect(entraEnElCierre('2026-08', '2026-09', true)).toBe(true);
         expect(entraEnElCierre('2026-09', '2026-09', true)).toBe(true);

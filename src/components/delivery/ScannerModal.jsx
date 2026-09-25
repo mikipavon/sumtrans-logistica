@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
-import { X, Camera, RefreshCw, CheckCircle, Package } from 'lucide-react';
+import { X, Camera, RefreshCw, CheckCircle, Package, AlertTriangle } from 'lucide-react';
+import { prepararPitido, pitidoDeBulto, pitidoDeRepetido } from '../../utils/pitidoEscaner';
+
+// Cuánto se enseña el aviso de "ya escaneado" y cada cuánto se repite si la
+// cámara sigue sobre la misma pegatina.
+const AVISO_REPETIDO_MS = 1500;
 
 const ScannerModal = ({ isOpen, onClose, onScan }) => {
     const scannerRef = useRef(null);
@@ -11,15 +16,23 @@ const ScannerModal = ({ isOpen, onClose, onScan }) => {
     const [error, setError] = useState(null);
     const [scannedHistory, setScannedHistory] = useState([]);
     const [lastScanFeedback, setLastScanFeedback] = useState(null);
-    
+    const [avisoRepetido, setAvisoRepetido] = useState(null);
+
     // Lógica para escaneo continuo y natural
     const isMountedRef = useRef(true);
     const onScanRef = useRef(onScan);
     const isProcessingRef = useRef(false);
-    
-    // Prevención de duplicados sin necesidad de pausar
-    const lastScannedBarcode = useRef(null);
-    const framesWithoutBarcode = useRef(0);
+
+    // ── Un bulto se escanea una vez ──
+    // La cámara lee la pegatina en cada fotograma (10 por segundo). Antes sólo
+    // se recordaba el ÚLTIMO código y se volvía a aceptar en cuanto la cámara
+    // lo perdía medio segundo: un temblor de mano o pasar de una pegatina a
+    // otra y volver bastaba para registrar el mismo bulto veinte veces, con su
+    // vibración y su subida a la nube cada vez. Ahora se guardan todos los
+    // códigos leídos mientras el escáner está abierto, y el repetido sólo saca
+    // un aviso.
+    const codigosEscaneadosRef = useRef(new Set());
+    const ultimoAvisoRepetidoRef = useRef({ codigo: null, en: 0 });
     
     // Mantener refs sincronizados
     useEffect(() => { onScanRef.current = onScan; }, [onScan]);
@@ -50,10 +63,14 @@ const ScannerModal = ({ isOpen, onClose, onScan }) => {
         if (isOpen) {
             setScannedHistory([]);
             setLastScanFeedback(null);
+            setAvisoRepetido(null);
             setError(null);
-            lastScannedBarcode.current = null;
-            framesWithoutBarcode.current = 0;
+            codigosEscaneadosRef.current = new Set();
+            ultimoAvisoRepetidoRef.current = { codigo: null, en: 0 };
             isProcessingRef.current = false;
+            // El escáner se abre con un toque: es el momento en que el
+            // navegador deja crear el audio. La primera lectura ya no lo es.
+            prepararPitido();
             timer = setTimeout(() => initScanner(), 400);
         } else {
             stopScanner();
@@ -84,41 +101,59 @@ const ScannerModal = ({ isOpen, onClose, onScan }) => {
         }
     };
 
+    // La cámara vuelve a leer un bulto que ya entró en esta sesión. No se
+    // registra nada: un aviso ámbar y dos tonos graves, y no más de uno cada
+    // segundo y medio aunque la cámara siga clavada en la pegatina.
+    const avisarDeRepetido = (text) => {
+        const ahora = Date.now();
+        const ultimo = ultimoAvisoRepetidoRef.current;
+        if (ultimo.codigo === text && ahora - ultimo.en < AVISO_REPETIDO_MS) return;
+        ultimoAvisoRepetidoRef.current = { codigo: text, en: ahora };
+
+        pitidoDeRepetido();
+        if (window.navigator.vibrate) window.navigator.vibrate(60);
+        setAvisoRepetido(text);
+        setTimeout(() => {
+            if (isMountedRef.current) setAvisoRepetido(null);
+        }, AVISO_REPETIDO_MS);
+    };
+
     const handleScanResult = async (text) => {
         // Prevenir ejecuciones concurrentes mientras se procesa la subida a bbdd
         if (isProcessingRef.current) return;
 
-        // Lógica natural de duplicados:
-        // Si es el mismo código que acabamos de escanear, y no hemos tenido al menos
-        // 5 frames (~0.5s) sin ver el código, lo ignoramos. 
-        // Esto obliga al conductor a apartar la cámara para escanear el siguiente bulto.
-        if (text === lastScannedBarcode.current && framesWithoutBarcode.current < 5) {
+        if (codigosEscaneadosRef.current.has(text)) {
+            avisarDeRepetido(text);
             return;
         }
 
-        // Nuevo escaneo válido
+        // Nuevo escaneo válido. Se apunta ANTES de esperar al padre para que
+        // los fotogramas que lleguen mientras tanto ya lo vean como repetido.
         isProcessingRef.current = true;
-        framesWithoutBarcode.current = 0;
-        lastScannedBarcode.current = text;
+        codigosEscaneadosRef.current.add(text);
 
         // Guardar cámara exitosa
         if (currentCameraId) {
             try { localStorage.setItem('drv_default_camera', currentCameraId); } catch (_) {}
         }
 
-        // Vibración
+        // El "bip" del supermercado y la vibración
+        pitidoDeBulto();
         if (window.navigator.vibrate) window.navigator.vibrate([100, 50, 100]);
 
         // Feedback visual inmediato
         const scanEntry = { code: text, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) };
         setScannedHistory(prev => [scanEntry, ...prev]);
+        setAvisoRepetido(null);
         setLastScanFeedback(text);
 
         // Enviar al padre (bloqueando temporalmente para evitar que dispare 5 veces seguidas la petición)
-        try { 
-            await onScanRef.current(text); 
-        } catch (e) { 
-            console.warn('onScan error:', e); 
+        try {
+            await onScanRef.current(text);
+        } catch (e) {
+            console.warn('onScan error:', e);
+            // Si el padre no pudo registrarlo, que se pueda volver a escanear.
+            codigosEscaneadosRef.current.delete(text);
         }
 
         // Liberar procesamiento
@@ -128,14 +163,6 @@ const ScannerModal = ({ isOpen, onClose, onScan }) => {
         setTimeout(() => {
             if (isMountedRef.current) setLastScanFeedback(null);
         }, 2000);
-    };
-
-    const handleScanFailure = (errorMessage) => {
-        // Incrementamos el contador de frames sin código.
-        // Capamos en 20 para evitar números enormes
-        if (framesWithoutBarcode.current < 20) {
-            framesWithoutBarcode.current += 1;
-        }
     };
 
     const startWithId = async (id) => {
@@ -154,7 +181,7 @@ const ScannerModal = ({ isOpen, onClose, onScan }) => {
                 id,
                 scannerConfig,
                 (text) => { if (text) handleScanResult(text); },
-                (err) => { handleScanFailure(err); }
+                () => {}
             );
             if (isMountedRef.current) setIsScanning(true);
         } catch (err) {
@@ -177,7 +204,7 @@ const ScannerModal = ({ isOpen, onClose, onScan }) => {
                 { facingMode: "environment" },
                 scannerConfig,
                 (text) => { if (text) handleScanResult(text); },
-                (err) => { handleScanFailure(err); }
+                () => {}
             );
             if (isMountedRef.current) setIsScanning(true);
         } catch (err) {
@@ -229,8 +256,8 @@ const ScannerModal = ({ isOpen, onClose, onScan }) => {
             <div className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl relative flex flex-col" style={{ maxHeight: '95vh' }}>
                 <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
                     <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-xl transition-colors ${lastScanFeedback ? 'bg-green-100 text-green-600' : 'bg-indigo-100 text-indigo-600'}`}>
-                            {lastScanFeedback ? <CheckCircle size={24} /> : <Camera size={24} />}
+                        <div className={`p-2 rounded-xl transition-colors ${lastScanFeedback ? 'bg-green-100 text-green-600' : avisoRepetido ? 'bg-amber-100 text-amber-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                            {lastScanFeedback ? <CheckCircle size={24} /> : avisoRepetido ? <AlertTriangle size={24} /> : <Camera size={24} />}
                         </div>
                         <div>
                             <h2 className="text-xl font-bold text-slate-800 leading-none">Escanear</h2>
@@ -260,7 +287,20 @@ const ScannerModal = ({ isOpen, onClose, onScan }) => {
                         </div>
                     )}
 
-                    <div className={`w-full aspect-square rounded-2xl overflow-hidden bg-black border-4 shadow-inner relative flex items-center justify-center shrink-0 transition-colors duration-300 ${lastScanFeedback ? 'border-green-500' : 'border-indigo-500'}`}>
+                    {/* Bulto que ya estaba escaneado en esta sesión */}
+                    {!lastScanFeedback && avisoRepetido && (
+                        <div className="w-full mb-3 p-3 bg-amber-50 border-2 border-amber-400 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2 fade-in duration-300">
+                            <div className="p-2 bg-amber-500 text-white rounded-full shrink-0">
+                                <AlertTriangle size={20} />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="text-xs font-bold text-amber-800 uppercase tracking-wider">Este bulto ya está escaneado</p>
+                                <p className="text-sm font-mono text-amber-700 truncate">{avisoRepetido}</p>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className={`w-full aspect-square rounded-2xl overflow-hidden bg-black border-4 shadow-inner relative flex items-center justify-center shrink-0 transition-colors duration-300 ${lastScanFeedback ? 'border-green-500' : avisoRepetido ? 'border-amber-500' : 'border-indigo-500'}`}>
                         {/* Elemento puro sin re-renderizado reactivo interno para proteger el DOM de la cámara */}
                         <div id={containerId} className="w-full h-full absolute inset-0"></div>
                     </div>

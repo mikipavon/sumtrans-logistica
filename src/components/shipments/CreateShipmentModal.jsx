@@ -45,6 +45,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         assignedDriverId: '',
         scheduledDate: '', // Hora a la que le sale al conductor. Solo la pone la oficina.
         observations: '',
+        clientReference: '', // Ref. externa del cliente (nº pedido, SSCC, QR)
         hasCod: false,
         codAmount: '',
         codCommission: '',
@@ -529,6 +530,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                     assignedDriverId: prefillData.assignedDriverId || '',
                     scheduledDate: prefillData.scheduledDate || '',
                     observations: prefillData.observations || '',
+                    // Lo trae el SSCC que escanea el repartidor y no estaba dado de alta.
+                    clientReference: prefillData.clientReference || '',
                     hasCod: prefillData.hasCod || false,
                     codAmount: prefillData.codAmount || '',
                     codCommission: prefillData.codCommission || '',
@@ -563,6 +566,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                     assignedDriverId: '',
                     scheduledDate: '',
                     observations: '',
+                    clientReference: '',
                     hasCod: false,
                     codAmount: '',
                     codCommission: '',
@@ -1184,6 +1188,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
             // Asignar (que mira el estado).
             assignedDriverId: (!isDriver && formData.assignedDriverId) ? Number(formData.assignedDriverId) : null,
             observations: formData.observations,
+            clientReference: String(formData.clientReference || '').trim() || null,
             originCoordinates: formData.originCoordinates || capturedGpsRef.current || '',
             destinationCoordinates: formData.destinationCoordinates,
             destinationBillingType: (function() {
@@ -1428,6 +1433,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                 destinationCoordinates: '',
                 amount: '',
                 observations: '',
+                clientReference: '', // cada envío lleva la suya
                 hasCod: false,
                 codAmount: '',
                 codCommission: '',
@@ -1812,6 +1818,14 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                     </button>
                                 </div>
                                 <textarea className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none h-16" placeholder="Instrucciones adicionales..." value={formData.observations} onChange={(e) => setFormData({ ...formData, observations: e.target.value })}></textarea>
+                            </div>
+                            <div>
+                                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                    <FileText size={14} className="text-indigo-400" />
+                                    Ref. Externa Cliente
+                                    <span className="font-medium normal-case tracking-normal text-[10px] text-slate-400">(opcional)</span>
+                                </h4>
+                                <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" placeholder="Nº pedido, código de barras, SSCC..." value={formData.clientReference || ''} onChange={(e) => setFormData({ ...formData, clientReference: e.target.value })} />
                             </div>
                         </div>
 
@@ -2375,7 +2389,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                         amount: totalConIva,
                                         customAmount: totalConIva,
                                         hasSimplifiedInvoice: true,
-                                        simplifiedInvoiceAmount: grandTotal,
+                                        // Con IVA, como en el resto de la app: la Cuenta lo lee así
+                                        simplifiedInvoiceAmount: totalConIva,
                                         simplifiedInvoicePaid: true
                                     }, 'Paid'));
                                 }}
