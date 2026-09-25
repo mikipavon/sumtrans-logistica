@@ -1681,7 +1681,7 @@ const DriverTimeLogAlerts = ({ currentDriverId }) => {
     );
 };
 
-function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, horarioReparto = null, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both', isTestMode = false, cachedDriverName = null, modoAdmin = false }) {
+function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAssignShipment, drivers, clients, allPoblaciones, onCreateShipment, onDeleteRecogida = null, onStatusChange, onUpdateShipment, onUpdateClient, onAddClient, tariffs, articles, familyOrder, coverageZones, defaultCodFee, routes, routeKnowledge, onUpdateRouteKnowledge, isInitialLoading, horarioReparto = null, gpsIntervalMinutes, driverAlerts, alertAcknowledgements = [], driverNamePreference = 'both', isTestMode = false, cachedDriverName = null, modoAdmin = false }) {
     console.log('DriverDashboard Render', { currentDriverId, drivers: drivers?.length, shipments: allShipments?.length, clients: clients?.length });
 
     const getDriverDisplayName = (driver) => {
@@ -4527,6 +4527,14 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                 drivers={drivers}
                 onUpdate={onUpdateShipment}
                 isReadOnly={isReadOnlyModal}
+                // Borrar desde Editar, sólo una recogida: no factura, y antes el
+                // repartidor tenía que llamar a la oficina (Miguel, 24/09/2026).
+                // Un albarán de entrega o un recibo llevan cobros y no se borran aquí.
+                onDelete={onDeleteRecogida && selectedShipment?.type === 'Recogida' ? async (id) => {
+                    const quien = selectedShipment.originName || selectedShipment.client || '';
+                    if (!window.confirm(`¿Borrar la recogida${quien ? ` de ${quien}` : ''}?\n\nDesaparece de tu reparto. No afecta a la facturación.`)) return false;
+                    return onDeleteRecogida(id);
+                } : null}
                 onWhatsAppShare={handleWhatsAppShare}
                 articles={articles}
                 clients={clients}

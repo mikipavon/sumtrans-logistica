@@ -16,7 +16,7 @@ import { getPackagesCount, recogidaDelEnvio } from '../../utils/shipmentUtils';
 import { Trash2, Plus } from 'lucide-react';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 import { baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, conMinimoFueraDeBaremo } from '../../utils/precioArticulo';
-export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1, showAdminControls = false }) {
+export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1, showAdminControls = false, onDelete = null }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -1984,6 +1984,23 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                 {/* Footer Buttons */}
                 {isEditing ? (
                     <div className="border-t border-gray-100 p-4 bg-gray-50 shrink-0 flex gap-3 animate-in slide-in-from-bottom-2" style={{ zoom }}>
+                        {/* Borrar desde la edición. Sólo llega `onDelete` cuando quien abre
+                            la ficha puede borrar este envío (el repartidor, una recogida:
+                            no factura). Quien lo pasa pone la confirmación y devuelve true
+                            si de verdad se borró; entonces la ficha se cierra. */}
+                        {onDelete && (
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    const borrado = await onDelete(shipment.id);
+                                    if (borrado) onClose();
+                                }}
+                                className="py-3 px-4 text-sm font-bold text-red-600 bg-white border border-red-200 rounded-xl hover:bg-red-50 flex items-center justify-center gap-2"
+                            >
+                                <Trash2 size={18} />
+                                Borrar
+                            </button>
+                        )}
                         <button
                             onClick={() => {
                                 setFormData(shipment);

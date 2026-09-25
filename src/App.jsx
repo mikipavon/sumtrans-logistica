@@ -3532,6 +3532,34 @@ function App() {
     return handleDeleteShipment(shipmentId, { pedirContrasena: !todaviaNoEsNuestro });
   };
 
+  // ── El transportista borra una recogida de su reparto ──
+  //
+  // Una recogida no factura: es el aviso de "pásate por aquí", y el albarán de
+  // verdad nace al convertirla. La oficina apunta recogidas en clientes que ya
+  // mandan sus envíos con etiqueta, y el conductor tenía que llamar para que se
+  // la quitaran (Miguel, 24/09/2026). Sólo recogidas: un albarán de entrega o un
+  // recibo llevan cobros y siguen siendo cosa de la oficina con su contraseña.
+  // No pasa por la cola sin red: si no hay cobertura, la recogida se queda y se
+  // avisa, que borrar dos veces no es problema y borrar a ciegas sí.
+  const handleDeleteRecogidaDesdeElReparto = async (shipmentId) => {
+    const envio = shipmentsRef.current.find(s => s.id === shipmentId);
+    if (!envio || envio.type !== 'Recogida') {
+      alert('Sólo se puede borrar una recogida. Para un albarán, avisa a la oficina.');
+      return false;
+    }
+    try {
+      const { error } = await supabase.from('shipments').delete().eq('id', shipmentId);
+      if (error) throw error;
+      setShipments(prev => prev.filter(s => s.id !== shipmentId));
+      await purgeCollectionsForShipments([shipmentId]);
+      return true;
+    } catch (e) {
+      console.error('[handleDeleteRecogidaDesdeElReparto]', e);
+      alert('No se ha podido borrar la recogida. Comprueba la cobertura e inténtalo otra vez.');
+      return false;
+    }
+  };
+
   // ── El portal del cliente: borrar y modificar sólo lo que aún no hemos recogido ──
   //
   // El cliente no pasa por la contraseña de borrado ni por la cola de reintentos
@@ -5096,6 +5124,7 @@ function App() {
           clients={clients}
           allPoblaciones={allPoblaciones}
           onCreateShipment={handleAddShipment}
+          onDeleteRecogida={handleDeleteRecogidaDesdeElReparto}
           onStatusChange={handleShipmentStatusChange}
           onUpdateShipment={handleUpdateShipment}
           onUpdateClient={handleUpdateClient}
