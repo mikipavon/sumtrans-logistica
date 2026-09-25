@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { X, Calculator, CheckCircle, ChevronDown, User, FileText, DownloadCloud, Printer, Clock } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
@@ -7,10 +7,16 @@ import { generateDeliveryPDFBlob } from '../../utils/deliveryPdf';
 import { printBudgetSummary } from '../../utils/printBudgetSummary';
 import { fichaDelPagador } from '../../utils/shipmentUtils';
 import { mesDelPresupuesto } from '../../utils/reciboDeDeuda';
-import { entraEnElCierre, nombreDelPeriodo, mesDelCierre } from '../../utils/mesesDelCierre';
+import { entraEnElCierre, nombreDelPeriodo, mesDelCierre, mesPorDefectoDelCierre } from '../../utils/mesesDelCierre';
 
 export default function BudgetLiquidationModal({ isOpen, onClose, shipments, clients, drivers, onCreateShipment, onUpdateMultipleShipments }) {
-    const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
+    // YYYY-MM. Hasta el día 10 abre en el mes anterior (ver utils/mesesDelCierre.js).
+    const [selectedMonth, setSelectedMonth] = useState(() => mesPorDefectoDelCierre());
+    // La ventana vive montada dentro de Envíos, que puede quedarse abierto días:
+    // el mes se vuelve a calcular cada vez que se abre, no sólo al cargar.
+    useEffect(() => {
+        if (isOpen) setSelectedMonth(mesPorDefectoDelCierre());
+    }, [isOpen]);
     const [selectedDriverId, setSelectedDriverId] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [viewTab, setViewTab] = useState('pending'); // 'pending' | 'liquidated'

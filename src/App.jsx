@@ -1245,7 +1245,7 @@ function App() {
         const queryNames = [
           'drivers', 'shipments_active', 'shipments_finished', 'clients',
           'articles', 'vehicles', 'fuel_logs', 'tariffs',
-          'settings', 'coverage_zones'
+          'settings', 'coverage_zones', 'presupuestos_sin_cerrar'
         ];
 
         const results = await Promise.allSettled([
@@ -1264,6 +1264,17 @@ function App() {
           fetchAllRows(() => supabase.from('tariffs').select('id, data').order('id'), { label: 'tariffs' }),
           fetchAllRows(() => supabase.from('settings').select('key, value').order('key'), { label: 'settings' }),
           fetchAllRows(() => supabase.from('coverage_zones').select('id, data').order('id'), { label: 'coverage_zones' }),
+          // 3 - Presupuesto sin cerrar, de antes de los 90 días. El cierre de
+          // presupuestos arrastra todo lo pendiente de meses anteriores, pero sólo
+          // puede sumar lo que la app ha cargado: un albarán en papel de junio
+          // apuntado en septiembre (HAB-686, 25/09/2026) se quedaba sin cobrar.
+          // Al liquidarse deja de cargarse, así que la lista no crece.
+          fetchAllRows(() => supabase.from('shipments').select('id, data')
+            .in('status', ['Entregado', 'Anulado'])
+            .lt('data->>createdAt', cutoffISO)
+            .eq('data->>billingType', 'Presupuesto')
+            .or('data->>budgetLiquidated.is.null,data->>budgetLiquidated.neq.true')
+            .order('id'), { label: 'presupuestos_sin_cerrar' }),
         ]);
 
         // Helper to safely extract data from settled results
@@ -1291,6 +1302,7 @@ function App() {
         const trf = getData(7);
         const allSettings = getData(8);
         const covZones = getData(9);
+        const shpPresupuestoViejo = getData(10);
 
         // ── Helper to get a setting value by key from the single settings query ──
         const getSetting = (key) => {
@@ -1313,7 +1325,11 @@ function App() {
         // reintento, que le recolocaba todas las paradas de golpe.
         const fotoIncompleta = activeShipmentsTimedOut && habraReintento;
         if (!fotoIncompleta && (shpActive || shpFinished)) {
-          const allShp = [...(shpActive || []), ...(shpFinished || [])];
+          // Los de presupuesto viejos no se solapan con los recientes (createdAt
+          // antes del corte), pero por si acaso no se repite ningún id.
+          const idsCargados = new Set([...(shpActive || []), ...(shpFinished || [])].map(s => s.id));
+          const allShp = [...(shpActive || []), ...(shpFinished || []),
+            ...(shpPresupuestoViejo || []).filter(s => !idsCargados.has(s.id))];
           let loadedShipments = allShp.map(s => ({ ...s.data, id: s.id }));
           
           // ── Apply pending queue operations over fresh Supabase data ──
