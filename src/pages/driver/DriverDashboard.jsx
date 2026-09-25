@@ -5444,6 +5444,15 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                             updates.codPaidAt = nowIso;
                                                         }
 
+                                                        // El importe tecleado en la tarjeta va al albarán, igual que
+                                                        // al cobrar desde la entrega: la Cuenta lee el albarán, no la
+                                                        // tarjeta, y sin esto cobraba 9 € pero apuntaba los 10 € de
+                                                        // siempre (caso Mundo fiesta, 25/09/2026).
+                                                        if (dashboardCustomAmounts[debtKey] !== undefined && parseAmount(currentAmount) !== parseAmount(item.amount)) {
+                                                            if (isPorte) updates.customAmount = parseAmount(currentAmount);
+                                                            else updates.codAmount = parseAmount(currentAmount);
+                                                        }
+
                                                         // Check if this makes the shipment fully paid
                                                         const willBePortePaid = isPorte || shipment.portePaid;
                                                         const willBeCodPaid = (!shipment.hasCod) || (!isPorte || shipment.codPaid); 
