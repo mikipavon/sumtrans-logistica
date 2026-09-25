@@ -13,6 +13,7 @@ import { emailDeAcceso } from '../utils/clientAccess';
 // quiere separados por comas, así que se rearma en vez de meter el campo tal
 // cual: con el ';' el gestor de correo abre un destinatario inválido.
 import { correosDeFicha } from '../utils/correosDeFicha';
+import { revisadaConGoogleMaps } from '../utils/revisadasConGoogleMaps';
 
 // ── Llama a la Edge Function para enviar email de acceso al cliente ──
 // `email` es opcional y sólo se usa cuando el que espera el aviso no es el
@@ -706,7 +707,7 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
             ? pendingClients.filter(c => !esRegistroWeb(c))
             : pendingClients;
 
-    // Aviso activo: null | 'repetidos' | 'parecidos' | 'cartera'. Los avisos de
+    // Aviso activo: null | 'repetidos' | 'parecidos' | 'cartera' | 'maps'. Los avisos de
     // arriba dicen cuántas fichas hay que mirar, pero luego había que buscarlas
     // a mano entre las cuatrocientas y pico: pinchando uno se queda sólo eso.
     const [aviso, setAviso] = useState(null);
@@ -726,7 +727,14 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
             ? clientesPorOrigen.filter(c => parecidasEnLaLista.has(c.id))
             : aviso === 'cartera'
                 ? clientesPorOrigen.filter(c => duplicadosPorCliente.has(c.id))
-                : clientesPorOrigen;
+                : aviso === 'maps'
+                    ? clientesPorOrigen.filter(revisadaConGoogleMaps)
+                    : clientesPorOrigen;
+
+    // Provisional: las que se repasaron con Google Maps el 24/09/2026 (ver
+    // utils/revisadasConGoogleMaps.js). Se cuentan sólo las que siguen
+    // pendientes, así que el botón se va solo cuando están todas aprobadas.
+    const cuantasRevisadasConMaps = pendingClients.filter(revisadaConGoogleMaps).length;
 
     // Filtro «Mercancía de»: la empresa que mandó el paquete (o a la que se lo
     // mandó la ficha, si es remitente). Guarda la clave normalizada, para que
@@ -956,6 +964,22 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                             {aviso === 'cartera' && <X size={15} className="text-white/80" />}
                         </button>
                     )}
+                    {cuantasRevisadasConMaps > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => alternarAviso('maps')}
+                            title={aviso === 'maps' ? 'Quitar el filtro y ver todos' : 'Ver sólo las que se repasaron con Google Maps: calle puesta y GPS comprobado'}
+                            className={`flex items-center gap-2 px-4 py-2 border rounded-xl transition-colors ${aviso === 'maps'
+                                ? 'bg-emerald-600 border-emerald-600 text-white'
+                                : 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100'
+                                }`}
+                        >
+                            <MapPin size={18} className={aviso === 'maps' ? 'text-white' : 'text-emerald-600'} />
+                            <span className={`font-bold ${aviso === 'maps' ? 'text-white' : 'text-emerald-700'}`}>{cuantasRevisadasConMaps}</span>
+                            <span className={aviso === 'maps' ? 'text-white' : 'text-emerald-600'}>revisadas con Google Maps</span>
+                            {aviso === 'maps' && <X size={15} className="text-white/80" />}
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -1016,6 +1040,7 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                         {aviso === 'repetidos' && (clientesPorAviso.length === 1 ? ' repetida en la lista' : ' repetidas en la lista')}
                         {aviso === 'parecidos' && ' con un nombre parecido a otra'}
                         {aviso === 'cartera' && (clientesPorAviso.length === 1 ? ' que ya parece estar en la cartera' : ' que ya parecen estar en la cartera')}
+                        {aviso === 'maps' && (clientesPorAviso.length === 1 ? ' revisada con Google Maps' : ' revisadas con Google Maps')}
                         .
                     </span>
                     <button
