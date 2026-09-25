@@ -1,3 +1,4 @@
+import { observacionesVisibles } from './shipmentUtils';
 /**
  * printLabel.js — Sistema de impresión de etiquetas A6 / A4 con posiciones.
  *
@@ -162,7 +163,7 @@ function buildLabelHTML(shipment, client, bultoIndex, totalBultos) {
   <div class="lbl-details">
     <div><p class="lbl-stitle">BULTOS</p><p class="lbl-dval">${bultoLabel}</p></div>
     ${shipment.clientReference ? `<div><p class="lbl-stitle">REFERENCIA</p><p class="lbl-dval lbl-ref">${shipment.clientReference}</p></div>` : ''}
-    ${shipment.observations ? `<div><p class="lbl-stitle">NOTAS</p><p class="lbl-dval lbl-obs">${shipment.observations}</p></div>` : ''}
+    ${observacionesVisibles(shipment.observations) ? `<div><p class="lbl-stitle">NOTAS</p><p class="lbl-dval lbl-obs">${observacionesVisibles(shipment.observations)}</p></div>` : ''}
     ${shipment.hasCod ? `<div><p class="lbl-stitle">REEMBOLSO</p><p class="lbl-dval lbl-cod">💰 ${parseFloat(shipment.codAmount || 0).toFixed(2)} €</p></div>` : ''}
   </div>
   <div class="lbl-qr">
@@ -518,7 +519,7 @@ function buildLabelHTML75x52(shipment, client, bultoIndex, totalBultos) {
       <div class="l75-pie">
         <p class="l75-origin"><b>REMITE:</b> ${origen || '—'}</p>
         ${shipment.clientReference ? `<p class="l75-refcli"><b>REF:</b> ${shipment.clientReference}</p>` : ''}
-        ${shipment.observations ? `<p class="l75-obs">${shipment.observations}</p>` : ''}
+        ${observacionesVisibles(shipment.observations) ? `<p class="l75-obs">${observacionesVisibles(shipment.observations)}</p>` : ''}
       </div>
     </div>
     <div class="l75-side">

@@ -219,6 +219,31 @@ function AvisoParecida({ parecidas, enTarjeta }) {
     );
 }
 
+// Con un nombre sólo parecido, la población es lo primero que dice si son la
+// misma: se ponen las dos y se marca si coinciden.
+const mismaPoblacion = (a, b) => {
+    const limpia = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+    return limpia(a) !== '' && limpia(a) === limpia(b);
+};
+
+function PoblacionComparada({ deLaFicha, deLaSolicitud }) {
+    if (!deLaFicha && !deLaSolicitud) return null;
+    const coinciden = mismaPoblacion(deLaFicha, deLaSolicitud);
+    return (
+        <span className="mt-0.5 flex items-center gap-1 flex-wrap">
+            <MapPin size={11} className="shrink-0 text-red-500" />
+            <span>Ficha: <b>{deLaFicha || 'sin población'}</b></span>
+            <span className="text-red-400">·</span>
+            <span>Ésta: <b>{deLaSolicitud || 'sin población'}</b></span>
+            {deLaFicha && deLaSolicitud && (
+                <span className={`ml-1 px-1.5 rounded font-bold ${coinciden ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-800'}`}>
+                    {coinciden ? 'coinciden' : 'distintas'}
+                </span>
+            )}
+        </span>
+    );
+}
+
 // Aviso de duplicado — la empresa ya está en cartera
 function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, vinculando, onVincular, enTarjeta }) {
     // Cuando lo único que hay es un nombre parecido, el aviso baja el tono: no
@@ -241,6 +266,7 @@ function AvisoDuplicado({ client, parecidas, dandoAcceso, onDarAcceso, vinculand
                                 <span className="font-bold break-words">{ficha.name}</span>
                                 {ficha.clientNumber && <span className="text-red-500"> (nº {ficha.clientNumber})</span>}
                                 <span className="text-red-600"> — {explicarMotivos(motivos)}</span>
+                                <PoblacionComparada deLaFicha={ficha.city} deLaSolicitud={client.city} />
                                 {yaTieneAcceso && (
                                     <span className="mt-1 flex items-center gap-1 font-bold text-red-800">
                                         <KeyRound size={11} className="shrink-0" />

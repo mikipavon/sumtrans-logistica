@@ -561,7 +561,7 @@ export default function DeliveryConfirmationModal({ isOpen, onClose, onConfirm, 
 
             printSimplifiedInvoice({
                 ...shipment,
-                amount: finalPorteWithIva,
+                totalConIva: finalPorteWithIva,
                 id: shipment.id,
                 date: new Date().toLocaleDateString('es-ES'),
                 articles: shipment.articles || []

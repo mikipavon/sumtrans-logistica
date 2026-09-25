@@ -1,5 +1,6 @@
 import { X, LogOut, FileText, Truck, Map as MapIcon, Package, Plus, Clock, Euro, Wallet, ArrowUpDown, GripVertical, User, CheckCircle, Calculator, Sparkles, BrainCircuit, AlertTriangle, Printer, PackagePlus, Phone, Scan, MessageSquare, MapPin, RotateCcw, WifiOff } from 'lucide-react';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '../../lib/supabase';
 import {
   DndContext, 
@@ -42,13 +43,15 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { agregarReceptor, leerReceptores, direccionPorNombre, direccionDeLaChuleta } from '../../utils/receptoresHabituales';
-import { getPackagesCount, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
+import { getPackagesCount, puedeAsignarloEsteConductor, ordenarParaAsignar, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
+import { agruparPorPagador, hermanosDe } from '../../utils/cobrosDelMismoPagador';
 import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, motivoSinJornada, puedeFicharAutomaticamente, textoSinJornada, MOTIVOS_BLOQUEO } from '../../utils/normasFichaje';
 import { esElMismoPueblo, normalizarPueblo, puebloDeRutaParaEnvio, estaEnBaremo } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
 import { geocodificarDireccion } from '../../utils/geocodificar';
 import { adaptarConocimiento, registrarEntrega, contarPueblosMemorizados } from '../../utils/aprendizajeRuta';
+import { registrarHoraDeEntrega, registrarCerrado, motivoDiceCerrado, etiquetaDeHora, contarClientesConHorario } from '../../utils/aprendizajeHorario';
 import { turnoQueSeAsignaAhora, turnoQueSeRepartaAhora, etiquetaTurno } from '../../utils/turnos';
 import { resolverLogo, insigniaDeAgencia, buscarClienteDeEnvio } from '../../utils/marca';
 import { abrirWhatsApp, necesitaGestoDelUsuario } from '../../utils/whatsappLink';
@@ -158,6 +161,8 @@ export const ShipmentCardUI = React.memo(({
     showDocActions,
     setShowDocActions,
     esDeCamino = false,
+    // Minuto del día a partir del cual abre, si el optimizador la ha aplazado.
+    horaDeApertura = null,
     dragOverlay = false
 }) => {
     // Desplegable del botón de llamar cuando la parada tiene fijo y móvil. Va en
@@ -287,6 +292,14 @@ export const ShipmentCardUI = React.memo(({
                                                         title="El optimizador la ha adelantado porque queda de camino. Arrástrala si prefieres dejarla para después."
                                                     >
                                                         DE CAMINO
+                                                    </span>
+                                                )}
+                                                {Number.isFinite(horaDeApertura) && (
+                                                    <span
+                                                        className="text-[9px] font-extrabold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded border border-amber-300 shadow-sm"
+                                                        title="El optimizador la ha dejado para más tarde porque a la hora que llegarías aún no abren. Arrástrala si sabes que sí."
+                                                    >
+                                                        ABRE A LAS {etiquetaDeHora(horaDeApertura)}
                                                     </span>
                                                 )}
                                                 {Array.isArray(stop.scannedPackages) && stop.scannedPackages.length > 0 && (
@@ -2455,6 +2468,9 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const [ssccPrefill, setSsccPrefill] = useState(null);           // Capa 2: SSCC pre-rellenado en modal de creación
     const [dashboardCustomAmounts, setDashboardCustomAmounts] = useState({});
     const [processingIds, setProcessingIds] = useState(new Set());
+    // El aviso de "este cliente tiene más cobros pendientes": la tarjeta pulsada,
+    // las claves de todas las del mismo pagador y cuáles ha dejado marcadas.
+    const [cobroEnGrupo, setCobroEnGrupo] = useState(null);
     const [pendingCollections, setPendingCollections] = useState([]);
 
     // --- OFFLINE / CONNECTIVITY ---
@@ -2650,6 +2666,10 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     // porque quedaban de camino. Se marcan en la tarjeta: la última palabra sobre si
     // conviene entregarlas ahí es del transportista, y para eso tiene que verlo.
     const [paradasDeCamino, setParadasDeCamino] = useState(() => new Set());
+    // Paradas que el optimizador ha movido a más tarde porque aún no abren: id → minuto
+    // del día a partir del cual se puede ir. Se pinta en la tarjeta para que el
+    // conductor sepa por qué está donde está y pueda arrastrarla si no está de acuerdo.
+    const [paradasAplazadas, setParadasAplazadas] = useState(() => new Map());
 
     // Se mide con offsetHeight y no con getBoundingClientRect a propósito: el panel
     // entero va dentro de un style={{ zoom }} y el rect viene ya multiplicado por la
@@ -2711,6 +2731,14 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
             setParadasDeCamino(prev => {
                 if (!prev.has(active.id)) return prev;
                 const siguiente = new Set(prev);
+                siguiente.delete(active.id);
+                return siguiente;
+            });
+            // Lo mismo con una parada aplazada por su hora de abrir: si la mueve él,
+            // la etiqueta ya no explica su sitio.
+            setParadasAplazadas(prev => {
+                if (!prev.has(active.id)) return prev;
+                const siguiente = new Map(prev);
                 siguiente.delete(active.id);
                 return siguiente;
             });
@@ -3263,11 +3291,13 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
             const saved = localStorage.getItem(`drv_pos_learn_${currentDriverId}`);
             if (saved) {
                 const parsed = adaptarConocimiento(JSON.parse(saved));
-                if (contarPueblosMemorizados(parsed) > 0) return parsed;
+                // Los horarios aprendidos también cuentan: un móvil que solo sabe a qué
+                // hora abren dos agencias no está vacío.
+                if (contarPueblosMemorizados(parsed) > 0 || contarClientesConHorario(parsed) > 0) return parsed;
             }
             // 2. Lo que haya en la nube de este conductor
             const cloudData = routeKnowledge?.byDriver?.[String(currentDriverId)];
-            if (contarPueblosMemorizados(cloudData) > 0) {
+            if (contarPueblosMemorizados(cloudData) > 0 || contarClientesConHorario(cloudData) > 0) {
                 const adaptado = adaptarConocimiento(cloudData);
                 localStorage.setItem(`drv_pos_learn_${currentDriverId}`, JSON.stringify(adaptado));
                 return adaptado;
@@ -3350,38 +3380,61 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
             s && !yaContadas.has(s.id) && normalizarPueblo(ciudadDeEnvio(s)) === clavePueblo
         ).length;
 
+        const ahora = new Date();
         setPositionLearning(prev => {
-            const updated = registrarEntrega(prev, {
+            const conOrden = registrarEntrega(prev, {
                 pueblo,
-                turno: turnoQueSeRepartaAhora(new Date(), horarioReparto),
+                turno: turnoQueSeRepartaAhora(ahora, horarioReparto),
                 cliente,
                 posicion,
                 total: entregadas.length + pendientes,
             });
-
-            try {
-                localStorage.setItem(`drv_pos_learn_${currentDriverId}`, JSON.stringify(updated));
-            } catch (e) { console.warn('No se pudo guardar el aprendizaje:', e); }
-
-            // Subida a la nube con retardo, para no llamar en cada entrega
-            if (onUpdateRouteKnowledge) {
-                clearTimeout(syncTimeoutRef.current);
-                syncTimeoutRef.current = setTimeout(() => {
-                    // `driverId` hace que se escriba solo la fila de este repartidor,
-                    // sin tocar la de los demás ni el JSON común.
-                    onUpdateRouteKnowledge({
-                        ...routeKnowledge,
-                        byDriver: {
-                            ...(routeKnowledge?.byDriver || {}),
-                            [String(currentDriverId)]: updated
-                        }
-                    }, { driverId: currentDriverId });
-                    console.log('☁️ Aprendizaje sincronizado');
-                }, 30000);
-            }
+            // Además del orden, a qué hora se ha podido entregar: de ahí sale que a
+            // quien no abre hasta las diez y media no se le mande a nadie a las nueve.
+            const updated = registrarHoraDeEntrega(conOrden, { cliente, fecha: ahora });
+            guardarAprendizaje(updated);
             return updated;
         });
     };
+
+    /**
+     * El repartidor se ha encontrado el sitio cerrado: se apunta la hora para no
+     * volver a mandarlo antes. Sale del motivo de la incidencia ("Local cerrado").
+     */
+    const recordCerrado = (shipment) => {
+        const cliente = nombreDeParada(shipment);
+        if (!cliente) return;
+        const ahora = new Date();
+        setPositionLearning(prev => {
+            const updated = registrarCerrado(prev, { cliente, fecha: ahora });
+            if (updated === prev) return prev;
+            guardarAprendizaje(updated);
+            return updated;
+        });
+    };
+
+    /** Copia en el móvil ya, y a la nube con retardo para no llamar en cada entrega. */
+    function guardarAprendizaje(updated) {
+        try {
+            localStorage.setItem(`drv_pos_learn_${currentDriverId}`, JSON.stringify(updated));
+        } catch (e) { console.warn('No se pudo guardar el aprendizaje:', e); }
+
+        if (onUpdateRouteKnowledge) {
+            clearTimeout(syncTimeoutRef.current);
+            syncTimeoutRef.current = setTimeout(() => {
+                // `driverId` hace que se escriba solo la fila de este repartidor,
+                // sin tocar la de los demás ni el JSON común.
+                onUpdateRouteKnowledge({
+                    ...routeKnowledge,
+                    byDriver: {
+                        ...(routeKnowledge?.byDriver || {}),
+                        [String(currentDriverId)]: updated
+                    }
+                }, { driverId: currentDriverId });
+                console.log('☁️ Aprendizaje sincronizado');
+            }, 30000);
+        }
+    }
 
     // Reset daily counters at start of day
     useEffect(() => {
@@ -3408,7 +3461,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
             const aprendido = positionLearningRef.current;
             // `contarPueblosMemorizados` y no `Object.keys`: un aprendizaje vacío lleva
             // la marca de versión, así que contando claves parecía que había algo.
-            if (onUpdateRouteKnowledge && contarPueblosMemorizados(aprendido) > 0) {
+            if (onUpdateRouteKnowledge && (contarPueblosMemorizados(aprendido) > 0 || contarClientesConHorario(aprendido) > 0)) {
                 onUpdateRouteKnowledge({
                     ...routeKnowledge,
                     byDriver: {
@@ -3491,7 +3544,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
         const ordenar = async (gps, origenPosicion) => {
             try {
                 const resolverCoordenadasPueblo = await resolverPueblosDelReparto();
-                const { orden, deCamino, resumen } = optimizarRuta({
+                const { orden, deCamino, aplazadas, resumen } = optimizarRuta({
                     envios: localRoute,
                     rutas: routes,
                     conductorId: currentDriverId,
@@ -3506,6 +3559,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
 
                 setLocalRoute(orden);
                 setParadasDeCamino(deCamino);
+                setParadasAplazadas(aplazadas);
                 setRouteOptimized(true);
                 guardarOrdenEnLaNube(orden);
                 // El resumen NO se le enseña al conductor: a él le vale con ver el
@@ -3595,6 +3649,8 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
         if (resumen.sinRuta) partes.push('sin ruta asignada, ordenados por cercanía');
         if (resumen.extras > 0) partes.push(`${resumen.extras} fuera de ruta`);
         if (resumen.deCamino > 0) partes.push(`${resumen.deCamino} de camino`);
+        // Movidas a más tarde porque a esa hora aún no abren (ficha o aprendido).
+        if (resumen.aplazadas > 0) partes.push(`${resumen.aplazadas} aplazada${resumen.aplazadas !== 1 ? 's' : ''} hasta que abran`);
         partes.push(resumen.pueblosMemorizados > 0
             ? `aprendidos: ${resumen.pueblosMemorizados}`
             : 'sin historial aún');
@@ -4509,8 +4565,13 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                 isOpen={isIncidentModalOpen}
                 onClose={() => setIsIncidentModalOpen(false)}
                 // Quién la reporta de verdad: el que cubre la ruta de otro no es el asignado.
-                onConfirm={(id, status, coords, reason, photo, proof, extra = {}) =>
-                    onStatusChange(id, status, coords, reason, photo, proof, { ...extra, incidentReportedById: currentDriverId ?? null })}
+                onConfirm={(id, status, coords, reason, photo, proof, extra = {}) => {
+                    // "Local cerrado" a las nueve enseña al optimizador a no mandar a
+                    // nadie allí antes de esa hora. Solo se apunta: la incidencia sigue
+                    // su camino igual que siempre.
+                    if (incidentShipment && motivoDiceCerrado(reason)) recordCerrado(incidentShipment);
+                    return onStatusChange(id, status, coords, reason, photo, proof, { ...extra, incidentReportedById: currentDriverId ?? null });
+                }}
                 shipment={incidentShipment}
                 initialReason={incidentInitialReason}
             />
@@ -4835,6 +4896,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                 onUnassign={handleUnassignShipment}
                                                 onPickupClick={handlePickupClick}
                                                 esDeCamino={paradasDeCamino.has(stop.id)}
+                                                horaDeApertura={paradasAplazadas.get(stop.id) ?? null}
                                             />
                                         ))}
                                     </SortableContext>
@@ -4864,6 +4926,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                     onUnassign={handleUnassignShipment}
                                                     onPickupClick={handlePickupClick}
                                                     esDeCamino={paradasDeCamino.has(activeStop.id)}
+                                                    horaDeApertura={paradasAplazadas.get(activeStop.id) ?? null}
                                                     dragOverlay={true}
                                                 />
                                             );
@@ -4883,9 +4946,9 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                             <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Disponibles en Zona</h3>
                         </div>
                         {(() => {
-                            const availableShipments = (allShipments || []).filter(
+                            const availableShipments = ordenarParaAsignar((allShipments || []).filter(
                                 s => puedeAsignarloEsteConductor(s, currentDriverId)
-                            );
+                            ));
 
                             return (
                                 <>
@@ -5342,6 +5405,143 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                 const porteDebts = visibleDebtItems.filter(item => item.label.includes('Pagado') || item.label.includes('Debido')).sort(sortByPayer);
                                 const reembolsoDebts = visibleDebtItems.filter(item => item.type === 'reembolso').sort(sortByPayer);
 
+                                // El importe que se va a cobrar: el tecleado en la tarjeta o, si no
+                                // se ha tocado, el del albarán.
+                                const importeDeLaLinea = (item) => {
+                                    const debtKey = `${item.shipment.id}-${item.type}`;
+                                    return dashboardCustomAmounts[debtKey] !== undefined ? dashboardCustomAmounts[debtKey] : item.amount;
+                                };
+
+                                // Cobra UNA línea (un porte o un reembolso de un albarán). Vive fuera
+                                // del botón porque el aviso de "este cliente tiene más cobros" la
+                                // llama varias veces seguidas, una por cada tarjeta elegida.
+                                const cobrarLinea = async (item) => {
+                                    const { shipment } = item;
+                                    const currentAmount = importeDeLaLinea(item);
+                                    // OPTIMISTIC UI: Hide item immediately
+                                    setProcessingIds(prev => new Set([...prev, item.key]));
+
+                                    try {
+                                        const isPorte = item.type === 'porte';
+
+                                        // Guarda anti-duplicado: esta lista sale de `allShipments`, que puede
+                                        // llevar hasta 60s sin refrescar (o venir de una sesión vieja). Si el
+                                        // envío YA consta cobrado en el servidor, cobrarlo otra vez aquí sumaría
+                                        // el importe dos veces en la Cuenta del día sin que el albarán cambie
+                                        // (su fecha de cobro real no se toca), así que el duplicado pasaría
+                                        // desapercibido. Se comprueba contra Supabase justo antes de cobrar.
+                                        const { data: freshRow } = await supabase.from('shipments').select('data').eq('id', shipment.id).maybeSingle();
+                                        const freshShip = freshRow?.data;
+                                        if (freshShip && ((isPorte && freshShip.portePaid) || (!isPorte && freshShip.codPaid))) {
+                                            const fecha = freshShip.paidAt || freshShip.updatedAt;
+                                            alert(`Este ${isPorte ? 'porte' : 'reembolso'} ya figura cobrado (${fecha ? new Date(fecha).toLocaleString() : 'fecha desconocida'}). No se ha duplicado el cobro.`);
+                                            onUpdateShipment(shipment.id, { ...freshShip, id: shipment.id });
+                                            setProcessingIds(prev => {
+                                                const next = new Set(prev);
+                                                next.delete(item.key);
+                                                return next;
+                                            });
+                                            return;
+                                        }
+
+                                        const debtKey = `${shipment.id}-${item.type}`;
+                                        const finalAmount = parseAmount(currentAmount).toFixed(2);
+
+                                        // 1. Determine local time-based date (using our standardized todayStr)
+                                        const collectionDate = todayStr;
+
+                                        // 2. Determine atomic update flags
+                                        const nowIso = new Date().toISOString();
+                                        const updates = { 
+                                            updatedAt: nowIso,
+                                            paidAt: nowIso
+                                        };
+                                        
+                                        // La fecha va también al concepto que se cobra, no sólo al
+                                        // paidAt común: si no, cobrar aquí el porte que quedaba
+                                        // pendiente pisaba la fecha del reembolso cobrado otro día y
+                                        // la Cuenta lo volvía a sumar hoy, en la caja del compañero
+                                        // que lo cobró entonces.
+                                        if (isPorte) {
+                                            updates.portePaid = true;
+                                            updates.porteCollectedById = currentDriverId;
+                                            updates.portePaidAt = nowIso;
+                                        } else {
+                                            updates.codPaid = true;
+                                            updates.codCollectedById = currentDriverId;
+                                            updates.codPaidAt = nowIso;
+                                        }
+
+                                        // El importe tecleado en la tarjeta va al albarán, igual que
+                                        // al cobrar desde la entrega: la Cuenta lee el albarán, no la
+                                        // tarjeta, y sin esto cobraba 9 € pero apuntaba los 10 € de
+                                        // siempre (caso Mundo fiesta, 25/09/2026).
+                                        if (dashboardCustomAmounts[debtKey] !== undefined && parseAmount(currentAmount) !== parseAmount(item.amount)) {
+                                            if (isPorte) updates.customAmount = parseAmount(currentAmount);
+                                            else updates.codAmount = parseAmount(currentAmount);
+                                        }
+
+                                        // Check if this makes the shipment fully paid
+                                        const willBePortePaid = isPorte || shipment.portePaid;
+                                        const willBeCodPaid = (!shipment.hasCod) || (!isPorte || shipment.codPaid); 
+                                        // Wait, let's be more precise
+                                        const pf = isPorte || shipment.portePaid;
+                                        const cf = (shipment.hasCod ? (item.type === 'reembolso' || shipment.codPaid) : true);
+                                        
+                                        if (pf && cf) {
+                                            updates.paymentStatus = 'Paid';
+                                        }
+
+                                        // 3. Sync to Supabase ATOMICALLY
+                                        // COBRAR NO ES ENTREGAR. Antes bastaba con que no quedara dinero
+                                        // pendiente (pf && cf) para mandar el albaran a Entregado. Eso rompia
+                                        // el caso del cliente que crea el albaran con "aplazar cobro" y paga
+                                        // un rato despues: al cobrarlo aqui el paquete seguia en el almacen,
+                                        // sin repartidor y sin entregar, pero figuraba como entregado (sin
+                                        // firma, sin hora de entrega) y desaparecia de la pestana Asignar,
+                                        // asi que ya no lo llevaba nadie. El estado solo lo cierra la entrega
+                                        // de verdad: si el albaran aun no esta entregado, aqui solo se guarda
+                                        // el dinero y se queda donde estaba (Pendiente de asignar / En reparto).
+                                        // Si ya estaba entregado, onStatusChange cierra el ciclo con las marcas de pago.
+                                        let success = false;
+                                        if (shipment.status === 'Entregado') {
+                                            await onStatusChange(shipment.id, 'Entregado', null, null, null, null, updates);
+                                            success = true; // onStatusChange handled it
+                                        } else {
+                                            success = await onUpdateShipment(shipment.id, updates);
+                                        }
+
+                                        if (success) {
+                                            // 4. Add to local collections state for the Account tab
+                                            const newCollection = {
+                                                id: `COL-${Date.now()}-${shipment.id}-${item.type}`,
+                                                shipmentId: shipment.id,
+                                                partType: item.type,
+                                                client: item.payerName,
+                                                sender: shipment.senderName || shipment.originName || 'N/A',
+                                                amount: finalAmount,
+                                                type: isPorte ? 'Porte' : 'Reembolso',
+                                                date: collectionDate
+                                            };
+                                            setCollectedCollections(prev => [...prev, newCollection]);
+                                        } else {
+                                            // Fallback for optimistic UI if failure
+                                            setProcessingIds(prev => {
+                                                const next = new Set(prev);
+                                                next.delete(item.key);
+                                                return next;
+                                            });
+                                        }
+                                    } catch (err) {
+                                        console.error("Error al procesar cobro individual:", err);
+                                        setProcessingIds(prev => {
+                                            const next = new Set(prev);
+                                            next.delete(item.key);
+                                            return next;
+                                        });
+                                    }
+                                };
+
                                 const renderDebtCard = (item) => {
                                     const { shipment } = item;
                                     const debtKey = `${shipment.id}-${item.type}`;
@@ -5395,131 +5595,17 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                             </p>
                                             <button
                                                 disabled={processingIds.has(item.key)}
-                                                onClick={async (e) => {
+                                                onClick={(e) => {
                                                     e.stopPropagation();
-                                                    
-                                                    // OPTIMISTIC UI: Hide item immediately
-                                                    setProcessingIds(prev => new Set([...prev, item.key]));
-
-                                                    try {
-                                                        const isPorte = item.type === 'porte';
-
-                                                        // Guarda anti-duplicado: esta lista sale de `allShipments`, que puede
-                                                        // llevar hasta 60s sin refrescar (o venir de una sesión vieja). Si el
-                                                        // envío YA consta cobrado en el servidor, cobrarlo otra vez aquí sumaría
-                                                        // el importe dos veces en la Cuenta del día sin que el albarán cambie
-                                                        // (su fecha de cobro real no se toca), así que el duplicado pasaría
-                                                        // desapercibido. Se comprueba contra Supabase justo antes de cobrar.
-                                                        const { data: freshRow } = await supabase.from('shipments').select('data').eq('id', shipment.id).maybeSingle();
-                                                        const freshShip = freshRow?.data;
-                                                        if (freshShip && ((isPorte && freshShip.portePaid) || (!isPorte && freshShip.codPaid))) {
-                                                            const fecha = freshShip.paidAt || freshShip.updatedAt;
-                                                            alert(`Este ${isPorte ? 'porte' : 'reembolso'} ya figura cobrado (${fecha ? new Date(fecha).toLocaleString() : 'fecha desconocida'}). No se ha duplicado el cobro.`);
-                                                            onUpdateShipment(shipment.id, { ...freshShip, id: shipment.id });
-                                                            setProcessingIds(prev => {
-                                                                const next = new Set(prev);
-                                                                next.delete(item.key);
-                                                                return next;
-                                                            });
-                                                            return;
-                                                        }
-
-                                                        const debtKey = `${shipment.id}-${item.type}`;
-                                                        const finalAmount = parseAmount(currentAmount).toFixed(2);
-
-                                                        // 1. Determine local time-based date (using our standardized todayStr)
-                                                        const collectionDate = todayStr;
-
-                                                        // 2. Determine atomic update flags
-                                                        const nowIso = new Date().toISOString();
-                                                        const updates = { 
-                                                            updatedAt: nowIso,
-                                                            paidAt: nowIso
-                                                        };
-                                                        
-                                                        // La fecha va también al concepto que se cobra, no sólo al
-                                                        // paidAt común: si no, cobrar aquí el porte que quedaba
-                                                        // pendiente pisaba la fecha del reembolso cobrado otro día y
-                                                        // la Cuenta lo volvía a sumar hoy, en la caja del compañero
-                                                        // que lo cobró entonces.
-                                                        if (isPorte) {
-                                                            updates.portePaid = true;
-                                                            updates.porteCollectedById = currentDriverId;
-                                                            updates.portePaidAt = nowIso;
-                                                        } else {
-                                                            updates.codPaid = true;
-                                                            updates.codCollectedById = currentDriverId;
-                                                            updates.codPaidAt = nowIso;
-                                                        }
-
-                                                        // El importe tecleado en la tarjeta va al albarán, igual que
-                                                        // al cobrar desde la entrega: la Cuenta lee el albarán, no la
-                                                        // tarjeta, y sin esto cobraba 9 € pero apuntaba los 10 € de
-                                                        // siempre (caso Mundo fiesta, 25/09/2026).
-                                                        if (dashboardCustomAmounts[debtKey] !== undefined && parseAmount(currentAmount) !== parseAmount(item.amount)) {
-                                                            if (isPorte) updates.customAmount = parseAmount(currentAmount);
-                                                            else updates.codAmount = parseAmount(currentAmount);
-                                                        }
-
-                                                        // Check if this makes the shipment fully paid
-                                                        const willBePortePaid = isPorte || shipment.portePaid;
-                                                        const willBeCodPaid = (!shipment.hasCod) || (!isPorte || shipment.codPaid); 
-                                                        // Wait, let's be more precise
-                                                        const pf = isPorte || shipment.portePaid;
-                                                        const cf = (shipment.hasCod ? (item.type === 'reembolso' || shipment.codPaid) : true);
-                                                        
-                                                        if (pf && cf) {
-                                                            updates.paymentStatus = 'Paid';
-                                                        }
-
-                                                        // 3. Sync to Supabase ATOMICALLY
-                                                        // COBRAR NO ES ENTREGAR. Antes bastaba con que no quedara dinero
-                                                        // pendiente (pf && cf) para mandar el albaran a Entregado. Eso rompia
-                                                        // el caso del cliente que crea el albaran con "aplazar cobro" y paga
-                                                        // un rato despues: al cobrarlo aqui el paquete seguia en el almacen,
-                                                        // sin repartidor y sin entregar, pero figuraba como entregado (sin
-                                                        // firma, sin hora de entrega) y desaparecia de la pestana Asignar,
-                                                        // asi que ya no lo llevaba nadie. El estado solo lo cierra la entrega
-                                                        // de verdad: si el albaran aun no esta entregado, aqui solo se guarda
-                                                        // el dinero y se queda donde estaba (Pendiente de asignar / En reparto).
-                                                        // Si ya estaba entregado, onStatusChange cierra el ciclo con las marcas de pago.
-                                                        let success = false;
-                                                        if (shipment.status === 'Entregado') {
-                                                            await onStatusChange(shipment.id, 'Entregado', null, null, null, null, updates);
-                                                            success = true; // onStatusChange handled it
-                                                        } else {
-                                                            success = await onUpdateShipment(shipment.id, updates);
-                                                        }
-
-                                                        if (success) {
-                                                            // 4. Add to local collections state for the Account tab
-                                                            const newCollection = {
-                                                                id: `COL-${Date.now()}-${shipment.id}-${item.type}`,
-                                                                shipmentId: shipment.id,
-                                                                partType: item.type,
-                                                                client: item.payerName,
-                                                                sender: shipment.senderName || shipment.originName || 'N/A',
-                                                                amount: finalAmount,
-                                                                type: isPorte ? 'Porte' : 'Reembolso',
-                                                                date: collectionDate
-                                                            };
-                                                            setCollectedCollections(prev => [...prev, newCollection]);
-                                                        } else {
-                                                            // Fallback for optimistic UI if failure
-                                                            setProcessingIds(prev => {
-                                                                const next = new Set(prev);
-                                                                next.delete(item.key);
-                                                                return next;
-                                                            });
-                                                        }
-                                                    } catch (err) {
-                                                        console.error("Error al procesar cobro individual:", err);
-                                                        setProcessingIds(prev => {
-                                                            const next = new Set(prev);
-                                                            next.delete(item.key);
-                                                            return next;
-                                                        });
+                                                    // Si el mismo cliente tiene más cobros en la lista, se le
+                                                    // ofrece cobrarlos todos de una vez (ver cobroEnGrupo).
+                                                    const hermanos = hermanosDe(item, visibleDebtItems);
+                                                    if (hermanos.length === 0) {
+                                                        cobrarLinea(item);
+                                                        return;
                                                     }
+                                                    const claves = [item.key, ...hermanos.map(h => h.key)];
+                                                    setCobroEnGrupo({ clavePulsada: item.key, claves, elegidas: new Set(claves) });
                                                 }}
                                                 className={`w-full text-xs font-bold py-2 rounded-lg transition-colors ${processingIds.has(item.key) ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100'}`}
                                             >
@@ -5527,6 +5613,66 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                             </button>
                                         </div>
                                     );
+                                };
+
+                                // Un importe de tarjeta en número, o 0 si es 'Tarifa' / vacío.
+                                const enEuros = (item) => parseAmount(importeDeLaLinea(item));
+
+                                // Las tarjetas del mismo pagador van juntas, dentro de un marco con
+                                // su nombre y la suma. "Cristóbal Merino" y "MERINO NUÑEZ, CRISTOBAL"
+                                // son la misma persona (ver utils/cobrosDelMismoPagador.js); antes
+                                // quedaban separadas por el orden alfabético. Una tarjeta sola sale
+                                // como siempre, sin marco.
+                                const renderAgrupadas = (items) => agruparPorPagador(items).map((grupo) => {
+                                    if (grupo.lineas.length === 1) return renderDebtCard(grupo.lineas[0]);
+                                    const suma = grupo.lineas.reduce((acc, l) => acc + enEuros(l), 0);
+                                    const otrosNombres = grupo.nombres.slice(1);
+                                    return (
+                                        <div key={'grupo-' + grupo.lineas[0].key} className="rounded-2xl border-2 border-indigo-200 bg-indigo-50/60 p-2 space-y-2">
+                                            <div className="flex justify-between items-start px-2 pt-1">
+                                                <div>
+                                                    <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Mismo cliente</p>
+                                                    <p className="font-bold text-slate-800 leading-tight">{grupo.nombre}</p>
+                                                    {otrosNombres.length > 0 && (
+                                                        <p className="text-[10px] text-slate-500">También como: {otrosNombres.join(' · ')}</p>
+                                                    )}
+                                                </div>
+                                                <div className="text-right shrink-0">
+                                                    <p className="font-mono font-bold text-indigo-700">{suma.toFixed(2)} €</p>
+                                                    <p className="text-[10px] text-slate-500">{grupo.lineas.length} cobros</p>
+                                                </div>
+                                            </div>
+                                            {grupo.lineas.map(renderDebtCard)}
+                                        </div>
+                                    );
+                                });
+
+                                // El aviso al pulsar Marcar Cobrado en una tarjeta con hermanas: las
+                                // tarjetas se buscan por clave en la lista de ahora mismo, así que si
+                                // una desaparece mientras el aviso está abierto (otro la cobró, o
+                                // llegó un refresco) deja de ofrecerse.
+                                const lineasDelAviso = cobroEnGrupo
+                                    ? cobroEnGrupo.claves.map(k => visibleDebtItems.find(i => i.key === k)).filter(Boolean)
+                                    : [];
+                                const lineaPulsada = lineasDelAviso.find(l => l.key === cobroEnGrupo?.clavePulsada);
+                                const elegidasDelAviso = lineasDelAviso.filter(l => cobroEnGrupo?.elegidas.has(l.key));
+                                const sumaElegidas = elegidasDelAviso.reduce((acc, l) => acc + enEuros(l), 0);
+                                const alternarElegida = (clave) => setCobroEnGrupo(prev => {
+                                    if (!prev) return prev;
+                                    const elegidas = new Set(prev.elegidas);
+                                    if (elegidas.has(clave)) elegidas.delete(clave); else elegidas.add(clave);
+                                    return { ...prev, elegidas };
+                                });
+                                // Se cobran una detrás de otra (cada una comprueba en Supabase que no
+                                // esté ya cobrada). Se esconden todas de golpe para que el repartidor
+                                // vea que el aviso hizo efecto; cobrarLinea vuelve a enseñar la que falle.
+                                const cobrarVarias = async (lineas) => {
+                                    setCobroEnGrupo(null);
+                                    if (lineas.length === 0) return;
+                                    setProcessingIds(prev => new Set([...prev, ...lineas.map(l => l.key)]));
+                                    for (const l of lineas) {
+                                        await cobrarLinea(l);
+                                    }
                                 };
 
                                 return (
@@ -5543,7 +5689,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                         Cobros por Portes
                                                     </h4>
                                                     <div className="space-y-3">
-                                                        {porteDebts.map(renderDebtCard)}
+                                                        {renderAgrupadas(porteDebts)}
                                                     </div>
                                                 </div>
                                             )}
@@ -5555,7 +5701,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                         Reembolsos (Destinatarios)
                                                     </h4>
                                                     <div className="space-y-3">
-                                                        {reembolsoDebts.map(renderDebtCard)}
+                                                        {renderAgrupadas(reembolsoDebts)}
                                                         {[...pendingCollections].sort((a,b) => (a.client || '').localeCompare(b.client || '')).map(collection => (
                                                             <div key={collection.id} className="bg-white p-4 rounded-xl shadow-sm border border-l-4 border-l-indigo-500 border-slate-100">
                                                                 <div className="flex justify-between items-start mb-2">
@@ -5590,6 +5736,77 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                 </div>
                                             )}
                                         </div>
+
+                                        {/* Aviso: el mismo cliente tiene más cobros. Va en un portal
+                                            fuera del div con zoom (la lupa A+/A-), que descuadra
+                                            cualquier modal que mida con vh; el zoom se aplica sólo
+                                            al contenido. */}
+                                        {cobroEnGrupo && lineaPulsada && lineasDelAviso.length > 1 && createPortal(
+                                            <div className="fixed inset-0 z-[120] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setCobroEnGrupo(null)}>
+                                                <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl flex flex-col max-h-[85vh] animate-in slide-in-from-bottom-4" style={{ zoom }} onClick={(e) => e.stopPropagation()}>
+                                                    <div className="p-4 border-b border-slate-100">
+                                                        <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Mismo cliente</p>
+                                                        <h3 className="font-bold text-slate-800 text-lg leading-tight">{lineaPulsada.payerName}</h3>
+                                                        <p className="text-sm text-slate-600 mt-1">Tiene {lineasDelAviso.length} cobros pendientes. Marca los que te paga ahora.</p>
+                                                    </div>
+                                                    <div className="overflow-y-auto p-2 space-y-1">
+                                                        {lineasDelAviso.map((l) => {
+                                                            const marcada = cobroEnGrupo.elegidas.has(l.key);
+                                                            const esPorte = l.type === 'porte';
+                                                            return (
+                                                                <label key={l.key} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${marcada ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-white'}`}>
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={marcada}
+                                                                        onChange={() => alternarElegida(l.key)}
+                                                                        className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                                                    />
+                                                                    <div className="flex-1 min-w-0">
+                                                                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full inline-block ${l.badgeClass}`}>{l.label}</span>
+                                                                        <p className="text-xs text-slate-700 truncate mt-0.5">
+                                                                            {l.key === cobroEnGrupo.clavePulsada ? 'La que has pulsado' : (l.payerName !== lineaPulsada.payerName ? l.payerName : '')}
+                                                                        </p>
+                                                                        {esPorte && l.payerName !== l.shipment.client && (
+                                                                            <p className="text-[10px] text-slate-400 truncate">Cliente origen: {l.shipment.client}</p>
+                                                                        )}
+                                                                    </div>
+                                                                    <span className="font-mono font-bold text-slate-800 shrink-0">
+                                                                        {/* 'Tarifa' (porte sin cifra) se enseña tal cual, como en la tarjeta */}
+                                                                        {typeof importeDeLaLinea(l) === 'string' && !Number.isFinite(parseFloat(importeDeLaLinea(l)))
+                                                                            ? importeDeLaLinea(l)
+                                                                            : `${enEuros(l).toFixed(2)} €`}
+                                                                    </span>
+                                                                </label>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                    <div className="p-3 border-t border-slate-100 space-y-2">
+                                                        <button
+                                                            disabled={elegidasDelAviso.length === 0}
+                                                            onClick={() => cobrarVarias(elegidasDelAviso)}
+                                                            className={`w-full py-3 rounded-xl font-bold text-sm transition-colors ${elegidasDelAviso.length === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                                                        >
+                                                            Cobrar {elegidasDelAviso.length === 1 ? '1 cobro' : `los ${elegidasDelAviso.length} cobros`} · {sumaElegidas.toFixed(2)} €
+                                                        </button>
+                                                        <div className="flex gap-2">
+                                                            <button
+                                                                onClick={() => cobrarVarias([lineaPulsada])}
+                                                                className="flex-1 py-2 rounded-xl font-bold text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+                                                            >
+                                                                Sólo el que he pulsado
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setCobroEnGrupo(null)}
+                                                                className="flex-1 py-2 rounded-xl font-bold text-xs text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
+                                                            >
+                                                                Cancelar
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>,
+                                            document.body
+                                        )}
                                     </>
                                 );
                             })()}
@@ -5882,7 +6099,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                             const ship = item.original || (allShipments || []).find(s => s.id === item.id) || {};
                                                             printSimplifiedInvoice({
                                                                 ...ship,
-                                                                amount: item.amount,
+                                                                totalConIva: item.amount,
                                                                 id: item.id,
                                                                 date: item.date || new Date().toLocaleDateString('es-ES'),
                                                                 articles: ship.articles || []

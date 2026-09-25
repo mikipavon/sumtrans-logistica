@@ -77,19 +77,39 @@ function json(payload: unknown, status = 200): Response {
 // Ojo: la clave anónima también es un JWT, pero no identifica a ningún
 // usuario, así que getUser() la rechaza y caemos al modo automigración.
 async function llamadaDeAdmin(req: Request, supabase: ReturnType<typeof createClient>): Promise<boolean> {
+  return (await porQueNoEsAdmin(req, supabase)) === null
+}
+
+// ── Y si no lo es, por qué ──
+// "No autorizado" a secas lo mismo quería decir que no había sesión, que la
+// función no podía leer el perfil (su clave de servicio rechazada) o que el
+// perfil no era de admin. Los tres se arreglan en sitios distintos, así que el
+// motivo va en la respuesta y en el log. Devuelve null si es admin.
+async function porQueNoEsAdmin(req: Request, supabase: ReturnType<typeof createClient>): Promise<string | null> {
+  if (!SUPABASE_SERVICE_ROLE_KEY) return 'la función no tiene la clave de servicio configurada'
+
   const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
-  if (!token) return false
+  if (!token) return 'la petición llega sin sesión'
 
   const { data, error } = await supabase.auth.getUser(token)
-  if (error || !data?.user) return false
+  if (error || !data?.user) {
+    return `el servidor no reconoce la sesión (${error?.message || 'sin usuario'})`
+  }
 
-  const { data: perfil } = await supabase
+  const { data: perfil, error: perfilError } = await supabase
     .from('profiles')
     .select('role')
     .eq('id', data.user.id)
     .single()
 
-  return perfil?.role === 'admin'
+  if (perfilError) return `la función no ha podido leer tu perfil (${perfilError.message})`
+  if (perfil?.role !== 'admin') return `tu perfil no es de administrador (rol: ${perfil?.role || 'ninguno'})`
+  return null
+}
+
+function noAutorizado(motivo: string, que: string): Response {
+  console.warn(`[create-auth-user] ${que} denegado: ${motivo}`)
+  return json({ error: `No autorizado: ${motivo}` }, 401)
 }
 
 // ── Buscar la cuenta que ya está vinculada a esta ficha ──
@@ -298,10 +318,8 @@ serve(async (req: Request) => {
     // principal se cambia por la ficha, y una cuenta de otro no se toca ni por
     // equivocación ni mandando su correo a mano.
     if (accion === 'revocar_acceso_adicional') {
-      if (!(await llamadaDeAdmin(req, supabase))) {
-        console.warn('[create-auth-user] Revocación sin admin — denegada')
-        return json({ error: 'No autorizado' }, 401)
-      }
+      const motivo = await porQueNoEsAdmin(req, supabase)
+      if (motivo) return noAutorizado(motivo, 'Revocación')
 
       const emailARevocar = String(email || '').trim().toLowerCase()
       const vinculo = String(linked_id || '')
@@ -344,10 +362,8 @@ serve(async (req: Request) => {
     // cliente al registrarse, y aquí no se cambia ninguna. Sólo hace falta una
     // si no hay cuenta que mover y hay que crearla.
     if (accion === 'mover_acceso') {
-      if (!(await llamadaDeAdmin(req, supabase))) {
-        console.warn('[create-auth-user] Movimiento de acceso sin admin — denegado')
-        return json({ error: 'No autorizado' }, 401)
-      }
+      const motivo = await porQueNoEsAdmin(req, supabase)
+      if (motivo) return noAutorizado(motivo, 'Movimiento de acceso')
 
       const correo = String(email || '').trim().toLowerCase()
       const destino = String(linked_id || '')

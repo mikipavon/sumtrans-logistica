@@ -47,14 +47,18 @@ export const categoriasMarcadas = ({ total, facturacion, habituales, presupuesto
     return TODAS_LAS_CATEGORIAS.filter((clave) => marcadas[clave]);
 };
 
-/** Título de la tarjeta: dice qué está sumando. */
-export const tituloDeIngresos = (claves) => {
+/**
+ * Título de la tarjeta: dice qué está sumando. `conCaja` añade la línea Caja
+ * (portes cobrados por los repartidores), que no es una categoría de albarán.
+ */
+export const tituloDeIngresos = (claves, conCaja = false) => {
     if (claves.length === TODAS_LAS_CATEGORIAS.length) return 'Ingresos (Total)';
-    if (claves.length === 0) return 'Ingresos (ninguna línea)';
-    return `Ingresos (${CATEGORIAS_DE_INGRESO
+    const nombres = CATEGORIAS_DE_INGRESO
         .filter((c) => claves.includes(c.clave))
         .map((c) => c.etiqueta)
-        .join(' + ')})`;
+        .concat(conCaja ? ['Caja'] : []);
+    if (nombres.length === 0) return 'Ingresos (ninguna línea)';
+    return `Ingresos (${nombres.join(' + ')})`;
 };
 
 /**

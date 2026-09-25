@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { getPackagesCount, papelDelClienteEnElEnvio } from './shipmentUtils';
+import { getPackagesCount, papelDelClienteEnElEnvio, observacionesVisibles } from './shipmentUtils';
 import { fechaSinHora } from './fechaSinHora';
 
 /**
@@ -69,7 +69,7 @@ export const filasDelManifiesto = (envios) => (envios || []).map((s) => {
         String(getPackagesCount(s)),
         kg ? String(kg).replace('.', ',') : '',
         s.clientReference || '',
-        s.observations || '',
+        observacionesVisibles(s.observations),
     ];
 });
 

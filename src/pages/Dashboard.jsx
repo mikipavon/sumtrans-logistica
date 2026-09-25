@@ -12,6 +12,7 @@ import {
     sumaDeIngresos
 } from '../utils/ingresosDelPanel';
 import { coincideEnCampos } from '../utils/busqueda';
+import { cajasPorDia, claveDelDia } from '../utils/cajasDelPanel';
 
 const formatoEuros = (n) => `€${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -29,7 +30,7 @@ const OPCIONES_POR_CLIENTE = [
     { valor: 'todas', etiqueta: 'Todo (Total General)' }
 ];
 
-export default function Dashboard({ onSync, isSyncing, shipments = [], clients = [], vehicles = [], isGhostModeUnlocked = false, onNavigate }) {
+export default function Dashboard({ onSync, isSyncing, shipments = [], clients = [], vehicles = [], drivers = [], isGhostModeUnlocked = false, onNavigate }) {
     const [timeGrouping, setTimeGrouping] = useState('days');
     const [dateRange, setDateRange] = useState('7');
     const [customStart, setCustomStart] = useState('');
@@ -39,6 +40,11 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
     const [showHabituales, setShowHabituales] = useState(true);
     const [showPresupuestos, setShowPresupuestos] = useState(true);
     const [showTotal, setShowTotal] = useState(false);
+    // "Caja": los PORTES que cobran todos los repartidores cada día (la parte de
+    // portes de sus cajas, sin reembolsos —dinero del cliente— ni facturas
+    // simplificadas). Clientes Habituales sigue contando lo que se crea, cobrado o no.
+    const [showCaja, setShowCaja] = useState(false);
+    const verCajas = isGhostModeUnlocked && showCaja;
 
     const [porClienteAbierto, setPorClienteAbierto] = useState(false);
     const [verPorCliente, setVerPorCliente] = useState('lineas');
@@ -113,6 +119,22 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
         return { startDate: start, endDate: today, filteredShipments: filtered };
     }, [shipments, dateRange, customStart, customEnd]);
 
+    // Sólo se calcula con la opción puesta: es la Cuenta de cada repartidor, día a día.
+    const cajas = useMemo(
+        () => (verCajas ? cajasPorDia({ envios: shipments, repartidores: drivers, clientes: clients, desde: startDate, hasta: endDate }) : null),
+        [verCajas, shipments, drivers, clients, startDate, endDate]
+    );
+
+    // Con Caja marcada, la tarjeta suma también los portes cobrados en el periodo.
+    // Con Total General no: el total ya cuenta esos portes al crearse el albarán.
+    const cajaEnLaTarjeta = verCajas && !showTotal;
+    const portesDeCaja = useMemo(() => {
+        if (!cajaEnLaTarjeta || !cajas) return 0;
+        let suma = 0;
+        cajas.forEach((caja) => { suma += caja.porte; });
+        return Math.round(suma * 100) / 100;
+    }, [cajaEnLaTarjeta, cajas]);
+
     // Lo que suma la tarjeta, cliente a cliente: su total es el de la tarjeta.
     const ingresosDeLaTarjeta = useMemo(
         () => sumaDeIngresos(ingresosPorCliente(filteredShipments, clasificar, categoriasDeLaTarjeta, clients)),
@@ -151,15 +173,15 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
         const pendientes = allShipments.filter(s => ['Pendiente', 'Asignado', 'Pendiente de asignar'].includes(s.status)).length;
 
         // Ingresos sí usa el periodo seleccionado, y sólo las líneas marcadas
-        const tituloIngresos = isGhostModeUnlocked ? tituloDeIngresos(categoriasDeLaTarjeta) : 'Ingresos (Periodo)';
+        const tituloIngresos = isGhostModeUnlocked ? tituloDeIngresos(categoriasDeLaTarjeta, cajaEnLaTarjeta) : 'Ingresos (Periodo)';
 
         return [
             { title: 'En Reparto', value: enReparto.toString(), icon: Truck, color: 'bg-blue-500 dark:bg-blue-600', trend: '', filterKey: 'En reparto' },
             { title: 'Entregados', value: entregados.toString(), icon: Package, color: 'bg-emerald-500 dark:bg-emerald-600', trend: '', filterKey: 'Entregado' },
             { title: 'Pendientes', value: pendientes.toString(), icon: Clock, color: 'bg-amber-500 dark:bg-amber-600', trend: '', filterKey: 'Pendiente' },
-            { title: tituloIngresos, value: formatoEuros(ingresosDeLaTarjeta), icon: DollarSign, color: 'bg-indigo-500 dark:bg-indigo-600', trend: '', filterKey: null, hint: 'Por cliente ↓' },
+            { title: tituloIngresos, value: formatoEuros(Math.round((ingresosDeLaTarjeta + portesDeCaja) * 100) / 100), icon: DollarSign, color: 'bg-indigo-500 dark:bg-indigo-600', trend: '', filterKey: null, hint: 'Por cliente ↓' },
         ];
-    }, [shipments, isGhostModeUnlocked, categoriasDeLaTarjeta, ingresosDeLaTarjeta]);
+    }, [shipments, isGhostModeUnlocked, categoriasDeLaTarjeta, ingresosDeLaTarjeta, cajaEnLaTarjeta, portesDeCaja]);
 
     const revenueData = useMemo(() => {
         const buckets = new Map();
@@ -194,27 +216,20 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
             }
             
             if (!buckets.has(key)) {
-                buckets.set(key, { name: label, ingresos: 0, habituales: 0, presupuestos: 0, total: 0 });
+                buckets.set(key, { name: label, ingresos: 0, habituales: 0, presupuestos: 0, total: 0, cajas: 0 });
             }
         }
 
+        const claveDelTramo = (sDate) => {
+            if (timeGrouping === 'days') return claveDelDia(sDate);
+            if (timeGrouping === 'months') return `${sDate.getFullYear()}-${sDate.getMonth()}`;
+            if (timeGrouping === 'quarters') return `${sDate.getFullYear()}-Q${Math.floor(sDate.getMonth() / 3) + 1}`;
+            return `${sDate.getFullYear()}`;
+        };
+
         // Populate buckets
         filteredShipments.forEach(s => {
-            const sDate = parseShipmentDate(s);
-            let key = '';
-            
-            if (timeGrouping === 'days') {
-                key = `${sDate.getFullYear()}-${String(sDate.getMonth()+1).padStart(2,'0')}-${String(sDate.getDate()).padStart(2,'0')}`;
-            } else if (timeGrouping === 'months') {
-                key = `${sDate.getFullYear()}-${sDate.getMonth()}`;
-            } else if (timeGrouping === 'quarters') {
-                const q = Math.floor(sDate.getMonth() / 3) + 1;
-                key = `${sDate.getFullYear()}-Q${q}`;
-            } else if (timeGrouping === 'years') {
-                key = `${sDate.getFullYear()}`;
-            }
-
-            const bucket = buckets.get(key);
+            const bucket = buckets.get(claveDelTramo(parseShipmentDate(s)));
             if (bucket) {
                 const amount = importeDelEnvio(s);
                 const categoria = clasificar(s);
@@ -230,8 +245,16 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
             }
         });
 
+        // Las cajas vienen día a día; por meses, trimestres o años se suman.
+        (cajas || new Map()).forEach((caja, dia) => {
+            const [y, m, d] = dia.split('-');
+            const bucket = buckets.get(claveDelTramo(new Date(y, m - 1, d)));
+            if (!bucket) return;
+            bucket.cajas += caja.porte;
+        });
+
         return Array.from(buckets.values());
-    }, [filteredShipments, clasificar, timeGrouping, startDate, endDate]);
+    }, [filteredShipments, clasificar, timeGrouping, startDate, endDate, cajas]);
 
     const loadMargins = useMemo(() => {
         let heavyShipments = 0;
@@ -448,6 +471,10 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
                                 <input type="checkbox" checked={showHabituales} onChange={e => setShowHabituales(e.target.checked)} className="rounded text-emerald-500" />
                                 <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">Clientes Habituales</span>
                             </label>
+                            <label className="flex items-center gap-2 cursor-pointer" title="Portes cobrados por todos los repartidores ese día, sin reembolsos ni facturas simplificadas">
+                                <input type="checkbox" checked={showCaja} onChange={e => setShowCaja(e.target.checked)} className="rounded text-cyan-500" />
+                                <span className="text-sm font-bold text-cyan-600 dark:text-cyan-400">Caja</span>
+                            </label>
                             <label className="flex items-center gap-2 cursor-pointer">
                                 <input type="checkbox" checked={showPresupuestos} onChange={e => setShowPresupuestos(e.target.checked)} className="rounded text-amber-500" />
                                 <span className="text-sm font-bold text-amber-600 dark:text-amber-400">Presupuestos</span>
@@ -475,6 +502,10 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
                                         <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} />
                                         <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
                                     </linearGradient>
+                                    <linearGradient id="colorCaja" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.4} />
+                                        <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+                                    </linearGradient>
                                     <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
                                         <stop offset="5%" stopColor="#a855f7" stopOpacity={0.4} />
                                         <stop offset="95%" stopColor="#a855f7" stopOpacity={0} />
@@ -493,6 +524,9 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
                                 )}
                                 {(isGhostModeUnlocked && showHabituales) && (
                                     <Area type="monotone" dataKey="habituales" name="Clientes Habituales" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorCobros)" />
+                                )}
+                                {verCajas && (
+                                    <Area type="monotone" dataKey="cajas" name="Caja" stroke="#06b6d4" strokeWidth={3} fillOpacity={1} fill="url(#colorCaja)" />
                                 )}
                                 {(isGhostModeUnlocked && showPresupuestos) && (
                                     <Area type="monotone" dataKey="presupuestos" name="Presupuestos" stroke="#f59e0b" strokeWidth={3} fillOpacity={1} fill="url(#colorPresupuestos)" />

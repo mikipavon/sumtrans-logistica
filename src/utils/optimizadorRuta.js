@@ -54,6 +54,14 @@
  *    para decidir en qué orden se visitan los PUEBLOS manda el punto del pueblo, y la
  *    coordenada de una ficha no pinta nada: una sola ficha con el GPS de la nave
  *    plantaba su pueblo entero encima del conductor.
+ *
+ * 7. A quien no abre hasta las diez y media no se le manda a nadie a las nueve. Con el
+ *    orden ya hecho se estima el reloj a lo largo de la ruta (40 km/h y cuatro minutos
+ *    por parada, que es lo justo para no pretender que sea exacto) y la parada a la que
+ *    se llegaría antes de su hora se saca y se vuelve a meter más adelante, donde menos
+ *    desvíe de las que ya se pueden hacer. Si ninguna llega a esa hora, va al final.
+ *    La hora sale de la ficha o de lo aprendido (utils/aprendizajeHorario.js), y la
+ *    parada va marcada para que el transportista sepa por qué se ha movido.
  */
 
 import { normalizarPueblo, mejorPuebloParaCiudad } from './townMatch';
@@ -69,6 +77,7 @@ import {
     contarPueblosMemorizados,
     UMBRAL_MEMORIA_FIRME,
 } from './aprendizajeRuta';
+import { noAntesDe } from './aprendizajeHorario';
 
 /** Radio y desvío máximo para dar una parada por "de camino". */
 export const RADIO_DE_CAMINO_KM = 1;
@@ -118,6 +127,17 @@ export const MARGEN_EMPATE_MIN_KM = 0.1;
  * zigzag aprendido de un mal día.
  */
 export const TOLERANCIA_ORDEN_APRENDIDO = 0.3;
+
+/**
+ * Con qué se estima el reloj a lo largo de la ruta (regla 7). Es una cuenta gorda a
+ * propósito: sirve para saber si a una parada se llega "a las nueve" o "a las once",
+ * no para acertar el minuto.
+ */
+export const VELOCIDAD_KM_H = 40;
+export const MINUTOS_POR_PARADA = 4;
+
+/** Llegar hasta esto antes de la hora de abrir se da por bueno: se espera un momento. */
+export const TOLERANCIA_APERTURA_MIN = 10;
 
 const RADIO_TIERRA_KM = 6371;
 
@@ -578,10 +598,83 @@ const ordenarDentroDelPueblo = (items, pueblo, entrada, contexto, deCamino, radi
     return pasarDeCamino(ordenado, deCamino, radioKm);
 };
 
+const minutosDelDia = (fecha) => {
+    const f = fecha instanceof Date && !isNaN(fecha) ? fecha : new Date();
+    return f.getHours() * 60 + f.getMinutes();
+};
+
+/**
+ * A qué minuto del día se llegaría a cada parada de la cadena, empezando en
+ * `puntoInicial` a las `inicio`. Devuelve también a qué hora se acaba.
+ */
+const relojDeLaCadena = (cadena, puntoInicial, inicio) => {
+    let reloj = inicio;
+    let cursor = puntoInicial;
+    const llegadas = cadena.map(item => {
+        if (item.coordsRef && cursor) {
+            const km = distanciaEntre(cursor, item.coordsRef);
+            if (Number.isFinite(km)) reloj += (km / VELOCIDAD_KM_H) * 60;
+        }
+        if (item.coordsRef) cursor = item.coordsRef;
+        const llegada = reloj;
+        reloj += MINUTOS_POR_PARADA;
+        return llegada;
+    });
+    return { llegadas, fin: reloj };
+};
+
+const llegaDemasiadoPronto = (item, llegada) =>
+    Number.isFinite(item.noAntesDe) && llegada + TOLERANCIA_APERTURA_MIN < item.noAntesDe;
+
+/**
+ * Regla 7: saca las paradas a las que se llegaría antes de que abran y las vuelve a
+ * meter más adelante, donde menos desvíen entre las posiciones a las que ya se llega
+ * a su hora. Devuelve la cadena nueva y qué paradas se han aplazado (id → minuto).
+ */
+const aplazarHastaQueAbran = (ordenados, puntoInicial, ahora) => {
+    const aplazadas = new Map();
+    if (!ordenados.some(i => Number.isFinite(i.noAntesDe))) return { lista: ordenados, aplazadas };
+
+    const inicio = minutosDelDia(ahora);
+    let cadena = [...ordenados];
+    const pendientes = [];
+
+    // Quitar una parada adelanta el reloj de las siguientes, así que se mira varias
+    // veces; en la práctica con dos vueltas basta.
+    for (let vuelta = 0; vuelta < 3; vuelta++) {
+        const { llegadas } = relojDeLaCadena(cadena, puntoInicial, inicio);
+        const tempranas = cadena.filter((item, i) => llegaDemasiadoPronto(item, llegadas[i]));
+        if (tempranas.length === 0) break;
+        cadena = cadena.filter(item => !tempranas.includes(item));
+        pendientes.push(...tempranas);
+    }
+    if (pendientes.length === 0) return { lista: ordenados, aplazadas };
+
+    // La que antes abre se coloca primero: las demás se miden con ella ya puesta.
+    pendientes.sort((a, b) => a.noAntesDe - b.noAntesDe);
+    pendientes.forEach(item => {
+        const { llegadas, fin } = relojDeLaCadena(cadena, puntoInicial, inicio);
+        let mejor = cadena.length;
+        let mejorCoste = Infinity;
+        for (let i = 0; i <= cadena.length; i++) {
+            const llegadaAqui = i < cadena.length ? llegadas[i] : fin;
+            if (llegaDemasiadoPronto(item, llegadaAqui)) continue;
+            const previo = i === 0 ? puntoInicial : cadena[i - 1].coordsRef;
+            const siguiente = i < cadena.length ? cadena[i].coordsRef : null;
+            const coste = item.coordsRef ? costeDeInsercion(previo, item.coordsRef, siguiente) : 0;
+            if (coste < mejorCoste) { mejorCoste = coste; mejor = i; }
+        }
+        cadena.splice(mejor, 0, item);
+        aplazadas.set(item.envio.id, item.noAntesDe);
+    });
+
+    return { lista: cadena, aplazadas };
+};
+
 /**
  * Ordena la ruta.
  *
- * @returns {{orden: object[], deCamino: Set<string|number>, resumen: object}}
+ * @returns {{orden: object[], deCamino: Set<string|number>, aplazadas: Map<string|number, number>, resumen: object}}
  */
 export const optimizarRuta = ({
     envios = [],
@@ -606,7 +699,8 @@ export const optimizarRuta = ({
         return {
             orden: [],
             deCamino: new Set(),
-            resumen: { turno, ruta: null, pueblos: 0, ordenPueblos: [], kmAlPrimero: null, extras: 0, coordenadasRaras: 0, sinRuta: true, deCamino: 0, pueblosMemorizados: 0, sinPosicion: !gps },
+            aplazadas: new Map(),
+            resumen: { turno, ruta: null, pueblos: 0, ordenPueblos: [], kmAlPrimero: null, extras: 0, coordenadasRaras: 0, sinRuta: true, deCamino: 0, aplazadas: 0, pueblosMemorizados: 0, sinPosicion: !gps },
         };
     }
 
@@ -639,6 +733,10 @@ export const optimizarRuta = ({
             ciudad,
             nombre: nombreDeParada(envio),
             direccion: envio.destinationAddress || '',
+            // "No entregar antes de" puesto en la ficha (la sede manda sobre la ficha
+            // madre, igual que con las coordenadas). Lo aprendido se mira después,
+            // cuando ya se sabe de qué repartidores se puede tirar.
+            horaFicha: cliente?._branch?.noAntesDe || cliente?.noAntesDe || null,
         };
     });
 
@@ -668,6 +766,18 @@ export const optimizarRuta = ({
             .map(([, datos]) => adaptarConocimiento(datos)),
     };
 
+    // A qué hora abre cada parada. Lo que saben los demás repartidores de un cliente
+    // vale igual que lo propio: la hora de abrir es del cliente, no de quien reparte.
+    const fuentesHorario = [
+        contexto.propia,
+        ...(contexto.maestroPropio ? [contexto.maestroPropio] : []),
+        ...contexto.otrosMaestros,
+        ...contexto.otrosConductores,
+    ];
+    items.forEach(item => {
+        item.noAntesDe = noAntesDe(fuentesHorario, item.nombre, item.horaFicha);
+    });
+
     const deCamino = new Set();
     const ordenados = [];
     // El vecino más cercano de cada pueblo arranca por donde se sale del anterior. Antes
@@ -688,9 +798,15 @@ export const optimizarRuta = ({
         if (!colocados.has(item.envio.id)) ordenados.push(item);
     });
 
+    // Regla 7, sobre la cadena ya hecha: lo que no abre todavía se aparta a más tarde.
+    // Una parada aplazada ya no está "de camino" de nada: se le quita esa marca.
+    const { lista: cadenaFinal, aplazadas } = aplazarHastaQueAbran(ordenados, puntoInicial, ahora);
+    aplazadas.forEach((_, id) => deCamino.delete(id));
+
     return {
-        orden: ordenados.map(i => i.envio),
+        orden: cadenaFinal.map(i => i.envio),
         deCamino,
+        aplazadas,
         resumen: {
             turno,
             // Con qué ruta se ha ordenado. Va en el resumen para que el conductor lo
@@ -720,6 +836,8 @@ export const optimizarRuta = ({
             // que decirlo, porque explica que la primera parada le salga lejos.
             sinPosicion: !posicion,
             deCamino: deCamino.size,
+            // Paradas movidas a más tarde porque aún no abren (regla 7).
+            aplazadas: aplazadas.size,
             pueblosMemorizados: contarPueblosMemorizados(aprendizaje),
         },
     };

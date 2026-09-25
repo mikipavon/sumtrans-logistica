@@ -5189,7 +5189,7 @@ function App() {
       <Suspense fallback={<PantallaCargando />}>
                 {currentView === 'dashboard' && (
                     <div className="animate-in fade-in duration-500">
-                        <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} vehicles={vehicles} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
+                        <Dashboard onSync={handleSyncLocalToCloud} isSyncing={isSyncing} shipments={visibleShipments} clients={clients} vehicles={vehicles} drivers={drivers} isGhostModeUnlocked={isGhostModeUnlocked} onNavigate={(view, statusFilter) => { setShipmentStatusFilter(statusFilter || null); setCurrentView(view); }} />
                     </div>
                 )}
       {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onReassignCollection={handleReassignPendingCollection} onReassignCollections={handleReassignPendingCollections} onUpdateShipment={handleUpdateShipment} onCreateShipment={handleAddShipment} articles={articles} isGhostModeUnlocked={isGhostModeUnlocked} driverNamePreference={driverNamePreference} />}

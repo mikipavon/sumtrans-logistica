@@ -1,3 +1,4 @@
+import { observacionesVisibles } from './shipmentUtils';
 import { estilosDeHoja, scriptDeAjuste } from './hojaDeImpresion';
 
 export const printShipmentTicket = (shipment) => {
@@ -131,10 +132,10 @@ ${estilosDeHoja()}
                     TOTAL REEMBOLSO: ${parseAmount(shipment.codAmount)} €
                 </div>` : ''}
 
-                ${shipment.observations ? `
+                ${observacionesVisibles(shipment.observations) ? `
                 <div class="section">
                     <div class="section-title">OBSERVACIONES</div>
-                    <div style="font-size: 10px; font-style: italic;">${shipment.observations}</div>
+                    <div style="font-size: 10px; font-style: italic;">${observacionesVisibles(shipment.observations)}</div>
                 </div>` : ''}
 
                 <div class="signature-box">

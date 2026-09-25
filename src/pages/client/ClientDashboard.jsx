@@ -12,7 +12,7 @@ import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import { baremoDelEnvio, precioUnitarioArticulo, conMinimoFueraDeBaremo, PRECIO_MINIMO_FUERA_DE_BAREMO } from '../../utils/precioArticulo';
 import { construirAgendaDestinatarios, filtrarAgendaDestinatarios, agendaDesdeServidor, juntarAgendas } from '../../utils/agendaDestinatarios';
 import { cargarAgendaDelServidor } from '../../utils/agendaDestinatariosServidor';
-import { getPackagesCount, envioEsDelCliente, papelDelClienteEnElEnvio, quienPagaElPorte } from '../../utils/shipmentUtils';
+import { getPackagesCount, envioEsDelCliente, papelDelClienteEnElEnvio, quienPagaElPorte, observacionesVisibles } from '../../utils/shipmentUtils';
 import { compressImage, esImagenComprimible } from '../../utils/imageCompression';
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
@@ -647,7 +647,7 @@ export default function ClientDashboard({
                             </div>
                             <div>
                                 <p class="section-title">Observaciones</p>
-                                <p class="text-bold" style="font-size: 12px; max-width: 150px;">${shipment.observations || '-'}</p>
+                                <p class="text-bold" style="font-size: 12px; max-width: 150px;">${observacionesVisibles(shipment.observations) || '-'}</p>
                             </div>
                             ${shipment.clientReference ? `
                             <div>
