@@ -139,6 +139,29 @@ export const mesDelPresupuesto = (s) => {
     return sDate.toISOString().substring(0, 7);
 };
 
+// ── El Recibo que nace del cierre de presupuestos ───────────────────────────
+//
+// Es el mes entero de un cliente de Presupuesto, no un porte suelto: en la
+// pestaña de cobros del repartidor va aparte, al final y con su color, para que
+// no se le confunda entre los portes de Clientes Habituales (Miguel, 28/09/2026).
+//
+// Se reconoce por lo que le escribe BudgetLiquidationModal al crearlo: el destino
+// 'Cobro de Presupuesto' y las observaciones 'Cobro mensual presupuestos
+// acumulados (Septiembre de 2026). Incluye 3 envíos.'. Vale cualquiera de los
+// dos, por si la oficina retoca uno. El Recibo de Añadir deuda no es de éstos.
+export const esReciboDePresupuesto = (envio) =>
+    envio?.type === 'Recibo' && (
+        String(envio.destination || '').trim().toLowerCase() === 'cobro de presupuesto'
+        || /^cobro mensual presupuestos/i.test(String(envio.observations || '').trim())
+    );
+
+// El periodo que cobra ('Septiembre de 2026', 'Agosto y septiembre de 2026'),
+// sacado de las observaciones. Vacío si no lo traen.
+export const periodoDelReciboDePresupuesto = (envio) => {
+    const entreParentesis = /^cobro mensual presupuestos[^(]*\(([^)]+)\)/i.exec(String(envio?.observations || '').trim());
+    return entreParentesis ? entreParentesis[1].trim() : '';
+};
+
 // El Recibo tal como se guarda. `fotos` son las URL ya subidas del papel firmado
 // y `articulos` las líneas del desglose (ver utils/articulosDeDeuda.js), que
 // pueden no cuadrar con el importe: el importe es lo que se debe; los artículos,
