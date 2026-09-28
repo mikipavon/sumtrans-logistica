@@ -471,7 +471,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
             ? calculateWeightPrice(kilos, weightClientData.tariff, weightClientData.client)
             : 0;
         // Población fuera de los baremos: el porte no baja de 12 € (22/09/2026).
-        const porte = conMinimoFueraDeBaremo(articlesTotal + portePorPeso, getEffectiveBaremo().fueraDeBaremo);
+        const porte = conMinimoFueraDeBaremo(articlesTotal + portePorPeso, cuentaFueraDeBaremo());
         return (porte + commission).toFixed(2);
     };
 
@@ -868,6 +868,11 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     // compartida con la ficha del albarán: editar tiene que dar el mismo precio que dar de alta.
     const getPointBaremo = (city, zip) => baremoDelPunto(city, zip, { tariffs, coverageZones });
     const getEffectiveBaremo = () => baremoDelEnvio(formData, { tariffs, coverageZones });
+    // Si el que paga va por kilos, el porte sale de SU tabla de kilos y el baremo
+    // no pinta nada: ni mínimo de 12 € ni aviso de "Fuera de Baremo". Pasó con un
+    // albarán que pagaba XPO con el remitente en un pueblo fuera de las listas
+    // (28/09/2026): salía Baremo 2, fuera de baremo y a 12 € en vez de su tramo.
+    const cuentaFueraDeBaremo = () => !weightClientData && getEffectiveBaremo().fueraDeBaremo;
 
     // Update existing articles prices when origin or destination changes
     useEffect(() => {
@@ -1236,7 +1241,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         // antes de la ventana de cobro) se para a quien da el alta para que
         // consulte con la oficina el precio, el peso y las medidas. El albarán
         // ya está montado; "Continuar" retoma exactamente donde se quedó.
-        if (getEffectiveBaremo().fueraDeBaremo) {
+        if (cuentaFueraDeBaremo()) {
             setAvisoFueraDeBaremo(shipmentData);
             return;
         }
@@ -2068,7 +2073,18 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                 </div>
                                 <div className="flex justify-between items-center px-1">
                                     {(() => {
-                                        const { baremo, source, fueraDeBaremo } = getEffectiveBaremo();
+                                        const { baremo, source } = getEffectiveBaremo();
+                                        const fueraDeBaremo = cuentaFueraDeBaremo();
+                                        if (weightClientData) return (
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-600">
+                                                    TARIFA POR KILOS
+                                                </span>
+                                                <span className="text-[9px] text-slate-400 font-medium italic">
+                                                    Paga {weightClientData.client?.name}: el baremo no cuenta
+                                                </span>
+                                            </div>
+                                        );
                                         return (
                                             <div className="flex items-center gap-2 flex-wrap">
                                                 <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${baremo === 2 ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
