@@ -46,6 +46,7 @@ import { agregarReceptor, leerReceptores, direccionPorNombre, direccionDeLaChule
 import { getPackagesCount, puedeAsignarloEsteConductor, ordenarParaAsignar, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
 import { agruparPorPagador, hermanosDe } from '../../utils/cobrosDelMismoPagador';
+import { esReciboDePresupuesto, periodoDelReciboDePresupuesto } from '../../utils/reciboDeDeuda';
 import { CLAVE_NORMAS_FICHAJE, normalizarNormasFichaje, motivoSinJornada, puedeFicharAutomaticamente, textoSinJornada, MOTIVOS_BLOQUEO } from '../../utils/normasFichaje';
 import { esElMismoPueblo, normalizarPueblo, puebloDeRutaParaEnvio, estaEnBaremo } from '../../utils/townMatch';
 import { optimizarRuta, parsearCoordenadas } from '../../utils/optimizadorRuta';
@@ -5382,6 +5383,21 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                 const cardPorLinea = (linea) => {
                                     const esPorte = linea.parte === 'porte';
                                     const esDebido = linea.type === 'Portes (Debido)';
+                                    // El recibo del cierre de presupuestos es el mes entero de un
+                                    // cliente, no un porte: va en morado y en su apartado, al final.
+                                    if (esPorte && esReciboDePresupuesto(linea.shipment)) {
+                                        return {
+                                            key: linea.shipment.id + '-' + linea.parte,
+                                            shipment: linea.shipment,
+                                            type: linea.parte,
+                                            label: 'Presupuesto',
+                                            esPresupuesto: true,
+                                            amount: linea.amountDisplay,
+                                            payerName: linea.payerName,
+                                            colorClass: 'border-l-violet-500',
+                                            badgeClass: 'text-violet-700 bg-violet-100',
+                                        };
+                                    }
                                     return {
                                         key: linea.shipment.id + '-' + linea.parte,
                                         shipment: linea.shipment,
@@ -5405,6 +5421,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
 
                                 const porteDebts = visibleDebtItems.filter(item => item.label.includes('Pagado') || item.label.includes('Debido')).sort(sortByPayer);
                                 const reembolsoDebts = visibleDebtItems.filter(item => item.type === 'reembolso').sort(sortByPayer);
+                                const presupuestoDebts = visibleDebtItems.filter(item => item.esPresupuesto).sort(sortByPayer);
 
                                 // El importe que se va a cobrar: el tecleado en la tarjeta o, si no
                                 // se ha tocado, el del albarán.
@@ -5551,7 +5568,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                     return (
                                         <div 
                                             key={item.key} 
-                                            className={`bg-white p-4 rounded-xl shadow-sm border border-l-4 ${item.colorClass} border-slate-100 cursor-pointer hover:border-blue-400 transition-all active:scale-[0.98]`}
+                                            className={`${item.esPresupuesto ? 'bg-violet-50' : 'bg-white'} p-4 rounded-xl shadow-sm border border-l-4 ${item.colorClass} border-slate-100 cursor-pointer hover:border-blue-400 transition-all active:scale-[0.98]`}
                                             onClick={() => {
                                                 setSelectedShipment(shipment);
                                                 setIsDetailsModalOpen(true);
@@ -5563,7 +5580,11 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                         {item.label}
                                                     </span>
                                                     <h4 className="font-bold text-slate-800">{item.payerName}</h4>
-                                                    {shipment.type === 'Recibo' ? (
+                                                    {item.esPresupuesto ? (
+                                                        <p className="text-[10px] text-violet-700 font-bold">
+                                                            {periodoDelReciboDePresupuesto(shipment) || 'Cierre de presupuestos'}
+                                                        </p>
+                                                    ) : shipment.type === 'Recibo' ? (
                                                         <p className="text-[10px] text-slate-400 font-bold italic">Creado por oficina</p>
                                                     ) : (
                                                         (item.payerName !== shipment.client) && (
@@ -5726,6 +5747,18 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                                 </button>
                                                             </div>
                                                         ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {presupuestoDebts.length > 0 && (
+                                                <div>
+                                                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                                        <div className="w-2 h-2 rounded-full bg-violet-500"></div>
+                                                        Presupuestos
+                                                    </h4>
+                                                    <div className="space-y-3">
+                                                        {renderAgrupadas(presupuestoDebts)}
                                                     </div>
                                                 </div>
                                             )}
