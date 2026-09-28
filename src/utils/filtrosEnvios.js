@@ -9,6 +9,7 @@ import { normalizarTexto } from './busqueda';
 import { normalizarPueblo } from './townMatch';
 import { ciudadDeEnvio, quienPagaElPorte } from './shipmentUtils';
 import { baremoDelPunto } from './precioArticulo';
+import { nombresDeLaMadre } from './otrosNombres';
 
 export const SIN_FILTRO = 'all';
 // Valores del filtro de población que no son un pueblo sino todo un baremo.
@@ -119,8 +120,8 @@ export const coincidePoblacion = (envio, poblacion, opciones = {}) =>
 //
 // El tipo no va en el albarán: está en la ficha de quien PAGA el porte (el
 // remitente en porte pagado, el destinatario en porte debido). Se busca la
-// ficha igual que lo hace la exportación a Excel: por nombre, razón social o
-// sucursal, y si la ficha es una sucursal numerada ("123-A") manda la matriz
+// ficha igual que lo hace la exportación a Excel: por nombre, razón social,
+// otro nombre de la ficha o sucursal, y si la ficha es una sucursal numerada ("123-A") manda la matriz
 // ("123"). Sin ficha, vale el tipo que traiga el albarán; sin nada, Habitual,
 // que es la regla que aplica el resto del sistema al calcular cobros.
 
@@ -134,6 +135,13 @@ export const tipoDeFacturacion = (valor) => {
     return 'Clientes Habituales';
 };
 
+/**
+ * Todos los nombres por los que responde una ficha en un albarán: el comercial,
+ * la razón social, los otros nombres apuntados en la ficha y sus sedes.
+ */
+export const nombresDeLaFicha = (ficha) => nombresDeLaMadre(ficha)
+    .concat(Array.isArray(ficha?.branches) ? ficha.branches.map((b) => b?.name) : []);
+
 const indiceDeClientes = (clientes) => {
     const porNombre = new Map();
     const porId = new Map();
@@ -143,9 +151,7 @@ const indiceDeClientes = (clientes) => {
         if (c.id != null) porId.set(String(c.id), c);
         const numero = String(c.clientNumber || '').trim();
         if (numero && !porNumero.has(numero)) porNumero.set(numero, c);
-        const nombres = [c.name, c.legalName]
-            .concat(Array.isArray(c.branches) ? c.branches.map((b) => b?.name) : []);
-        nombres.forEach((n) => {
+        nombresDeLaFicha(c).forEach((n) => {
             const clave = normalizarTexto(n);
             if (clave && !porNombre.has(clave)) porNombre.set(clave, c);
         });
