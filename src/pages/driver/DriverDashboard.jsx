@@ -4601,6 +4601,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                 clients={clients}
                 tariffs={tariffs}
                 coverageZones={coverageZones}
+                defaultCodFee={defaultCodFee}
                 familyOrder={familyOrder}
                 hidePrices={(() => {
                     if (!selectedShipment) return false;

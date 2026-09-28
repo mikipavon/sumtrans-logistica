@@ -1047,6 +1047,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                 articles={articles}
                 tariffs={tariffs}
                 coverageZones={coverageZones}
+                defaultCodFee={defaultCodFee}
                 familyOrder={[]}
                 driverNamePreference={driverNamePreference}
                 // El botón de WhatsApp del modal no hacía nada aquí: sólo el panel del

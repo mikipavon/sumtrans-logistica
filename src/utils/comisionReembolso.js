@@ -46,6 +46,24 @@ export function calcularComisionReembolso(cliente, importeReembolso, comisionPor
 }
 
 /**
+ * La ficha que manda en la comisión: la de quien paga el porte.
+ *
+ * La tarifa de reembolso es de la ficha donde se escribe y no viaja con la
+ * mercancía. La comisión va dentro del porte, así que en un Debido la paga el
+ * destinatario: se mira SU ficha, y si no tiene nada propio (o no tiene ficha)
+ * sale la general de Ajustes. Antes se miraba siempre la del remitente y un
+ * envío de VYPSA a porte debido le cobró a su destinatario el porcentaje con
+ * mínimo de 4 € que VYPSA tiene pactado (28/09/2026).
+ *
+ * @param {string} porteType  'Pagado' o 'Debido'; sin elegir cuenta como Pagado.
+ * @param {object|null} fichaRemitente  Ficha de quien paga cuando va Pagado.
+ * @param {object|null} fichaDestinatario  Ficha del destinatario, si la tiene.
+ */
+export function fichaQuePagaElReembolso(porteType, fichaRemitente, fichaDestinatario) {
+    return (porteType === 'Debido' ? fichaDestinatario : fichaRemitente) || null;
+}
+
+/**
  * Cómo cobra este cliente, en una línea, para enseñarlo en la ficha.
  */
 export function textoComisionReembolso(cliente, comisionPorDefecto = 3) {

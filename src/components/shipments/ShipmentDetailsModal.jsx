@@ -14,9 +14,9 @@ import { getPackagesCount, recogidaDelEnvio, observacionesVisibles, llevaMarcaDe
 
 
 import { Trash2, Plus } from 'lucide-react';
-import { calcularComisionReembolso } from '../../utils/comisionReembolso';
+import { calcularComisionReembolso, fichaQuePagaElReembolso } from '../../utils/comisionReembolso';
 import { baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, conMinimoFueraDeBaremo } from '../../utils/precioArticulo';
-export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1, showAdminControls = false, onDelete = null }) {
+export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1, showAdminControls = false, onDelete = null, defaultCodFee = 3 }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
     const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -200,6 +200,60 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
             setFormData(prev => ({ ...prev, amount: calcularImporteTotal(articulos) }));
         }
     }, [isEditing, formData.porteType, formData.client, formData.destinationName, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip]);
+
+    // La comisión del reembolso va dentro del porte, así que la tarifa que cuenta
+    // es la de quien lo paga: a porte Debido la del destinatario (o la general si
+    // no tiene una suya), nunca la que tenga pactada el remitente. Un envío de
+    // VYPSA a porte debido le cobró a su destinatario el porcentaje con mínimo
+    // de 4 € de VYPSA (28/09/2026).
+    const comisionDelReembolso = (importe) => {
+        if (!(importe > 0)) return 0;
+        const ficha = fichaQuePagaElReembolso(
+            formData.porteType,
+            findBillingClient(formData.client),
+            findBillingClient(formData.destinationName)
+        );
+        return calcularComisionReembolso(ficha, importe, defaultCodFee);
+    };
+
+    // El precio guardado viene como «€16.00» y parseFloat lo da por 0: al cambiar
+    // la comisión de un albarán sin artículos se perdía el porte entero.
+    const importeEnNumero = (valor) =>
+        parseFloat(String(valor ?? '').replace(/[^0-9.,-]+/g, '').replace(',', '.')) || 0;
+
+    // Al corregir quién paga DURANTE la edición, la comisión se rehace con la
+    // ficha del nuevo pagador. Como el efecto de arriba, entrar a editar no toca
+    // nada de lo guardado. Va después de él para corregir sobre el importe que
+    // deje si saltan los dos a la vez.
+    const clavePagadorAnterior = useRef(null);
+    useEffect(() => {
+        if (!isEditing) {
+            clavePagadorAnterior.current = null;
+            return;
+        }
+        const clave = JSON.stringify([formData.porteType || 'Pagado', formData.client, formData.destinationName]);
+        if (clavePagadorAnterior.current === null) {
+            clavePagadorAnterior.current = clave;
+            return;
+        }
+        if (clave === clavePagadorAnterior.current) return;
+        clavePagadorAnterior.current = clave;
+
+        const importe = parseFloat(formData.codAmount) || 0;
+        if (importe <= 0) return;
+        const fee = comisionDelReembolso(importe);
+        setFormData(prev => {
+            const anterior = parseFloat(prev.codCommission) || 0;
+            if (Math.abs(anterior - fee) < 0.005) return prev;
+            // Sólo cambia la parte de la comisión; sin precio puesto ("Pendiente")
+            // el importe se queda como está.
+            const hayPrecio = /\d/.test(String(prev.amount ?? ''));
+            const amount = hayPrecio
+                ? (Math.max(0, importeEnNumero(prev.amount) - anterior) + fee).toFixed(2)
+                : prev.amount;
+            return { ...prev, codCommission: fee > 0 ? fee.toFixed(2) : 0, amount };
+        });
+    }, [isEditing, formData.porteType, formData.client, formData.destinationName]);
 
     useEffect(() => {
         if (shipment) {
@@ -1129,14 +1183,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                                 const val = e.target.value;
                                                 const amount = parseFloat(val) || 0;
                                                 
-                                                const cName = formData.client ? formData.client.toLowerCase().trim() : '';
-                                                const clientObj = (clients || []).find(c =>
-                                                    String(c.name || '').toLowerCase().trim() === cName ||
-                                                    String(c.legalName || '').toLowerCase().trim() === cName
-                                                );
-                                                const fee = calcularComisionReembolso(clientObj, amount);
-                                                
-                                                const currentTotal = parseFloat(formData.amount) || 0;
+                                                const fee = comisionDelReembolso(amount);
+
+                                                const currentTotal = importeEnNumero(formData.amount);
                                                 const prevCommission = parseFloat(formData.codCommission) || 0;
                                                 
                                                 let basePorte = 0;

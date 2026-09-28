@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calcularComisionReembolso, textoComisionReembolso, COMISION_PORCENTAJE } from './comisionReembolso';
+import { calcularComisionReembolso, fichaQuePagaElReembolso, textoComisionReembolso, COMISION_PORCENTAJE } from './comisionReembolso';
 
 describe('calcularComisionReembolso', () => {
     it('sin reembolso no cobra nada, aunque el cliente tenga tarifa', () => {
@@ -50,6 +50,35 @@ describe('calcularComisionReembolso', () => {
 
     it('porcentaje a medio configurar no inventa cobros', () => {
         expect(calcularComisionReembolso({ codFeeMode: COMISION_PORCENTAJE }, 500, 3)).toBe(0);
+    });
+});
+
+describe('fichaQuePagaElReembolso', () => {
+    const vypsa = { name: 'VYPSA', codFeeMode: COMISION_PORCENTAJE, codFeePercent: '3', codFeeMin: '4' };
+    const comision = (porteType, remitente, destinatario, importe, general = 3) =>
+        calcularComisionReembolso(fichaQuePagaElReembolso(porteType, remitente, destinatario), importe, general);
+
+    it('a porte pagado manda la tarifa del remitente', () => {
+        expect(comision('Pagado', vypsa, null, 50)).toBe(4);    // el mínimo
+        expect(comision('Pagado', vypsa, null, 400)).toBe(12);  // el porcentaje
+    });
+
+    it('a porte debido el destinatario no hereda la tarifa del remitente: paga la general', () => {
+        expect(comision('Debido', vypsa, null, 50, '3.00')).toBe(3);
+        expect(comision('Debido', vypsa, null, 400, '3.00')).toBe(3);
+        // Con ficha pero sin tarifa de reembolso propia, igual.
+        expect(comision('Debido', vypsa, { name: 'FERRETERIA LOPEZ', codFee: '' }, 400, '3.50')).toBe(3.5);
+    });
+
+    it('a porte debido, si el destinatario tiene su tarifa, es la suya', () => {
+        const destinatario = { name: 'TALLERES RUIZ', codFeeMode: COMISION_PORCENTAJE, codFeePercent: '2', codFeeMin: '5' };
+        expect(comision('Debido', vypsa, destinatario, 100)).toBe(5);
+        expect(comision('Debido', { codFee: '9' }, vypsa, 400)).toBe(12);
+    });
+
+    it('sin tipo de porte elegido cuenta como pagado', () => {
+        expect(comision('', vypsa, { codFee: '1' }, 50)).toBe(4);
+        expect(comision(undefined, vypsa, { codFee: '1' }, 50)).toBe(4);
     });
 });
 

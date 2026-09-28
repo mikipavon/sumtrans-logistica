@@ -5111,6 +5111,7 @@ function App() {
           articles={articles}
           tariffs={tariffs}
           coverageZones={coverageZones}
+          defaultCodFee={defaultCodFee}
           onCreateShipment={handleAddShipment}
           onUpdateClient={handleUpdateClient}
           onDeleteShipment={suplantandoCliente ? handleDeleteShipmentDesdeElPortal : handleClientDeleteShipment}
