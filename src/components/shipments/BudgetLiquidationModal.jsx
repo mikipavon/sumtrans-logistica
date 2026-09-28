@@ -5,8 +5,8 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { generateDeliveryPDFBlob } from '../../utils/deliveryPdf';
 import { printBudgetSummary } from '../../utils/printBudgetSummary';
-import { fichaDelPagador } from '../../utils/shipmentUtils';
 import { mesDelPresupuesto } from '../../utils/reciboDeDeuda';
+import { albaranesPorCerrar } from '../../utils/cierreDePresupuestos';
 import { entraEnElCierre, nombreDelPeriodo, mesDelCierre, mesPorDefectoDelCierre } from '../../utils/mesesDelCierre';
 
 export default function BudgetLiquidationModal({ isOpen, onClose, shipments, clients, drivers, onCreateShipment, onUpdateMultipleShipments }) {
@@ -23,47 +23,24 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
     // Sumar también lo que quedó sin cerrar de meses anteriores (ver utils/mesesDelCierre.js).
     const [arrastrarAnteriores, setArrastrarAnteriores] = useState(true);
 
-    // Filtrar los envíos de "Presupuesto" que no estén liquidados y correspondan al mes seleccionado
-    const budgetData = useMemo(() => {
-        if (!isOpen) return [];
+    // Lo que paga un cliente de Presupuesto y sigue sin liquidar, de cualquier mes
+    // (ver utils/cierreDePresupuestos.js: manda la ficha de quien paga el porte).
+    const porCerrar = useMemo(
+        () => (isOpen ? albaranesPorCerrar(shipments, clients) : []),
+        [shipments, clients, isOpen]
+    );
 
+    // Una fila por cliente con lo del mes seleccionado. Una deuda apuntada a mano
+    // cuenta en el mes de su fecha escrita (fechaContable), no en el del día en
+    // que se tecleó.
+    const budgetData = useMemo(() => {
         const dataByClient = new Map();
 
-        shipments.forEach(s => {
-            // Ignorar los que ya se han liquidado
-            if (s.budgetLiquidated) return;
-            // Ignorar los envíos que sean en sí mismos recibos de cobro
-            if (s.type === 'Recibo' || s.type === 'Cobro') return;
-
-            // Determinar tipo de facturación
-            let billingType = s.billingType;
-            let clientName = s.client;
-            let clientId = s.clientId;
-
-            if (!billingType) {
-                // Misma regla que getClientInfo en Shipments.jsx: primero por el
-                // enlace con la ficha, luego por nombre (fichaDelPagador).
-                const payingClientName = String(s.porteType === 'Debido' ? (s.destinationName || s.destination) : s.client).trim();
-                const cInfo = fichaDelPagador(s, clients) || {};
-                billingType = cInfo.billingType || 'Clientes Habituales';
-                clientName = cInfo.name || payingClientName;
-                clientId = cInfo.id || s.clientId;
-            }
-
-            if (billingType !== 'Presupuesto') return;
-
-            // Comprobar la fecha. Una deuda apuntada a mano cuenta en el mes de su
-            // fecha escrita (fechaContable), no en el del día en que se tecleó.
-            const mes = mesDelPresupuesto(s);
+        porCerrar.forEach(({ envio, clave, clientId, clientName, mes, importe }) => {
             if (!entraEnElCierre(mes, selectedMonth, arrastrarAnteriores)) return;
 
-            const amount = parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
-            
-            if (amount <= 0) return; // Solo sumar envíos con valor
-
-            const key = clientId || clientName;
-            if (!dataByClient.has(key)) {
-                dataByClient.set(key, {
+            if (!dataByClient.has(clave)) {
+                dataByClient.set(clave, {
                     clientId: clientId,
                     clientName: clientName,
                     shipments: [],
@@ -72,29 +49,23 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                 });
             }
 
-            const clientData = dataByClient.get(key);
-            clientData.shipments.push(s);
+            const clientData = dataByClient.get(clave);
+            clientData.shipments.push(envio);
             clientData.meses.add(mes);
-            clientData.totalAmount += amount;
+            clientData.totalAmount += importe;
         });
 
         return Array.from(dataByClient.values())
             .map(d => ({ ...d, meses: [...d.meses].sort(), periodo: nombreDelPeriodo([...d.meses]) }))
             .sort((a, b) => b.totalAmount - a.totalAmount);
-    }, [shipments, clients, isOpen, selectedMonth, arrastrarAnteriores]);
+    }, [porCerrar, selectedMonth, arrastrarAnteriores]);
 
     // Albaranes de meses anteriores que quedaron sin cerrar. Se cuentan siempre,
     // con la casilla marcada o no, para que se sepa que existen.
-    const deMesesAnteriores = useMemo(() => {
-        if (!isOpen) return 0;
-        return shipments.filter(s => {
-            if (s.budgetLiquidated || s.type === 'Recibo' || s.type === 'Cobro') return false;
-            const tipo = s.billingType || (fichaDelPagador(s, clients) || {}).billingType;
-            if (tipo !== 'Presupuesto') return false;
-            if ((parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0) <= 0) return false;
-            return mesDelPresupuesto(s) < selectedMonth;
-        }).length;
-    }, [shipments, clients, isOpen, selectedMonth]);
+    const deMesesAnteriores = useMemo(
+        () => porCerrar.filter(({ mes }) => mes < selectedMonth).length,
+        [porCerrar, selectedMonth]
+    );
 
     // Presupuestos ya cerrados este mes: para saber a quién se le asignó cada cobro
     // y si ya lo cobró o sigue pendiente, sin tener que recordarlo de memoria.
@@ -126,7 +97,9 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
 
             return {
                 receiptId,
-                clientName: groupShipments[0]?.client || receipt?.client || 'Desconocido',
+                // El recibo lleva el nombre de quien paga; en un porte debido el
+                // `client` del albarán es el remitente.
+                clientName: receipt?.client || groupShipments[0]?.client || 'Desconocido',
                 shipments: groupShipments,
                 periodo: nombreDelPeriodo(groupShipments.map(mesDelPresupuesto)),
                 totalAmount,

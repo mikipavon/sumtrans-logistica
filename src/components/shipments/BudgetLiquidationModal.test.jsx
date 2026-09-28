@@ -66,6 +66,47 @@ describe('BudgetLiquidationModal · deudas apuntadas a mano', () => {
     });
 });
 
+// ── Manda quien paga el porte (JUAN ALBA, 28/09/2026) ──
+describe('BudgetLiquidationModal · porte debido a un cliente de Presupuesto', () => {
+    const fichas = [
+        { id: 1, name: 'JUAN ALBA', billingType: 'Presupuesto' },
+        { id: 2, name: 'AGROCIRILO', billingType: 'Clientes Habituales' },
+    ];
+    const debido = (id, dia) => ({
+        id, type: 'Entrega', client: 'AGROCIRILO', originName: 'AGROCIRILO', destinationName: 'JUAN ALBA',
+        billingType: 'Clientes Habituales', porteType: 'Debido', amount: '€7.00', customAmount: 7,
+        status: 'Entregado', createdAt: `2026-09-${dia}T09:00:00.000Z`,
+    });
+
+    it('sale el destinatario que paga, con sus albaranes en una fila, y el recibo va a su nombre', async () => {
+        const onCreateShipment = vi.fn().mockResolvedValue(true);
+        const onUpdateMultipleShipments = vi.fn().mockResolvedValue(true);
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        render(
+            <BudgetLiquidationModal
+                isOpen onClose={vi.fn()} clients={fichas}
+                drivers={[{ id: 7, name: 'Paco' }]}
+                shipments={[debido('HAB-264', '14'), debido('HAB-726', '28')]}
+                onCreateShipment={onCreateShipment}
+                onUpdateMultipleShipments={onUpdateMultipleShipments}
+            />
+        );
+        elegirMes('2026-09');
+        expect(screen.getByText('JUAN ALBA')).toBeInTheDocument();
+        expect(screen.queryByText('AGROCIRILO')).toBeNull();
+        expect(screen.getByText('2 envíos acumulados')).toBeInTheDocument();
+        expect(screen.getByText('€14.00')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '7' } });
+        fireEvent.click(screen.getByText('Cerrar Mes'));
+        await vi.waitFor(() => expect(onUpdateMultipleShipments).toHaveBeenCalled());
+        expect(onCreateShipment.mock.calls[0][0]).toMatchObject({ type: 'Recibo', client: 'JUAN ALBA', clientId: 1, customAmount: 14 });
+        window.confirm.mockRestore();
+        window.alert.mockRestore();
+    });
+});
+
 // ── Septiembre de 2026, primer mes con la app: se cierra junto con agosto ──
 const albaranDeSeptiembre = {
     id: 'HAB-950', type: 'Entrega', client: 'ISPAVICAR', billingType: 'Presupuesto',

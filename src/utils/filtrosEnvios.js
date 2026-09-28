@@ -170,15 +170,29 @@ export const nombreDelPagador = (envio) =>
  * Tipo de cliente de un albarán, mirando a quien paga. Acepta la lista de
  * clientes o el índice ya montado (para no recorrer la lista por cada envío).
  */
-export const tipoDeClienteDelEnvio = (envio, clientesOIndice) => {
-    const indice = clientesOIndice?.porNombre ? clientesOIndice : indiceDeClientes(clientesOIndice);
+const fichaQuePaga = (envio, indice) => {
     const pagaDestinatario = quienPagaElPorte(envio) === 'Destinatario';
     const nombre = normalizarTexto(nombreDelPagador(envio));
     let ficha = indice.porNombre.get(nombre);
     if (!ficha && !pagaDestinatario && envio?.clientId != null) ficha = indice.porId.get(String(envio.clientId));
-    ficha = fichaMatriz(ficha, indice);
+    return fichaMatriz(ficha, indice) || null;
+};
+
+export const tipoDeClienteDelEnvio = (envio, clientesOIndice) => {
+    const indice = clientesOIndice?.porNombre ? clientesOIndice : indiceDeClientes(clientesOIndice);
+    const pagaDestinatario = quienPagaElPorte(envio) === 'Destinatario';
+    const ficha = fichaQuePaga(envio, indice);
     const delAlbaran = pagaDestinatario ? envio?.destinationBillingType : envio?.billingType;
     return tipoDeFacturacion(ficha?.billingType || ficha?.tipoFacturacion || delAlbaran);
+};
+
+/**
+ * Devuelve una función envío → ficha de quien paga (la matriz si es una sede),
+ * o null si no tiene ficha. Es la misma ficha de la que sale el tipo de cliente.
+ */
+export const buscadorDeFichaQuePaga = (clientes) => {
+    const indice = indiceDeClientes(clientes);
+    return (envio) => fichaQuePaga(envio, indice);
 };
 
 /** Criba por tipo de cliente para un listado entero; monta el índice una sola vez. */
