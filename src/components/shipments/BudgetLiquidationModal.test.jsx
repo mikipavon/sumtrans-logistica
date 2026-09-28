@@ -172,6 +172,12 @@ describe('BudgetLiquidationModal · meses anteriores sin cerrar', () => {
         expect(recibo).toMatchObject({ type: 'Recibo', customAmount: 65 });
         expect(recibo.observations).toContain('Agosto y septiembre de 2026');
         expect(onUpdateMultipleShipments.mock.calls[0][0].map(u => u.id).sort()).toEqual(['HAB-900', 'HAB-901', 'HAB-950']);
+        // Cada albarán se lleva el recibo y el día del cierre: es lo que enseña
+        // la etiqueta PRESP de la lista de Envíos.
+        onUpdateMultipleShipments.mock.calls[0][0].forEach(({ updates }) => {
+            expect(updates).toMatchObject({ budgetLiquidated: true, linkedReceiptId: recibo.id });
+            expect(Number.isNaN(Date.parse(updates.budgetLiquidatedAt))).toBe(false);
+        });
         window.confirm.mockRestore();
         window.alert.mockRestore();
     });

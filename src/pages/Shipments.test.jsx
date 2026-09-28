@@ -86,6 +86,51 @@ describe('Listado de Envíos — el cartel de incidencia', () => {
     });
 });
 
+// ── Que en Envíos se vea qué albaranes entraron ya en un cierre de presupuesto ──
+//
+// Igual que FACT dice cuál está facturado, PRESP dice cuál se cerró en el
+// presupuesto del mes (Miguel, 28/09/2026). No es un botón: el cierre se deshace
+// borrando el recibo, que devuelve todos sus albaranes a la vez.
+
+describe('Listado de Envíos — la etiqueta PRESP', () => {
+    it('la lleva el albarán cerrado, y dice el recibo y el día', () => {
+        montar([envio('HAB-900', 'Entregado', {
+            budgetLiquidated: true, linkedReceiptId: 'RC-123456', budgetLiquidatedAt: '2026-09-28T10:00:00.000Z',
+        })]);
+
+        const etiqueta = within(fila('HAB-900')).getByText('PRESP');
+        expect(etiqueta.tagName).toBe('SPAN');
+        expect(etiqueta.title).toContain('RC-123456');
+        expect(etiqueta.title).toContain('28/9/2026');
+    });
+
+    it('un cierre antiguo, sin fecha guardada, la lleva igual', () => {
+        montar([envio('HAB-901', 'Entregado', { budgetLiquidated: true, linkedReceiptId: 'RC-1' })]);
+
+        expect(within(fila('HAB-901')).getByText('PRESP').title).toBe('Cerrado en presupuesto · recibo RC-1');
+    });
+
+    it('no sale en el que sigue sin cerrar ni en el que se devolvió a pendiente', () => {
+        montar([
+            envio('HAB-902', 'Entregado'),
+            envio('HAB-903', 'Entregado', { budgetLiquidated: false, linkedReceiptId: null }),
+        ]);
+
+        expect(within(fila('HAB-902')).queryByText('PRESP')).toBeNull();
+        expect(within(fila('HAB-903')).queryByText('PRESP')).toBeNull();
+    });
+
+    it('convive con FACT sin pisarla', () => {
+        montar([envio('HAB-904', 'Entregado', {
+            budgetLiquidated: true, linkedReceiptId: 'RC-2', exportedAt: '2026-09-20T10:00:00.000Z',
+        })]);
+
+        const f = fila('HAB-904');
+        expect(within(f).getByText('PRESP')).toBeInTheDocument();
+        expect(within(f).getByText('FACT')).toBeInTheDocument();
+    });
+});
+
 // ── En una recogida la parada es el ORIGEN ──
 //
 // La columna de direcciones pinta en grande y en azul el destino, que es donde
