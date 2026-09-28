@@ -161,10 +161,12 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                 return;
             }
 
-            // 2. Marcar los albaranes como liquidados usando actualización múltiple
+            // 2. Marcar los albaranes como liquidados usando actualización múltiple.
+            // La fecha es la que enseña la etiqueta PRESP de la lista de Envíos.
+            const cerradoEl = new Date().toISOString();
             const updatesArray = clientData.shipments.map(s => ({
                 id: s.id,
-                updates: { budgetLiquidated: true, linkedReceiptId: newShipmentId }
+                updates: { budgetLiquidated: true, linkedReceiptId: newShipmentId, budgetLiquidatedAt: cerradoEl }
             }));
 
             const updated = await onUpdateMultipleShipments(updatesArray);

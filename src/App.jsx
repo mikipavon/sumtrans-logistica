@@ -3519,7 +3519,7 @@ function App() {
       if (presupuestosARevertir.length > 0) {
           const updatesArray = presupuestosARevertir.map(s => ({
               id: s.id,
-              updates: { budgetLiquidated: false, linkedReceiptId: null }
+              updates: { budgetLiquidated: false, linkedReceiptId: null, budgetLiquidatedAt: null }
           }));
           // Ejecutar actualización múltiple local y en la nube
           await handleUpdateMultipleShipments(updatesArray);

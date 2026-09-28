@@ -112,6 +112,16 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         await onUpdateShipment(shipment.id, { ...shipment, exportedAt: null });
     };
 
+    // Lo que dice la etiqueta PRESP al pasar el ratón: en qué recibo se cerró y
+    // cuándo. Los cierres de antes del 28/09/2026 no guardaron la fecha.
+    const textoDelCierreDePresupuesto = (shipment) => {
+        const cuando = shipment.budgetLiquidatedAt
+            ? ` el ${new Date(shipment.budgetLiquidatedAt).toLocaleDateString('es-ES')}`
+            : '';
+        const recibo = shipment.linkedReceiptId ? ` · recibo ${shipment.linkedReceiptId}` : '';
+        return `Cerrado en presupuesto${cuando}${recibo}`;
+    };
+
     // Filters State
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState(typeof initialStatusFilter === 'string' ? initialStatusFilter : 'all');
@@ -707,6 +717,14 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                         className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[8px] font-bold rounded-full uppercase tracking-wider hover:bg-red-100 hover:text-red-700 transition-colors"
                                                         title={`Facturado: ${new Date(shipment.exportedAt).toLocaleString('es-ES')} · pulsa para quitar el FACT`}
                                                     >FACT</button>
+                                                )}
+                                                {/* Cerrado en un presupuesto. No se quita pinchando: quitar uno
+                                                    descuadra el recibo. El cierre se deshace borrando el recibo. */}
+                                                {shipment.budgetLiquidated && shipment.type !== 'Recibo' && shipment.type !== 'Cobro' && (
+                                                    <span
+                                                        className="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 text-[8px] font-bold rounded-full uppercase tracking-wider"
+                                                        title={textoDelCierreDePresupuesto(shipment)}
+                                                    >PRESP</span>
                                                 )}
                                                 {shipment.hasSimplifiedInvoice && (
                                                     <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 text-[8px] font-bold rounded-full uppercase tracking-wider" title="Factura Simplificada emitida — No se exporta a Factusol">SIMPLIFICADA</span>
