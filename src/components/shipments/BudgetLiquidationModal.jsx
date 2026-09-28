@@ -5,7 +5,7 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { generateDeliveryPDFBlob } from '../../utils/deliveryPdf';
 import { printBudgetSummary } from '../../utils/printBudgetSummary';
-import { fichaDelPagador } from '../../utils/shipmentUtils';
+import { fichaDelPagador, porteDelEnvio } from '../../utils/shipmentUtils';
 import { mesDelPresupuesto } from '../../utils/reciboDeDeuda';
 import { entraEnElCierre, nombreDelPeriodo, mesDelCierre, mesPorDefectoDelCierre } from '../../utils/mesesDelCierre';
 
@@ -57,7 +57,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             const mes = mesDelPresupuesto(s);
             if (!entraEnElCierre(mes, selectedMonth, arrastrarAnteriores)) return;
 
-            const amount = parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
+            const amount = porteDelEnvio(s);
             
             if (amount <= 0) return; // Solo sumar envíos con valor
 
@@ -91,7 +91,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             if (s.budgetLiquidated || s.type === 'Recibo' || s.type === 'Cobro') return false;
             const tipo = s.billingType || (fichaDelPagador(s, clients) || {}).billingType;
             if (tipo !== 'Presupuesto') return false;
-            if ((parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0) <= 0) return false;
+            if (porteDelEnvio(s) <= 0) return false;
             return mesDelPresupuesto(s) < selectedMonth;
         }).length;
     }, [shipments, clients, isOpen, selectedMonth]);
@@ -122,7 +122,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             const driver = receipt ? (drivers || []).find(d => String(d.id) === String(receipt.assignedDriverId)) : null;
             const totalAmount = receipt
                 ? (parseFloat(receipt.customAmount) > 0 ? parseFloat(receipt.customAmount) : parseFloat(receipt.amount)) || 0
-                : groupShipments.reduce((sum, s) => sum + (parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0), 0);
+                : groupShipments.reduce((sum, s) => sum + porteDelEnvio(s), 0);
 
             return {
                 receiptId,
@@ -213,7 +213,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             const date = s.createdAt ? new Date(s.createdAt).toLocaleDateString('es-ES') : (s.date || '');
             const origin = s.originName ? s.originName : (s.originCity ? `${s.originCity} (${s.originZip || ''})` : (s.origin || ''));
             const dest = s.destinationName ? s.destinationName : (s.destinationCity ? `${s.destinationCity} (${s.destinationZip || ''})` : (s.destination || ''));
-            const amount = parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
+            const amount = porteDelEnvio(s);
             const articlesInfo = Array.isArray(s.articles) 
                 ? s.articles.map(a => `${a.quantity}x ${a.description}`).join(' | ') 
                 : '';

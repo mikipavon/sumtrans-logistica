@@ -1,11 +1,4 @@
-const parseAmount = (val) => {
-    if (!val) return 0;
-    if (typeof val === 'number') return val;
-    const str = val.toString().replace(/[^0-9,.-]+/g, "");
-    const normalized = str.includes(',') && !str.includes('.') ? str.replace(',', '.') : str;
-    const num = parseFloat(normalized);
-    return isNaN(num) ? 0 : num;
-};
+import { porteDelEnvio } from './shipmentUtils';
 
 const formatMonthLabel = (monthStr) => {
     if (!monthStr) return '';
@@ -35,7 +28,7 @@ export const printBudgetSummary = (clientData, month, status = null) => {
         const desc = Array.isArray(s.articles) && s.articles.length > 0
             ? s.articles.map(a => a.name || a.description).filter(Boolean).join(', ')
             : (s.observations || 'Portes');
-        return { id: s.id, date, dest, desc, amount: parseAmount(s.amount) };
+        return { id: s.id, date, dest, desc, amount: porteDelEnvio(s) };
     });
 
     const total = clientData.totalAmount != null ? clientData.totalAmount : rows.reduce((sum, r) => sum + r.amount, 0);

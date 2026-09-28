@@ -10,7 +10,7 @@ import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import CameraCaptureModal from '../CameraCaptureModal';
 import CityAutocomplete from '../CityAutocomplete';
-import { getPackagesCount, recogidaDelEnvio, observacionesVisibles, llevaMarcaDeCobroPendiente } from '../../utils/shipmentUtils';
+import { getPackagesCount, recogidaDelEnvio, observacionesVisibles, llevaMarcaDeCobroPendiente, precioDeLaFicha } from '../../utils/shipmentUtils';
 
 
 import { Trash2, Plus } from 'lucide-react';
@@ -217,6 +217,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
             setWeightKg(shipment.weightKg || '');
             setFormData({
                 ...shipment,
+                // Si el repartidor cobró otro importe, ése es el precio del albarán
+                // (HAB-642: la ficha decía 7 € y la Cuenta de Javito 12 €).
+                amount: precioDeLaFicha(shipment),
                 packages: packagesText
             });
             setIsEditing(false);
@@ -893,7 +896,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             // Si la vacía, se vuelve al importe que ya tenía el albarán:
                                             // borrar la casilla no puede dejar el porte a cero.
                                             setPriceOverride(val === '' ? null : val);
-                                            handleChange('amount', val === '' ? (shipment.amount ?? '') : val);
+                                            handleChange('amount', val === '' ? (precioDeLaFicha(shipment) ?? '') : val);
                                         }}
                                         className={`w-full text-sm border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none font-bold ${priceOverride === null ? 'text-slate-400 italic' : 'text-slate-700'}`}
                                     />

@@ -51,7 +51,7 @@ import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNom
 import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre, hayAutoLoginPendiente } from './utils/ventanaPadre';
 import { CLAVE_HORARIO_REPARTO, HORARIO_REPARTO_POR_DEFECTO, normalizarHorarioReparto } from './utils/turnos';
-import { getIrregularReasons, fichaDelDestinatario } from './utils/shipmentUtils';
+import { getIrregularReasons, fichaDelDestinatario, textoDelPorte } from './utils/shipmentUtils';
 import {
   fusionarConocimiento,
   claveAprendizaje,
@@ -883,7 +883,7 @@ function App() {
         s.destinationName || '',
         s.destinationZip || '',
         s.porteType || '',
-        s.amount || '0',
+        textoDelPorte(s) || '0',
         s.hasCod ? (s.codAmount || '0') : '0',
         s.status || '',
         driver ? driver.name : '',

@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
-import { getPackagesCount, intervinoConductor, importeParaMostrar, poblacionYCalle, fichaDelPagador, quienPagaElPorte } from '../utils/shipmentUtils';
+import { getPackagesCount, intervinoConductor, porteDelEnvio, textoDelPorte, poblacionYCalle, fichaDelPagador, quienPagaElPorte } from '../utils/shipmentUtils';
 import { coincideBusqueda, coincideEnCampos } from '../utils/busqueda';
 import { ahoraParaInputLocal, conHoraRapida, HORAS_RAPIDAS_DE_ASIGNACION } from '../utils/horaDeAsignacion';
 import { compartirAlbaranPorWhatsApp } from '../utils/mensajeJustificante';
@@ -233,8 +233,9 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
                 // Handle Amounts/Numbers
                 if (sortConfig.key === 'amount') {
-                    const cleanA = parseFloat(String(aVal || '0').replace(/[^0-9.-]/g, '')) || 0;
-                    const cleanB = parseFloat(String(bVal || '0').replace(/[^0-9.-]/g, '')) || 0;
+                    // El mismo importe que pinta la columna (ver porteDelEnvio)
+                    const cleanA = porteDelEnvio(a);
+                    const cleanB = porteDelEnvio(b);
                     return sortConfig.direction === 'asc' ? cleanA - cleanB : cleanB - cleanA;
                 }
 
@@ -861,7 +862,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                         </td>
                                         <td className="px-4 py-3 text-right whitespace-nowrap">
                                             <div className="flex flex-col items-end gap-1">
-                                                <span className="text-sm font-bold text-slate-700 whitespace-nowrap">{importeParaMostrar(shipment.amount)}</span>
+                                                <span className="text-sm font-bold text-slate-700 whitespace-nowrap">{textoDelPorte(shipment)}</span>
                                                 {shipment.hasCod && parseFloat(shipment.codAmount || 0) > 0 && (
                                                     <span
                                                         className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap leading-none ${
@@ -1500,7 +1501,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             'Z Cantidad Galary', 'Z Posicion de la linea',
                                         ];
                                         const albRows = shipmentsToExport.map((s, index) => {
-                                            const amount = parseFloat((s.amount || '0').toString().replace(/[^0-9.]/g, '')) || 0;
+                                            const amount = porteDelEnvio(s);
                                             const bTypeLower = getBillingType(s).toLowerCase();
                                             const isPresupuesto = bTypeLower.includes('presupuesto');
                                             const vatRate = isPresupuesto ? 0 : 21;
@@ -1576,7 +1577,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 docNumberStr = docNumberStr.slice(-6);
                                             }
                                             const documentNumber = docNumberStr ? parseInt(docNumberStr, 10) : (index + 1);
-                                            const amount = parseFloat((s.amount || '0').toString().replace(/[^0-9.]/g, '')) || 0;
+                                            const amount = porteDelEnvio(s);
                                             const hasReembolso = s.hasCod || parseFloat(String(s.codAmount || '0').replace(/[^0-9.-]/g, '')) > 0;
                                             const reembolsoText = hasReembolso ? ' (+ Reembolso)' : '';
 
