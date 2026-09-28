@@ -17,7 +17,7 @@ import { compressImage, esImagenComprimible } from '../../utils/imageCompression
 import ImportExcelShipments from '../../components/clients/ImportExcelShipments';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { avisarAlPadre, estamosEmbebidos } from '../../utils/ventanaPadre';
-import { calcularComisionReembolso } from '../../utils/comisionReembolso';
+import { calcularComisionReembolso, fichaQuePagaElReembolso } from '../../utils/comisionReembolso';
 import { elClientePuedeTocarlo, porQueElClienteNoPuedeTocarlo } from '../../utils/envioDelPortal';
 import { elPortalAdmiteVariosArticulos, anadirLinea, quitarLinea, lineasDelEnvio, bultosDeLosArticulos, valorarLineas } from '../../utils/articulosDelPortal';
 
@@ -47,7 +47,8 @@ export default function ClientDashboard({
     onDeleteShipment,
     onUpdateShipment,
     pendingQueueCount = 0,
-    isSyncingQueue = false
+    isSyncingQueue = false,
+    defaultCodFee = 3
 }) {
     const [activeTab, setActiveTab] = useState('shipments'); // 'shipments', 'create'
     const [selectedShipment, setSelectedShipment] = useState(null);
@@ -465,7 +466,18 @@ export default function ClientDashboard({
         // oficina (la ficha la enseña como "Comisión (Incluida)"). Aquí no se
         // sumaba y SUM-1003 salió a 7 € con 3 € de comisión que nadie cobraba.
         // Sin precio de tarifa se queda en "Pendiente" para que la oficina lo vea.
-        const codFee = calcularComisionReembolso(client, amountNum);
+        // La tarifa de reembolso de la ficha es para lo que paga este cliente. A
+        // porte Debido paga el destinatario: la suya si la oficina la ve en sus
+        // fichas (el cliente sólo ve la propia) y, si no, la general de Ajustes.
+        const nombreDestino = normalizarTexto(newDestinationName || '');
+        const fichaDestinatario = nombreDestino
+            ? (allClients || []).find(c =>
+                normalizarTexto(c.name || '') === nombreDestino ||
+                normalizarTexto(c.legalName || '') === nombreDestino) || null
+            : null;
+        const codFee = calcularComisionReembolso(
+            fichaQuePagaElReembolso(porteType, client, fichaDestinatario), amountNum, defaultCodFee
+        );
         const finalAmount = totalPrice > 0 ? totalPrice + codFee : 0;
 
         // Lo que el cliente decide en el formulario. Al modificar es lo único que

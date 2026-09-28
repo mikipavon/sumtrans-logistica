@@ -10,7 +10,7 @@ import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
 import { resolveOwnerAgencyId, getOwnerLabel } from '../../utils/agencyOwnership';
 import CityAutocomplete from '../CityAutocomplete';
 import { supabase } from '../../lib/supabase';
-import { calcularComisionReembolso } from '../../utils/comisionReembolso';
+import { calcularComisionReembolso, fichaQuePagaElReembolso } from '../../utils/comisionReembolso';
 import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { precioDeLaRecogida } from '../../utils/precioDeLaRecogida';
 import { ahoraParaInputLocal, conHoraRapida, HORAS_RAPIDAS_DE_ASIGNACION } from '../../utils/horaDeAsignacion';
@@ -371,6 +371,19 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     const hayOtroPagador = String(formData.payerName || '').trim().length > 0;
     const nombrePagadorRemitente = hayOtroPagador ? formData.payerName.trim() : formData.clientName;
     const parentPagadorRemitente = hayOtroPagador ? (formData._payerParentClientId || null) : formData._parentClientId;
+
+    // La comisión del reembolso va dentro del porte, así que la tarifa que cuenta
+    // es la de quien lo paga: a porte Debido la del destinatario (o la general si
+    // no tiene una suya), nunca la que tenga pactada el remitente.
+    const comisionDelReembolso = (importe) => {
+        if (!(importe > 0)) return 0;
+        const ficha = fichaQuePagaElReembolso(
+            formData.porteType,
+            resolveBillingClient(nombrePagadorRemitente, parentPagadorRemitente),
+            resolveBillingClient(formData.destinationName, formData._destParentClientId)
+        );
+        return calcularComisionReembolso(ficha, importe, defaultCodFee);
+    };
 
     const shouldHidePrices = useMemo(() => {
         if (!isDriver) return false;
@@ -893,6 +906,26 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
             setFormData(prev => ({ ...prev, amount: importeSegunArticulos(prev, articulos) }));
         }
     }, [formData.porteType, formData.clientName, formData.payerName, formData._payerParentClientId, formData.destinationName, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip, tariffs, coverageZones, selectedArticles]);
+
+    // Si cambia quién paga (Pagado ↔ Debido, otro remitente, otro destinatario)
+    // con el reembolso ya tecleado, la comisión se rehace con la ficha del nuevo
+    // pagador. Va DESPUÉS del efecto de los precios para que, si saltan los dos a
+    // la vez, éste corrija sobre el importe que aquél acaba de dejar.
+    useEffect(() => {
+        if (!isOpen) return;
+        const importe = parseFloat(formData.codAmount) || 0;
+        if (importe <= 0) return;
+        const fee = comisionDelReembolso(importe);
+        setFormData(prev => {
+            const anterior = parseFloat(prev.codCommission) || 0;
+            if (Math.abs(anterior - fee) < 0.005) return prev;
+            // Sólo se cambia la parte de la comisión: el porte que hubiera
+            // (artículos, kilos, precio fijado en la recogida) se queda igual.
+            const total = parseFloat(prev.amount);
+            const amount = Number.isFinite(total) ? (Math.max(0, total - anterior) + fee).toFixed(2) : prev.amount;
+            return { ...prev, codCommission: fee, amount };
+        });
+    }, [isOpen, formData.porteType, formData.clientName, formData.payerName, formData._payerParentClientId, formData._parentClientId, formData.destinationName, formData._destParentClientId, formData.codAmount, clients, defaultCodFee]);
 
     const addArticle = (id, quantity) => {
         if (!id || quantity <= 0) return;
@@ -2058,7 +2091,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                     <Euro className="absolute left-3 top-1/2 -translate-y-1/2 text-red-400" size={16} />
                                     <input type="number" step="0.01" placeholder="REEMBOLSO 0.00" className={inputClass + " pl-9 border-red-200 focus:border-red-500 focus:ring-red-500/20"} value={formData.codAmount} onChange={(e) => {
                                         const val = e.target.value; const amount = parseFloat(val) || 0;
-                                        let fee = 0; if (amount > 0) { const client = resolveBillingClient(nombrePagadorRemitente, parentPagadorRemitente); fee = calcularComisionReembolso(client, amount, defaultCodFee); }
+                                        const fee = comisionDelReembolso(amount);
                                         const prevCommission = parseFloat(formData.codCommission) || 0;
                                         const currentTotal = parseFloat(formData.amount) || 0;
                                         const basePorte = selectedArticles.length > 0 ? selectedArticles.reduce((sum, item) => sum + item.totalPrice, 0) : Math.max(0, currentTotal - prevCommission);
