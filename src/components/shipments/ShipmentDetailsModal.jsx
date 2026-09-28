@@ -117,7 +117,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
             ? calculateWeightPrice(kilos, weightClientData.tariff, weightClientData.client)
             : 0;
         // Población fuera de los baremos: el porte no baja de 12 € (22/09/2026).
-        const porte = conMinimoFueraDeBaremo(articlesTotal + portePorPeso, baremoActual().fueraDeBaremo);
+        // Si paga un cliente por kilos manda su tabla y el baremo no cuenta, igual
+        // que en el alta (caso XPO con remitente fuera de las listas, 28/09/2026).
+        const porte = conMinimoFueraDeBaremo(articlesTotal + portePorPeso, !weightClientData && baremoActual().fueraDeBaremo);
         return (porte + commission).toFixed(2);
     };
 

@@ -325,6 +325,45 @@ describe('CreateShipmentModal — aviso de población fuera de baremo', () => {
         expect(screen.queryByText('¡Fuera de Baremo!')).not.toBeInTheDocument();
     });
 
+    // 28/09/2026: albarán que paga XPO (tarifa por kilos) con el remitente en un
+    // pueblo fuera de las listas. Salía Baremo 2, fuera de baremo y a 12 €; lo
+    // que manda es el tramo de kilos de XPO.
+    it('si paga un cliente por kilos, el baremo no cuenta: su tramo, sin mínimo ni aviso', async () => {
+        const XPO = { id: 77, name: 'XPO LOGISTICS', status: 'approved', tariffType: 'Por Kilos', weightTariff: [{ maxKg: 50, price: 6 }, { maxKg: 900, price: 58.51 }] };
+        render(
+            <CreateShipmentModal
+                isOpen
+                onClose={vi.fn()}
+                onSave={vi.fn()}
+                clients={[XPO]}
+                allPoblaciones={['Montilla', 'Lucena']}
+                tariffs={[]}
+                articles={ARTICULOS}
+                defaultCodFee={0}
+                familyOrder={[]}
+                coverageZones={[]}
+                allShipments={[]}
+                prefillData={{ ...fueraDeBaremo, type: 'Envío', originCity: 'Pueblo Inventado', originZip: '29999', destinationCity: 'Lucena', destinationZip: '14900', payerName: 'XPO LOGISTICS', _payerParentClientId: 77, amount: '' }}
+            />
+        );
+        expect(screen.getByText('TARIFA POR KILOS', { selector: 'span.rounded' })).toBeInTheDocument();
+        expect(screen.queryByText('FUERA DE BAREMO · MÍN. 12 €')).not.toBeInTheDocument();
+        expect(screen.queryByText('BAREMO 2')).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByPlaceholderText('Kg'), { target: { value: '10' } });
+        expect(screen.getByPlaceholderText('PRECIO FINAL 0.00').value).toBe('6.00');
+
+        // Un cliente por kilos necesita al menos un artículo para generar.
+        const sel = desplegable();
+        fireEvent.change(sel, { target: { value: '1774442159060' } });
+        fireEvent.blur(sel);
+        expect(screen.getByPlaceholderText('PRECIO FINAL 0.00').value).toBe('6.00');
+
+        generar();
+        await waitFor(() => expect(screen.getByText('Atribución de Cobro al Contado')).toBeInTheDocument());
+        expect(screen.queryByText('¡Fuera de Baremo!')).not.toBeInTheDocument();
+    });
+
     it('Volver cierra el aviso y no abre nada más', async () => {
         abrir();
         generar();
