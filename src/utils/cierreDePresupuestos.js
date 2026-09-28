@@ -23,13 +23,11 @@ import { mesDelPresupuesto } from './reciboDeDeuda';
 const porteDelEnvio = (envio) =>
     parseFloat(String(envio?.amount || '0').replace(/[^0-9.-]/g, '')) || 0;
 
-/**
- * ¿El porte ya lo cobró alguien en mano? Al entregar, el porte de un cliente de
- * Presupuesto se marca pagado sin que nadie cobre (va al cierre); sólo un cobro
- * de verdad apunta quién lo cobró. Ese no puede volver a pedirse en el cierre.
- */
-export const porteCobradoEnMano = (envio) =>
-    Boolean(envio?.portePaid) && envio?.porteCollectedById != null && envio.porteCollectedById !== '';
+// No se mira si el porte consta cobrado. El alta de un cliente de Presupuesto lo
+// guarda «pagado» y con el repartidor que lo tecleó como cobrador, sin que nadie
+// cobre nada (finalizeSubmit en CreateShipmentModal), y la entrega hace lo mismo.
+// Descartando los que llevan cobrador, a AGRO VELASCO le faltaban en el cierre
+// los albaranes que dieron de alta los repartidores (28/09/2026).
 
 /**
  * Los albaranes sin liquidar que paga un cliente de Presupuesto, de cualquier
@@ -44,7 +42,6 @@ export const albaranesPorCerrar = (envios, clientes) => {
         // Los recibos de cobro no son albaranes.
         if (envio.type === 'Recibo' || envio.type === 'Cobro') return;
         if (!esDePresupuesto(envio)) return;
-        if (porteCobradoEnMano(envio)) return;
         const importe = porteDelEnvio(envio);
         if (importe <= 0) return; // Sólo los que tienen precio
         const ficha = fichaDe(envio);
