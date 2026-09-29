@@ -86,7 +86,7 @@ export const destinoDelAlbaran = (tipo) => {
     return 'queda en Cobros Pendientes sin repartidor, para pasárselo a quien lo cobre';
 };
 
-export const construirAlbaranAtrasado = ({ id, cliente, importe, concepto, fecha, fotos = [], articulos = [] }) => {
+export const construirAlbaranAtrasado = ({ id, cliente, importe, concepto, fecha, fotos = [], articulos = [], remitente = '', destinatario = '' }) => {
     const total = Math.round(Number(importe) * 100) / 100;
     const tipo = tipoDeCobroDelCliente(cliente);
     return {
@@ -99,8 +99,9 @@ export const construirAlbaranAtrasado = ({ id, cliente, importe, concepto, fecha
         // y, si no hay, por nombre; los albaranes del alta no lo llevan, y con él
         // éste saldría en una fila aparte del resto de albaranes del cliente.
         clientId: null,
-        originName: cliente.name,
-        destinationName: cliente.name,
+        // Remitente y destinatario del papel; si no se escriben, el cliente.
+        originName: String(remitente || '').trim() || cliente.name,
+        destinationName: String(destinatario || '').trim() || cliente.name,
         destination: concepto,
         date: fechaDeAlbaran(fecha),
         fechaContable: fecha || hoyParaElCampo(),

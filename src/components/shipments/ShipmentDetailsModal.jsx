@@ -10,7 +10,7 @@ import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import CameraCaptureModal from '../CameraCaptureModal';
 import CityAutocomplete from '../CityAutocomplete';
-import { getPackagesCount, recogidaDelEnvio, observacionesVisibles, llevaMarcaDeCobroPendiente } from '../../utils/shipmentUtils';
+import { getPackagesCount, recogidaDelEnvio, observacionesVisibles, observacionesParaEditar, llevaMarcaDeCobroPendiente } from '../../utils/shipmentUtils';
 
 
 import { Trash2, Plus } from 'lucide-react';
@@ -1389,7 +1389,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     Observaciones
                                 </span>
                                 <textarea
-                                    value={observacionesVisibles(formData.observations)}
+                                    value={observacionesParaEditar(formData.observations)}
                                     onChange={(e) => handleChange('observations',
                                         llevaMarcaDeCobroPendiente(formData.observations)
                                             ? `[COBRO PENDIENTE] ${e.target.value}`
