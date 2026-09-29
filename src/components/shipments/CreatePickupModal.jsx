@@ -1,4 +1,4 @@
-import { X, Building2, Package, FileText, MapPin, Loader2, Mic, MicOff, Truck, Phone, Euro, User } from 'lucide-react';
+import { X, Building2, Package, FileText, MapPin, Loader2, Truck, Phone, Euro, User } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 import CityAutocomplete from '../CityAutocomplete';
@@ -54,50 +54,6 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [filteredDestinations, setFilteredDestinations] = useState([]);
     const [showDestSuggestions, setShowDestSuggestions] = useState(false);
-    const [listeningField, setListeningField] = useState(null);
-
-    const startListening = (field, targetKey) => {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            alert("Tu navegador no soporta el reconocimiento de voz.");
-            return;
-        }
-
-        try {
-            const recognition = new SpeechRecognition();
-            recognition.lang = 'es-ES';
-            recognition.continuous = false;
-            recognition.interimResults = false;
-
-            recognition.onstart = () => setListeningField(field);
-            recognition.onend = () => setListeningField(null);
-            recognition.onerror = () => setListeningField(null);
-            
-            recognition.onresult = (event) => {
-                const transcript = event.results[0][0].transcript.replace(/[.,;:]$/, '').trim();
-                setFormData(prev => {
-                    const newValue = prev[targetKey] ? `${prev[targetKey]} ${transcript}` : transcript;
-                    
-                    if (targetKey === 'clientName') {
-                        setTimeout(() => updateSuggestions(newValue), 50);
-                    }
-                    if (targetKey === 'destinationName') {
-                        setTimeout(() => updateDestSuggestions(newValue), 50);
-                    }
-                    
-                    return {
-                        ...prev,
-                        [targetKey]: newValue
-                    };
-                });
-            };
-
-            recognition.start();
-        } catch (error) {
-            console.error("Speech Recognition Error:", error);
-            setListeningField(null);
-        }
-    };
 
     useEffect(() => {
         if (!isOpen) {
@@ -460,14 +416,6 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                             <div className="relative">
                                 <div className="flex justify-between items-center mb-1">
                                     <label className={labelClass + " mb-0"}>Remitente / Empresa</label>
-                                    <button
-                                        type="button"
-                                        onClick={() => startListening('sender', 'clientName')}
-                                        className={`p-1 rounded-md transition-colors ${listeningField === 'sender' ? 'bg-red-100 text-red-600 animate-pulse' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
-                                        title="Hablar para escribir"
-                                    >
-                                        {listeningField === 'sender' ? <MicOff size={14} /> : <Mic size={14} />}
-                                    </button>
                                 </div>
                                 <input
                                     type="text"
@@ -503,14 +451,6 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                             <div>
                                 <div className="flex justify-between items-center mb-1">
                                     <label className={labelClass + " mb-0"}>Dirección de Recogida</label>
-                                    <button
-                                        type="button"
-                                        onClick={() => startListening('address', 'originAddress')}
-                                        className={`p-1 rounded-md transition-colors ${listeningField === 'address' ? 'bg-red-100 text-red-600 animate-pulse' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
-                                        title="Hablar para escribir"
-                                    >
-                                        {listeningField === 'address' ? <MicOff size={14} /> : <Mic size={14} />}
-                                    </button>
                                 </div>
                                 <input
                                     type="text"
@@ -569,14 +509,6 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                             <div>
                                 <div className="flex justify-between items-center mb-1">
                                     <label className={labelClass + " mb-0"}>Teléfono</label>
-                                    <button
-                                        type="button"
-                                        onClick={() => startListening('phone', 'originPhone')}
-                                        className={`p-1 rounded-md transition-colors ${listeningField === 'phone' ? 'bg-red-100 text-red-600 animate-pulse' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
-                                        title="Hablar para escribir"
-                                    >
-                                        {listeningField === 'phone' ? <MicOff size={14} /> : <Mic size={14} />}
-                                    </button>
                                 </div>
                                 <div className="relative">
                                     <Phone size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -597,14 +529,6 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                                 <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
                                     <FileText size={14} /> Observaciones
                                 </h4>
-                                <button
-                                    type="button"
-                                    onClick={() => startListening('observations', 'observations')}
-                                    className={`p-1 rounded-md transition-colors ${listeningField === 'observations' ? 'bg-red-100 text-red-600 animate-pulse' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
-                                    title="Hablar para escribir"
-                                >
-                                    {listeningField === 'observations' ? <MicOff size={14} /> : <Mic size={14} />}
-                                </button>
                             </div>
                             <textarea
                                 className="flex-1 w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 resize-none h-24"
@@ -628,14 +552,6 @@ export default function CreatePickupModal({ isOpen, onClose, onSave, clients, al
                                 <div className="relative">
                                     <div className="flex justify-between items-center mb-1">
                                         <label className={labelClass + " mb-0"}>Nombre del destinatario</label>
-                                        <button
-                                            type="button"
-                                            onClick={() => startListening('destination', 'destinationName')}
-                                            className={`p-1 rounded-md transition-colors ${listeningField === 'destination' ? 'bg-red-100 text-red-600 animate-pulse' : 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'}`}
-                                            title="Hablar para escribir"
-                                        >
-                                            {listeningField === 'destination' ? <MicOff size={14} /> : <Mic size={14} />}
-                                        </button>
                                     </div>
                                     <input
                                         type="text"
