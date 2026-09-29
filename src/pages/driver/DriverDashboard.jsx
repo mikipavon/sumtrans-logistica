@@ -2656,7 +2656,6 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     // AI / Smart Features State
     const [isOptimizing, setIsOptimizing] = useState(false);
     const [showRouteMap, setShowRouteMap] = useState(false);
-    const [routeOptimized, setRouteOptimized] = useState(false);
     const [learningMessage, setLearningMessage] = useState(null);
     // A qué altura cae el cartel del optimizador. Iba clavado a top-24 y se plantaba
     // ENCIMA de las pestañas (Entregas, C.Pendientes), que no se podían tocar mientras
@@ -3561,7 +3560,6 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                 setLocalRoute(orden);
                 setParadasDeCamino(deCamino);
                 setParadasAplazadas(aplazadas);
-                setRouteOptimized(true);
                 guardarOrdenEnLaNube(orden);
                 // El resumen NO se le enseña al conductor: a él le vale con ver el
                 // orden que le ha quedado. Es información de diagnóstico —con qué ruta
@@ -4846,15 +4844,17 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                         </>
                                     )}
                                 </button>
-                                {routeOptimized && !isOptimizing && (
-                                    <button
-                                        onClick={() => setShowRouteMap(true)}
-                                        className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-500/30"
-                                    >
-                                        <MapIcon size={14} />
-                                        Ver Mapa
-                                    </button>
-                                )}
+                                {/* Siempre a mano: el mapa pinta la lista en el orden que tenga,
+                                    optimizada o no. Sólo se apaga mientras se recalcula. */}
+                                <button
+                                    onClick={() => setShowRouteMap(true)}
+                                    disabled={isOptimizing}
+                                    className={`flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors shadow-sm
+                                        ${isOptimizing ? 'bg-emerald-100 text-emerald-400' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/30'}`}
+                                >
+                                    <MapIcon size={14} />
+                                    Ver Mapa
+                                </button>
                             </div>
 
                         </div>
