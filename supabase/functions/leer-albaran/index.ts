@@ -101,14 +101,15 @@ Devuelve SOLO un objeto JSON, sin texto alrededor, con estas claves:
   "porte": "Pagado" si el papel dice pagado/pagados, "Debido" si dice debido/debidos, "" si no se ve,
   "servicio": copia tal cual lo que pone en la línea "Servicio" y las siglas que van en su misma franja, también las que vienen en un recuadro negro con letras blancas a la derecha (p. ej. "PAQUETERIA Plata DAC"), "" si no hay,
   "letraRecuadro": la letra grande que hay dentro del recuadro de abajo a la izquierda, junto a "TIPO DE PORTES" y bajo "TOTAL" (en TXT suele ser "R"), "" si el recuadro está vacío o no existe,
-  "total": el importe de la casilla "TOTAL" en euros (número), null si no hay
+  "total": el importe de la casilla "TOTAL" en euros (número), null si no hay,
+  "textoRecibi": copia tal cual todo lo que hay impreso o escrito a mano dentro del recuadro "Recibí Conforme" / "Fecha de entrega" y a su lado (p. ej. "DEVOLVER ALBARAN REMITENTE"), sin contar los rótulos "Recibí Conforme (Nombre, DNI, Firma y Sello)", "Fecha" y "Hora"; "" si no hay nada más
 }
 
-Las tres últimas claves son sólo para COPIAR lo que se ve impreso, sin interpretarlo.
+Las cuatro últimas claves son sólo para COPIAR lo que se ve, sin interpretarlo.
 
 Cuándo "devolverFirmado" es true:
 - En TXT aparece "DAC" (Devolución de Albarán/Documentación firmada), normalmente junto al servicio.
-- En XPO aparece "DEVOLVER ALBARÁN" impreso junto a "Fecha de entrega" / "Recibí Conforme", a veces con "firmado" escrito a mano al lado. Ojo: "Dev. Alb. Rtte" es sólo el nombre de una casilla de XPO y NO cuenta.
+- En XPO aparece "DEVOLVER ALBARÁN" impreso junto a "Fecha de entrega" / "Recibí Conforme", a veces con "REMITENTE" detrás o "firmado" escrito a mano al lado. Ojo: la casilla pequeña "Dev. Alb. Rtte" (con SI/NO) sola NO cuenta, pero no quita que el "DEVOLVER ALBARÁN" impreso junto al Recibí sí cuente.
 - Cualquier otra agencia que diga lo mismo con otras palabras ("retorno de albarán firmado", "devolver documentación firmada", "albarán conformado").
 - La casilla "Recibí (Sello, Firma y D.N.I.)" la llevan TODOS los albaranes para que firme quien recibe: eso sola NO es devolver firmado.
 

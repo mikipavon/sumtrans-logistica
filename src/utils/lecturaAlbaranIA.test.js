@@ -47,6 +47,17 @@ describe('normalizarCamposIA', () => {
         expect(normalizarCamposIA({ servicio: 'CADACUAL' }).devolverFirmado).toBe(false);
     });
 
+    it('XPO con DEVOLVER ALBARAN REMITENTE junto al Recibí: devolver firmado aunque el modelo diga que no (CANTERA EL GALLO)', () => {
+        const r = normalizarCamposIA({ devolverFirmado: false, textoRecibi: 'DEVOLVER ALBARAN REMITENTE' });
+        expect(r.devolverFirmado).toBe(true);
+        expect(normalizarCamposIA({ textoRecibi: 'devolver albarán firmado' }).devolverFirmado).toBe(true);
+    });
+
+    it('un Recibí sin aviso de devolver no marca nada', () => {
+        expect(normalizarCamposIA({ textoRecibi: '1/10/2026 A 2200' }).devolverFirmado).toBe(false);
+        expect(normalizarCamposIA({ textoRecibi: '' }).devolverFirmado).toBe(false);
+    });
+
     it('arregla la forma: números como texto, espacios y símbolos', () => {
         const r = normalizarCamposIA({ cp: ' 14500 ', bultos: '3', kilos: '12,5', reembolso: '125,40 €', expedicion: 12345 });
         expect(r.cp).toBe('14500');
