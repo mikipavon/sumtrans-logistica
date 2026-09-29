@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, useDeferredValue } from 'react';
 import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
-import { getPackagesCount, intervinoConductor, importeParaMostrar, poblacionYCalle, fichaDelPagador, quienPagaElPorte } from '../utils/shipmentUtils';
+import { getPackagesCount, intervinoConductor, porteDelEnvio, textoDelPorte, poblacionYCalle, fichaDelPagador, quienPagaElPorte } from '../utils/shipmentUtils';
 import { coincideBusqueda, coincideEnCampos } from '../utils/busqueda';
 import { ahoraParaInputLocal, conHoraRapida, HORAS_RAPIDAS_DE_ASIGNACION } from '../utils/horaDeAsignacion';
 import { compartirAlbaranPorWhatsApp } from '../utils/mensajeJustificante';
@@ -19,11 +19,20 @@ import BudgetLiquidationModal from '../components/shipments/BudgetLiquidationMod
 import CodReceiptUploadModal from '../components/shipments/CodReceiptUploadModal';
 import { Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { pendienteEnAsignar, textoDeDias } from '../utils/pendienteEnAsignar';
+import { ALL_BAREMO_PUEBLOS } from '../data/baremos';
 import { usePorTandas } from '../hooks/usePorTandas';
 import PieDeTandas from '../components/PieDeTandas';
 const { utils, writeFile } = XLSX;
 
-export default function Shipments({ shipments, allShipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, onUpdateClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both', onAutorizarConContrasena }) {
+// Opciones del filtro de estado que parten "Pendiente de asignar" por de quién depende.
+const FILTROS_PENDIENTE_DE = {
+    pend_transportista: (p) => p?.tipo === 'transportista',
+    pend_fuera_de_ruta: (p) => p?.tipo === 'transportista' && !p.conductores.some(c => c.deSuRuta),
+    pend_cliente: (p) => p?.tipo === 'cliente',
+};
+
+export default function Shipments({ shipments, allShipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, onUpdateClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both', onAutorizarConContrasena, routes = [] }) {
     const getDriverDisplayName = (driver) => {
         if (!driver) return '';
         const name = driver.name || '';
@@ -186,6 +195,12 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         return null;
     };
 
+    // De quién depende cada pendiente de asignar: el cliente que aún no lo ha
+    // entregado, o el transportista que lo tiene en su pestaña Asignar (verde si
+    // el pueblo es de su ruta, rojo si se le ha quedado algo de otra).
+    const pendienteDeLaFila = (shipment) =>
+        pendienteEnAsignar(shipment, { drivers, routes, tablaBaremo: ALL_BAREMO_PUEBLOS });
+
     // Filter Logic
     const filteredShipments = useMemo(() => {
         const safeShipments = Array.isArray(shipments) ? shipments : [];
@@ -198,8 +213,11 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
             const matchesSearch = coincideBusqueda(shipment, busquedaDiferida);
 
             const PENDING_STATUSES = ['Pendiente', 'Asignado', 'Pendiente de asignar'];
-            const matchesStatus = statusFilter === 'all' || statusFilter === 'cod_no_receipt' || 
-                (statusFilter === 'Pendiente' ? PENDING_STATUSES.includes(shipment.status) : shipment.status === statusFilter);
+            // Los pendientes de asignar partidos por de quién dependen (columna Asignar).
+            const PENDIENTE_DE = FILTROS_PENDIENTE_DE[statusFilter];
+            const matchesStatus = statusFilter === 'all' || statusFilter === 'cod_no_receipt' ||
+                (PENDIENTE_DE ? PENDIENTE_DE(pendienteEnAsignar(shipment, { drivers, routes, tablaBaremo: ALL_BAREMO_PUEBLOS })) :
+                statusFilter === 'Pendiente' ? PENDING_STATUSES.includes(shipment.status) : shipment.status === statusFilter);
 
             // Filtrar por conductor es "enseñame lo suyo", no solo lo que tiene asignado:
             // el que cubre la ruta de otro entrega y cobra albaranes asignados al que
@@ -248,8 +266,9 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
                 // Handle Amounts/Numbers
                 if (sortConfig.key === 'amount') {
-                    const cleanA = parseFloat(String(aVal || '0').replace(/[^0-9.-]/g, '')) || 0;
-                    const cleanB = parseFloat(String(bVal || '0').replace(/[^0-9.-]/g, '')) || 0;
+                    // El mismo importe que pinta la columna (ver porteDelEnvio)
+                    const cleanA = porteDelEnvio(a);
+                    const cleanB = porteDelEnvio(b);
                     return sortConfig.direction === 'asc' ? cleanA - cleanB : cleanB - cleanA;
                 }
 
@@ -303,7 +322,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         }
 
         return result;
-    }, [shipments, busquedaDiferida, statusFilter, driverFilter, clientFilter, poblacionFilter, tipoFilter, clients, tariffs, coverageZones, sortConfig, dateFrom, dateTo, idsDeAlerta]);
+    }, [shipments, busquedaDiferida, statusFilter, driverFilter, clientFilter, poblacionFilter, tipoFilter, clients, tariffs, coverageZones, sortConfig, dateFrom, dateTo, idsDeAlerta, drivers, routes]);
 
     // Por tandas: pintar las miles de filas era lo que hacía ir la app con retraso.
     const tandas = usePorTandas(
@@ -429,6 +448,9 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             <option value="all">Todos los Estados</option>
                             <option value="Pendiente">📋 Todos Pendientes</option>
                             <option value="Pendiente de asignar">Pendiente de asignar</option>
+                            <option value="pend_transportista">↳ Lo tiene un transportista</option>
+                            <option value="pend_fuera_de_ruta">↳ Lo tiene quien no es de su ruta</option>
+                            <option value="pend_cliente">↳ Del cliente, sin recoger</option>
                             <option value="En reparto">En reparto</option>
                             <option value="Entregado">Entregado</option>
                             <option value="Incidencia">Incidencia</option>
@@ -680,6 +702,10 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             <SortIcon column="status" />
                                         </div>
                                     </th>
+                                    <th
+                                        className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap"
+                                        title="Quién tiene el pendiente en su pestaña Asignar del móvil: verde si el pueblo es de su ruta, rojo si no"
+                                    >Asignar</th>
                                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider min-w-[200px]">Conductor</th>
                                     <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer group hover:bg-slate-100 transition-colors whitespace-nowrap" onClick={() => requestSort('amount')}>
                                         <div className="flex items-center justify-end gap-1">
@@ -849,6 +875,48 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             )}
                                             </div>
                                         </td>
+                                        <td className="px-4 py-3 whitespace-nowrap">
+                                            {(() => {
+                                                const pendiente = pendienteDeLaFila(shipment);
+                                                if (!pendiente) return <span className="text-slate-300 text-sm">—</span>;
+                                                const corto = (d) => d?.alias?.trim() || d?.name?.trim().split(' ')[0] || 'Conductor';
+                                                const deLaRuta = pendiente.rutaDe
+                                                    .map(id => (drivers || []).find(d => String(d.id) === id))
+                                                    .filter(Boolean).map(corto).join(' o ');
+                                                const dias = textoDeDias(pendiente.dias);
+                                                return (
+                                                    <div className="flex flex-col items-start gap-1">
+                                                        {pendiente.tipo === 'transportista' ? pendiente.conductores.map(({ driver, deSuRuta }) => (
+                                                            <span
+                                                                key={driver.id}
+                                                                className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${deSuRuta
+                                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                                    : 'bg-red-50 text-red-700 border-red-200'}`}
+                                                                title={deSuRuta
+                                                                    ? 'Lo tiene en su Asignar y el pueblo es de su ruta'
+                                                                    : (deLaRuta ? `No es de su ruta: va en la de ${deLaRuta}` : 'El pueblo no está en ninguna ruta')}
+                                                            >
+                                                                {corto(driver)}
+                                                            </span>
+                                                        )) : (
+                                                            <span
+                                                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border bg-slate-50 text-slate-600 border-slate-200"
+                                                                title={pendiente.tipo === 'cliente'
+                                                                    ? 'Lo dio de alta el cliente en el portal y aún no se han escaneado los bultos'
+                                                                    : 'Lo tecleó la oficina: no sale en el Asignar de ningún transportista'}
+                                                            >
+                                                                {pendiente.tipo === 'cliente' ? 'Cliente · sin recoger' : 'Oficina'}
+                                                            </span>
+                                                        )}
+                                                        {dias && (
+                                                            <span className={`text-[10px] ${pendiente.dias >= 2 ? 'font-bold text-red-600' : 'text-slate-400'}`}>
+                                                                {dias}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
+                                        </td>
                                         <td className="px-4 py-3 min-w-[200px]">
                                             <div className="flex items-center gap-2 min-w-0">
                                                 <User size={14} className="text-slate-400 shrink-0" />
@@ -890,7 +958,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                         </td>
                                         <td className="px-4 py-3 text-right whitespace-nowrap">
                                             <div className="flex flex-col items-end gap-1">
-                                                <span className="text-sm font-bold text-slate-700 whitespace-nowrap">{importeParaMostrar(shipment.amount)}</span>
+                                                <span className="text-sm font-bold text-slate-700 whitespace-nowrap">{textoDelPorte(shipment)}</span>
                                                 {shipment.hasCod && parseFloat(shipment.codAmount || 0) > 0 && (
                                                     <span
                                                         className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap leading-none ${
@@ -939,7 +1007,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                 )})}
                                 {filteredShipments.length === 0 && (
                                     <tr>
-                                        <td colSpan="9" className="text-center py-12">
+                                        <td colSpan="10" className="text-center py-12">
                                             <div className="bg-slate-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
                                                 <Search size={32} />
                                             </div>
@@ -1523,7 +1591,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                             'Z Cantidad Galary', 'Z Posicion de la linea',
                                         ];
                                         const albRows = shipmentsToExport.map((s, index) => {
-                                            const amount = parseFloat((s.amount || '0').toString().replace(/[^0-9.]/g, '')) || 0;
+                                            const amount = porteDelEnvio(s);
                                             const bTypeLower = getBillingType(s).toLowerCase();
                                             const isPresupuesto = bTypeLower.includes('presupuesto');
                                             const vatRate = isPresupuesto ? 0 : 21;
@@ -1599,7 +1667,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                                 docNumberStr = docNumberStr.slice(-6);
                                             }
                                             const documentNumber = docNumberStr ? parseInt(docNumberStr, 10) : (index + 1);
-                                            const amount = parseFloat((s.amount || '0').toString().replace(/[^0-9.]/g, '')) || 0;
+                                            const amount = porteDelEnvio(s);
                                             const hasReembolso = s.hasCod || parseFloat(String(s.codAmount || '0').replace(/[^0-9.-]/g, '')) > 0;
                                             const reembolsoText = hasReembolso ? ' (+ Reembolso)' : '';
 

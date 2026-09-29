@@ -10,12 +10,13 @@ import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import CameraCaptureModal from '../CameraCaptureModal';
 import CityAutocomplete from '../CityAutocomplete';
-import { getPackagesCount, recogidaDelEnvio, observacionesVisibles, observacionesParaEditar, llevaMarcaDeCobroPendiente } from '../../utils/shipmentUtils';
+import { getPackagesCount, recogidaDelEnvio, observacionesVisibles, observacionesParaEditar, llevaMarcaDeCobroPendiente, precioDeLaFicha } from '../../utils/shipmentUtils';
 
 
 import { Trash2, Plus } from 'lucide-react';
 import { calcularComisionReembolso, fichaQuePagaElReembolso } from '../../utils/comisionReembolso';
-import { baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, conMinimoFueraDeBaremo } from '../../utils/precioArticulo';
+import { baremoDelEnvio, precioUnitarioArticulo, repreciarArticulos, conMinimoFueraDeBaremo, pueblosQueCasan } from '../../utils/precioArticulo';
+import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
 export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpdate, allPoblaciones, drivers = [], clients = [], tariffs = null, coverageZones = [], articles = [], familyOrder = [], isReadOnly = false, onWhatsAppShare, hidePrices = false, hideTicketPrint = false, isClientView = false, clientePortal = null, driverNamePreference = 'both', zoom = 1, showAdminControls = false, onDelete = null, defaultCodFee = 3 }) {
     const [isEditing, setIsEditing] = useState(false);
     const [formData, setFormData] = useState({});
@@ -35,6 +36,17 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
     // presupuesto). null = no se ha tocado, así el precio de tarifa sigue sin verse.
     // Mismo mecanismo que el alta (CreateShipmentModal), donde sí se podía.
     const [priceOverride, setPriceOverride] = useState(null);
+
+    // Dar por escaneados los bultos que no pasaron por el escáner. El repartidor
+    // llevaba los 7 de SUM-2442 y sólo escaneó 6: al entregar, el móvil lo mandaba
+    // a incidencia por entrega parcial y no había dónde corregirlo (28/09/2026).
+    // Es una casilla de la edición: no se guarda hasta pulsar Guardar Cambios.
+    const [completarEscaneo, setCompletarEscaneo] = useState(false);
+
+    // Lo que la oficina ha corregido del justificante (quién recibe y las fotos)
+    // y ya está guardado. El `shipment` que nos pasan no se refresca al guardar:
+    // sin esto, Cancelar o el PDF volvían a sacar el DNI viejo y la foto quitada.
+    const [justificanteGuardado, setJustificanteGuardado] = useState(null);
 
     const [selectedArticles, setSelectedArticles] = useState([]);
     const [tempArticleId, setTempArticleId] = useState('');
@@ -63,6 +75,22 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         }
         return null;
     }, [formData.porteType, formData.client, formData.destinationName, clients]);
+
+    // Pueblos que ofrece el buscador de Población. Varias pantallas abren esta
+    // ficha sin pasar allPoblaciones (Notificaciones, Cobros Pendientes, la ficha
+    // del repartidor), así que la lista se completa aquí con las de los baremos.
+    const poblacionesSugeridas = React.useMemo(() => {
+        const vistos = new Map();
+        [
+            ...(allPoblaciones || []),
+            ...(coverageZones || []).map(z => z.name),
+            ...ALL_BAREMO_PUEBLOS.map(p => p.name),
+        ].forEach(nombre => {
+            const limpio = String(nombre || '').trim();
+            if (limpio && !vistos.has(limpio.toLowerCase())) vistos.set(limpio.toLowerCase(), limpio);
+        });
+        return Array.from(vistos.values()).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    }, [allPoblaciones, coverageZones]);
 
     const calculateWeightPrice = (kg, tariff, clientData) => {
         if (!kg) return 0;
@@ -271,15 +299,38 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
             setWeightKg(shipment.weightKg || '');
             setFormData({
                 ...shipment,
+                // Si el repartidor cobró otro importe, ése es el precio del albarán
+                // (HAB-642: la ficha decía 7 € y la Cuenta de Javito 12 €).
+                amount: precioDeLaFicha(shipment),
                 packages: packagesText
             });
             setIsEditing(false);
             setCodReceiptPhoto(null);
             setPriceOverride(null);
+            setCompletarEscaneo(false);
+            setJustificanteGuardado(null);
         }
     }, [shipment, isOpen]);
 
     if (!isOpen || !shipment) return null;
+
+    // ── Corregir el justificante de entrega ──
+    // SUM-2513, 28/09/2026: el repartidor apunta mal el DNI o hace la foto que no
+    // es, y la oficina no tenía dónde arreglarlo: el bloque sólo enseñaba. Lo
+    // corrige la oficina y nadie más (el repartidor no retoca su propia prueba),
+    // al editar y sin guardar nada hasta Guardar Cambios. La firma no se toca.
+    const puedeCorregirJustificante = isEditing && showAdminControls && !isReadOnly && !!onUpdate;
+    const pruebaGuardada = { ...shipment, ...(justificanteGuardado || {}) };
+
+    // Los escaneados salen de formData y no de `shipment`: el `shipment` que nos
+    // pasan no se refresca al guardar, y el 6/7 se quedaba puesto hasta reabrir.
+    // Al editar, el total cuenta los artículos tal como están en pantalla: es lo
+    // que se va a guardar y contra lo que compara el móvil al entregar.
+    const bultosEscaneados = Array.isArray(formData.scannedPackages) ? formData.scannedPackages.length : 0;
+    const bultosTotales = isEditing
+        ? getPackagesCount({ ...formData, articles: selectedArticles })
+        : getPackagesCount(shipment);
+    const faltanBultosPorEscanear = bultosEscaneados > 0 && bultosEscaneados < bultosTotales && shipment.status !== 'Entregado';
 
     const handleSave = async () => {
         if (onUpdate && !isReadOnly) {
@@ -377,6 +428,46 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                 if (finalFormData.portePaid) finalFormData.isPaid = true;
                 if (finalFormData.codPaid) finalFormData.isCodPaid = true;
 
+                // BULTOS DADOS POR ESCANEADOS A MANO
+                // Se cuentan sobre lo que se va a guardar (por si en esta misma
+                // edición se han cambiado los artículos) y queda apuntado quién lo
+                // hizo: en el albarán no se distingue de un escaneo de verdad.
+                if (completarEscaneo) {
+                    const total = getPackagesCount(finalFormData);
+                    finalFormData.scannedPackages = Array.from({ length: total }, (_, i) => i + 1);
+                    finalFormData.scannedCompletedAt = ahora;
+                    finalFormData.scannedCompletedBy = showAdminControls ? 'Administrador' : 'Conductor';
+                }
+
+                // JUSTIFICANTE CORREGIDO POR LA OFICINA
+                // Queda apuntado que se tocó, y la dirección de cada foto quitada se
+                // guarda en el albarán: de las fotos no hay copia de seguridad, y así
+                // una quitada por error se puede volver a poner. Al revertir la
+                // entrega no se entra: ahí el justificante se borra entero, arriba.
+                const seRevierteLaEntrega = shipment.status === 'Entregado' && finalFormData.status !== 'Entregado';
+                if (showAdminControls && !seRevierteLaEntrega) {
+                    const limpio = (valor) => String(valor || '').trim();
+                    const cambiaElReceptor = ['receiverName', 'receiverId']
+                        .filter(campo => limpio(finalFormData[campo]) !== limpio(pruebaGuardada[campo]));
+                    cambiaElReceptor.forEach(campo => { finalFormData[campo] = limpio(finalFormData[campo]); });
+
+                    const fotosQuitadas = ['deliveryPhoto', 'deliveryPhoto2']
+                        .filter(campo => pruebaGuardada[campo] && !finalFormData[campo])
+                        .map(campo => ({ campo, url: pruebaGuardada[campo], at: ahora }));
+                    fotosQuitadas.forEach(({ campo }) => { finalFormData[campo] = null; });
+
+                    if (cambiaElReceptor.length > 0 || fotosQuitadas.length > 0) {
+                        finalFormData.proofEditedAt = ahora;
+                        finalFormData.proofEditedBy = 'Administrador';
+                    }
+                    if (fotosQuitadas.length > 0) {
+                        finalFormData.proofRemovedPhotos = [
+                            ...(Array.isArray(finalFormData.proofRemovedPhotos) ? finalFormData.proofRemovedPhotos : []),
+                            ...fotosQuitadas,
+                        ];
+                    }
+                }
+
                 // Forzar que el customAmount coincida con el importe final real del albarán,
                 // de esta forma las cajas y recaudaciones tomarán este nuevo valor si el admin lo cambia.
                 //
@@ -422,7 +513,16 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                 await onUpdate(shipment.id, finalFormData);
                 // El `shipment` que nos pasan es la foto de cuando se abrió la ficha
                 // y no se refresca: lo que se enseña al salir de Editar sale de formData.
-                setFormData(prev => ({ ...prev, clientReference: finalFormData.clientReference }));
+                const justificante = {
+                    receiverName: finalFormData.receiverName,
+                    receiverId: finalFormData.receiverId,
+                    deliveryPhoto: finalFormData.deliveryPhoto,
+                    deliveryPhoto2: finalFormData.deliveryPhoto2,
+                    proofRemovedPhotos: finalFormData.proofRemovedPhotos,
+                };
+                setFormData(prev => ({ ...prev, clientReference: finalFormData.clientReference, scannedPackages: finalFormData.scannedPackages, ...justificante }));
+                setJustificanteGuardado(justificante);
+                setCompletarEscaneo(false);
                 setIsEditing(false);
                 setNewPhoto(null);
                 setCodReceiptPhoto(null);
@@ -480,6 +580,103 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
     const handleChange = (field, value) => {
         setFormData(prev => ({ ...prev, [field]: value }));
     };
+
+    // Una foto del justificante (la de entrega o la del documento firmado). La
+    // oficina, al editar, la puede quitar; hasta Guardar Cambios se puede deshacer.
+    const renderFotoDelJustificante = (campo, alt, Icono, sinFoto) => {
+        const url = formData[campo];
+        if (url) {
+            return (
+                <>
+                    <div className="relative group bg-slate-100 border border-slate-200 rounded-xl overflow-hidden aspect-square flex items-center justify-center shadow-inner">
+                        <img src={url} alt={alt} className="w-full h-full object-cover" />
+                        <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2 text-[10px] font-bold backdrop-blur-[1px]"
+                        >
+                            <ExternalLink size={12} /> Ver Original
+                        </a>
+                    </div>
+                    {puedeCorregirJustificante && (
+                        <button
+                            type="button"
+                            onClick={() => handleChange(campo, null)}
+                            aria-label={`Quitar ${alt}`}
+                            className="w-full py-1.5 text-[10px] font-bold text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 flex items-center justify-center gap-1"
+                        >
+                            <Trash2 size={12} /> Quitar foto
+                        </button>
+                    )}
+                </>
+            );
+        }
+        const quitadaSinGuardar = puedeCorregirJustificante && !!pruebaGuardada[campo];
+        if (quitadaSinGuardar) {
+            return (
+                <>
+                    <div className="aspect-square bg-red-50 rounded-xl border border-dashed border-red-200 flex flex-col items-center justify-center text-red-500 gap-1 text-center px-1">
+                        <Trash2 size={16} className="opacity-60" />
+                        <span className="text-[10px] uppercase font-bold leading-tight">Se quita al guardar</span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => handleChange(campo, pruebaGuardada[campo])}
+                        aria-label={`Volver a poner ${alt}`}
+                        className="w-full py-1.5 text-[10px] font-bold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
+                    >
+                        Deshacer
+                    </button>
+                </>
+            );
+        }
+        return (
+            <div className="aspect-square bg-slate-50 rounded-xl border border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 gap-1 text-center px-1">
+                <Icono size={16} className="opacity-20" />
+                <span className="text-[10px] uppercase font-bold">{sinFoto}</span>
+            </div>
+        );
+    };
+
+    // Población con buscador, como en el alta. Aquí era una caja de texto sin
+    // sugerencias: tecleando "benam" no salía Benamejí y el C.P. había que
+    // sabérselo (REC-689, 28/09/2026). El C.P. se rellena con las mismas filas
+    // que deciden el baremo; si el que ya tiene el albarán es de ese pueblo
+    // (Córdoba lleva quince) no se toca.
+    const cambiarPoblacion = (lado, city) => {
+        const conCp = (lista) => pueblosQueCasan(city, '', lista).filter(p => p.zip);
+        const deAjustes = conCp(coverageZones);
+        const filas = deAjustes.length ? deAjustes : conCp(ALL_BAREMO_PUEBLOS);
+        setFormData(prev => {
+            const cpActual = String(prev[`${lado}Zip`] || '').trim();
+            const yaEsSuyo = filas.some(p => String(p.zip).trim() === cpActual);
+            return {
+                ...prev,
+                [`${lado}City`]: city,
+                ...(filas.length && !yaEsSuyo ? { [`${lado}Zip`]: filas[0].zip } : {}),
+            };
+        });
+    };
+
+    const renderPoblacion = (lado) => (
+        <div className="space-y-1">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">Población</span>
+            {isEditing && !isReadOnly ? (
+                <CityAutocomplete
+                    poblaciones={poblacionesSugeridas}
+                    placeholder="Población"
+                    value={formData[`${lado}City`] || ''}
+                    onChange={(e) => cambiarPoblacion(lado, e.target.value)}
+                    className="w-full text-sm border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                />
+            ) : (
+                <p className="text-gray-800 font-medium text-sm break-words whitespace-pre-wrap">
+                    {formData[`${lado}City`] || <span className="text-gray-300 italic">No especificado</span>}
+                </p>
+            )}
+        </div>
+    );
 
     // originCoordinates/destinationCoordinates son una FOTO tomada al crear el
     // albarán (de la sede, o del GPS de quien lo creó si tocó "capturar
@@ -608,13 +805,13 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                             </h2>
                             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                 <p className="text-xs text-gray-500 font-mono">REF: {shipment.id}</p>
-                                {Array.isArray(shipment.scannedPackages) && shipment.scannedPackages.length > 0 && (
+                                {bultosEscaneados > 0 && (
                                     <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded shadow-sm ${
-                                        shipment.scannedPackages.length >= getPackagesCount(shipment)
+                                        bultosEscaneados >= bultosTotales
                                             ? 'bg-green-600 text-white'
                                             : 'bg-orange-500 text-white'
                                     }`}>
-                                        {shipment.scannedPackages.length}/{getPackagesCount(shipment)} BULTOS ESCANEADOS
+                                        {bultosEscaneados}/{bultosTotales} BULTOS ESCANEADOS
                                     </span>
                                 )}
                             </div>
@@ -777,7 +974,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                         </a>
                                     </div>
                                     <div className="grid grid-cols-2 gap-3">
-                                        {renderField("Población", formData.originCity, "originCity")}
+                                        {renderPoblacion('origin')}
                                         {renderField("C.P.", formData.originZip, "originZip")}
                                     </div>
                                     <div className="grid grid-cols-2 gap-3">
@@ -879,7 +1076,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                         </a>
                                     </div>
                                     <div className="grid grid-cols-2 gap-3">
-                                        {renderField("Población", formData.destinationCity, "destinationCity")}
+                                        {renderPoblacion('destination')}
                                         {renderField("C.P.", formData.destinationZip, "destinationZip")}
                                     </div>
                                     <div className="grid grid-cols-2 gap-3">
@@ -947,7 +1144,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                             // Si la vacía, se vuelve al importe que ya tenía el albarán:
                                             // borrar la casilla no puede dejar el porte a cero.
                                             setPriceOverride(val === '' ? null : val);
-                                            handleChange('amount', val === '' ? (shipment.amount ?? '') : val);
+                                            handleChange('amount', val === '' ? (precioDeLaFicha(shipment) ?? '') : val);
                                         }}
                                         className={`w-full text-sm border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none font-bold ${priceOverride === null ? 'text-slate-400 italic' : 'text-slate-700'}`}
                                     />
@@ -1873,6 +2070,28 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                         </div>
                                     )}
                                 </div>
+
+                                {faltanBultosPorEscanear && (
+                                    <div className="col-span-full bg-white p-3 rounded-xl border border-orange-100 shadow-sm hover:border-orange-300 transition-colors">
+                                        <label className="flex items-center gap-3 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={completarEscaneo}
+                                                onChange={(e) => setCompletarEscaneo(e.target.checked)}
+                                                className="w-5 h-5 rounded text-orange-600 border-gray-300 focus:ring-orange-500"
+                                            />
+                                            <div>
+                                                <span className="text-sm font-bold text-slate-800 block leading-none mb-1">Dar los {bultosTotales} bultos por escaneados</span>
+                                                <span className="text-[10px] text-slate-500 uppercase leading-none block">Ahora hay {bultosEscaneados} de {bultosTotales} · márcalo sólo si el repartidor los lleva todos</span>
+                                            </div>
+                                        </label>
+                                        {completarEscaneo && (
+                                            <p className="text-[10px] font-bold text-orange-600 mt-2 leading-tight">
+                                                Al guardar, el repartidor podrá entregar sin que le salte la incidencia de entrega parcial.
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
                             </fieldset>
                         </div>
                     )}
@@ -1891,11 +2110,32 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase">
                                         <Fingerprint size={12} /> Datos del Receptor
                                     </div>
-                                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                                        <p className="text-sm font-bold text-slate-700">{shipment.receiverName || <span className="text-slate-300 italic">Nombre no registrado</span>}</p>
-                                        <p className="text-xs text-slate-500 mt-1">DNI/ID: {shipment.receiverId || <span className="text-slate-300 italic">No proporcionado</span>}</p>
-                                    </div>
-                                    
+                                    {puedeCorregirJustificante ? (
+                                        <div className="bg-slate-50 p-3 rounded-xl border border-emerald-200 space-y-2">
+                                            <input
+                                                type="text"
+                                                aria-label="Nombre de quien recibe"
+                                                placeholder="Nombre de quien recibe"
+                                                value={formData.receiverName || ''}
+                                                onChange={(e) => handleChange('receiverName', e.target.value)}
+                                                className="w-full text-sm font-bold text-slate-700 border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white"
+                                            />
+                                            <input
+                                                type="text"
+                                                aria-label="DNI de quien recibe"
+                                                placeholder="DNI / ID"
+                                                value={formData.receiverId || ''}
+                                                onChange={(e) => handleChange('receiverId', e.target.value)}
+                                                className="w-full text-xs text-slate-700 border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-white"
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                            <p className="text-sm font-bold text-slate-700">{formData.receiverName || <span className="text-slate-300 italic">Nombre no registrado</span>}</p>
+                                            <p className="text-xs text-slate-500 mt-1">DNI/ID: {formData.receiverId || <span className="text-slate-300 italic">No proporcionado</span>}</p>
+                                        </div>
+                                    )}
+
                                     {shipment.deliverySignature ? (
                                         <div className="space-y-2">
                                             <span className="text-[10px] font-bold text-slate-400 uppercase block">Firma Digital</span>
@@ -1923,8 +2163,9 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                     )}
                                 </div>
 
-                                {/* Photos Section */}
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                                {/* Photos Section. De dos en dos: a cuatro por fila, en la
+                                    ficha estrecha los rótulos se montaban uno encima de otro. */}
+                                <div className="grid grid-cols-2 gap-4 content-start">
                                     {/* Merchandise Photo (Carga) */}
                                     <div className="space-y-3">
                                         <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase">
@@ -1959,58 +2200,16 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                         <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase">
                                             <ImageIcon size={12} /> Foto de Entrega (Sello)
                                         </div>
-                                        {shipment.deliveryPhoto ? (
-                                            <div className="relative group bg-slate-100 border border-slate-200 rounded-xl overflow-hidden aspect-square flex items-center justify-center shadow-inner">
-                                                <img 
-                                                    src={shipment.deliveryPhoto} 
-                                                    alt="Entrega" 
-                                                    className="w-full h-full object-cover"
-                                                />
-                                                <a 
-                                                    href={shipment.deliveryPhoto} 
-                                                    target="_blank" 
-                                                    rel="noopener noreferrer"
-                                                    className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2 text-[10px] font-bold backdrop-blur-[1px]"
-                                                >
-                                                    <ExternalLink size={12} /> Ver Original
-                                                </a>
-                                            </div>
-                                        ) : (
-                                            <div className="aspect-square bg-slate-50 rounded-xl border border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 gap-1">
-                                                <ImageIcon size={16} className="opacity-20" />
-                                                <span className="text-[10px] uppercase font-bold">Sin foto</span>
-                                            </div>
-                                        )}
+                                        {renderFotoDelJustificante('deliveryPhoto', 'Entrega', ImageIcon, 'Sin foto')}
                                     </div>
 
                                     {/* Delivery Photo 2 (Documentación de vuelta) */}
-                                    {(shipment.deliveryPhoto2 || shipment.needsSignatureReturn) && (
+                                    {(formData.deliveryPhoto2 || pruebaGuardada.deliveryPhoto2 || shipment.needsSignatureReturn) && (
                                         <div className="space-y-3">
                                             <div className="flex items-center gap-2 text-[10px] font-bold text-emerald-500 uppercase">
                                                 <FileText size={12} /> Foto 2: Doc. Firmado
                                             </div>
-                                            {shipment.deliveryPhoto2 ? (
-                                                <div className="relative group bg-slate-100 border border-slate-200 rounded-xl overflow-hidden aspect-square flex items-center justify-center shadow-inner">
-                                                    <img 
-                                                        src={shipment.deliveryPhoto2} 
-                                                        alt="Doc. Firmado" 
-                                                        className="w-full h-full object-cover"
-                                                    />
-                                                    <a 
-                                                        href={shipment.deliveryPhoto2} 
-                                                        target="_blank" 
-                                                        rel="noopener noreferrer"
-                                                        className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2 text-[10px] font-bold backdrop-blur-[1px]"
-                                                    >
-                                                        <ExternalLink size={12} /> Ver Original
-                                                    </a>
-                                                </div>
-                                            ) : (
-                                                <div className="aspect-square bg-slate-50 rounded-xl border border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 gap-1">
-                                                    <FileText size={16} className="opacity-20" />
-                                                    <span className="text-[10px] uppercase font-bold">Sin foto de doc.</span>
-                                                </div>
-                                            )}
+                                            {renderFotoDelJustificante('deliveryPhoto2', 'Doc. Firmado', FileText, 'Sin foto de doc.')}
                                         </div>
                                     )}
 
@@ -2091,7 +2290,8 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                         )}
                         <button
                             onClick={() => {
-                                setFormData(shipment);
+                                setFormData(pruebaGuardada);
+                                setCompletarEscaneo(false);
                                 setIsEditing(false);
                             }}
                             className="flex-1 py-3 text-sm font-bold text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50"
@@ -2117,7 +2317,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                                         // `clientePortal` sólo llega desde el portal del
                                         // cliente: el justificante sale sin el precio del
                                         // porte cuando no es él quien lo paga.
-                                        await generateDeliveryPDF(shipment, clientePortal);
+                                        await generateDeliveryPDF(pruebaGuardada, clientePortal);
                                     } catch (err) {
                                         console.error("PDF Generate Error:", err);
                                         alert("Error al generar el PDF: " + err.message);

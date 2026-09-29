@@ -535,6 +535,54 @@ export const importeParaMostrar = (amount) => {
 };
 
 /**
+ * El precio del porte de un albarán, en número. MANDA LO QUE SE COBRA.
+ *
+ * El albarán guarda el precio dos veces: `amount` es el texto que se pinta
+ * ("€7.00", "Tarifa") y `customAmount` el número. Cuando el repartidor cobraba
+ * otro importe sólo se escribía `customAmount`, así que su Cuenta decía 12 € y la
+ * ficha, el listado, las estadísticas y Factusol seguían en 7 (HAB-642, Javito,
+ * 25/09/2026).
+ *
+ * Con el porte COBRADO vale `customAmount`, que es lo que se cobró. Sin cobrar
+ * vale `amount`: ahí la diferencia sólo puede venir de un cambio posterior al
+ * alta (el cliente modificando su envío en el portal), y el dato nuevo es el
+ * texto. Si uno de los dos no trae número, vale el otro.
+ */
+export const porteDelEnvio = (envio) => {
+    const cobrado = importeDelAlbaran(envio?.customAmount);
+    const escrito = importeDelAlbaran(envio?.amount);
+    const hayEscrito = /\d/.test(String(envio?.amount ?? ''));
+    if (envio?.portePaid && cobrado > 0) return cobrado;
+    return hayEscrito ? escrito : cobrado;
+};
+
+/** El precio del porte para enseñarlo: `€0.00`, o "Tarifa"/"Pendiente" si no hay número. */
+export const textoDelPorte = (envio) => {
+    const importe = porteDelEnvio(envio);
+    if (importe > 0 || /\d/.test(String(envio?.amount ?? ''))) return `€${importe.toFixed(2)}`;
+    return importeParaMostrar(envio?.amount);
+};
+
+/**
+ * El `amount` con el que se abre la ficha del albarán. Es el que tiene guardado,
+ * tal cual, salvo que el porte se cobrara a otro importe: entonces el cobrado.
+ * La ficha, al guardar, copia su casilla de precio al número; abriéndola con el
+ * precio viejo, cualquier retoque de la oficina deshacía lo que cobró el repartidor.
+ */
+export const precioDeLaFicha = (envio) => {
+    const vigente = porteDelEnvio(envio);
+    return vigente > 0 && vigente !== importeDelAlbaran(envio?.amount)
+        ? textoDelPorte(envio)
+        : envio?.amount;
+};
+
+/** Los dos campos del precio, para que quien lo cambie los escriba siempre juntos. */
+export const camposDelPorte = (importe) => {
+    const numero = Math.round(importeDelAlbaran(importe) * 100) / 100;
+    return { amount: `€${numero.toFixed(2)}`, customAmount: numero };
+};
+
+/**
  * Separa una dirección de albarán en la población y la calle, para que en la lista
  * la población se lea siempre aunque la calle no quepa.
  *

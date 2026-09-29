@@ -1313,6 +1313,22 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                         <div className="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform"></div>
                                     </div>
                                 </label>
+                                {/* SAN RAFAEL entrega una hoja con una línea por expedición: con esto,
+                                    Importar envíos → Fotos de agencia ya abre en modo listado. */}
+                                <label className="flex items-center justify-between p-3 mb-3 bg-white rounded-xl border border-slate-200 cursor-pointer hover:border-blue-300 transition-colors group">
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-lg">📋</span>
+                                        <div>
+                                            <p className="text-sm font-bold text-slate-700 group-hover:text-blue-700 transition-colors">Sus fotos son listados (cada línea, un envío)</p>
+                                            <p className="text-[10px] text-slate-400">Al importar fotos de este cliente, cada línea de la hoja se lee como un envío. Se puede cambiar en el momento.</p>
+                                        </div>
+                                    </div>
+                                    <div className="relative">
+                                        <input type="checkbox" className="sr-only peer" checked={!!formData.fotosComoListado} onChange={e => set('fotosComoListado', e.target.checked)} />
+                                        <div className="w-11 h-6 bg-slate-200 peer-checked:bg-blue-600 rounded-full transition-colors"></div>
+                                        <div className="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full shadow-sm peer-checked:translate-x-5 transition-transform"></div>
+                                    </div>
+                                </label>
                                 <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
                                     {formData.allowedArticles && formData.allowedArticles.length > 0 && (
                                         <div className="bg-blue-50 border-b border-blue-100">

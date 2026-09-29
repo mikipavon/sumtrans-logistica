@@ -1,5 +1,6 @@
 import { Fuel, Plus, Calendar, Truck, User, TrendingDown, DollarSign, Activity, ChevronUp, ChevronDown } from 'lucide-react';
 import { useState, useMemo } from 'react';
+import { porteDelEnvio } from '../utils/shipmentUtils';
 
 export default function FuelManagement({ drivers, fuelLogs, onAddFuelLog, shipments }) {
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -42,8 +43,7 @@ export default function FuelManagement({ drivers, fuelLogs, onAddFuelLog, shipme
         
         // Compute revenue (only counting portes for this estimate, not reembolsos)
         const totalRevenue = relevantShipments.reduce((acc, s) => {
-            const val = parseFloat(String(s.amount).replace(/[^0-9.-]+/g, "")) || 0;
-            return acc + val;
+            return acc + porteDelEnvio(s);
         }, 0);
 
         const costPerPackage = totalShipped > 0 ? (totalCost / totalShipped) : 0;

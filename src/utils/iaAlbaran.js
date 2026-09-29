@@ -7,7 +7,7 @@
 // no hay conexión o se acaba el saldo.
 
 import { supabase } from '../lib/supabase';
-import { normalizarCamposIA } from './lecturaAlbaranIA';
+import { normalizarCamposIA, normalizarListadoIA } from './lecturaAlbaranIA';
 
 // Lado mayor con el que se manda la hoja. A 1600 px la letra de las casillas se
 // lee de sobra y la foto pesa unos 200-300 KB; más grande sólo gasta más.
@@ -58,6 +58,24 @@ export async function leerHojaConIA(lienzo) {
         throw new ErrorLecturaIA(mensaje, { sinSaldo });
     }
     return { campos: normalizarCamposIA(data?.campos), coste: data?.coste ?? null, modelo: data?.modelo || '' };
+}
+
+/**
+ * Lee con la IA una hoja que es un listado de varios envíos (una línea por
+ * envío, como el de SAN RAFAEL). No hay lector gratuito de respaldo: Tesseract
+ * no sabe separar las líneas de una tabla fotografiada.
+ * @param {HTMLCanvasElement} lienzo
+ * @returns {Promise<{lineas: object[], coste: number|null, modelo: string}>}
+ * @throws {ErrorLecturaIA}
+ */
+export async function leerListadoConIA(lienzo) {
+    const imagen = lienzoAJpeg(lienzo);
+    const { data, error } = await supabase.functions.invoke('leer-albaran', { body: { accion: 'leerListado', imagen } });
+    if (error) {
+        const { mensaje, sinSaldo } = await motivoDelFallo(error);
+        throw new ErrorLecturaIA(mensaje, { sinSaldo });
+    }
+    return { lineas: normalizarListadoIA(data?.campos), coste: data?.coste ?? null, modelo: data?.modelo || '' };
 }
 
 /** Saldo de OpenRouter para el panel de consumo (en dólares). */

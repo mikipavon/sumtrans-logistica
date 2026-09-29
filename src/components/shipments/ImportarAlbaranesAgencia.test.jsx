@@ -10,10 +10,11 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
-const { leerHojaConIA, onCreateShipment } = vi.hoisted(() => ({ leerHojaConIA: vi.fn(), onCreateShipment: vi.fn() }));
+const { leerHojaConIA, leerListadoConIA, onCreateShipment } = vi.hoisted(() => ({ leerHojaConIA: vi.fn(), leerListadoConIA: vi.fn(), onCreateShipment: vi.fn() }));
 
 vi.mock('../../utils/iaAlbaran', () => ({
     leerHojaConIA: (...args) => leerHojaConIA(...args),
+    leerListadoConIA: (...args) => leerListadoConIA(...args),
     consultarSaldoIA: vi.fn().mockResolvedValue({}),
 }));
 // Nada de canvas ni Tesseract en jsdom: una hoja por fichero y ya.
@@ -68,6 +69,7 @@ async function subirFotoYRevisar() {
 
 beforeEach(() => {
     leerHojaConIA.mockReset();
+    leerListadoConIA.mockReset();
     onCreateShipment.mockReset();
     leerHojaConIA.mockResolvedValue({ campos: { ...lecturaReal }, coste: 0.0003 });
     onCreateShipment.mockResolvedValue(undefined);
@@ -121,5 +123,68 @@ describe('ImportarAlbaranesAgencia', () => {
 
         expect(screen.getByDisplayValue('AGUILAR DE LA FRONTERA')).toBeInTheDocument();
         expect(screen.queryByText(/Población cambiada/)).not.toBeInTheDocument();
+    });
+});
+
+// ── Listado de SAN RAFAEL (29/09/2026): una hoja con una línea por expedición ──
+describe('ImportarAlbaranesAgencia en modo listado', () => {
+    const sanRafael = { id: 'sr', name: 'ALMACENES DE FERRETERIA SAN RAFAEL', address: 'Avda. Apreama, parcela 12', zip: '14013', city: 'Córdoba', billingType: 'Clientes Habituales' };
+    const lineas = [
+        { expedicion: '187824', remitente: '', destinatario: 'AGRO SERVICIO JESUS TORO S.L.', direccion: 'POLG.LOS BERMEJALES.PARC.10', poblacion: 'ALMEDINILLA', cp: '14812', telefono: '679995451', bultos: 1, kilos: 51, reembolso: 0, devolverFirmado: false },
+        { expedicion: '187828', remitente: '', destinatario: 'FERRETERIA LA CADENA S.L.', direccion: 'Calle FUENTE EL ALAMO, Nº 33', poblacion: 'MONTILLA', cp: '14550', telefono: '637852762', bultos: 3, kilos: 40, reembolso: 0, devolverFirmado: false },
+    ];
+
+    function abrir(allShipments = []) {
+        return render(
+            <ImportarAlbaranesAgencia client={sanRafael} onCreateShipment={onCreateShipment} allShipments={allShipments}
+                articles={[...articulos, { id: 'a3', name: 'BLT_3', category: 'BADI', price: 9 }]} tariffs={[]}
+                coverageZones={[{ name: 'Almedinilla', zip: '14812', baremo: 1 }, { name: 'Montilla', zip: '14550', baremo: 1 }]}
+                onClose={() => {}} isAdmin />
+        );
+    }
+
+    async function subirListado() {
+        fireEvent.click(screen.getByRole('button', { name: /Un listado/ }));
+        fireEvent.change(document.getElementById('agencia-file-input'), { target: { files: [new File(['foto'], 'listado.jpg', { type: 'image/jpeg' })] } });
+        fireEvent.click(await screen.findByRole('button', { name: /Revisar 2 albaranes/ }));
+    }
+
+    it('cada línea es un envío, con el cliente como remitente y pagador', async () => {
+        leerListadoConIA.mockResolvedValue({ lineas, coste: 0.001 });
+        abrir();
+        await subirListado();
+
+        expect(leerHojaConIA).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: /Crear 2 envíos/ }));
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalledTimes(2));
+        const [a, b] = onCreateShipment.mock.calls.map(c => c[0]);
+        expect(a).toMatchObject({ id: 'HAB-700', client: sanRafael.name, originName: sanRafael.name, destinationName: 'AGRO SERVICIO JESUS TORO S.L.', destinationCity: 'ALMEDINILLA', clientReference: '187824', packages: 1, weightKg: 51, porteType: 'Pagado' });
+        expect(b).toMatchObject({ id: 'HAB-701', originName: sanRafael.name, destinationName: 'FERRETERIA LA CADENA S.L.', destinationCity: 'MONTILLA', clientReference: '187828', packages: 3 });
+    });
+
+    it('avisa si una expedición del listado ya se importó', async () => {
+        leerListadoConIA.mockResolvedValue({ lineas, coste: 0 });
+        abrir([{ id: 'HAB-650', clientId: 'sr', clientReference: '187824' }]);
+        await subirListado();
+        expect(screen.getByText('Expedición 187824 ya importada en HAB-650')).toBeInTheDocument();
+    });
+
+    it('si la ficha dice que sus fotos son listados, abre ya en modo listado', async () => {
+        leerListadoConIA.mockResolvedValue({ lineas, coste: 0 });
+        render(
+            <ImportarAlbaranesAgencia client={{ ...sanRafael, fotosComoListado: true }} onCreateShipment={onCreateShipment} allShipments={[]}
+                articles={articulos} tariffs={[]} coverageZones={[]} onClose={() => {}} isAdmin />
+        );
+        fireEvent.change(document.getElementById('agencia-file-input'), { target: { files: [new File(['foto'], 'listado.jpg', { type: 'image/jpeg' })] } });
+        expect(await screen.findByRole('button', { name: /Revisar 2 albaranes/ })).toBeInTheDocument();
+        expect(leerHojaConIA).not.toHaveBeenCalled();
+    });
+
+    it('si la IA no puede leer el listado no se cae al lector gratuito', async () => {
+        leerListadoConIA.mockRejectedValue(new Error('caído'));
+        abrir();
+        fireEvent.click(screen.getByRole('button', { name: /Un listado/ }));
+        fireEvent.change(document.getElementById('agencia-file-input'), { target: { files: [new File(['foto'], 'listado.jpg', { type: 'image/jpeg' })] } });
+        expect(await screen.findByText(/La IA no pudo leer el listado .caído./)).toBeInTheDocument();
     });
 });

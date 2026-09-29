@@ -43,7 +43,7 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getQueueLength } from '../../utils/offlineQueue';
 import { resolveOwnerAgencyId } from '../../utils/agencyOwnership';
 import { agregarReceptor, leerReceptores, direccionPorNombre, direccionDeLaChuleta } from '../../utils/receptoresHabituales';
-import { getPackagesCount, puedeAsignarloEsteConductor, ordenarParaAsignar, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, nombreDestinatarioEnRuta, fichaDelDestinatario } from '../../utils/shipmentUtils';
+import { getPackagesCount, puedeAsignarloEsteConductor, ordenarParaAsignar, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, ciudadDeEnvio, nombreDeParada, quienPagaElPorte, nombreDestinatarioEnRuta, fichaDelDestinatario, textoDelPorte, camposDelPorte } from '../../utils/shipmentUtils';
 import { cobrosPendientesDe } from '../../utils/pendingCollections';
 import { agruparPorPagador, hermanosDe } from '../../utils/cobrosDelMismoPagador';
 import { esReciboDePresupuesto, periodoDelReciboDePresupuesto } from '../../utils/reciboDeDeuda';
@@ -3784,7 +3784,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                 const originClean = (s.originName || '').trim().toLowerCase();
 
                 const isDebido = s.porteType === 'Debido';
-                const hasPendingPorte = parseAmount(s.amount) > 0 && !s.portePaid;
+                const hasPendingPorte = (parseAmount(s.customAmount) || parseAmount(s.amount)) > 0 && !s.portePaid;
                 if (hasPendingPorte) {
                     const portePayerClean = isDebido ? (destClean || clientClean) : (originClean || clientClean);
                     if (portePayerClean === targetNameClean) return true;
@@ -4043,10 +4043,12 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                     // conceptos: cobrar aquí el porte pisaba la fecha del reembolso que se
                     // cobró otro día y la Cuenta lo resucitaba.
                     updated.portePaidAt = updated.paidAt;
-                    // Si el conductor modificó el importe del porte, guardar como customAmount
-                    // para que la Cuenta y la BD reflejen el importe real cobrado
+                    // Si el conductor modificó el importe del porte, manda lo que cobra:
+                    // va a los DOS campos del precio. Escribiendo sólo customAmount la
+                    // Cuenta decía 12 € y la ficha, el listado y las estadísticas de la
+                    // oficina seguían en 7 (HAB-642, 25/09/2026).
                     if (customAmounts[debtKey] !== undefined && parseAmount(customAmounts[debtKey]) !== parseAmount(originalAmount)) {
-                        updated.customAmount = parseAmount(customAmounts[debtKey]);
+                        Object.assign(updated, camposDelPorte(parseAmount(customAmounts[debtKey])));
                         console.log(`[DeliveryConfirm] Porte modificado para ${sid}: ${originalAmount} → ${customAmounts[debtKey]}`);
                     }
                 } else {
@@ -4242,7 +4244,8 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                     flags.portePaidAt = flags.updatedAt;
                     // Si el conductor cambió el importe del porte, persistir en la BD
                     if (shipData.customAmount !== undefined && shipData.customAmount !== original?.customAmount) {
-                        flags.customAmount = shipData.customAmount;
+                        // Los dos campos del precio, no sólo el número (ver camposDelPorte)
+                        Object.assign(flags, camposDelPorte(shipData.customAmount));
                     }
                 }
                 if (shipData.codPaid && !original?.codPaid) {
@@ -5359,7 +5362,7 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                                 if (isInvoice) {
                                                     return <span className="text-[10px] text-slate-400 italic font-sans">Enviado</span>;
                                                 }
-                                                return `${shipment.amount}€`;
+                                                return textoDelPorte(shipment);
                                             })()}
                                         </div>
                                     </div>
@@ -5495,7 +5498,9 @@ ${scriptDeAjuste({ hoja: '.hoja', contenido: '.contenido' })}
                                         // tarjeta, y sin esto cobraba 9 € pero apuntaba los 10 € de
                                         // siempre (caso Mundo fiesta, 25/09/2026).
                                         if (dashboardCustomAmounts[debtKey] !== undefined && parseAmount(currentAmount) !== parseAmount(item.amount)) {
-                                            if (isPorte) updates.customAmount = parseAmount(currentAmount);
+                                            // El porte, en sus dos campos: con sólo el número la
+                                            // oficina seguía viendo el precio de antes.
+                                            if (isPorte) Object.assign(updates, camposDelPorte(currentAmount));
                                             else updates.codAmount = parseAmount(currentAmount);
                                         }
 

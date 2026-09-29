@@ -1,21 +1,43 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { X, Calculator, CheckCircle, ChevronDown, User, FileText, DownloadCloud, Printer, Clock } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { X, Calculator, CheckCircle, ChevronDown, User, FileText, DownloadCloud, Printer, Clock, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { generateDeliveryPDFBlob } from '../../utils/deliveryPdf';
 import { printBudgetSummary } from '../../utils/printBudgetSummary';
+import { porteDelEnvio } from '../../utils/shipmentUtils';
 import { mesDelPresupuesto } from '../../utils/reciboDeDeuda';
 import { albaranesPorCerrar } from '../../utils/cierreDePresupuestos';
 import { entraEnElCierre, nombreDelPeriodo, mesDelCierre, mesPorDefectoDelCierre } from '../../utils/mesesDelCierre';
+import { coincideEnCampos } from '../../utils/busqueda';
 
 export default function BudgetLiquidationModal({ isOpen, onClose, shipments, clients, drivers, onCreateShipment, onUpdateMultipleShipments }) {
     // YYYY-MM. Hasta el día 10 abre en el mes anterior (ver utils/mesesDelCierre.js).
     const [selectedMonth, setSelectedMonth] = useState(() => mesPorDefectoDelCierre());
+    // Buscador por nombre de cliente: filtra las dos pestañas.
+    const [busqueda, setBusqueda] = useState('');
+    // En el ordenador la ventana mide lo que su lista y va centrada: al filtrar
+    // encogía y la caja se iba de debajo del cursor. Mientras se busca se queda
+    // con el alto que tenía al empezar a teclear.
+    const ventanaRef = useRef(null);
+    const [altoAlBuscar, setAltoAlBuscar] = useState(null);
+    const cambiarBusqueda = (texto) => {
+        if (!texto) {
+            setAltoAlBuscar(null);
+        } else if (!busqueda && ventanaRef.current && window.matchMedia?.('(min-width: 640px)')?.matches) {
+            setAltoAlBuscar(ventanaRef.current.offsetHeight);
+        }
+        setBusqueda(texto);
+    };
     // La ventana vive montada dentro de Envíos, que puede quedarse abierto días:
-    // el mes se vuelve a calcular cada vez que se abre, no sólo al cargar.
+    // el mes se vuelve a calcular cada vez que se abre, no sólo al cargar, y la
+    // búsqueda de la vez anterior no se queda escondiendo clientes.
     useEffect(() => {
-        if (isOpen) setSelectedMonth(mesPorDefectoDelCierre());
+        if (isOpen) {
+            setSelectedMonth(mesPorDefectoDelCierre());
+            setBusqueda('');
+            setAltoAlBuscar(null);
+        }
     }, [isOpen]);
     const [selectedDriverId, setSelectedDriverId] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
@@ -93,7 +115,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             const driver = receipt ? (drivers || []).find(d => String(d.id) === String(receipt.assignedDriverId)) : null;
             const totalAmount = receipt
                 ? (parseFloat(receipt.customAmount) > 0 ? parseFloat(receipt.customAmount) : parseFloat(receipt.amount)) || 0
-                : groupShipments.reduce((sum, s) => sum + (parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0), 0);
+                : groupShipments.reduce((sum, s) => sum + porteDelEnvio(s), 0);
 
             return {
                 receiptId,
@@ -112,6 +134,32 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
 
         return groups.sort((a, b) => a.clientName.localeCompare(b.clientName));
     }, [shipments, drivers, isOpen, selectedMonth]);
+
+    // Lo que se pinta. Las pestañas siguen contando todo lo que hay, no lo filtrado.
+    const pendientesALaVista = useMemo(
+        () => budgetData.filter(d => coincideEnCampos(d.clientName, busqueda)),
+        [budgetData, busqueda]
+    );
+    const liquidadosALaVista = useMemo(
+        () => liquidatedData.filter(d => coincideEnCampos(d.clientName, busqueda)),
+        [liquidatedData, busqueda]
+    );
+
+    const sinCoincidencias = (
+        <div className="text-center py-12 px-4">
+            <div className="bg-slate-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-400">
+                <Search size={32} />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800">Ningún cliente con ese nombre</h3>
+            <p className="text-slate-500 text-sm mt-1 max-w-sm mx-auto">No hay nada para «{busqueda.trim()}» en el mes seleccionado.</p>
+            <button
+                onClick={() => cambiarBusqueda('')}
+                className="mt-4 px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 text-sm font-bold rounded-lg border border-slate-200 transition-colors"
+            >
+                Quitar búsqueda
+            </button>
+        </div>
+    );
 
     const handlePrintBudget = (clientData, statusInfo = null) => {
         printBudgetSummary(clientData, selectedMonth, statusInfo);
@@ -188,7 +236,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             const date = s.createdAt ? new Date(s.createdAt).toLocaleDateString('es-ES') : (s.date || '');
             const origin = s.originName ? s.originName : (s.originCity ? `${s.originCity} (${s.originZip || ''})` : (s.origin || ''));
             const dest = s.destinationName ? s.destinationName : (s.destinationCity ? `${s.destinationCity} (${s.destinationZip || ''})` : (s.destination || ''));
-            const amount = parseFloat((s.amount || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
+            const amount = porteDelEnvio(s);
             const articlesInfo = Array.isArray(s.articles) 
                 ? s.articles.map(a => `${a.quantity}x ${a.description}`).join(' | ') 
                 : '';
@@ -265,7 +313,11 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
 
     return (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center sm:p-4">
-            <div className="bg-white sm:rounded-2xl w-full max-w-4xl modal-mobile-full flex flex-col shadow-xl overflow-hidden animate-in fade-in zoom-in-95">
+            <div
+                ref={ventanaRef}
+                style={altoAlBuscar ? { minHeight: altoAlBuscar } : undefined}
+                className="bg-white sm:rounded-2xl w-full max-w-4xl modal-mobile-full flex flex-col shadow-xl overflow-hidden animate-in fade-in zoom-in-95"
+            >
                 
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
@@ -333,6 +385,30 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                             </div>
                         </div>
                     )}
+                    <div className={viewTab === 'pending' ? 'md:col-span-2' : ''}>
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                            <input
+                                type="search"
+                                value={busqueda}
+                                onChange={(e) => cambiarBusqueda(e.target.value)}
+                                placeholder="Buscar cliente por nombre..."
+                                aria-label="Buscar cliente por nombre"
+                                className="w-full pl-10 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-medium text-slate-700 outline-none [&::-webkit-search-cancel-button]:appearance-none"
+                            />
+                            {busqueda && (
+                                <button
+                                    type="button"
+                                    onClick={() => cambiarBusqueda('')}
+                                    title="Quitar búsqueda"
+                                    aria-label="Quitar búsqueda"
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors"
+                                >
+                                    <X size={16} />
+                                </button>
+                            )}
+                        </div>
+                    </div>
                 </div>
 
                 {viewTab === 'pending' && deMesesAnteriores > 0 && (
@@ -362,9 +438,9 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                                 <h3 className="text-lg font-bold text-slate-800">Todo al día</h3>
                                 <p className="text-slate-500 text-sm mt-1 max-w-sm mx-auto">No hay presupuestos pendientes de liquidar para el mes seleccionado.</p>
                             </div>
-                        ) : (
+                        ) : pendientesALaVista.length === 0 ? sinCoincidencias : (
                             <div className="space-y-4">
-                                {budgetData.map((data, idx) => (
+                                {pendientesALaVista.map((data, idx) => (
                                     <div key={idx} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
                                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                                             <div>
@@ -428,9 +504,9 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                                 <h3 className="text-lg font-bold text-slate-800">Nada liquidado todavía</h3>
                                 <p className="text-slate-500 text-sm mt-1 max-w-sm mx-auto">No se ha cerrado ningún presupuesto para el mes seleccionado.</p>
                             </div>
-                        ) : (
+                        ) : liquidadosALaVista.length === 0 ? sinCoincidencias : (
                             <div className="space-y-4">
-                                {liquidatedData.map((data) => (
+                                {liquidadosALaVista.map((data) => (
                                     <div key={data.receiptId} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
                                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                                             <div>

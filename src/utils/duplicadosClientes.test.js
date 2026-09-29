@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, buscarSolicitudesParecidas, nombresSeParecen, algunNombreSeParece, loQueAportanLasGemelas, explicarAportacion } from './duplicadosClientes';
+import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, buscarSolicitudesParecidas, nombresSeParecen, algunNombreSeParece, clavesDelNombre, loQueAportanLasGemelas, explicarAportacion } from './duplicadosClientes';
 
 const CARTERA = {
     id: 10,
@@ -299,6 +299,53 @@ describe('buscarSolicitudesParecidas', () => {
         const b = unaDeAlbaran(2, 'Bar Manolo 2');
         expect(buscarSolicitudesGemelas(a, [a, b])).toEqual([]);
         expect(buscarSolicitudesParecidas(a, [a, b]).map(p => p.id)).toEqual([2]);
+    });
+});
+
+describe('el número de pedido pegado al nombre no es de la empresa', () => {
+    // Caso real de Validar Clientes (28/09/2026): el albarán de ACTIVA trae el
+    // pedido de su web delante del destinatario, y la ficha de cartera lleva
+    // delante el nombre corto de la tienda. A cada una le sobraba una palabra
+    // distinta y el aviso no saltaba.
+    const cartera = { id: 166, name: 'Md Hogar - MONTILLA DECORACION HOGAR', city: 'Montilla', status: 'active' };
+    const solicitud = pendiente({
+        name: 'WEBB2B-11410 MONTILLA DECORACION HOGAR S.L.',
+        city: 'MONTILLA',
+        createdFrom: 'albaran',
+    });
+
+    it('avisa de la ficha de cartera', () => {
+        const r = buscarFichasParecidas(solicitud, [cartera]);
+        expect(r.map(p => p.client.id)).toEqual([166]);
+        expect(r[0].motivos).toEqual(['un nombre casi igual']);
+        expect(r[0].soloPorParecido).toBe(true);
+    });
+
+    it('no guarda el pedido entre las palabras del nombre', () => {
+        expect([...clavesDelNombre('WEBB2B-11410 MONTILLA DECORACION HOGAR S.L.')])
+            .toEqual(['montilla', 'decoracion', 'hogar']);
+        // El número solo, o con barras y guiones de por medio.
+        expect([...clavesDelNombre('Muebles Lopez 0011410')]).toEqual(['muebl', 'lopez']);
+        expect([...clavesDelNombre('PED/2026-11410 Muebles Lopez')]).toEqual(['muebl', 'lopez']);
+    });
+
+    it('deja los números que sí son del nombre', () => {
+        expect([...clavesDelNombre('Bar Manolo 2')]).toEqual(['bar', 'manolo', '2']);
+        expect([...clavesDelNombre('Grupo 2000')]).toEqual(['grupo', '2000']);
+        expect([...clavesDelNombre('Taller 24h')]).toEqual(['taller', '24h']);
+        expect([...clavesDelNombre('3M España')]).toEqual(['3m', 'espana']);
+    });
+
+    it('dos pedidos distintos de la misma tienda se señalan entre sí', () => {
+        const uno = { id: 1, name: 'WEBB2B-11410 MONTILLA DECORACION HOGAR S.L.', city: 'Montilla', status: 'pending' };
+        const otro = { id: 2, name: 'WEBB2B-11502 MONTILLA DECORACION HOGAR S.L.', city: 'Montilla', status: 'pending' };
+        expect(buscarSolicitudesParecidas(uno, [uno, otro]).map(p => p.id)).toEqual([2]);
+    });
+
+    it('el pedido no empareja a dos tiendas distintas del mismo remitente', () => {
+        const uno = { id: 1, name: 'WEBB2B-11410 Muebles Lopez', status: 'pending' };
+        const otro = { id: 2, name: 'WEBB2B-11410 Electrodomesticos Ruiz', status: 'pending' };
+        expect(algunNombreSeParece(uno, otro)).toBe(false);
     });
 });
 

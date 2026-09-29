@@ -237,8 +237,10 @@ describe('nuestros antes que las agencias', () => {
 
     it('la agencia espera aunque esté más cerca, si desviarse cuesta', () => {
         contador = 0;
+        // A 2 km, pero hacia un lado: pasar por ella camino de la nuestra son
+        // 2,4 km de más. Cerca no es lo mismo que de camino.
         const envios = [
-            envio({ coords: punto(0), agencia: true, nombre: 'agencia_pegada' }),
+            envio({ coords: punto(0, 2), agencia: true, nombre: 'agencia_pegada' }),
             envio({ coords: punto(5), nombre: 'nuestro_lejos' }),
         ];
         const r = optimizarRuta({
@@ -311,6 +313,81 @@ describe('nuestros antes que las agencias', () => {
         // Está a 800 m (dentro del radio) pero ir y volver cuesta 1,6 km.
         expect(r.deCamino.size).toBe(0);
         expect(nombres(r)).toEqual(['salida', 'rumbo', 'agencia_detras']);
+    });
+
+    // El caso de Baena: viniendo del sur se pasa por la puerta de la agencia (dos
+    // albaranes en la misma nave) seis kilómetros antes de la primera parada nuestra.
+    describe('al llegar al pueblo', () => {
+        const baena = () => {
+            contador = 0;
+            return {
+                cooperativa: envio({ coords: punto(30, 2), nombre: 'cooperativa' }),
+                nave1: envio({ coords: punto(25), agencia: true, nombre: 'nave' }),
+                nave2: envio({ coords: punto(25), agencia: true, nombre: 'nave' }),
+                nuestra: envio({ coords: punto(31, -1), nombre: 'nuestra' }),
+            };
+        };
+
+        it('la agencia por cuya puerta se pasa se deja antes de la primera parada', () => {
+            const { cooperativa, nave1, nave2, nuestra } = baena();
+            const r = optimizarRuta({
+                envios: [cooperativa, nuestra, nave1, nave2],
+                rutas, conductorId: 7, ahora: MANANA,
+                gps: { lat: norte(0), lon: este(0) },
+            });
+            expect(nombres(r)).toEqual(['nave', 'nave', 'cooperativa', 'nuestra']);
+            expect([...r.deCamino].sort()).toEqual([nave1.id, nave2.id].sort());
+        });
+
+        it('tres albaranes en la misma puerta van los tres: el tope cuenta paradas', () => {
+            const { cooperativa, nave1, nave2 } = baena();
+            const nave3 = envio({ coords: punto(25), agencia: true, nombre: 'nave' });
+            const r = optimizarRuta({
+                envios: [cooperativa, nave1, nave2, nave3],
+                rutas, conductorId: 7, ahora: MANANA,
+                gps: { lat: norte(0), lon: este(0) },
+            });
+            expect(nombres(r)).toEqual(['nave', 'nave', 'nave', 'cooperativa']);
+        });
+
+        it('la que queda más allá de la primera parada no se adelanta', () => {
+            contador = 0;
+            const r = optimizarRuta({
+                envios: [
+                    envio({ coords: punto(30), nombre: 'nuestra' }),
+                    envio({ coords: punto(36), agencia: true, nombre: 'agencia_mas_alla' }),
+                ],
+                rutas, conductorId: 7, ahora: MANANA,
+                gps: { lat: norte(0), lon: este(0) },
+            });
+            expect(nombres(r)).toEqual(['nuestra', 'agencia_mas_alla']);
+            expect(r.deCamino.size).toBe(0);
+        });
+
+        it('sin saber dónde está el conductor no se adelanta nada', () => {
+            const { cooperativa, nave1, nave2, nuestra } = baena();
+            const r = optimizarRuta({
+                envios: [cooperativa, nuestra, nave1, nave2],
+                rutas, conductorId: 7, ahora: MANANA,
+            });
+            expect(r.deCamino.size).toBe(0);
+            expect(nombres(r).slice(-2)).toEqual(['nave', 'nave']);
+        });
+
+        it('también vale entrando al segundo pueblo desde el primero', () => {
+            contador = 0;
+            const dosPueblos = [{ id: 'r1', conductorId: 7, poblacionesManana: ['Cabra', 'Baena'] }];
+            const r = optimizarRuta({
+                envios: [
+                    envio({ ciudad: 'Cabra', coords: punto(0.5), nombre: 'en_cabra' }),
+                    envio({ ciudad: 'Baena', coords: punto(30, 2), nombre: 'cooperativa' }),
+                    envio({ ciudad: 'Baena', coords: punto(25), agencia: true, nombre: 'nave' }),
+                ],
+                rutas: dosPueblos, conductorId: 7, ahora: MANANA,
+                gps: { lat: norte(0), lon: este(0) },
+            });
+            expect(nombres(r)).toEqual(['en_cabra', 'nave', 'cooperativa']);
+        });
     });
 
     it('la prioridad "normal" del cliente ya no manda al bloque de agencias', () => {

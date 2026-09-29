@@ -83,6 +83,31 @@ export function normalizarCamposIA(bruto) {
     };
 }
 
+/**
+ * Deja las líneas de un listado (varios envíos en una hoja, como el de SAN
+ * RAFAEL) con la forma de los campos de la revisión: una entrada por envío.
+ *
+ * El remitente se deja vacío a propósito: es el cliente que encabeza la hoja
+ * y al crear el envío se pone el de la ficha elegida. Las filas sin
+ * destinatario ni CP (la de totales que se le escapa al modelo) se descartan.
+ * @param {{envios?: unknown[]} | null | undefined} bruto
+ * @returns {object[]}
+ */
+export function normalizarListadoIA(bruto) {
+    const lineas = Array.isArray(bruto?.envios) ? bruto.envios : [];
+    return lineas
+        .map((l) => {
+            const campos = normalizarCamposIA({ ...(l || {}), remitente: '', devolverFirmado: false });
+            // "Calle FUENTE EL ALAMO, Nº 33 (MONTILLA)": el pueblo ya va en su casilla.
+            const pueblo = normalizarPueblo(campos.poblacion);
+            const direccion = campos.direccion.replace(/\s*\(([^)]*)\)\s*$/, (entero, dentro) => (
+                pueblo && normalizarPueblo(dentro) === pueblo ? '' : entero
+            ));
+            return { ...campos, direccion };
+        })
+        .filter((c) => c.destinatario || c.cp);
+}
+
 function siONo(v) {
     if (typeof v === 'boolean') return v;
     return /^(true|si|sí|yes|1)$/i.test(texto(v));

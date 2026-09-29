@@ -51,7 +51,7 @@ import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNom
 import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre, hayAutoLoginPendiente } from './utils/ventanaPadre';
 import { CLAVE_HORARIO_REPARTO, HORARIO_REPARTO_POR_DEFECTO, normalizarHorarioReparto } from './utils/turnos';
-import { getIrregularReasons, fichaDelDestinatario } from './utils/shipmentUtils';
+import { getIrregularReasons, fichaDelDestinatario, textoDelPorte } from './utils/shipmentUtils';
 import {
   fusionarConocimiento,
   claveAprendizaje,
@@ -883,7 +883,7 @@ function App() {
         s.destinationName || '',
         s.destinationZip || '',
         s.porteType || '',
-        s.amount || '0',
+        textoDelPorte(s) || '0',
         s.hasCod ? (s.codAmount || '0') : '0',
         s.status || '',
         driver ? driver.name : '',
@@ -5194,7 +5194,7 @@ function App() {
                     </div>
                 )}
       {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onReassignCollection={handleReassignPendingCollection} onReassignCollections={handleReassignPendingCollections} onUpdateShipment={handleUpdateShipment} onCreateShipment={handleAddShipment} articles={articles} isGhostModeUnlocked={isGhostModeUnlocked} driverNamePreference={driverNamePreference} />}
-      {currentView === 'shipments' && <Shipments shipments={visibleShipments} allShipments={shipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} onAutorizarConContrasena={autorizarBorrado} />}
+      {currentView === 'shipments' && <Shipments shipments={visibleShipments} allShipments={shipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} onAutorizarConContrasena={autorizarBorrado} routes={routes} />}
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
       {currentView === 'maintenance-history' && <MaintenanceHistory vehicles={vehicles} onUpdateVehicle={handleUpdateVehicle} onNavigateToFleet={() => setCurrentView('fleet')} />}
       {currentView === 'fuel' && <FuelManagement fuelLogs={fuelLogs} onAddFuelLog={handleAddFuelLog} drivers={drivers} shipments={visibleShipments} />}
