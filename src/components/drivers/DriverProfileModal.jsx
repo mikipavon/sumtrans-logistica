@@ -7,6 +7,7 @@ import { generateCashReportPDF } from '../../utils/cashReportPdf';
 import { abrirResumenPorte } from '../../utils/resumenDePorte';
 import { abrirJustificantes } from '../../utils/justificanteReembolso';
 import { fechaSinHora } from '../../utils/fechaSinHora';
+import { porteDelEnvio } from '../../utils/shipmentUtils';
 import ShipmentDetailsModal from '../shipments/ShipmentDetailsModal';
 
 // El día de hoy como 'AAAA-MM-DD' en hora local. toISOString() lo daba en UTC,
@@ -172,8 +173,8 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
             : null;
 
         // Total revenue (portes) ever
-        const parseAmount = v => parseFloat(String(v || '0').replace(',', '.').replace(/[^0-9.-]/g, '')) || 0;
-        const totalRevenue = all.reduce((s, sh) => s + parseAmount(sh.amount), 0);
+        // Lo cobrado manda sobre el precio de la ficha (ver porteDelEnvio)
+        const totalRevenue = all.reduce((s, sh) => s + porteDelEnvio(sh), 0);
         
         // Revenue this month
         const now = new Date();
@@ -181,7 +182,7 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
             const d = s.paidAt ? new Date(s.paidAt) : (s.updatedAt ? new Date(s.updatedAt) : null);
             return d && d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
         });
-        const monthlyRevenue = thisMonth.reduce((s, sh) => s + parseAmount(sh.amount), 0);
+        const monthlyRevenue = thisMonth.reduce((s, sh) => s + porteDelEnvio(sh), 0);
 
         // Top destinations
         const cityCounts = {};
@@ -620,7 +621,7 @@ export default function DriverProfileModal({ isOpen, onClose, driver, shipments,
                                             </p>
                                             <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-50">
                                                 <span className="font-mono text-slate-500">{shipment.id}</span>
-                                                <span className="font-bold text-slate-700">€{(parseFloat(String(shipment.amount || shipment.customAmount || 0).replace(/[^0-9.-]/g, '')) || 0).toFixed(2)}</span>
+                                                <span className="font-bold text-slate-700">€{porteDelEnvio(shipment).toFixed(2)}</span>
                                             </div>
                                         </div>
                                     </div>

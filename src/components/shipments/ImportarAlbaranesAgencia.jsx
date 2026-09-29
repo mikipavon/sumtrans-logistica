@@ -4,7 +4,7 @@ import { reservarNumerosAlbaran } from '../../utils/numeracionAlbaran';
 import { calcularComisionReembolso } from '../../utils/comisionReembolso';
 import { buscarArticuloBadi, baremoDelPunto, precioUnitarioParaCliente, prefijoSerieDelCliente, esPoblacionConocida } from '../../utils/importacionEnvios';
 import { hojasDeFichero, leerHoja, miniaturaDeLienzo, cerrarLector } from '../../utils/ocrAlbaran';
-import { leerHojaConIA } from '../../utils/iaAlbaran';
+import { leerHojaConIA, leerListadoConIA } from '../../utils/iaAlbaran';
 import { poblacionSegunCP } from '../../utils/lecturaAlbaranIA';
 import { cobraPorKilos, precioPorKilos, tramoDePeso } from '../../utils/precioPorKilos';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
@@ -28,6 +28,12 @@ import PanelConsumoIA from './PanelConsumoIA';
 // (poblacionSegunCP): las etiquetas ponen "CORDOBA" en la delegación de
 // destino y el lector se lo llevaba a la población aunque el CP fuera 14920
 // (Aguilar de la Frontera). El cambio se enseña como aviso en la revisión.
+//
+// Modo listado: algunos clientes (ALMACENES DE FERRETERIA SAN RAFAEL) no dan un
+// albarán por envío sino una hoja con una línea por expedición. En ese modo la
+// IA devuelve todas las líneas y cada una sale como un envío en la revisión,
+// con el cliente elegido como remitente y pagador. Sólo con IA: Tesseract no
+// sabe separar las líneas de una tabla fotografiada.
 
 let contadorHojas = 0;
 
@@ -59,6 +65,12 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
     const [avisoIA, setAvisoIA] = useState('');
     const [consumo, setConsumo] = useState({ hojas: 0, coste: 0 });
     const [refrescoSaldo, setRefrescoSaldo] = useState(0);
+    // 'albaran' = cada hoja es un envío; 'listado' = cada línea de la hoja es un envío.
+    // Por defecto lo que diga la ficha (interruptor "Sus fotos son listados").
+    const [tipoHoja, setTipoHoja] = useState(client?.fotosComoListado ? 'listado' : 'albaran');
+    useEffect(() => { setTipoHoja(client?.fotosComoListado ? 'listado' : 'albaran'); }, [client?.id, client?.fotosComoListado]);
+    const tipoHojaRef = useRef(tipoHoja);
+    tipoHojaRef.current = tipoHoja;
 
     useEffect(() => () => { cerrarLector(); }, []);
 
@@ -71,6 +83,33 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
     const pueblos = useMemo(() => [...(coverageZones || []), ...ALL_BAREMO_PUEBLOS], [coverageZones]);
     const pueblosRef = useRef(pueblos);
     pueblosRef.current = pueblos;
+
+    // Una hoja-listado se sustituye por tantas filas como envíos traiga, todas
+    // con la misma foto para que la oficina compare cada línea con el papel.
+    const leerListado = useCallback(async (id, lienzo) => {
+        const grande = miniaturaDeLienzo(lienzo, 1400);
+        if (iaSinSaldoRef.current) {
+            actualizarHoja(id, { estado: 'error', error: 'Sin saldo de IA: un listado sólo se puede leer con IA', grande });
+            return;
+        }
+        try {
+            actualizarHoja(id, { progreso: 0.5 });
+            const { lineas, coste } = await leerListadoConIA(lienzo);
+            setConsumo(c => ({ hojas: c.hojas + 1, coste: c.coste + (coste || 0) }));
+            if (lineas.length === 0) {
+                actualizarHoja(id, { estado: 'error', error: 'No se ha encontrado ninguna línea de envío en la hoja', grande });
+                return;
+            }
+            setHojas(prev => prev.flatMap(h => (h.id !== id ? [h] : lineas.map((leidos, k) => {
+                const { campos, correccion } = poblacionSegunCP(leidos, pueblosRef.current);
+                return { ...h, id: `${id}-${k + 1}`, linea: k + 1, campos, correccion, texto: '', lector: 'ia', estado: 'leida', progreso: 1, grande };
+            }))));
+        } catch (err) {
+            console.error('La IA no pudo leer el listado', err);
+            if (err?.sinSaldo) iaSinSaldoRef.current = true;
+            actualizarHoja(id, { estado: 'error', error: `La IA no pudo leer el listado (${err?.message || 'error'}). Vuelve a subir la foto.`, grande });
+        }
+    }, [actualizarHoja]);
 
     const leerFicheros = useCallback((ficheros) => {
         const lista = Array.from(ficheros || []).filter(f => /^image\//.test(f.type) || f.type === 'application/pdf' || /\.(pdf|jpe?g|png|webp|bmp|gif)$/i.test(f.name));
@@ -92,6 +131,11 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                     const lienzo = lienzos[i];
                     const id = `h${++contadorHojas}`;
                     setHojas(prev => [...prev, { id, fichero: fichero.name, pagina: i + 1, miniatura: miniaturaDeLienzo(lienzo), grande: null, campos: camposVacios(), texto: '', estado: 'leyendo', progreso: 0 }]);
+
+                    if (tipoHojaRef.current === 'listado') {
+                        await leerListado(id, lienzo);
+                        continue;
+                    }
 
                     if (!iaSinSaldoRef.current) {
                         try {
@@ -124,7 +168,7 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                 }
             }
         }).finally(() => { setLeyendo(false); setRefrescoSaldo(n => n + 1); });
-    }, [actualizarHoja]);
+    }, [actualizarHoja, leerListado]);
 
     const handleDrop = (e) => { e.preventDefault(); setDragOver(false); leerFicheros(e.dataTransfer.files); };
 
@@ -143,6 +187,14 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
         // Lo que se cambió al leer (la población por el CP) se enseña para que la
         // oficina lo vea junto a la foto, aunque después lo edite.
         if (h.correccion) avisos.push(h.correccion);
+        // La misma hoja subida dos veces (o dos fotos del mismo listado) crearía
+        // el envío repetido: se avisa si la expedición ya existe para este cliente.
+        const exp = String(c.expedicion || '').trim();
+        if (exp) {
+            const yaCreado = (allShipments || []).find(s => String(s?.clientReference || '').trim() === exp && String(s?.clientId) === String(client?.id));
+            if (yaCreado) avisos.push(`Expedición ${exp} ya importada en ${yaCreado.id}`);
+            else if (hojas.some(o => o.id !== h.id && String(o.campos?.expedicion || '').trim() === exp)) avisos.push(`Expedición ${exp} repetida en esta importación`);
+        }
         if ((c.poblacion || c.cp) && !esPoblacionConocida(c.poblacion, c.cp, { tariffs, coverageZones })) avisos.push('Población fuera del baremo: revisa el nombre');
         // Sin kilos, a una agencia que cobra por peso el porte le saldría a 0.
         const kilos = kilosDe(c.kilos);
@@ -151,7 +203,7 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
         const porteKilos = porKilos && kilos ? { precio: precioPorKilos(kilos, client), tramo: tramoDePeso(kilos, client) } : null;
         const articulo = bultos > 0 ? buscarArticuloBadi(articles, bultos) : null;
         return { ...h, errores, avisos, articulo, porteKilos };
-    }), [hojas, articles, tariffs, coverageZones, client]);
+    }), [hojas, articles, tariffs, coverageZones, client, allShipments]);
 
     const validas = hojasRevisadas.filter(h => h.errores.length === 0);
     const conErrores = hojasRevisadas.filter(h => h.errores.length > 0);
@@ -289,6 +341,16 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                 )}
                 {step === 1 && (
                     <div className="space-y-4">
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="font-bold text-slate-500">Cada hoja es:</span>
+                            <div className="flex bg-slate-100 rounded-lg p-0.5">
+                                <button onClick={() => setTipoHoja('albaran')} disabled={leyendo}
+                                    className={`px-3 py-1 rounded-md font-bold transition-colors ${tipoHoja === 'albaran' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Un albarán</button>
+                                <button onClick={() => setTipoHoja('listado')} disabled={leyendo}
+                                    className={`px-3 py-1 rounded-md font-bold transition-colors ${tipoHoja === 'listado' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Un listado (cada línea, un envío)</button>
+                            </div>
+                            {tipoHoja === 'listado' && <span className="text-slate-400">Remitente y pagador: <b className="text-slate-600">{client?.name}</b></span>}
+                        </div>
                         <div
                             onDrop={handleDrop}
                             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -300,7 +362,7 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                                 onChange={(e) => { leerFicheros(e.target.files); e.target.value = ''; }} />
                             <Camera size={44} className="mx-auto text-slate-300 mb-3" />
                             <p className="text-lg font-bold text-slate-700 mb-1">Arrastra aquí las fotos o PDF de los albaranes</p>
-                            <p className="text-sm text-slate-500">Puedes soltar muchos a la vez. Cada hoja será un albarán.</p>
+                            <p className="text-sm text-slate-500">Puedes soltar muchos a la vez. {tipoHoja === 'listado' ? 'Cada línea del listado será un albarán.' : 'Cada hoja será un albarán.'}</p>
                             <p className="text-xs text-slate-400 mt-2">Cada hoja tarda unos segundos en leerse.</p>
                         </div>
 
@@ -310,7 +372,7 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                                     <div key={h.id} className="flex items-center gap-3 px-3 py-2 text-xs">
                                         {h.miniatura ? <img src={h.miniatura} alt="" className="w-10 h-14 object-cover rounded border border-slate-200" /> : <FileText size={20} className="text-slate-300" />}
                                         <div className="flex-1 min-w-0">
-                                            <p className="font-bold text-slate-700 truncate">{h.fichero}{h.pagina > 1 ? ` · pág. ${h.pagina}` : ''}</p>
+                                            <p className="font-bold text-slate-700 truncate">{h.fichero}{h.pagina > 1 ? ` · pág. ${h.pagina}` : ''}{h.linea ? ` · línea ${h.linea}` : ''}</p>
                                             {h.estado === 'leyendo' && (
                                                 <div className="h-1.5 bg-slate-100 rounded-full mt-1 overflow-hidden">
                                                     <div className="h-full bg-emerald-500 transition-all" style={{ width: `${Math.round((h.progreso || 0) * 100)}%` }} />
@@ -341,14 +403,14 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                                 <p className="font-bold text-slate-800">Revisa lo leído — {validas.length} listos para crear</p>
                                 {conErrores.length > 0 && <p className="text-xs text-red-600 font-bold">{conErrores.length} con datos que faltan (no se crearán hasta que los completes)</p>}
                             </div>
-                            <span className="text-xs text-slate-400">Agencia que paga: <b>{client?.name}</b></span>
+                            <span className="text-xs text-slate-400">Paga el porte: <b>{client?.name}</b></span>
                         </div>
 
                         <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
                             {hojasRevisadas.map((h, i) => (
                                 <div key={h.id} className={`rounded-xl border p-3 flex gap-3 ${h.errores.length > 0 ? 'border-red-200 bg-red-50/40' : 'border-slate-200'}`}>
                                     <div className="w-24 shrink-0 flex flex-col items-center gap-1">
-                                        <span className="text-[10px] font-bold text-slate-400">#{i + 1}</span>
+                                        <span className="text-[10px] font-bold text-slate-400">#{i + 1}{h.linea ? ` · lín. ${h.linea}` : ''}</span>
                                         {h.miniatura && (
                                             <img src={h.miniatura} alt="" className="w-24 rounded border border-slate-200 cursor-zoom-in" onClick={() => setHojaAmpliada(h)} title="Ver en grande" />
                                         )}
@@ -366,7 +428,7 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                                     </div>
                                     <div className="flex-1 min-w-0 space-y-2">
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                                            {campo(h, 'remitente', 'Remitente (quien entrega)', { ancho: 'col-span-2' })}
+                                            {campo(h, 'remitente', 'Remitente (quien entrega)', { ancho: 'col-span-2', placeholder: client?.name || '' })}
                                             {campo(h, 'expedicion', 'Expedición / Ref.', { ancho: 'col-span-2' })}
                                             {campo(h, 'destinatario', 'Destinatario', { ancho: 'col-span-2' })}
                                             {campo(h, 'direccion', 'Dirección', { ancho: 'col-span-2' })}
@@ -376,7 +438,7 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                                             {campo(h, 'bultos', 'Bultos', { tipo: 'number' })}
                                             <div className="flex flex-col gap-0.5">
                                                 <span className="text-[10px] font-bold uppercase text-slate-500">Porte</span>
-                                                <span className="px-2 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700" title="El porte de un albarán de agencia lo paga siempre la agencia">Pagado (lo paga la agencia)</span>
+                                                <span className="px-2 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700" title={`El porte lo paga ${client?.name || 'el cliente elegido'}`}>Pagado (lo paga {h.linea ? 'el cliente' : 'la agencia'})</span>
                                             </div>
                                             {campo(h, 'reembolso', 'Reembolso €', { placeholder: '0' })}
                                             {campo(h, 'kilos', 'Kilos', { placeholder: '—' })}

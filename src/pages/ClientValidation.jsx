@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react';
-import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2, AlertTriangle, KeyRound, Globe, Merge, Copy, List, LayoutGrid, Truck, X } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, MapPin, Phone, Building2, Tag, User, Calendar, Edit, Mail, Search, Trash2, AlertTriangle, KeyRound, Globe, Merge, Copy, List, LayoutGrid, Truck, X, Eye, EyeOff } from 'lucide-react';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import { supabase } from '../lib/supabase';
 import { getOwnerLabel } from '../utils/agencyOwnership';
 import { buscarFichasParecidas, explicarMotivos, buscarSolicitudesGemelas, buscarSolicitudesParecidas, loQueAportanLasGemelas, explicarAportacion } from '../utils/duplicadosClientes';
 import { esRegistroWeb } from '../utils/altaClientes';
 import { indexarEnviosPorCliente, quienMandoLaMercancia } from '../utils/quienMandoLaMercancia';
+import { AGENCIAS, agenciasDeLaFicha, estaOcultaPorAgencia } from '../utils/agenciasDeLaFicha';
 import { planDeAcceso, explicarElAcceso } from '../utils/accesoFichaExistente';
 import { planDeVinculo, enviosQueSeVinculan, explicarElVinculo } from '../utils/vincularFichaPendiente';
 import { emailDeAcceso } from '../utils/clientAccess';
@@ -447,6 +448,25 @@ function vistaGuardada() {
     }
 }
 
+// Las agencias quitadas de la vista también se guardan: quien las quita es
+// porque no las quiere ver al repasar, y tener que quitarlas cada mañana sería
+// peor que no tener el filtro. El aviso de la lista recuerda que están ocultas.
+function agenciasOcultasGuardadas() {
+    try {
+        const guardadas = JSON.parse(localStorage.getItem('validacion-agencias-ocultas') || '[]');
+        return Array.isArray(guardadas)
+            ? AGENCIAS.map(a => a.clave).filter(clave => guardadas.includes(clave))
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+// "TSB", "TSB y XPO", "TSB, TXT y XPO"
+const enumerar = (nombres) => nombres.length <= 1
+    ? nombres.join('')
+    : `${nombres.slice(0, -1).join(', ')} y ${nombres[nombres.length - 1]}`;
+
 export default function ClientValidation({ clients, shipments = [], onValidateClient, onUpdateClient, onDeleteClients, onGrantAccessToExisting, onVincularFichaPendiente, articles, tariffs, allPoblaciones }) {
     // Filter only pending clients — exclude test-mode clients (isTest: true)
     // Los registros web van primero, y entre ellos el último de arriba: son los
@@ -754,6 +774,57 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                 ? clientesPorOrigen.filter(c => duplicadosPorCliente.has(c.id))
                 : clientesPorOrigen;
 
+    // ── Quitar de la vista las fichas de TSB, TXT y XPO ──
+    // Sólo esconde: no aprueba, no rechaza y no borra. Los contadores de arriba
+    // siguen contando todos los pendientes, ocultos o no.
+    const [agenciasOcultas, setAgenciasOcultas] = useState(agenciasOcultasGuardadas);
+
+    // Los registros de la web se quedan fuera: tienen a alguien esperando y no
+    // se esconden aunque su nombre coincida con el de un destinatario de agencia.
+    const agenciasPorCliente = useMemo(() => {
+        const mapa = new Map();
+        pendingClients.forEach(p => {
+            if (esRegistroWeb(p)) return;
+            const suyas = agenciasDeLaFicha(p, clients, quienMandoPorCliente.get(p.id));
+            if (suyas.length > 0) mapa.set(p.id, suyas);
+        });
+        return mapa;
+    }, [pendingClients, clients, quienMandoPorCliente]);
+
+    const estaOculta = (c, ocultas = agenciasOcultas) => estaOcultaPorAgencia(agenciasPorCliente.get(c.id), ocultas);
+
+    const guardarAgenciasOcultas = (ocultas) => {
+        setAgenciasOcultas(ocultas);
+        try { localStorage.setItem('validacion-agencias-ocultas', JSON.stringify(ocultas)); } catch { /* sin memoria, da igual */ }
+        // Lo que deja de verse se desmarca: «Borrar (n)» borra lo marcado, y no
+        // puede llevarse fichas que ya no están delante.
+        const seVan = pendingClients.filter(c => estaOculta(c, ocultas)).map(c => c.id);
+        if (seVan.length > 0) setSelectedIds(prev => prev.filter(id => !seVan.includes(id)));
+    };
+
+    const alternarAgencia = (clave) => guardarAgenciasOcultas(
+        agenciasOcultas.includes(clave)
+            ? agenciasOcultas.filter(a => a !== clave)
+            : [...agenciasOcultas, clave]
+    );
+
+    // Un botón por agencia, con cuántas fichas tiene en lo que se está mirando.
+    // La que no tiene ninguna no se ofrece, salvo que esté quitada: si no, no
+    // habría dónde pinchar para volver a ponerla.
+    const botonesDeAgencia = AGENCIAS
+        .map(a => ({
+            ...a,
+            oculta: agenciasOcultas.includes(a.clave),
+            total: clientesPorAviso.filter(c => (agenciasPorCliente.get(c.id) || []).includes(a.clave)).length,
+        }))
+        .filter(a => a.total > 0 || a.oculta);
+
+    const clientesALaVista = agenciasOcultas.length === 0
+        ? clientesPorAviso
+        : clientesPorAviso.filter(c => !estaOculta(c));
+    const cuantasOcultas = clientesPorAviso.length - clientesALaVista.length;
+    const nombresDeLasOcultas = enumerar(AGENCIAS.filter(a => agenciasOcultas.includes(a.clave)).map(a => a.nombre));
+
     // Filtro «Mercancía de»: la empresa que mandó el paquete (o a la que se lo
     // mandó la ficha, si es remitente). Guarda la clave normalizada, para que
     // "TSB" y "T.S.B." cuenten como la misma. '' = todas.
@@ -764,7 +835,7 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
     // dejaría la lista vacía.
     const opcionesRemitente = (() => {
         const cuenta = new Map();
-        clientesPorAviso.forEach(c => {
+        clientesALaVista.forEach(c => {
             (quienMandoPorCliente.get(c.id)?.todos || []).forEach(({ clave, nombre }) => {
                 const actual = cuenta.get(clave);
                 if (actual) actual.total += 1;
@@ -775,8 +846,8 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
     })();
 
     const clientesPorRemitente = remitenteFiltro === ''
-        ? clientesPorAviso
-        : clientesPorAviso.filter(c =>
+        ? clientesALaVista
+        : clientesALaVista.filter(c =>
             (quienMandoPorCliente.get(c.id)?.todos || []).some(r => r.clave === remitenteFiltro));
 
     // Al cambiar de pestaña la empresa elegida puede no tener fichas en la
@@ -1008,6 +1079,57 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                             </span>
                         </button>
                     ))}
+
+                    {/* Quitar de la vista las fichas de cada agencia. Tachada = no se ve. */}
+                    {botonesDeAgencia.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 md:ml-auto">
+                            <span className="text-xs font-bold text-slate-400">Agencias:</span>
+                            {botonesDeAgencia.map(({ clave, nombre, oculta, total }) => (
+                                <button
+                                    key={clave}
+                                    type="button"
+                                    onClick={() => alternarAgencia(clave)}
+                                    aria-pressed={oculta}
+                                    aria-label={oculta ? `Volver a enseñar las fichas de ${nombre}` : `Quitar de la vista las fichas de ${nombre}`}
+                                    title={oculta ? `Las fichas de ${nombre} están ocultas. Pincha para volver a verlas.` : `Quitar de la vista las fichas de ${nombre}. No se borran.`}
+                                    className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-sm font-bold border transition-colors ${oculta
+                                        ? 'bg-slate-700 border-slate-700 text-white hover:bg-slate-600'
+                                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                        }`}
+                                >
+                                    {oculta ? <EyeOff size={15} /> : <Eye size={15} className="text-slate-400" />}
+                                    <span className={oculta ? 'line-through' : ''}>{nombre}</span>
+                                    <span className={`px-1.5 rounded-full text-xs ${oculta ? 'bg-white/20' : 'bg-slate-100 text-slate-500'}`}>
+                                        {total}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Lo que está escondido se dice siempre: una ficha oculta es una
+                ficha que nadie valida, y el filtro se queda guardado de un día
+                para otro. */}
+            {cuantasOcultas > 0 && (
+                <div className="flex items-center justify-between gap-3 px-4 py-2 bg-slate-100 border border-slate-200 text-slate-600 rounded-xl text-sm">
+                    <span className="flex items-center gap-2 min-w-0">
+                        <EyeOff size={15} className="shrink-0 text-slate-400" />
+                        <span>
+                            {cuantasOcultas === 1
+                                ? <>Hay <strong>1</strong> ficha de {nombresDeLasOcultas} oculta.</>
+                                : <>Hay <strong>{cuantasOcultas}</strong> fichas de {nombresDeLasOcultas} ocultas.</>}
+                        </span>
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => guardarAgenciasOcultas([])}
+                        className="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 font-bold transition-colors"
+                    >
+                        <Eye size={14} />
+                        Enseñarlas
+                    </button>
                 </div>
             )}
 
@@ -1038,10 +1160,10 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
             {aviso && (
                 <div className="flex items-center justify-between gap-3 px-4 py-2 bg-slate-800 text-white rounded-xl text-sm">
                     <span>
-                        Viendo <strong>{clientesPorAviso.length}</strong> ficha{clientesPorAviso.length === 1 ? '' : 's'}
-                        {aviso === 'repetidos' && (clientesPorAviso.length === 1 ? ' repetida en la lista' : ' repetidas en la lista')}
+                        Viendo <strong>{clientesALaVista.length}</strong> ficha{clientesALaVista.length === 1 ? '' : 's'}
+                        {aviso === 'repetidos' && (clientesALaVista.length === 1 ? ' repetida en la lista' : ' repetidas en la lista')}
                         {aviso === 'parecidos' && ' con un nombre parecido a otra'}
-                        {aviso === 'cartera' && (clientesPorAviso.length === 1 ? ' que ya parece estar en la cartera' : ' que ya parecen estar en la cartera')}
+                        {aviso === 'cartera' && (clientesALaVista.length === 1 ? ' que ya parece estar en la cartera' : ' que ya parecen estar en la cartera')}
                         .
                     </span>
                     <button
@@ -1408,6 +1530,8 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
                     <p className="text-slate-500">
                         {remitenteFiltro
                             ? `Ninguna ficha de esta pestaña lleva mercancía de ${nombreRemitenteFiltro || 'esa empresa'}${searchTerm.trim() !== '' ? ` y coincide con "${searchTerm}"` : ''}. Quita el filtro de «Mercancía de» para verlas todas.`
+                            : cuantasOcultas > 0 && clientesALaVista.length === 0
+                            ? `Aquí sólo ${cuantasOcultas === 1 ? 'queda 1 ficha' : `quedan ${cuantasOcultas} fichas`} de ${nombresDeLasOcultas}, y ${cuantasOcultas === 1 ? 'la tienes oculta' : 'las tienes ocultas'}. Pincha «Enseñarlas» para volver a verlas.`
                             : aviso
                             ? `Ninguna ficha de ese aviso queda a la vista${searchTerm.trim() !== '' ? ` buscando "${searchTerm}"` : ' en esta pestaña'}. Vuelve a pinchar el aviso para quitar el filtro.`
                             : searchTerm.trim() !== ''

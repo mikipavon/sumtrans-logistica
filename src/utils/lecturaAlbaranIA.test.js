@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizarCamposIA, poblacionSegunCP, albaranesPorFotoDelMes, nivelDeSaldo } from './lecturaAlbaranIA';
+import { normalizarCamposIA, normalizarListadoIA, poblacionSegunCP, albaranesPorFotoDelMes, nivelDeSaldo } from './lecturaAlbaranIA';
 
 describe('normalizarCamposIA', () => {
     it('deja tal cual una lectura buena (la de Gemini con la foto real de TSB)', () => {
@@ -93,6 +93,27 @@ describe('normalizarCamposIA', () => {
         expect(r.bultos).toBeNull();
         expect(r.reembolso).toBe(0);
         expect(normalizarCamposIA({ destinatario: null, poblacion: undefined }).destinatario).toBe('');
+    });
+});
+
+describe('normalizarListadoIA', () => {
+    it('una entrada por línea, sin remitente, y fuera la fila de totales', () => {
+        const r = normalizarListadoIA({ envios: [
+            { expedicion: 187828, destinatario: 'FERRETERIA LA CADENA S.L.', direccion: 'Calle FUENTE EL ALAMO, Nº 33 (MONTILLA)', poblacion: 'MONTILLA', cp: '14550', telefono: '637852762', bultos: '3', kilos: '40,00', reembolso: 0 },
+            { expedicion: '', destinatario: '', cp: '', bultos: 33, kilos: 271 },
+        ] });
+        expect(r).toHaveLength(1);
+        expect(r[0]).toMatchObject({ expedicion: '187828', remitente: '', direccion: 'Calle FUENTE EL ALAMO, Nº 33', poblacion: 'MONTILLA', bultos: 3, kilos: 40, devolverFirmado: false });
+    });
+
+    it('un paréntesis que no es el pueblo se queda en la dirección', () => {
+        const [c] = normalizarListadoIA({ envios: [{ destinatario: 'X', direccion: 'Carretera BAENA, S/N (nave 2)', poblacion: 'NUEVA CARTEYA', cp: '14857' }] });
+        expect(c.direccion).toBe('Carretera BAENA, S/N (nave 2)');
+    });
+
+    it('sin lista de envíos devuelve vacío', () => {
+        expect(normalizarListadoIA(null)).toEqual([]);
+        expect(normalizarListadoIA({ campos: 1 })).toEqual([]);
     });
 });
 

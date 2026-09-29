@@ -7,7 +7,7 @@
 // de contacto, así que no había forma de saber QUIÉN se había registrado.
 
 import { render, screen, within, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import ClientValidation from './ClientValidation';
 
 // El modal de alta arrastra medio proyecto y aquí no se abre nunca.
@@ -528,5 +528,154 @@ describe('Validar Clientes — quién le mandó la mercancía', () => {
         localStorage.setItem('validacion-vista', 'lista');
         render(<ClientValidation clients={[destinatario]} shipments={[]} {...props} />);
         expect(screen.queryByText(/Mercancía de:/)).not.toBeInTheDocument();
+    });
+});
+
+// ── Quitar de la vista las fichas de las agencias ──
+//
+// Casi todo lo que cae en esta pantalla son destinatarios de TSB, TXT y XPO
+// que se apuntan solos al entregarles. Para repasar lo propio hay que poder
+// quitarlos de delante, y volver a ponerlos cuando toque. Sólo se esconden:
+// no se aprueba, no se rechaza y no se borra nada.
+describe('Validar Clientes — quitar de la vista las fichas de TSB, TXT y XPO', () => {
+    beforeEach(() => {
+        localStorage.setItem('validacion-vista', 'lista');
+        localStorage.removeItem('validacion-agencias-ocultas');
+    });
+    // Las pruebas comparten navegador de mentira: lo guardado aquí no puede
+    // quedarse para el fichero que venga detrás.
+    afterEach(() => localStorage.removeItem('validacion-agencias-ocultas'));
+
+    const TSB = { id: 1, name: 'TSB', isAgency: true, status: 'approved' };
+    const XPO = { id: 2, name: 'XPO Logistics', isAgency: true, status: 'approved' };
+    const deTsb = { id: 30, name: 'Bar Pepe', status: 'pending', type: 'Destinatario', createdFrom: 'Reparto (Driver)', ownerAgencyId: 1 };
+    const deXpo = { id: 31, name: 'Talleres Ruiz', status: 'pending', type: 'Destinatario', createdFrom: 'Reparto (Driver)', ownerAgencyId: 2 };
+    const mio = { id: 32, name: 'Zuricar', status: 'pending', type: 'Destinatario', createdFrom: 'Albarán' };
+    const todos = [TSB, XPO, deTsb, deXpo, mio];
+
+    const quitar = (agencia) => screen.getByRole('button', { name: `Quitar de la vista las fichas de ${agencia}` });
+
+    it('ofrece un botón por agencia con sus fichas, y no el de la que no tiene ninguna', () => {
+        render(<ClientValidation clients={todos} {...props} />);
+
+        expect(quitar('TSB')).toHaveTextContent('TSB1');
+        expect(quitar('XPO')).toHaveTextContent('XPO1');
+        expect(screen.queryByRole('button', { name: /las fichas de TXT/ })).not.toBeInTheDocument();
+    });
+
+    it('sin fichas de agencia no sale ningún botón', () => {
+        render(<ClientValidation clients={[mio]} {...props} />);
+        expect(screen.queryByText('Agencias:')).not.toBeInTheDocument();
+    });
+
+    it('al pinchar una agencia sus fichas dejan de verse y las demás siguen', () => {
+        render(<ClientValidation clients={todos} {...props} />);
+
+        fireEvent.click(quitar('TSB'));
+
+        expect(screen.queryByText('Bar Pepe')).not.toBeInTheDocument();
+        expect(screen.getByText('Talleres Ruiz')).toBeInTheDocument();
+        expect(screen.getByText('Zuricar')).toBeInTheDocument();
+    });
+
+    it('avisa de cuántas hay ocultas, y con «Enseñarlas» vuelven todas', () => {
+        render(<ClientValidation clients={todos} {...props} />);
+        fireEvent.click(quitar('TSB'));
+        fireEvent.click(quitar('XPO'));
+
+        expect(screen.getByText(/fichas de TSB y XPO ocultas/)).toBeInTheDocument();
+        expect(screen.getByText('Zuricar')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Enseñarlas' }));
+        expect(screen.getByText('Bar Pepe')).toBeInTheDocument();
+        expect(screen.getByText('Talleres Ruiz')).toBeInTheDocument();
+        expect(screen.queryByText(/ocultas/)).not.toBeInTheDocument();
+    });
+
+    it('volviendo a pinchar la agencia, sus fichas vuelven', () => {
+        render(<ClientValidation clients={todos} {...props} />);
+        fireEvent.click(quitar('TSB'));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Volver a enseñar las fichas de TSB' }));
+        expect(screen.getByText('Bar Pepe')).toBeInTheDocument();
+    });
+
+    it('lo quitado se queda quitado al volver a entrar', () => {
+        const { unmount } = render(<ClientValidation clients={todos} {...props} />);
+        fireEvent.click(quitar('TSB'));
+        unmount();
+
+        render(<ClientValidation clients={todos} {...props} />);
+        expect(screen.queryByText('Bar Pepe')).not.toBeInTheDocument();
+        expect(screen.getByText(/ficha de TSB oculta\./)).toBeInTheDocument();
+    });
+
+    it('una ficha sin bolsa se oculta si toda su mercancía vino de la agencia', () => {
+        const sinBolsa = { ...deTsb, ownerAgencyId: null };
+        const envio = { id: 'SUM-700', client: 'TSB', originName: 'TALLERES SUR', destinationName: 'BAR PEPE', createdAt: '2026-09-11T07:00:00.000Z' };
+        render(<ClientValidation clients={[TSB, sinBolsa, mio]} shipments={[envio]} {...props} />);
+
+        fireEvent.click(quitar('TSB'));
+        expect(screen.queryByText('Bar Pepe')).not.toBeInTheDocument();
+    });
+
+    it('si además le mandó un cliente nuestro, la ficha no se esconde', () => {
+        const sinBolsa = { ...deTsb, ownerAgencyId: null };
+        const envios = [
+            { id: 'SUM-700', client: 'TSB', originName: 'TALLERES SUR', destinationName: 'BAR PEPE', createdAt: '2026-09-11T07:00:00.000Z' },
+            { id: 'SUM-701', client: 'PROSERVICE', originName: 'PROSERVICE', destinationName: 'BAR PEPE', createdAt: '2026-09-12T07:00:00.000Z' },
+        ];
+        render(<ClientValidation clients={[TSB, sinBolsa, deXpo, XPO]} shipments={envios} {...props} />);
+
+        // No cuenta como ficha de TSB: ni siquiera se ofrece el botón.
+        expect(screen.queryByRole('button', { name: /las fichas de TSB/ })).not.toBeInTheDocument();
+        fireEvent.click(quitar('XPO'));
+        expect(screen.getByText('Bar Pepe')).toBeInTheDocument();
+    });
+
+    it('un registro de la web no se esconde aunque se llame como un destinatario de agencia', () => {
+        const web = { ...registroWeb, id: 40, name: 'Bar Pepe' };
+        const envio = { id: 'SUM-700', client: 'TSB', originName: 'TALLERES SUR', destinationName: 'BAR PEPE', createdAt: '2026-09-11T07:00:00.000Z' };
+        render(<ClientValidation clients={[TSB, { ...web, type: 'Destinatario' }, deTsb]} shipments={[envio]} {...props} />);
+        fireEvent.click(screen.getByRole('button', { name: /^Todos/ }));
+
+        fireEvent.click(quitar('TSB'));
+        expect(screen.getByText('Se ha registrado en la web')).toBeInTheDocument();
+        expect(screen.getByText(/ficha de TSB oculta\./)).toBeInTheDocument();
+    });
+
+    it('al quitar una agencia se desmarcan sus fichas, para que «Borrar» no se las lleve', async () => {
+        const onDeleteClients = vi.fn().mockResolvedValue();
+        const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        render(<ClientValidation clients={todos} {...props} onDeleteClients={onDeleteClients} />);
+
+        fireEvent.click(screen.getByLabelText('Seleccionar todos'));
+        expect(screen.getByRole('button', { name: /Borrar \(3\)/ })).toBeInTheDocument();
+
+        fireEvent.click(quitar('TSB'));
+        fireEvent.click(screen.getByRole('button', { name: /Borrar \(2\)/ }));
+
+        await vi.waitFor(() => expect(onDeleteClients).toHaveBeenCalledWith([31, 32]));
+        confirm.mockRestore();
+    });
+
+    it('si sólo quedan fichas ocultas, lo dice en vez de enseñar la pantalla vacía', () => {
+        render(<ClientValidation clients={[TSB, deTsb]} {...props} />);
+        fireEvent.click(quitar('TSB'));
+
+        expect(screen.getByText(/Aquí sólo queda 1 ficha de TSB, y la tienes oculta/)).toBeInTheDocument();
+    });
+
+    it('el desplegable «Mercancía de» deja de ofrecer la agencia quitada', () => {
+        const envios = [
+            { id: 'SUM-700', client: 'TSB', originName: 'TALLERES SUR', destinationName: 'BAR PEPE', createdAt: '2026-09-11T07:00:00.000Z' },
+            { id: 'SUM-701', client: 'PROSERVICE', originName: 'PROSERVICE', destinationName: 'ZURICAR', createdAt: '2026-09-12T07:00:00.000Z' },
+        ];
+        render(<ClientValidation clients={[TSB, deTsb, mio]} shipments={envios} {...props} />);
+        expect(screen.getByRole('option', { name: 'TSB (1)' })).toBeInTheDocument();
+
+        fireEvent.click(quitar('TSB'));
+        expect(screen.queryByRole('option', { name: 'TSB (1)' })).not.toBeInTheDocument();
+        expect(screen.getByRole('option', { name: 'PROSERVICE (1)' })).toBeInTheDocument();
     });
 });

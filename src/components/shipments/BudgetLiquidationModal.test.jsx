@@ -107,6 +107,69 @@ describe('BudgetLiquidationModal · porte debido a un cliente de Presupuesto', (
     });
 });
 
+// ── Buscador por nombre: con 37 clientes por cerrar había que ir bajando a ojo ──
+describe('BudgetLiquidationModal · buscador de cliente', () => {
+    const fichas = [
+        { id: 1, name: 'TALLERES LOPERA', billingType: 'Presupuesto' },
+        { id: 2, name: 'HIDRÁULICA CARTEYANA', billingType: 'Presupuesto' },
+    ];
+    const albaran = (id, client, extra = {}) => ({
+        id, type: 'Entrega', client, billingType: 'Presupuesto', porteType: 'Pagado',
+        amount: '€7.00', customAmount: 7, status: 'Entregado', createdAt: '2026-09-12T09:00:00.000Z', ...extra,
+    });
+    const montarCon = (shipments) => render(
+        <BudgetLiquidationModal
+            isOpen onClose={vi.fn()} clients={fichas} drivers={[]} shipments={shipments}
+            onCreateShipment={vi.fn()} onUpdateMultipleShipments={vi.fn()}
+        />
+    );
+    const buscar = (texto) => fireEvent.change(screen.getByRole('searchbox'), { target: { value: texto } });
+
+    it('deja sólo el cliente buscado, sin mirar acentos ni mayúsculas', () => {
+        montarCon([albaran('HAB-1', 'TALLERES LOPERA'), albaran('HAB-2', 'HIDRÁULICA CARTEYANA')]);
+        elegirMes('2026-09');
+        buscar('hidraulica');
+        expect(screen.getByText('HIDRÁULICA CARTEYANA')).toBeInTheDocument();
+        expect(screen.queryByText('TALLERES LOPERA')).toBeNull();
+        // La pestaña sigue contando los dos.
+        expect(screen.getByText(/Pendientes de Liquidar \(2\)/)).toBeInTheDocument();
+    });
+
+    it('vale una palabra de en medio del nombre', () => {
+        montarCon([albaran('HAB-1', 'TALLERES LOPERA'), albaran('HAB-2', 'HIDRÁULICA CARTEYANA')]);
+        elegirMes('2026-09');
+        buscar('lopera');
+        expect(screen.getByText('TALLERES LOPERA')).toBeInTheDocument();
+        expect(screen.queryByText('HIDRÁULICA CARTEYANA')).toBeNull();
+    });
+
+    it('si no hay ninguno lo dice, y quitar la búsqueda los devuelve todos', () => {
+        montarCon([albaran('HAB-1', 'TALLERES LOPERA'), albaran('HAB-2', 'HIDRÁULICA CARTEYANA')]);
+        elegirMes('2026-09');
+        buscar('zzz');
+        expect(screen.getByText('Ningún cliente con ese nombre')).toBeInTheDocument();
+        expect(screen.queryByText('Todo al día')).toBeNull();
+        fireEvent.click(screen.getByText('Quitar búsqueda'));
+        expect(screen.getByText('TALLERES LOPERA')).toBeInTheDocument();
+        expect(screen.getByText('HIDRÁULICA CARTEYANA')).toBeInTheDocument();
+    });
+
+    it('también filtra Ya Liquidados', () => {
+        const cerrado = (id, client, recibo) => albaran(id, client, { budgetLiquidated: true, linkedReceiptId: recibo });
+        montarCon([
+            cerrado('HAB-1', 'TALLERES LOPERA', 'RC-1'),
+            cerrado('HAB-2', 'HIDRÁULICA CARTEYANA', 'RC-2'),
+            { id: 'RC-1', type: 'Recibo', client: 'TALLERES LOPERA', customAmount: 7, amount: '7.00' },
+            { id: 'RC-2', type: 'Recibo', client: 'HIDRÁULICA CARTEYANA', customAmount: 7, amount: '7.00' },
+        ]);
+        fireEvent.click(screen.getByText(/Ya Liquidados/));
+        elegirMes('2026-09');
+        buscar('talleres');
+        expect(screen.getByText('TALLERES LOPERA')).toBeInTheDocument();
+        expect(screen.queryByText('HIDRÁULICA CARTEYANA')).toBeNull();
+    });
+});
+
 // ── Septiembre de 2026, primer mes con la app: se cierra junto con agosto ──
 const albaranDeSeptiembre = {
     id: 'HAB-950', type: 'Entrega', client: 'ISPAVICAR', billingType: 'Presupuesto',

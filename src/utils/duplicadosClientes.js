@@ -115,13 +115,28 @@ const PALABRAS_DEL_RAMO = new Set([
 const esDelRamo = (palabra) => PALABRAS_DEL_RAMO.has(palabra)
     || (palabra.length > 6 && palabra.endsWith('eria'));
 
+// Lo que el remitente pega al nombre y no es de la empresa: el número de pedido
+// ("WEBB2B-11410 MONTILLA DECORACION HOGAR", que es como llegan los albaranes de
+// la web de ACTIVA), un CIF, un teléfono, el código postal. Cambia en cada
+// albarán, así que como palabra del nombre sólo estorba: a la solicitud le
+// sobraba el pedido, a la ficha de cartera el nombre corto de la tienda, y con
+// una palabra de más en cada lado el aviso no saltaba.
+//
+// Se reconoce por las cifras: cinco seguidas si es sólo un número, cuatro si va
+// mezclado con letras. Por debajo se queda, que ahí el número sí es del nombre:
+// "Bar Manolo 2", "Grupo 2000", "Taller 24h", "3M".
+const esUnaReferencia = (palabra) => {
+    const cifras = palabra.replace(/[^0-9]/g, '').length;
+    return cifras >= (cifras === palabra.length ? 5 : 4);
+};
+
 // Las palabras con las que se reconoce a una empresa, ya limpias. Se exporta
 // para poder probarla suelta.
 export function clavesDelNombre(valor) {
     const palabras = normalizarTexto(valor)
         .split(' ')
         .map(p => p.replace(/[^a-z0-9]/g, ''))   // paréntesis, barras, símbolos
-        .filter(Boolean)
+        .filter(p => p && !esUnaReferencia(p))
         .map(p => ABREVIATURAS[p] || p)
         .map(enSingular)
         .filter(p => !PALABRAS_VACIAS.has(p) && !FORMAS_JURIDICAS.has(p));

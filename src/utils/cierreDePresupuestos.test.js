@@ -5,7 +5,7 @@
 // cierre no salía él (28/09/2026).
 
 import { describe, it, expect } from 'vitest';
-import { albaranesPorCerrar, porteCobradoEnMano } from './cierreDePresupuestos';
+import { albaranesPorCerrar } from './cierreDePresupuestos';
 import { filtroTipoDeCliente } from './filtrosEnvios';
 
 const clientes = [
@@ -59,20 +59,24 @@ describe('albaranesPorCerrar', () => {
         expect(albaranesPorCerrar([sinFicha], clientes)[0]).toMatchObject({ clientName: 'TALLERES NUEVOS', clientId: null });
     });
 
-    it('no entran los liquidados, los recibos, los que no tienen precio ni los cobrados en mano', () => {
+    it('no entran los liquidados, los recibos ni los que no tienen precio', () => {
         const fuera = [
             { ...debidoAJuanAlba, budgetLiquidated: true },
             { ...debidoAJuanAlba, type: 'Recibo' },
             { ...debidoAJuanAlba, amount: 'Tarifa', customAmount: null },
-            { ...debidoAJuanAlba, portePaid: true, porteCollectedById: 5 },
         ];
         expect(albaranesPorCerrar(fuera, clientes)).toHaveLength(0);
     });
 
-    it('el porte que se dio por pagado al entregar, sin que nadie lo cobrara, sí entra', () => {
+    // AGRO VELASCO, 28/09/2026: el alta desde el móvil guarda el albarán de un
+    // cliente de Presupuesto como pagado y con el repartidor de cobrador.
+    it('el albarán que dio de alta un repartidor entra aunque conste pagado y con cobrador', () => {
+        const delMovil = albaran({
+            id: 'HAB-7', client: 'PROSERVICE', billingType: 'Presupuesto',
+            paymentStatus: 'Paid', portePaid: true, porteCollectedById: 5,
+        });
         const entregado = { ...debidoAJuanAlba, portePaid: true, porteCollectedById: null };
-        expect(porteCobradoEnMano(entregado)).toBe(false);
-        expect(albaranesPorCerrar([entregado], clientes)).toHaveLength(1);
+        expect(albaranesPorCerrar([delMovil, entregado], clientes).map(f => f.envio.id)).toEqual(['HAB-7', 'HAB-264']);
     });
 
     it('con precio y sin cobrar, lo que sale en Envíos por «Presupuesto» es lo que sale aquí', () => {

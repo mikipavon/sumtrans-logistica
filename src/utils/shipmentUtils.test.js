@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador, getPackagesCount, recogidaDelEnvio } from './shipmentUtils';
+import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, porteDelEnvio, textoDelPorte, precioDeLaFicha, camposDelPorte, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador, getPackagesCount, recogidaDelEnvio } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -464,6 +464,55 @@ describe('importeParaMostrar · la columna Valor con un solo formato', () => {
         expect(importeParaMostrar('Tarifa')).toBe('Tarifa');
         expect(importeParaMostrar('')).toBe('');
         expect(importeParaMostrar(null)).toBe('');
+    });
+});
+
+describe('porteDelEnvio · manda lo que se cobra', () => {
+    // HAB-642, 25/09/2026: porte de 7 € que Javito cobró a 12 €. El móvil sólo
+    // escribió el número; la ficha y el listado seguían enseñando 7.
+    const hab642 = { id: 'HAB-642', amount: '€7.00', customAmount: 12, portePaid: true };
+
+    it('con el porte cobrado a otro importe vale el cobrado', () => {
+        expect(porteDelEnvio(hab642)).toBe(12);
+        expect(textoDelPorte(hab642)).toBe('€12.00');
+        expect(precioDeLaFicha(hab642)).toBe('€12.00');
+    });
+
+    it('sin cobrar vale el precio escrito: el número puede ser el del alta, ya viejo', () => {
+        const modificadoEnElPortal = { amount: '12.00', customAmount: 7, portePaid: false };
+        expect(porteDelEnvio(modificadoEnElPortal)).toBe(12);
+        expect(textoDelPorte(modificadoEnElPortal)).toBe('€12.00');
+        expect(precioDeLaFicha(modificadoEnElPortal)).toBe('12.00');
+    });
+
+    it('cuando los dos campos coinciden no cambia nada, ni el formato de la ficha', () => {
+        expect(porteDelEnvio({ amount: '€7.00', customAmount: 7, portePaid: true })).toBe(7);
+        expect(precioDeLaFicha({ amount: '€7.00', customAmount: 7, portePaid: true })).toBe('€7.00');
+        expect(precioDeLaFicha({ amount: '6', customAmount: 6 })).toBe('6');
+    });
+
+    it('si el texto no trae número ("Tarifa") vale el número, y si no hay ninguno se deja el texto', () => {
+        expect(porteDelEnvio({ amount: 'Tarifa', customAmount: 9 })).toBe(9);
+        expect(textoDelPorte({ amount: 'Tarifa', customAmount: 9 })).toBe('€9.00');
+        expect(porteDelEnvio({ amount: 'Tarifa', customAmount: null })).toBe(0);
+        expect(textoDelPorte({ amount: 'Tarifa', customAmount: null })).toBe('Tarifa');
+        expect(precioDeLaFicha({ amount: 'Tarifa', customAmount: null })).toBe('Tarifa');
+    });
+
+    it('un porte puesto a 0 por la oficina es un 0, no el precio de antes', () => {
+        expect(porteDelEnvio({ amount: '0', customAmount: 0, portePaid: true })).toBe(0);
+        expect(textoDelPorte({ amount: '0', customAmount: 0, portePaid: true })).toBe('€0.00');
+    });
+
+    it('no se rompe con un albarán vacío', () => {
+        expect(porteDelEnvio(null)).toBe(0);
+        expect(textoDelPorte({})).toBe('');
+        expect(precioDeLaFicha({})).toBeUndefined();
+    });
+
+    it('camposDelPorte escribe el texto y el número juntos', () => {
+        expect(camposDelPorte(12)).toEqual({ amount: '€12.00', customAmount: 12 });
+        expect(camposDelPorte('9,5')).toEqual({ amount: '€9.50', customAmount: 9.5 });
     });
 });
 

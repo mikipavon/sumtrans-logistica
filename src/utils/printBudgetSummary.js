@@ -1,13 +1,4 @@
-import { quienPagaElPorte } from './shipmentUtils';
-
-const parseAmount = (val) => {
-    if (!val) return 0;
-    if (typeof val === 'number') return val;
-    const str = val.toString().replace(/[^0-9,.-]+/g, "");
-    const normalized = str.includes(',') && !str.includes('.') ? str.replace(',', '.') : str;
-    const num = parseFloat(normalized);
-    return isNaN(num) ? 0 : num;
-};
+import { porteDelEnvio, quienPagaElPorte } from './shipmentUtils';
 
 // Los nombres los teclea la oficina o el cliente: un «&» o un «<» no pueden
 // romper la hoja.
@@ -48,7 +39,7 @@ export const htmlDelDetalleDeEnvios = (clientData, month, status = null) => {
         const desc = Array.isArray(s.articles) && s.articles.length > 0
             ? s.articles.map(a => a.name || a.description).filter(Boolean).join(', ')
             : (s.observations || 'Portes');
-        return { id: s.id, date, origin, dest, desc, amount: parseAmount(s.amount), pagaDestinatario: quienPagaElPorte(s) === 'Destinatario' };
+        return { id: s.id, date, origin, dest, desc, amount: porteDelEnvio(s), pagaDestinatario: quienPagaElPorte(s) === 'Destinatario' };
     });
 
     const total = clientData.totalAmount != null ? clientData.totalAmount : rows.reduce((sum, r) => sum + r.amount, 0);

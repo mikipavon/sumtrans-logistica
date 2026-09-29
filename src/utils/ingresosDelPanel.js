@@ -12,7 +12,7 @@
 // La tarjeta y el desplegable salen de la misma lista (ingresosPorCliente), así
 // que el total de la tarjeta y el pie del desplegable siempre coinciden.
 
-import { filtroTipoDeCliente, nombreDelPagador } from './filtrosEnvios';
+import { filtroTipoDeCliente, nombreDelPagador, nombresDeLaFicha } from './filtrosEnvios';
 import { normalizarTexto } from './busqueda';
 import { quienPagaElPorte } from './shipmentUtils';
 
@@ -65,7 +65,8 @@ export const tituloDeIngresos = (claves, conCaja = false) => {
  * Devuelve una función envío → ficha madre de quien paga (o null si no hay
  * ficha). Las sedes no son clientes aparte: una sede guardada dentro de la
  * ficha (branches) y una ficha numerada "123-A" cuentan para su matriz, igual
- * que al decidir el tipo de cobro en filtrosEnvios.
+ * que al decidir el tipo de cobro en filtrosEnvios. Tampoco lo son los otros
+ * nombres apuntados en la ficha: el albarán que llega con uno de ellos es suyo.
  */
 const buscadorDeMatriz = (clientes) => {
     const porNombre = new Map();
@@ -76,12 +77,10 @@ const buscadorDeMatriz = (clientes) => {
         if (c.id != null) porId.set(String(c.id), c);
         const numero = String(c.clientNumber || '').trim();
         if (numero && !porNumero.has(numero)) porNumero.set(numero, c);
-        [c.name, c.legalName]
-            .concat(Array.isArray(c.branches) ? c.branches.map((b) => b?.name) : [])
-            .forEach((n) => {
-                const clave = normalizarTexto(n);
-                if (clave && !porNombre.has(clave)) porNombre.set(clave, c);
-            });
+        nombresDeLaFicha(c).forEach((n) => {
+            const clave = normalizarTexto(n);
+            if (clave && !porNombre.has(clave)) porNombre.set(clave, c);
+        });
     });
     const matriz = (ficha) => {
         const m = String(ficha?.clientNumber || '').trim().match(/^(.*?\d)[-_ ]?[a-zA-Z]{1,2}$/);

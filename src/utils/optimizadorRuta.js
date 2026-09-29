@@ -31,6 +31,11 @@
  *    desviarse a por ella cueste más de 1 km. Va marcada, para que el transportista
  *    vea por qué se ha colado y pueda moverla si ese día no le conviene.
  *
+ * 3b. Lo mismo AL LLEGAR al pueblo: la agencia por cuya puerta se pasa antes de
+ *    alcanzar la primera parada se deja al pasar, esté a la distancia que esté de
+ *    esa primera parada. Aquí el radio de 1 km no pinta nada —se viene de 30 km—
+ *    y lo que cuenta es el desvío (ver `pasarAlLlegar`).
+ *
  * 4. El orden dentro del pueblo se aprende del transportista: cuando ya hay historial
  *    firme, manda el orden que él confirma y la geografía solo coloca a los clientes
  *    nuevos. Mientras no lo hay, manda la geografía y el historial desempata.
@@ -84,6 +89,9 @@ export const RADIO_DE_CAMINO_KM = 1;
 
 /** Cuántas paradas como máximo se cuelan tras una misma parada. */
 export const MAX_ARRASTRE_DE_CAMINO = 2;
+
+/** Dos albaranes a menos de esto son la misma puerta: cuentan como una parada. */
+export const MISMA_PUERTA_KM = 0.05;
 
 /**
  * A partir de cuántos kilómetros de su propio pueblo una coordenada canta.
@@ -576,7 +584,49 @@ const pasarDeCamino = (lista, deCamino, radioKm) => {
     return salida;
 };
 
-const ordenarDentroDelPueblo = (items, pueblo, entrada, contexto, deCamino, radioKm) => {
+/**
+ * Regla 3b: las agencias por cuya puerta se pasa AL LLEGAR al pueblo.
+ *
+ * `pasarDeCamino` solo mira desde una parada ya hecha y a menos de 1 km, así que el
+ * tramo de llegada —de donde se viene a la primera parada— no lo miraba nadie: el
+ * conductor pasaba por la puerta de una agencia, seguía 6 km hasta la primera
+ * parada nuestra y después volvía a por ella.
+ *
+ * "De paso" = pilla ANTES que la primera parada y meterla desvía menos de `radioKm`.
+ * `llegada` tiene que ser un punto de verdad (el GPS, o la coordenada de la última
+ * parada del pueblo anterior): con el centro de las paradas del día o el punto de un
+ * pueblo no se sabe por dónde se viene, y no se adelanta nada.
+ */
+const pasarAlLlegar = (lista, llegada, deCamino, radioKm) => {
+    const primera = lista[0];
+    if (!llegada || !primera?.coords || lista.length < 2) return { alPasar: [], resto: lista };
+
+    const hastaLaPrimera = distanciaEntre(llegada, primera.coords);
+    const candidatas = lista.slice(1)
+        .filter(c => c.agencia && c.coords)
+        .map(c => ({ c, hasta: distanciaEntre(llegada, c.coords) }))
+        .filter(({ c, hasta }) => hasta < hastaLaPrimera
+            && costeDeInsercion(llegada, c.coords, primera.coords) <= radioKm)
+        .sort((a, b) => a.hasta - b.hasta);
+
+    // El tope cuenta puertas, no albaranes: dos albaranes para la misma nave se
+    // dejan en la misma parada, y no tendría sentido adelantar uno y dejar el otro.
+    const alPasar = [];
+    const puertas = [];
+    candidatas.forEach(({ c }) => {
+        const mismaPuerta = puertas.some(p => distanciaEntre(p, c.coords) < MISMA_PUERTA_KM);
+        if (!mismaPuerta) {
+            if (puertas.length >= MAX_ARRASTRE_DE_CAMINO) return;
+            puertas.push(c.coords);
+        }
+        alPasar.push(c);
+    });
+
+    alPasar.forEach(c => deCamino.add(c.envio.id));
+    return { alPasar, resto: lista.filter(i => !alPasar.includes(i)) };
+};
+
+const ordenarDentroDelPueblo = (items, pueblo, entrada, contexto, deCamino, radioKm, llegada = null) => {
     const memoria = memoriaAplicable(pueblo, contexto);
 
     // Los nuestros antes que las agencias. La prioridad del cliente ya no decide
@@ -595,7 +645,10 @@ const ordenarDentroDelPueblo = (items, pueblo, entrada, contexto, deCamino, radi
         if (ultimo) cursor = ultimo.coordsRef;
     });
 
-    return pasarDeCamino(ordenado, deCamino, radioKm);
+    // Las de la llegada se apartan antes y se ponen delante: si entraran en
+    // `pasarDeCamino` como una parada más, arrastrarían a su vez a otras agencias.
+    const { alPasar, resto } = pasarAlLlegar(ordenado, llegada, deCamino, radioKm);
+    return [...alPasar, ...pasarDeCamino(resto, deCamino, radioKm)];
 };
 
 const minutosDelDia = (fecha) => {
@@ -784,12 +837,14 @@ export const optimizarRuta = ({
     // arrancaba siempre del GPS inicial, así que el cuarto pueblo del día se ordenaba
     // según lo que estaba cerca de la nave a las ocho de la mañana.
     let entrada = puntoInicial;
+    // Por dónde se llega al pueblo, solo si se sabe de verdad (regla 3b).
+    let llegada = posicion;
     grupos.forEach(grupo => {
         const trozo = ordenarDentroDelPueblo(
-            grupo.items, grupo.pueblo, entrada, contexto, deCamino, radioDeCaminoKm);
+            grupo.items, grupo.pueblo, entrada, contexto, deCamino, radioDeCaminoKm, llegada);
         ordenados.push(...trozo);
         const ultimo = [...trozo].reverse().find(i => i.coordsRef);
-        if (ultimo) entrada = ultimo.coordsRef;
+        if (ultimo) { entrada = ultimo.coordsRef; llegada = ultimo.coords || null; }
     });
 
     // Red de seguridad: que no se pierda ningún envío por el camino.

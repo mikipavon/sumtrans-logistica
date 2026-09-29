@@ -500,6 +500,10 @@ export default function ClientDashboard({
             clientReference: clientReference ? clientReference.trim() : null,
             articles: articulosDelEnvio,
             amount: finalAmount ? finalAmount.toFixed(2) : 'Pendiente',
+            // El número va con el texto. Al modificar un envío sólo se reescribía
+            // `amount` y el número del alta se quedaba viejo: el repartidor y la
+            // Cuenta, que leen el número, seguían con el precio de antes.
+            customAmount: finalAmount ? Math.round(finalAmount * 100) / 100 : null,
             porteType: porteType,
             hasCod: amountNum > 0,
             codAmount: amountNum,
