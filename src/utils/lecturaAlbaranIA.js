@@ -61,6 +61,11 @@ export function normalizarCamposIA(bruto) {
         ? reembolsoLeido
         : (conLetraR ? total : reembolsoLeido);
     const conDAC = /\bDAC\b/i.test(texto(b.servicio));
+    // XPO: "DEVOLVER ALBARAN REMITENTE" impreso junto al Recibí Conforme. El
+    // modelo lo confundía con la casilla "Dev. Alb. Rtte" y contestaba que no
+    // (CANTERA EL GALLO, 29/09/2026).
+    const pideDevolver = /devolver\s+(el\s+)?albar|retorno\s+de(l)?\s+albar|devolver\s+(la\s+)?documentaci|albar[aá]n\s+conformado/i
+        .test(texto(b.textoRecibi));
     return {
         expedicion: texto(b.expedicion),
         remitente: texto(b.remitente),
@@ -74,7 +79,7 @@ export function normalizarCamposIA(bruto) {
         reembolso: reembolso !== null && reembolso > 0 ? Math.round(reembolso * 100) / 100 : 0,
         // DAC en TXT, "devolver albarán firmado" en XPO: al repartidor le sale
         // "Recoger firma de vuelta" y se le pide foto del papel firmado.
-        devolverFirmado: siONo(b.devolverFirmado) || conDAC,
+        devolverFirmado: siONo(b.devolverFirmado) || conDAC || pideDevolver,
     };
 }
 
