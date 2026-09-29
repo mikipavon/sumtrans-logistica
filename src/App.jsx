@@ -1245,7 +1245,8 @@ function App() {
         const queryNames = [
           'drivers', 'shipments_active', 'shipments_finished', 'clients',
           'articles', 'vehicles', 'fuel_logs', 'tariffs',
-          'settings', 'coverage_zones', 'presupuestos_sin_cerrar'
+          'settings', 'coverage_zones', 'presupuestos_sin_cerrar',
+          'deudas_atrasadas_sin_cobrar'
         ];
 
         const results = await Promise.allSettled([
@@ -1275,6 +1276,17 @@ function App() {
             .eq('data->>billingType', 'Presupuesto')
             .or('data->>budgetLiquidated.is.null,data->>budgetLiquidated.neq.true')
             .order('id'), { label: 'presupuestos_sin_cerrar' }),
+          // 4 - Deuda de Añadir deuda sin cobrar, de antes de los 90 días. Nace
+          // entregada y fechada el día del papel (fechaContable), así que una de
+          // marzo apuntada en septiembre no entraba en los terminados recientes: se
+          // veía en la ventana que la creó y desaparecía al recargar (HAB-798 y
+          // HAB-799 de Kike equipos, 29/09/2026). Al cobrarse deja de cargarse.
+          fetchAllRows(() => supabase.from('shipments').select('id, data')
+            .eq('status', 'Entregado')
+            .lt('data->>createdAt', cutoffISO)
+            .not('data->>fechaContable', 'is', null)
+            .or('data->>portePaid.is.null,data->>portePaid.neq.true')
+            .order('id'), { label: 'deudas_atrasadas_sin_cobrar' }),
         ]);
 
         // Helper to safely extract data from settled results
@@ -1303,6 +1315,7 @@ function App() {
         const allSettings = getData(8);
         const covZones = getData(9);
         const shpPresupuestoViejo = getData(10);
+        const shpDeudaAtrasada = getData(11);
 
         // ── Helper to get a setting value by key from the single settings query ──
         const getSetting = (key) => {
@@ -1325,11 +1338,13 @@ function App() {
         // reintento, que le recolocaba todas las paradas de golpe.
         const fotoIncompleta = activeShipmentsTimedOut && habraReintento;
         if (!fotoIncompleta && (shpActive || shpFinished)) {
-          // Los de presupuesto viejos no se solapan con los recientes (createdAt
-          // antes del corte), pero por si acaso no se repite ningún id.
-          const idsCargados = new Set([...(shpActive || []), ...(shpFinished || [])].map(s => s.id));
+          // Los viejos (presupuesto sin cerrar, deuda atrasada) no se solapan con los
+          // recientes (createdAt antes del corte), pero una deuda atrasada de un
+          // cliente de presupuesto sale en las dos consultas: ningún id se repite.
+          const idsCargados = new Set();
           const allShp = [...(shpActive || []), ...(shpFinished || []),
-            ...(shpPresupuestoViejo || []).filter(s => !idsCargados.has(s.id))];
+            ...(shpPresupuestoViejo || []), ...(shpDeudaAtrasada || [])]
+            .filter(s => !idsCargados.has(s.id) && idsCargados.add(s.id));
           let loadedShipments = allShp.map(s => ({ ...s.data, id: s.id }));
           
           // ── Apply pending queue operations over fresh Supabase data ──
