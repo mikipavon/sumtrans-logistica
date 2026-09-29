@@ -1,4 +1,4 @@
-import { X, Truck, Package, Euro, Map as MapIcon, Building2, FileText, UserPlus, Check, MapPin, Loader2, CheckCircle, Trash2, Plus, Mic, MicOff, RotateCcw, Image as ImageIcon, Camera } from 'lucide-react';
+import { X, Truck, Package, Euro, Map as MapIcon, Building2, FileText, UserPlus, Check, MapPin, Loader2, CheckCircle, Trash2, Plus, RotateCcw, Image as ImageIcon, Camera } from 'lucide-react';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Shipment from '../../models/Shipment';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
@@ -60,8 +60,7 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [showDestSuggestions, setShowDestSuggestions] = useState(false);
     const [savedDestClient, setSavedDestClient] = useState(false);
-    const [listeningField, setListeningField] = useState(null);
-    const [keepOrigin, setKeepOrigin] = useState(false); // 'sender', 'destination', 'observations'
+    const [keepOrigin, setKeepOrigin] = useState(false);
     const [pagaOtroCliente, setPagaOtroCliente] = useState(false); // casilla "Paga otro cliente" (intrapoblación)
     const [selectedDebtIds, setSelectedDebtIds] = useState([]); // Deudas seleccionadas para cobrar
     const [showSuccessFeedback, setShowSuccessFeedback] = useState(false);
@@ -131,50 +130,6 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
         }
     }, [isOpen]);
 
-    const startListening = (field, targetKey) => {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            alert("Tu navegador no soporta el reconocimiento de voz.");
-            return;
-        }
-
-        try {
-            const recognition = new SpeechRecognition();
-            recognition.lang = 'es-ES';
-            recognition.continuous = false;
-            recognition.interimResults = false;
-
-            recognition.onstart = () => setListeningField(field);
-            recognition.onend = () => setListeningField(null);
-            recognition.onerror = () => setListeningField(null);
-            
-            recognition.onresult = (event) => {
-                // Eliminar punto final u otras puntuaciones que suele poner el dictado
-                const transcript = event.results[0][0].transcript.replace(/[.,;:]$/, '').trim();
-                
-                setFormData(prev => {
-                    const newValue = prev[targetKey] ? `${prev[targetKey]} ${transcript}` : transcript;
-                    
-                    // Disparar las sugerencias (búsqueda) automáticamente
-                    if (targetKey === 'clientName') {
-                        setTimeout(() => updateSuggestions(newValue), 50);
-                    } else if (targetKey === 'destinationName') {
-                        setTimeout(() => updateDestSuggestions(newValue), 50);
-                    }
-                    
-                    return {
-                        ...prev,
-                        [targetKey]: newValue
-                    };
-                });
-            };
-
-            recognition.start();
-        } catch (error) {
-            console.error("Speech Recognition Error:", error);
-            setListeningField(null);
-        }
-    };
     const [showPaymentAlert, setShowPaymentAlert] = useState(false);
     const [pendingSubmitData, setPendingSubmitData] = useState(null);
     // El albarán montado y a la espera de que se confirme el aviso de
@@ -1555,18 +1510,6 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                                     />
                                                     <span className="select-none uppercase">Envío Múltiple</span>
                                                 </label>
-                                                <button 
-                                                type="button"
-                                                onClick={() => startListening('sender', 'clientName')}
-                                                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold transition-all ${
-                                                    listeningField === 'sender' 
-                                                    ? 'bg-red-100 text-red-600 animate-pulse ring-1 ring-red-200' 
-                                                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200 active:scale-95'
-                                                }`}
-                                            >
-                                                {listeningField === 'sender' ? <MicOff size={10} /> : <Mic size={10} />}
-                                                {listeningField === 'sender' ? 'ESCUCHANDO...' : 'HABLAR'}
-                                                </button>
                                             </div>
                                         </div>
                                         <div className="relative">
@@ -1688,14 +1631,6 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                     <div>
                                         <div className="flex justify-between items-center mb-1">
                                             <label className={labelClass + " !mb-0"}>Destinatario</label>
-                                            <button 
-                                                type="button"
-                                                onClick={() => startListening('destination', 'destinationName')}
-                                                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold transition-all ${listeningField === 'destination' ? 'bg-red-100 text-red-600 animate-pulse ring-1 ring-red-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200 active:scale-95'}`}
-                                            >
-                                                {listeningField === 'destination' ? <MicOff size={10} /> : <Mic size={10} />}
-                                                {listeningField === 'destination' ? 'ESCUCHANDO...' : 'HABLAR'}
-                                            </button>
                                         </div>
                                         <div className="relative">
                                             <div className="flex gap-2">
@@ -1850,10 +1785,6 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
                                         <FileText size={14} className="text-slate-400" />
                                         Notas y Observaciones
                                     </h4>
-                                    <button type="button" onClick={() => startListening('observations', 'observations')} className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold transition-all ${listeningField === 'observations' ? 'bg-red-100 text-red-600 animate-pulse ring-1 ring-red-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200 active:scale-95'}`}>
-                                        {listeningField === 'observations' ? <MicOff size={10} /> : <Mic size={10} />}
-                                        {listeningField === 'observations' ? 'ESCUCHANDO...' : 'HABLAR'}
-                                    </button>
                                 </div>
                                 <textarea className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none h-16" placeholder="Instrucciones adicionales..." value={formData.observations} onChange={(e) => setFormData({ ...formData, observations: e.target.value })}></textarea>
                             </div>
