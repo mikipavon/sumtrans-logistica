@@ -39,7 +39,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
     const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
     const [isCodReceiptModalOpen, setIsCodReceiptModalOpen] = useState(false);
     const [importClientId, setImportClientId] = useState('');
-    const [importMode, setImportMode] = useState('excel'); // 'excel' | 'fotos' (albaranes de agencia leídos por OCR)
+    const [importMode, setImportMode] = useState('fotos'); // 'fotos' (albaranes de agencia leídos por OCR, el más usado) | 'excel'
     const [importClientSearch, setImportClientSearch] = useState('');
     const [viewMode, setViewMode] = useState('list'); // 'list' or 'stats'
     // shipmentIds: la ventana de "Programar Asignación" sirve igual para una fila que para
@@ -602,7 +602,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                         </button>
 
                         <button
-                            onClick={() => setIsImportModalOpen(true)}
+                            onClick={() => { setImportMode('fotos'); setIsImportModalOpen(true); }}
                             className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors border border-indigo-200 text-xs font-bold"
                         >
                             <Plus size={15} />
@@ -1205,8 +1205,8 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                 Importar envíos
                             </h3>
                             <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-                                <button onClick={() => setImportMode('excel')} className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${importMode === 'excel' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Excel</button>
                                 <button onClick={() => setImportMode('fotos')} className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${importMode === 'fotos' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Fotos de agencia</button>
+                                <button onClick={() => setImportMode('excel')} className={`px-3 py-1 rounded-md text-xs font-bold transition-colors ${importMode === 'excel' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Excel</button>
                             </div>
                             <button onClick={() => { setIsImportModalOpen(false); setImportClientId(''); }} className="text-slate-400 hover:text-slate-600">
                                 <X size={20} />
