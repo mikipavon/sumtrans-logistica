@@ -817,7 +817,7 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                             </div>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                         {/* Sin onUpdate no hay con qué guardar: el lápiz sacaba los controles
                             y "Guardar Cambios" no hacía nada (la ficha del conductor abría
                             así el albarán). Sin función de guardar, sólo lectura. */}
@@ -855,6 +855,26 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                         </button>
                     </div>
                 </div>
+
+                {/* Quién paga el porte, a la vista nada más abrir (oficina y repartidor): el
+                    cliente a porte Pagado y el destinatario a porte Debido, como en el cálculo
+                    del porte. Editando sigue al formulario para que no enseñe el valor viejo. */}
+                {(() => {
+                    const datos = isEditing ? formData : shipment;
+                    const debido = (datos.porteType || 'Pagado') === 'Debido';
+                    const pagador = debido ? datos.destinationName : datos.client;
+                    return (
+                        <div className={`shrink-0 px-4 py-2 flex items-center gap-2 border-b ${debido ? 'bg-orange-50 border-orange-100' : 'bg-green-50 border-green-100'}`} style={{ zoom }}>
+                            <span className={`shrink-0 px-2 py-0.5 text-[10px] font-bold rounded shadow-sm text-white ${debido ? 'bg-orange-500' : 'bg-green-600'}`}>
+                                {debido ? 'DEBIDO' : 'PAGADO'}
+                            </span>
+                            <span className={`text-xs truncate ${debido ? 'text-orange-800' : 'text-green-800'}`}>
+                                {/* A Pagado el cliente puede no ser el remitente (intrapoblación): se dice sólo quién paga. */}
+                                {pagador ? <>Paga: <span className="font-bold">{pagador}</span></> : (debido ? 'Paga el destinatario' : 'Paga el cliente')}
+                            </span>
+                        </div>
+                    );
+                })()}
 
                 <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 flex-1 overflow-y-auto bg-slate-50/50" style={{ zoom }}>
                     {/* Client Information */}
