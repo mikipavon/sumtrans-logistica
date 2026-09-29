@@ -1,6 +1,6 @@
 import { Search, Filter, Plus, MoreVertical, MapPin, Calendar, Truck, User, BarChart2, CheckCircle, Clock, AlertCircle, FileText, Printer, Trash2, ChevronUp, ChevronDown, PackagePlus, X, Banknote } from 'lucide-react';
 import { printShipmentTicket } from '../utils/printShipment';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useDeferredValue } from 'react';
 import CreateShipmentModal from '../components/shipments/CreateShipmentModal';
 import CreatePickupModal from '../components/shipments/CreatePickupModal';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
@@ -19,6 +19,8 @@ import BudgetLiquidationModal from '../components/shipments/BudgetLiquidationMod
 import CodReceiptUploadModal from '../components/shipments/CodReceiptUploadModal';
 import { Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { usePorTandas } from '../hooks/usePorTandas';
+import PieDeTandas from '../components/PieDeTandas';
 const { utils, writeFile } = XLSX;
 
 export default function Shipments({ shipments, allShipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, onUpdateClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both', onAutorizarConContrasena }) {
@@ -124,6 +126,9 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
     // Filters State
     const [searchTerm, setSearchTerm] = useState('');
+    // La lista va un paso por detrás del teclado: la letra sale al momento y la
+    // tabla se pone al día en cuanto puede, en vez de bloquear lo que se escribe.
+    const busquedaDiferida = useDeferredValue(searchTerm);
     const [statusFilter, setStatusFilter] = useState(typeof initialStatusFilter === 'string' ? initialStatusFilter : 'all');
     const [driverFilter, setDriverFilter] = useState('all');
     const [clientFilter, setClientFilter] = useState(SIN_FILTRO);
@@ -190,7 +195,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         const pasaTipo = filtroTipo(tipoFilter, clients);
         let result = safeShipments.filter(shipment => {
             // Busca en remitente y destinatario a la vez, sin depender de quién paga
-            const matchesSearch = coincideBusqueda(shipment, searchTerm);
+            const matchesSearch = coincideBusqueda(shipment, busquedaDiferida);
 
             const PENDING_STATUSES = ['Pendiente', 'Asignado', 'Pendiente de asignar'];
             const matchesStatus = statusFilter === 'all' || statusFilter === 'cod_no_receipt' || 
@@ -298,7 +303,13 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         }
 
         return result;
-    }, [shipments, searchTerm, statusFilter, driverFilter, clientFilter, poblacionFilter, tipoFilter, clients, tariffs, coverageZones, sortConfig, dateFrom, dateTo, idsDeAlerta]);
+    }, [shipments, busquedaDiferida, statusFilter, driverFilter, clientFilter, poblacionFilter, tipoFilter, clients, tariffs, coverageZones, sortConfig, dateFrom, dateTo, idsDeAlerta]);
+
+    // Por tandas: pintar las miles de filas era lo que hacía ir la app con retraso.
+    const tandas = usePorTandas(
+        filteredShipments,
+        JSON.stringify([busquedaDiferida, statusFilter, driverFilter, clientFilter, poblacionFilter, tipoFilter, sortConfig, dateFrom, dateTo, idsDeAlerta])
+    );
 
     const requestSort = (key) => {
         let direction = 'asc';
@@ -680,7 +691,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                                {filteredShipments.map((shipment) => {
+                                {tandas.visibles.map((shipment) => {
                                     const isProgrammed = shipment.scheduledDate && shipment.status === 'En reparto' && (new Date(shipment.scheduledDate).getTime() > new Date().getTime());
                                     const programmedStr = isProgrammed ? new Date(shipment.scheduledDate).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
                                     
@@ -940,14 +951,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             </tbody>
                         </table>
                     </div>
-                    {/* Pagination Mockup */}
-                    <div className="bg-slate-50 px-6 py-4 border-t border-slate-100 flex items-center justify-between text-sm text-slate-500">
-                        <span>Mostrando {filteredShipments.length} envíos</span>
-                        <div className="flex gap-2">
-                            <button className="px-3 py-1 border border-slate-200 rounded hover:bg-white disabled:opacity-50" disabled>Anterior</button>
-                            <button className="px-3 py-1 border border-slate-200 rounded hover:bg-white disabled:opacity-50" disabled>Siguiente</button>
-                        </div>
-                    </div>
+                    <PieDeTandas tandas={tandas} nombre="envíos" />
                 </div>
             ) : (
                 <div className="space-y-6">

@@ -5,7 +5,7 @@
 // administración no tenía forma de saber desde el listado que había una
 // incidencia abierta encima. El estado no se toca — se le pone un cartel al lado.
 
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import Shipments from './Shipments';
 
@@ -177,5 +177,34 @@ describe('Listado de Envíos — la parada de una recogida', () => {
         const f = fila('SUM-1');
         expect(within(f).getByText('Lucena').className).toContain('font-bold');
         expect(within(f).queryByText('RECOGER')).toBeNull();
+    });
+});
+
+// ── Pintar por tandas ──
+//
+// Con 4.000 albaranes cargados, cada letra del buscador tardaba más de un
+// segundo: no por filtrar (20 ms) sino por pintar todas las filas. La tabla
+// enseña 150 y un botón para ver más; buscar vuelve a la primera tanda.
+describe('Listado de Envíos — por tandas', () => {
+    const muchos = (n) => Array.from({ length: n }, (_, i) => envio(`SUM-${1000 + i}`, 'Entregado'));
+    // getByRole con cientos de filas se pasa del tiempo de la prueba en jsdom.
+    const filas = () => [...document.querySelectorAll('tbody tr')].filter(r => /SUM-\d+/.test(r.textContent));
+
+    it('pinta las 150 primeras y el pie dice cuántas hay', () => {
+        montar(muchos(200));
+
+        expect(filas()).toHaveLength(150);
+        expect(screen.getByText('Mostrando 150 de 200 envíos')).toBeInTheDocument();
+    });
+
+    it('«Ver más» añade las que faltan y buscar vuelve a empezar', () => {
+        montar(muchos(200));
+
+        fireEvent.click(screen.getByText('Ver 50 más'));
+        expect(filas()).toHaveLength(200);
+        expect(screen.queryByText(/^Ver \d+ más$/)).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByPlaceholderText(/Buscar ID/), { target: { value: 'SUM-1' } });
+        expect(filas()).toHaveLength(150);
     });
 });
