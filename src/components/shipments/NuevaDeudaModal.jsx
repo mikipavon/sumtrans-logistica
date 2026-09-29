@@ -54,6 +54,10 @@ export default function NuevaDeudaModal({
     const [articuloElegido, setArticuloElegido] = useState('');
     const [cantidad, setCantidad] = useState(1);
     const [concepto, setConcepto] = useState('');
+    // Quién mandó y quién recibió el albarán en papel. Vacíos = el cliente, como
+    // antes; sin ellos el detalle de envíos salía «BAENA SOLAR → BAENA SOLAR».
+    const [remitente, setRemitente] = useState('');
+    const [destinatario, setDestinatario] = useState('');
     // Sin fecha de serie: un albarán en papel lleva la suya, y con "hoy" puesto
     // se guardaba en el mes equivocado sin que nadie lo notara (HAB-426, que era
     // de agosto, quedó en septiembre). El recibo, si no se pone, es de hoy.
@@ -123,6 +127,8 @@ export default function NuevaDeudaModal({
         setCantidad(1);
         setImporte('');
         setConcepto('');
+        setRemitente('');
+        setDestinatario('');
         setFecha('');
         setDriverId('');
         setFotos([]);
@@ -173,7 +179,7 @@ export default function NuevaDeudaModal({
                 const serie = serieDelAlbaran(tipoDeCobro);
                 let numero = null;
                 try { numero = await pedirNumero(serie); } catch (err) { console.error('[NuevaDeuda] Sin número de serie:', err); }
-                recibo = construirAlbaranAtrasado({ ...datos, id: numero ? serie + '-' + numero : undefined });
+                recibo = construirAlbaranAtrasado({ ...datos, remitente, destinatario, id: numero ? serie + '-' + numero : undefined });
             } else {
                 recibo = construirRecibo({ ...datos, driverId });
             }
@@ -388,6 +394,38 @@ export default function NuevaDeudaModal({
                         )}
                     </div>
                 </div>
+
+                {esAlbaran && (
+                    <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label htmlFor="nueva-deuda-remitente" className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Remitente</label>
+                        <input
+                            id="nueva-deuda-remitente"
+                            type="text"
+                            className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            value={remitente}
+                            onChange={(e) => setRemitente(e.target.value)}
+                            placeholder={cliente?.name || 'El cliente'}
+                            maxLength={120}
+                        />
+                    </div>
+                    <div>
+                        <label htmlFor="nueva-deuda-destinatario" className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Destinatario</label>
+                        <input
+                            id="nueva-deuda-destinatario"
+                            type="text"
+                            className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            value={destinatario}
+                            onChange={(e) => setDestinatario(e.target.value)}
+                            placeholder={cliente?.name || 'El cliente'}
+                            maxLength={120}
+                        />
+                    </div>
+                        <p className="col-span-2 text-[10px] text-slate-400 -mt-2">
+                            Los del papel. Vacío = el cliente. Salen en el detalle de envíos que se le da.
+                        </p>
+                    </div>
+                )}
 
                 <div>
                     <label htmlFor="nueva-deuda-concepto" className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">Concepto</label>

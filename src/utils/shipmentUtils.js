@@ -198,6 +198,13 @@ const MARCA_COBRO_PENDIENTE = /\[COBRO PENDIENTE\]/gi;
 export const observacionesVisibles = (observaciones) =>
     String(observaciones || '').replace(MARCA_COBRO_PENDIENTE, '').trim();
 
+// Para el cuadro de texto al editar: quita la marca (y el espacio que se le pone
+// detrás al reescribirla) pero NO recorta. Con el trim de arriba el espacio que
+// se acababa de teclear al final desaparecía en cada tecla y no se podía escribir
+// "dejar en portería" (29/09/2026).
+export const observacionesParaEditar = (observaciones) =>
+    String(observaciones || '').replace(/\[COBRO PENDIENTE\] ?/gi, '');
+
 export const llevaMarcaDeCobroPendiente = (observaciones) =>
     /\[COBRO PENDIENTE\]/i.test(String(observaciones || ''));
 
