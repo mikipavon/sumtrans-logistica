@@ -49,7 +49,18 @@ export function normalizarCamposIA(bruto) {
     const b = bruto || {};
     const bultos = numero(b.bultos);
     const kilos = numero(b.kilos);
-    const reembolso = numero(b.reembolso);
+    // En TXT la IA copia bien la letra del recuadro, el TOTAL y la línea del
+    // servicio, pero se salta la regla de juntarlos (caso SERRANO DE LA ROSA,
+    // 29/09/2026: "R", 549,22 € y DAC, leído como reembolso 0 y sin DAC).
+    // Por eso lo decide el código con lo copiado, y lo que dijo el modelo
+    // sólo cuenta si ya trae un sí.
+    const reembolsoLeido = numero(b.reembolso);
+    const total = numero(b.total);
+    const conLetraR = /^r$/i.test(texto(b.letraRecuadro));
+    const reembolso = reembolsoLeido !== null && reembolsoLeido > 0
+        ? reembolsoLeido
+        : (conLetraR ? total : reembolsoLeido);
+    const conDAC = /\bDAC\b/i.test(texto(b.servicio));
     return {
         expedicion: texto(b.expedicion),
         remitente: texto(b.remitente),
@@ -63,7 +74,7 @@ export function normalizarCamposIA(bruto) {
         reembolso: reembolso !== null && reembolso > 0 ? Math.round(reembolso * 100) / 100 : 0,
         // DAC en TXT, "devolver albarán firmado" en XPO: al repartidor le sale
         // "Recoger firma de vuelta" y se le pide foto del papel firmado.
-        devolverFirmado: siONo(b.devolverFirmado),
+        devolverFirmado: siONo(b.devolverFirmado) || conDAC,
     };
 }
 
