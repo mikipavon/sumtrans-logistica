@@ -27,6 +27,26 @@ export const importeSinValorar = (value) => {
     return !Number.isFinite(parseFloat(String(value || '0').replace(/[^0-9.-]+/g, "")));
 };
 
+// La ficha cuyo nombre o razón social coincide, la primera de la lista como
+// hacía el clients.find de antes. Ese find recorría todas las fichas por cada
+// albarán (4.000 × 1.000 comparaciones) y Cobros Pendientes tardaba más de un
+// segundo en abrirse (29/09/2026); el índice se hace una vez por lista de fichas.
+const indicesDeFichas = new WeakMap();
+const fichaPorNombre = (clients, nombre) => {
+    if (!Array.isArray(clients)) return undefined;
+    let indice = indicesDeFichas.get(clients);
+    if (!indice) {
+        indice = new Map();
+        for (const c of clients) {
+            for (const clave of [normalizeName(c?.name), normalizeName(c?.legalName)]) {
+                if (!indice.has(clave)) indice.set(clave, c);
+            }
+        }
+        indicesDeFichas.set(clients, indice);
+    }
+    return indice.get(normalizeName(nombre));
+};
+
 // ── Las líneas de cobro de un albarán: LA regla, la misma en todas partes ────
 //
 // Antes había dos copias de esta regla que no coincidían: la pestaña Cobros del
@@ -57,8 +77,8 @@ export const lineasDeCobro = (s, clients) => {
     if (s.type === 'Recogida') return [];
 
     const esRecibo = s.type === 'Recibo';
-    const senderClient = esRecibo ? null : clients?.find(c => normalizeName(c.name) === normalizeName(s.client) || normalizeName(c.legalName) === normalizeName(s.client));
-    const destClient = esRecibo ? null : clients?.find(c => normalizeName(c.name) === normalizeName(s.destinationName) || normalizeName(c.legalName) === normalizeName(s.destinationName));
+    const senderClient = esRecibo ? null : fichaPorNombre(clients, s.client);
+    const destClient = esRecibo ? null : fichaPorNombre(clients, s.destinationName);
 
     const model = new Shipment({
         ...s,

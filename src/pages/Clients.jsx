@@ -1,5 +1,5 @@
 import { Search, Filter, MapPin, Building2, Calendar, Database, Lock, Edit2, Trash2, Check, X, Plus, Upload, FileSpreadsheet, Download, ChevronUp, ChevronDown, Copy, LogIn, Hash } from 'lucide-react';
-import React, { useState, useRef, useMemo, useEffect } from 'react';
+import React, { useState, useRef, useMemo, useEffect, useDeferredValue } from 'react';
 import * as XLSX from 'xlsx';
 import CreateClientModal from '../components/clients/CreateClientModal';
 import AgencyDatabasesPanel from '../components/clients/AgencyDatabasesPanel';
@@ -8,6 +8,8 @@ import { esUrgente } from '../utils/prioridadDeFicha';
 import { SIN_FILTRO, TIPOS_DE_CLIENTE, tipoDeFacturacion } from '../utils/filtrosEnvios';
 import { normalizarTexto } from '../utils/busqueda';
 import { planDeNumeracion } from '../utils/numeracionCliente';
+import { usePorTandas } from '../hooks/usePorTandas';
+import PieDeTandas from '../components/PieDeTandas';
 
 // Ordenar comparando las letras a pelo manda los acentos al final del listado:
 // para el ordenador la "Á" va después de la "Z", así que "Álvarez" salía detrás
@@ -22,6 +24,8 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
     const fileInputRef = useRef(null);
 
     const [searchTerm, setSearchTerm] = useState('');
+    // La letra sale al momento en el buscador; la tabla se pone al día detrás.
+    const busquedaDiferida = useDeferredValue(searchTerm);
     const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
     const [filterGPS, setFilterGPS] = useState(false);
     const [expandedClients, setExpandedClients] = useState(new Set());
@@ -54,7 +58,7 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
 
             // Sin tildes por los dos lados: "Alvarez" encuentra a "Álvarez" y al
             // revés, que es lo que pasa cuando la ficha se dio de alta a prisa.
-            const search = normalizarTexto(searchTerm);
+            const search = normalizarTexto(busquedaDiferida);
             const mainMatch = normalizarTexto(c.name).includes(search) ||
                    normalizarTexto(c.legalName).includes(search) ||
                    normalizarTexto(c.address).includes(search) ||
@@ -85,7 +89,13 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
             });
         }
         return result;
-    }, [clients, searchTerm, sortConfig, filterGPS, ownerFilter, tipoFilter]);
+    }, [clients, busquedaDiferida, sortConfig, filterGPS, ownerFilter, tipoFilter]);
+
+    // Por tandas: pintar las mil fichas de golpe hacía ir con retraso cada letra del buscador.
+    const tandas = usePorTandas(
+        filteredClients,
+        JSON.stringify([busquedaDiferida, sortConfig, filterGPS, ownerFilter, tipoFilter])
+    );
 
     // ── Las que se quedaron sin Nº ──
     //
@@ -602,7 +612,7 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                        {filteredClients.map((client) => (
+                        {tandas.visibles.map((client) => (
                             <React.Fragment key={client.id}>
                             <tr className="hover:bg-slate-50 transition-colors">
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600 font-medium font-mono">
@@ -829,6 +839,7 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
                         )}
                     </tbody>
                 </table>
+                <PieDeTandas tandas={tandas} nombre="clientes" />
             </div>
 
             <CreateClientModal

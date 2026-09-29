@@ -1,10 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
 import { Wallet, Filter, Search, User, Calendar, Truck, Euro, AlertTriangle, CheckCircle, ArrowRight, Pencil, X, FileText, ChevronUp, ChevronDown, Plus, Camera } from 'lucide-react';
 import ShipmentDetailsModal from '../components/shipments/ShipmentDetailsModal';
 import NuevaDeudaModal from '../components/shipments/NuevaDeudaModal';
 import { utils, writeFile } from 'xlsx';
 import { lineasDeCobro, needsDriverAfterCollecting } from '../utils/pendingCollections';
 import { coincideBusqueda } from '../utils/busqueda';
+import { usePorTandas } from '../hooks/usePorTandas';
+import PieDeTandas from '../components/PieDeTandas';
 
 // Valor del desplegable para ver el dinero que no lleva nadie.
 const SIN_REPARTIDOR = 'unassigned';
@@ -26,6 +28,8 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
     const [filterType, setFilterType] = useState('all'); // 'all', 'shipping_fee', 'reimbursement'
     const [filterDriver, setFilterDriver] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
+    // La letra sale al momento en el buscador; la tabla se pone al día detrás.
+    const busquedaDiferida = useDeferredValue(searchTerm);
     const [editingId, setEditingId] = useState(null);
     const [tempDriverId, setTempDriverId] = useState('');
     // Repartidor elegido en la barra "Pasar todos los cobros de X a…".
@@ -117,7 +121,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
         .map(item => ({ ...item, collectionTypes: item.collectionTypes.filter(lineaVisible) }))
         .filter(item => item.collectionTypes.length > 0)
         // Búsqueda: remitente y destinatario a la vez, sin depender de quién paga
-        .filter(item => coincideBusqueda(item, searchTerm));
+        .filter(item => coincideBusqueda(item, busquedaDiferida));
 
     // Quién sale en el desplegable de repartidores. Un repartidor dado de baja
     // que todavía tenga dinero por cobrar tiene que poder elegirse, y los cobros
@@ -165,6 +169,9 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
         }
         return result;
     }, [filteredItems, sortConfig, filterType]);
+
+    // Por tandas: pintar cientos de cobros de golpe hacía ir con retraso cada letra del buscador.
+    const tandas = usePorTandas(sortedItems, JSON.stringify([busquedaDiferida, filterType, filterDriver, sortConfig]));
 
 
     // El total es exactamente la suma de lo que se ve: con el filtro puesto en un
@@ -504,7 +511,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                                         </div>
                                     </td>
                                 </tr>
-                            ) : sortedItems.map((item) => {
+                            ) : tandas.visibles.map((item) => {
                                 const hasPorte = item.collectionTypes.some(t => t.type.startsWith('Portes'));
                                 const hasReembolso = item.collectionTypes.some(t => t.type === 'Reembolso');
 
@@ -656,6 +663,7 @@ export default function PendingCollections({ shipments, drivers, clients, onAssi
                             })}
                         </tbody>
                     </table>
+                    {tandas.total > 0 && <PieDeTandas tandas={tandas} nombre="albaranes con cobro" />}
                 </div>
             </div>
         </div>
