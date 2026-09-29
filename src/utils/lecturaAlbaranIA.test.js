@@ -28,6 +28,25 @@ describe('normalizarCamposIA', () => {
         expect(normalizarCamposIA({}).devolverFirmado).toBe(false);
     });
 
+    it('TXT con la R y el DAC copiados: reembolso = TOTAL y devolver firmado, aunque el modelo diga que no (SERRANO DE LA ROSA)', () => {
+        const r = normalizarCamposIA({
+            reembolso: 0, devolverFirmado: false,
+            servicio: 'PAQUETERIA Plata DAC', letraRecuadro: 'R', total: '549,22 €',
+        });
+        expect(r.reembolso).toBe(549.22);
+        expect(r.devolverFirmado).toBe(true);
+    });
+
+    it('TXT sin R: el TOTAL es sólo el precio del transporte, no reembolso', () => {
+        const r = normalizarCamposIA({ reembolso: 0, servicio: 'PAQUETERIA Plata', letraRecuadro: '', total: 18.5 });
+        expect(r.reembolso).toBe(0);
+        expect(r.devolverFirmado).toBe(false);
+    });
+
+    it('DAC sólo cuenta como sigla suelta, no dentro de otra palabra', () => {
+        expect(normalizarCamposIA({ servicio: 'CADACUAL' }).devolverFirmado).toBe(false);
+    });
+
     it('arregla la forma: números como texto, espacios y símbolos', () => {
         const r = normalizarCamposIA({ cp: ' 14500 ', bultos: '3', kilos: '12,5', reembolso: '125,40 €', expedicion: 12345 });
         expect(r.cp).toBe('14500');

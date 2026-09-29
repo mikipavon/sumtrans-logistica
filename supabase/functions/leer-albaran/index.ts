@@ -14,6 +14,8 @@
 // Acciones (campo `accion` del cuerpo):
 //   'leer'  → { imagen: 'data:image/jpeg;base64,…', modelo? }
 //             devuelve { campos, coste, modelo }
+//   'leerListado' → igual, pero la hoja es un listado con varios envíos:
+//             campos = { envios: [ {expedicion, destinatario, …}, … ] }
 //   'saldo' → devuelve lo que queda y lo gastado, para el panel de consumo
 //
 // Lo que devuelve el modelo NO se da por bueno: la app lo enseña junto a la
@@ -96,8 +98,13 @@ Devuelve SOLO un objeto JSON, sin texto alrededor, con estas claves:
   "kilos": kilos que cobra la agencia (número) o null. Si el albarán trae varios pesos (netos, brutos, reales, convertidos o volumétricos), pon el MAYOR de todos: el volumétrico puede ser 200 aunque el paquete pese 1,
   "reembolso": importe a cobrar contra reembolso en euros (número), 0 si no hay,
   "devolverFirmado": true si la agencia pide que le devolvamos el albarán o la documentación firmada por el destinatario, false si no,
-  "porte": "Pagado" si el papel dice pagado/pagados, "Debido" si dice debido/debidos, "" si no se ve
+  "porte": "Pagado" si el papel dice pagado/pagados, "Debido" si dice debido/debidos, "" si no se ve,
+  "servicio": copia tal cual lo que pone en la línea "Servicio" y las siglas que van en su misma franja, también las que vienen en un recuadro negro con letras blancas a la derecha (p. ej. "PAQUETERIA Plata DAC"), "" si no hay,
+  "letraRecuadro": la letra grande que hay dentro del recuadro de abajo a la izquierda, junto a "TIPO DE PORTES" y bajo "TOTAL" (en TXT suele ser "R"), "" si el recuadro está vacío o no existe,
+  "total": el importe de la casilla "TOTAL" en euros (número), null si no hay
 }
+
+Las tres últimas claves son sólo para COPIAR lo que se ve impreso, sin interpretarlo.
 
 Cuándo "devolverFirmado" es true:
 - En TXT aparece "DAC" (Devolución de Albarán/Documentación firmada), normalmente junto al servicio.
@@ -114,6 +121,40 @@ Cuidado:
 - Reembolso: es el dinero que el repartidor tiene que cobrar al destinatario al entregar. Busca "Reembolso", "Contra reembolso", "R.E." o "COD" con un importe al lado.
 - En TXT el reembolso NO va escrito junto a la palabra: abajo a la izquierda, junto a "TIPO DE PORTES", hay un recuadro grande con una letra. Si esa letra es "R", el importe de la casilla "TOTAL" es el reembolso a cobrar (aunque el porte diga "P. Pagados"). Si el recuadro está vacío o lleva otra letra, el TOTAL es sólo el precio del transporte y el reembolso es 0.
 - Una casilla de reembolso vacía o a cero es 0.
+- Si un dato no se lee con seguridad, déjalo vacío ("" o null). No te lo inventes.
+- Copia los nombres y direcciones tal cual, con sus tildes y eñes.`
+
+// Listado de un cliente que nos da varias expediciones en una misma hoja (p. ej.
+// ALMACENES DE FERRETERIA SAN RAFAEL: una línea por envío con Nº Expedición,
+// Bultos, Kg y el destinatario debajo). El remitente es el que encabeza la hoja
+// y la app lo pone con la ficha del cliente, así que aquí sólo se piden las líneas.
+const INSTRUCCIONES_LISTADO = `Eres el administrativo de una empresa de transporte de Córdoba (España).
+Te llega la foto de un LISTADO de envíos que nos entrega un cliente para repartir: en la cabecera está el propio cliente (el remitente) y debajo una línea por envío, normalmente con "Nº Expedición", "Bultos", "Kg" y los datos del destinatario (nombre, dirección, código postal y población, teléfono).
+La foto puede estar girada, torcida, con sombras o con reflejos.
+
+Devuelve SOLO un objeto JSON, sin texto alrededor, con esta forma:
+{
+  "envios": [
+    {
+      "expedicion": número de expedición de esa línea, como texto,
+      "destinatario": nombre de quien recibe,
+      "direccion": calle y número del destinatario (sin el código postal ni la población),
+      "poblacion": población del destinatario, sin el código postal ni la provincia,
+      "cp": código postal del destinatario (5 cifras),
+      "telefono": teléfono del destinatario, sólo cifras, "" si no aparece,
+      "bultos": número de bultos (entero) o null,
+      "kilos": kilos de esa línea (número) o null,
+      "reembolso": importe a cobrar contra reembolso en euros si la línea lo indica, 0 si no
+    }
+  ]
+}
+
+Cuidado:
+- Una entrada por cada línea de envío, en el mismo orden que en la hoja. No te saltes ninguna ni repitas ninguna.
+- La cabecera (nombre, dirección, teléfono y fecha del cliente que manda el listado) y el "REPARTIDOR" NO son envíos: ignóralos.
+- La fila de totales ("Total", "Total Agencia") NO es un envío.
+- Si la población viene con la provincia detrás ("MONTILLA (CORDOBA)", "14550 - MONTILLA (CORDOBA)"), quédate sólo con el pueblo. Si la dirección lleva el pueblo entre paréntesis al final ("Calle FUENTE EL ALAMO, Nº 33 (MONTILLA)"), quítalo de la dirección.
+- Los kilos usan coma decimal ("51,00" son 51).
 - Si un dato no se lee con seguridad, déjalo vacío ("" o null). No te lo inventes.
 - Copia los nombres y direcciones tal cual, con sus tildes y eñes.`
 
@@ -135,8 +176,15 @@ function extraerJson(texto: string): Record<string, unknown> | null {
 // si no, la hoja cae al lector gratuito, que con fotos de móvil lee fatal.
 const MODELO_DE_REPUESTO = 'google/gemini-2.5-flash'
 
-async function leer(imagen: string, modelo: string): Promise<Response> {
-  const primero = await preguntar(imagen, modelo)
+type Tarea = { instrucciones: string; maxTokens: number; valida: (c: Record<string, unknown>) => boolean }
+
+const ALBARAN: Tarea = { instrucciones: INSTRUCCIONES, maxTokens: 1500, valida: () => true }
+// Cada línea del listado ocupa unos 120 tokens: con 6000 caben de sobra las
+// 20-30 líneas de una hoja llena.
+const LISTADO: Tarea = { instrucciones: INSTRUCCIONES_LISTADO, maxTokens: 6000, valida: (c) => Array.isArray(c.envios) }
+
+async function leer(imagen: string, modelo: string, tarea: Tarea = ALBARAN): Promise<Response> {
+  const primero = await preguntar(imagen, modelo, tarea)
   if (primero instanceof Response) return primero
   if (primero.campos) return json({ campos: primero.campos, modelo: primero.modelo, coste: primero.coste })
 
@@ -145,7 +193,7 @@ async function leer(imagen: string, modelo: string): Promise<Response> {
     return json({ error: `La IA no devolvió datos legibles (${primero.fin || 'sin motivo'})`, respuesta: primero.contenido.slice(0, 500) }, 502)
   }
 
-  const segundo = await preguntar(imagen, MODELO_DE_REPUESTO)
+  const segundo = await preguntar(imagen, MODELO_DE_REPUESTO, tarea)
   if (segundo instanceof Response) return segundo
   // Lo que costó el intento fallido también se paga: se suma para el panel.
   const coste = primero.coste === null && segundo.coste === null ? null : (primero.coste || 0) + (segundo.coste || 0)
@@ -157,7 +205,7 @@ async function leer(imagen: string, modelo: string): Promise<Response> {
 
 type Contestacion = { campos: Record<string, unknown> | null; contenido: string; fin: string; modelo: string; coste: number | null }
 
-async function preguntar(imagen: string, modelo: string): Promise<Contestacion | Response> {
+async function preguntar(imagen: string, modelo: string, tarea: Tarea): Promise<Contestacion | Response> {
   const respuesta = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -170,7 +218,7 @@ async function preguntar(imagen: string, modelo: string): Promise<Contestacion |
       model: modelo,
       temperature: 0,
       // El JSON ocupa unos 300; con 800 una respuesta que se enrollaba se cortaba antes del cierre.
-      max_tokens: 1500,
+      max_tokens: tarea.maxTokens,
       response_format: { type: 'json_object' },
       // Los albaranes llevan nombres, direcciones y teléfonos de clientes: sólo
       // proveedores que no guardan ni entrenan con lo que se les manda.
@@ -180,7 +228,7 @@ async function preguntar(imagen: string, modelo: string): Promise<Contestacion |
       messages: [{
         role: 'user',
         content: [
-          { type: 'text', text: INSTRUCCIONES },
+          { type: 'text', text: tarea.instrucciones },
           { type: 'image_url', image_url: { url: imagen } },
         ],
       }],
@@ -196,8 +244,9 @@ async function preguntar(imagen: string, modelo: string): Promise<Contestacion |
   }
 
   const contenido = String(cuerpo?.choices?.[0]?.message?.content || '')
+  const leido = extraerJson(contenido)
   return {
-    campos: extraerJson(contenido),
+    campos: leido && tarea.valida(leido) ? leido : null,
     contenido,
     // 'length' = se quedó sin sitio a medias; 'content_filter'/'SAFETY' = el proveedor la bloqueó.
     fin: String(cuerpo?.choices?.[0]?.native_finish_reason || cuerpo?.choices?.[0]?.finish_reason || ''),
@@ -245,13 +294,13 @@ serve(async (req: Request) => {
   try {
     if (cuerpo.accion === 'saldo') return await saldo()
 
-    if (cuerpo.accion === 'leer') {
+    if (cuerpo.accion === 'leer' || cuerpo.accion === 'leerListado') {
       const imagen = String(cuerpo.imagen || '')
       if (!/^data:image\/(jpeg|png|webp);base64,/.test(imagen)) return json({ error: 'Falta la imagen del albarán' }, 400)
       if (imagen.length > TAMANO_MAXIMO_IMAGEN) return json({ error: 'La imagen es demasiado grande' }, 413)
       const modelo = cuerpo.modelo ? String(cuerpo.modelo) : MODELO_POR_DEFECTO
       if (!MODELOS_PERMITIDOS.has(modelo)) return json({ error: `Modelo no permitido: ${modelo}` }, 400)
-      return await leer(imagen, modelo)
+      return await leer(imagen, modelo, cuerpo.accion === 'leerListado' ? LISTADO : ALBARAN)
     }
 
     return json({ error: 'Acción desconocida' }, 400)
