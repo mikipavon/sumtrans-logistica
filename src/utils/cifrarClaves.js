@@ -95,6 +95,25 @@ export async function descifrarClave(llave, guardado) {
   return descifrarCon(llave, partes[1], partes[2]);
 }
 
+/**
+ * Ficheros (las imágenes de una contraseña): los 12 bytes del IV delante y el
+ * cifrado detrás, todo en binario.
+ */
+export async function cifrarBytes(llave, bytes) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const cifrado = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, llave, bytes));
+  const junto = new Uint8Array(iv.length + cifrado.length);
+  junto.set(iv, 0);
+  junto.set(cifrado, iv.length);
+  return junto;
+}
+
+/** Lanza si no es de esta llave. */
+export async function descifrarBytes(llave, bytes) {
+  const todo = new Uint8Array(bytes);
+  return crypto.subtle.decrypt({ name: 'AES-GCM', iv: todo.slice(0, 12) }, llave, todo.slice(12));
+}
+
 /** Mensaje de error para una llave maestra nueva, o null si vale. */
 export function validarNuevaLlaveMaestra(nueva, repetida) {
   if (!nueva || nueva.length < LONGITUD_MINIMA) {

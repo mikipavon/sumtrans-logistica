@@ -8,6 +8,8 @@ import {
   descifrarClave,
   validarNuevaLlaveMaestra,
 } from '../utils/cifrarClaves';
+import { subirImagen, borrarImagenes, imagenesDelPortapapeles } from '../utils/imagenesDeNotas';
+import ImagenesDeNota, { BotonAnadirImagen } from '../components/notas/ImagenesDeNota';
 
 // Pestaña "Notas" de Administración: apuntes sueltos (lo que antes iba a
 // OneNote) y una libreta de contraseñas cifrada con una llave maestra.
@@ -31,6 +33,9 @@ const coincide = (textos, busqueda) => {
 };
 
 const mensajeDeError = (error) => {
+  if (/imagenes/i.test(error?.message || '')) {
+    return 'Falta la columna de imágenes: hay que ejecutar supabase/37_imagenes_en_las_notas.sql en el SQL Editor de Supabase.';
+  }
   if (error?.code === '42P01' || /does not exist|schema cache/i.test(error?.message || '')) {
     return 'Falta crear la tabla de notas: hay que ejecutar supabase/36_notas_de_la_oficina.sql en el SQL Editor de Supabase.';
   }
@@ -74,9 +79,11 @@ export default function Notas() {
   };
 
   const borrar = async (id) => {
+    const imagenes = filas.find((f) => f.id === id)?.imagenes;
     const { error } = await supabase.from(TABLA).delete().eq('id', id);
     if (error) throw new Error(mensajeDeError(error));
     setFilas((prev) => prev.filter((f) => f.id !== id));
+    await borrarImagenes(imagenes);
   };
 
   return (
@@ -221,6 +228,44 @@ function EditorDeNota({ nota, onGuardar, onBorrar }) {
   guardarYaRef.current = guardarYa;
   useEffect(() => () => { guardarYaRef.current(); }, []);
 
+  // Las imágenes se guardan en cuanto se suben (botón o Ctrl+V en el texto).
+  const [subiendo, setSubiendo] = useState(false);
+  const [avisoImagen, setAvisoImagen] = useState(null);
+  const imagenes = nota.imagenes || [];
+
+  const anadirImagenes = async (ficheros) => {
+    if (subiendo) return;
+    setSubiendo(true);
+    setAvisoImagen(null);
+    const nuevas = [];
+    try {
+      for (const f of ficheros) nuevas.push(await subirImagen(f));
+      await onGuardar(nota.id, { imagenes: [...imagenes, ...nuevas] });
+    } catch (e) {
+      await borrarImagenes(nuevas);
+      setAvisoImagen(e.message);
+    } finally {
+      setSubiendo(false);
+    }
+  };
+
+  const quitarImagen = async (img) => {
+    if (!window.confirm('¿Quitar esta imagen de la nota?')) return;
+    try {
+      await onGuardar(nota.id, { imagenes: imagenes.filter((i) => i.ruta !== img.ruta) });
+      await borrarImagenes([img]);
+    } catch (e) {
+      setAvisoImagen(e.message);
+    }
+  };
+
+  const pegar = (e) => {
+    const ficheros = imagenesDelPortapapeles(e);
+    if (!ficheros.length) return;
+    e.preventDefault();
+    anadirImagenes(ficheros);
+  };
+
   const rotulo = {
     guardado: 'Guardado',
     guardando: 'Guardando…',
@@ -238,6 +283,7 @@ function EditorDeNota({ nota, onGuardar, onBorrar }) {
           placeholder="Título"
           className="flex-1 text-xl font-bold text-slate-800 outline-none border-b border-transparent focus:border-slate-200 pb-1"
         />
+        <BotonAnadirImagen onFicheros={anadirImagenes} ocupado={subiendo} />
         <span className={`text-xs font-medium ${estado === 'error' ? 'text-red-600' : 'text-slate-400'}`}>{rotulo}</span>
         <button onClick={onBorrar} title="Borrar nota" className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg">
           <Trash2 size={18} />
@@ -247,9 +293,12 @@ function EditorDeNota({ nota, onGuardar, onBorrar }) {
         value={texto}
         onChange={(e) => cambiar('texto', e.target.value)}
         onBlur={guardarYa}
-        placeholder="Escribe aquí…"
-        className="flex-1 min-h-[50vh] w-full resize-none outline-none text-slate-700 leading-relaxed text-[15px]"
+        onPaste={pegar}
+        placeholder="Escribe aquí… (puedes pegar capturas con Ctrl+V)"
+        className="flex-1 min-h-[40vh] w-full resize-none outline-none text-slate-700 leading-relaxed text-[15px]"
       />
+      {avisoImagen && <p className="text-red-600 text-sm">{avisoImagen}</p>}
+      <ImagenesDeNota imagenes={imagenes} onQuitar={quitarImagen} />
     </div>
   );
 }
@@ -339,7 +388,7 @@ function CerraduraDeClaves({ comprobante, onCrear, onAbierta }) {
   );
 }
 
-const FICHA_VACIA = { titulo: '', web: '', usuario: '', clave: '', texto: '' };
+const FICHA_VACIA = { titulo: '', web: '', usuario: '', clave: '', texto: '', imagenes: [] };
 
 function ListaDeClaves({ llave, claves, onCrear, onGuardar, onBorrar, onCerrar }) {
   const [busqueda, setBusqueda] = useState('');
@@ -361,6 +410,10 @@ function ListaDeClaves({ llave, claves, onCrear, onGuardar, onBorrar, onCerrar }
       texto: ficha.texto,
       clave_cifrada: await cifrarClave(llave, ficha.clave),
     };
+    // Sólo se manda si hay imágenes de por medio: así una contraseña sin
+    // imágenes se guarda aunque falte la columna (migración 37).
+    const teniaImagenes = editando !== 'nueva' && editando.imagenes?.length;
+    if (ficha.imagenes.length || teniaImagenes) fila.imagenes = ficha.imagenes;
     if (editando === 'nueva') await onCrear({ tipo: 'clave', ...fila });
     else await onGuardar(editando.id, fila);
     setEditando(null);
@@ -454,6 +507,7 @@ function TarjetaDeClave({ fila, llave, onEditar, onBorrar }) {
         }
       />
       {fila.texto && <p className="text-xs text-slate-500 whitespace-pre-wrap border-t border-slate-50 pt-2">{fila.texto}</p>}
+      <ImagenesDeNota imagenes={fila.imagenes} llave={llave} />
     </div>
   );
 }
@@ -486,11 +540,48 @@ function FormularioDeClave({ llave, fila, onGuardar, onCancelar }) {
   const [verClave, setVerClave] = useState(false);
   const [aviso, setAviso] = useState(null);
   const [ocupado, setOcupado] = useState(false);
+  const [subiendo, setSubiendo] = useState(false);
+  // Las imágenes se suben cifradas en cuanto se añaden, pero la ficha no se
+  // entera hasta Guardar. Si se cancela, se borran las subidas; las quitadas
+  // sólo se borran del almacén cuando se ha guardado sin ellas.
+  const subidas = useRef([]);
+  const quitadas = useRef([]);
+  const guardado = useRef(false);
+  useEffect(() => () => { if (!guardado.current) borrarImagenes(subidas.current); }, []);
+
+  const anadirImagenes = async (ficheros) => {
+    if (subiendo) return;
+    setSubiendo(true);
+    setAviso(null);
+    try {
+      for (const f of ficheros) {
+        const img = await subirImagen(f, llave);
+        subidas.current.push(img);
+        setFicha((prev) => ({ ...prev, imagenes: [...prev.imagenes, img] }));
+      }
+    } catch (e) {
+      setAviso(e.message);
+    } finally {
+      setSubiendo(false);
+    }
+  };
+
+  const quitarImagen = (img) => {
+    quitadas.current.push(img);
+    setFicha((prev) => ({ ...prev, imagenes: prev.imagenes.filter((i) => i.ruta !== img.ruta) }));
+  };
+
+  const pegar = (e) => {
+    const ficheros = imagenesDelPortapapeles(e);
+    if (!ficheros.length) return;
+    e.preventDefault();
+    anadirImagenes(ficheros);
+  };
 
   useEffect(() => {
     if (!fila) { setFicha(FICHA_VACIA); return; }
     let vivo = true;
-    const base = { titulo: fila.titulo || '', web: fila.web || '', usuario: fila.usuario || '', texto: fila.texto || '', clave: '' };
+    const base = { titulo: fila.titulo || '', web: fila.web || '', usuario: fila.usuario || '', texto: fila.texto || '', clave: '', imagenes: fila.imagenes || [] };
     setFicha(base);
     descifrarClave(llave, fila.clave_cifrada)
       .then((clave) => { if (vivo) setFicha((f) => ({ ...f, clave })); })
@@ -509,6 +600,8 @@ function FormularioDeClave({ llave, fila, onGuardar, onCancelar }) {
     setOcupado(true);
     try {
       await onGuardar(ficha);
+      guardado.current = true;
+      await borrarImagenes(quitadas.current);
     } catch (err) {
       setAviso(err.message);
       setOcupado(false);
@@ -518,7 +611,7 @@ function FormularioDeClave({ llave, fila, onGuardar, onCancelar }) {
   const estilo = 'w-full border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500';
 
   return (
-    <form onSubmit={enviar} className="bg-white rounded-xl border border-blue-200 shadow-sm p-5 space-y-3">
+    <form onSubmit={enviar} onPaste={pegar} className="bg-white rounded-xl border border-blue-200 shadow-sm p-5 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="font-bold text-slate-800">{fila ? 'Editar contraseña' : 'Nueva contraseña'}</h3>
         <button type="button" onClick={onCancelar} className="p-1.5 text-slate-400 hover:text-slate-700"><X size={18} /></button>
@@ -535,10 +628,15 @@ function FormularioDeClave({ llave, fila, onGuardar, onCancelar }) {
         </div>
       </div>
       <textarea {...campo('texto')} placeholder="Notas (opcional; esto NO va cifrado)" rows={2} className={estilo} />
+      <div className="flex items-center gap-3">
+        <BotonAnadirImagen onFicheros={anadirImagenes} ocupado={subiendo} />
+        <span className="text-xs text-slate-400">o pega una captura con Ctrl+V. Las imágenes de una contraseña van cifradas.</span>
+      </div>
+      <ImagenesDeNota imagenes={ficha.imagenes} llave={llave} onQuitar={quitarImagen} />
       {aviso && <p className="text-red-600 text-sm">{aviso}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancelar} className="px-4 py-2 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-100">Cancelar</button>
-        <button disabled={ocupado} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-bold">
+        <button disabled={ocupado || subiendo} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-bold">
           {ocupado ? 'Guardando…' : 'Guardar'}
         </button>
       </div>
