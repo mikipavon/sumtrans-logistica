@@ -152,7 +152,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         phone: '', mobile: '', email: '', coordinates: '',
         opAddress: '', opCity: '', opZip: '',
         type: 'Remitente', billingType: 'Clientes Habituales', tariffType: 'General',
-        customRates: {}, customRatesB2: {}, allowedArticles: [], codFee: '', codFeeMode: COMISION_FIJA, codFeePercent: '', codFeeMin: '', color: '#ef4444', 
+        customRates: {}, customRatesB2: {}, deliveryRates: {}, allowedArticles: [], codFee: '', codFeeMode: COMISION_FIJA, codFeePercent: '', codFeeMin: '', color: '#ef4444', 
         priority: 'urgent',
         username: '', password: '', accessEmail: '', accessEmailsExtra: [],
         // Factusol extra
@@ -521,9 +521,11 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
         }
     };
 
+    // columna: false → customRates (B1), true → customRatesB2, o el nombre del
+    // campo ('deliveryRates', la columna "Entregas aquí").
     const handleRateChange = (articleId, newPrice, isB2 = false) => {
-        const key = isB2 ? 'customRatesB2' : 'customRates';
-        setFormData(prev => ({ ...prev, [key]: { ...prev[key], [articleId]: newPrice } }));
+        const key = typeof isB2 === 'string' ? isB2 : (isB2 ? 'customRatesB2' : 'customRates');
+        setFormData(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [articleId]: newPrice } }));
     };
 
     const toggleArticle = (articleId) => {
@@ -1027,6 +1029,7 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                                         </th>
                                                         <th className="px-4 py-2 text-right font-medium text-slate-600">P. Cliente (B1)</th>
                                                         <th className="px-4 py-2 text-right font-medium text-slate-600">P. Cliente (B2)</th>
+                                                        <th className="px-4 py-2 text-right font-medium text-amber-700" title="Lo que paga quien le manda algo a este cliente (menos las agencias), tenga la tarifa que tenga">Entregas aquí</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-100">
@@ -1058,14 +1061,26 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                                                     <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">€</span>
                                                                 </div>
                                                             </td>
+                                                            <td className="px-4 py-2 text-right">
+                                                                <div className="relative inline-block w-24">
+                                                                    <input type="number" step="0.01" placeholder="—"
+                                                                        className="w-full px-2 py-1 bg-amber-50 border border-amber-200 rounded focus:outline-none focus:border-amber-500 text-right pr-6 text-sm"
+                                                                        value={formData.deliveryRates?.[article.id] || ''}
+                                                                        onChange={e => handleRateChange(article.id, e.target.value, 'deliveryRates')} />
+                                                                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">€</span>
+                                                                </div>
+                                                            </td>
                                                         </tr>
                                                     ))}
                                                     {(!articles || articles.length === 0) && (
-                                                        <tr><td colSpan="5" className="px-4 py-4 text-center text-slate-400 italic">No hay artículos definidos.</td></tr>
+                                                        <tr><td colSpan="6" className="px-4 py-4 text-center text-slate-400 italic">No hay artículos definidos.</td></tr>
                                                     )}
                                                 </tbody>
                                             </table>
                                         </div>
+                                        <p className="text-[10px] text-amber-700 mt-2">
+                                            <b>Entregas aquí:</b> lo que se cobra a quien le mande algo a este cliente, tenga la tarifa que tenga. No se aplica si paga una agencia ni si paga este mismo cliente. Vacío: precio normal.
+                                        </p>
                                     </div>
                                 )}
 

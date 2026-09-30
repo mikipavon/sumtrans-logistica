@@ -162,10 +162,10 @@ export default function Articles({
                 const nuevo = shouldBeB2 ? 2 : (String(zone.zip || '').startsWith('14') ? 1 : 2);
                 const confirmed = await onUpdateCoverageZone(zone.id, { ...zone, baremo: nuevo });
                 if (confirmed) count++;
-            } else if (baremoActual === 1 && shouldBeB2) {
-                const confirmed = await onUpdateCoverageZone(zone.id, { ...zone, baremo: 2 });
-                if (confirmed) count++;
             }
+            // Una fila en B1 se deja como está aunque el listado maestro diga
+            // B2: la ha puesto la oficina y Zonas B1/B2 manda (30/09/2026,
+            // Santa Cruz). Hasta entonces este botón la volvía a poner en B2.
         }
 
         // 2. Check Tariffs (Zonas Especiales) - Ensure they have baremo if they match B2 towns
