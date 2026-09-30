@@ -45,10 +45,11 @@ const lecturaReal = {
     bultos: 1, kilos: 15, reembolso: 0, devolverFirmado: false,
 };
 
-function abrirImportacion() {
+function abrirImportacion({ clients = [] } = {}) {
     return render(
         <ImportarAlbaranesAgencia
             client={agencia}
+            clients={clients}
             onCreateShipment={onCreateShipment}
             allShipments={[]}
             articles={articulos}
@@ -123,6 +124,43 @@ describe('ImportarAlbaranesAgencia', () => {
 
         expect(screen.getByDisplayValue('AGUILAR DE LA FRONTERA')).toBeInTheDocument();
         expect(screen.queryByText(/Población cambiada/)).not.toBeInTheDocument();
+    });
+
+    // 30/09/2026: la IA leyó «S» de destinatario y la oficina quería poner una
+    // ficha que ya existe; la casilla era texto suelto y no buscaba nada.
+    it('el destinatario busca en las fichas y al elegir una rellena sus datos', async () => {
+        const fichas = [
+            { id: 'c1', name: 'TALLERES CARCABUEY S.L.', address: 'Ctra A-339 km 17', city: 'Carcabuey', zip: '14810', phone: '957000111', coordinates: '37.44,-4.27' },
+            { id: 'c2', name: 'OTRO CLIENTE', address: 'x', city: 'Cabra', zip: '14940' },
+            { id: 'c3', name: 'TALLERES PENDIENTE', status: 'pending' },
+        ];
+        abrirImportacion({ clients: fichas });
+        await subirFotoYRevisar();
+
+        const destinatario = screen.getByRole('textbox', { name: 'Destinatario' });
+        fireEvent.focus(destinatario);
+        fireEvent.change(destinatario, { target: { value: 'tallere' } });
+        expect(screen.queryByText('OTRO CLIENTE')).not.toBeInTheDocument();
+        expect(screen.queryByText('TALLERES PENDIENTE')).not.toBeInTheDocument();
+        fireEvent.mouseDown(screen.getByText('TALLERES CARCABUEY S.L.'));
+
+        expect(screen.getByDisplayValue('TALLERES CARCABUEY S.L.')).toBeInTheDocument();
+        expect(screen.getByDisplayValue('Carcabuey')).toBeInTheDocument();
+        expect(screen.queryByText(/Población cambiada/)).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: /Crear 1 envíos/ }));
+        await waitFor(() => expect(onCreateShipment).toHaveBeenCalledTimes(1));
+        expect(onCreateShipment.mock.calls[0][0]).toMatchObject({
+            destinationName: 'TALLERES CARCABUEY S.L.',
+            destinationAddress: 'Ctra A-339 km 17',
+            destinationCity: 'Carcabuey',
+            destinationZip: '14810',
+            destinationPhone: '957000111',
+            destinationCoordinates: '37.44,-4.27',
+            // El remitente y quien paga no cambian.
+            originName: 'S.VDA.E.FAJEDA-FAIBO, S.L.',
+            client: 'TXT',
+        });
     });
 });
 

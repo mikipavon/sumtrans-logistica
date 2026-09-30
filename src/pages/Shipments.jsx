@@ -1332,6 +1332,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             <ImportarAlbaranesAgencia
                                 isAdmin={true}
                                 client={(clients || []).find(c => String(c.id) === String(importClientId))}
+                                clients={clients}
                                 onCreateShipment={onCreateShipment}
                                 allShipments={shipments}
                                 articles={articles}

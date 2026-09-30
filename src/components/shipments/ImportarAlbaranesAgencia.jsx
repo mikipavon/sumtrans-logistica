@@ -46,10 +46,54 @@ function kilosDe(valor) {
 }
 
 function camposVacios() {
-    return { expedicion: '', remitente: '', destinatario: '', direccion: '', poblacion: '', cp: '', telefono: '', bultos: null, kilos: null, reembolso: 0, devolverFirmado: false };
+    return { expedicion: '', remitente: '', destinatario: '', direccion: '', poblacion: '', cp: '', telefono: '', coordenadas: '', bultos: null, kilos: null, reembolso: 0, devolverFirmado: false };
 }
 
-export default function ImportarAlbaranesAgencia({ client, onCreateShipment, allShipments, articles, tariffs, coverageZones, onClose, isAdmin }) {
+/** Igual que el buscador del alta: sin acentos, sin puntuación y sin "S.L."/"S.A.". */
+function normalizarBusqueda(texto) {
+    if (!texto) return '';
+    return String(texto)
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[.,;:]/g, '')
+        .replace(/\b(s\.?l\.?u?|s\.?a\.?|sociedad limitada|sociedad anonima)\b/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
+ * Fichas (y sus sedes) cuyo nombre contiene lo tecleado, como en el destinatario
+ * del alta. Fuera las pendientes de validar. Cada resultado trae ya los campos de
+ * la hoja que rellena al elegirlo.
+ */
+function fichasQueCasan(clients, texto, max = 8) {
+    const buscado = normalizarBusqueda(texto);
+    if (buscado.length < 2) return [];
+    const resultados = [];
+    const fichas = (clients || []).filter(c => c && c.status !== 'pending')
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    for (const c of fichas) {
+        const nombreCasa = normalizarBusqueda(c.name).includes(buscado);
+        if (nombreCasa) {
+            resultados.push({
+                id: String(c.id), nombre: c.name,
+                campos: { destinatario: c.name || '', direccion: c.opAddress || c.address || '', poblacion: c.opCity || c.city || '', cp: c.opZip || c.zip || '', telefono: c.phone || '', coordenadas: c.coordinates || '' },
+            });
+        }
+        for (const b of (Array.isArray(c.branches) ? c.branches : [])) {
+            if (!nombreCasa && !normalizarBusqueda(b.name).includes(buscado) && !normalizarBusqueda(b.city).includes(buscado)) continue;
+            resultados.push({
+                id: `${c.id}_${b.id}`, nombre: b.name || c.name, sede: true,
+                campos: { destinatario: b.name || c.name || '', direccion: b.address || c.opAddress || c.address || '', poblacion: b.city || c.opCity || c.city || '', cp: b.zip || c.opZip || c.zip || '', telefono: b.phone || c.phone || '', coordenadas: b.coordinates || c.coordinates || '' },
+            });
+        }
+        if (resultados.length >= max) break;
+    }
+    return resultados.slice(0, max);
+}
+
+export default function ImportarAlbaranesAgencia({ client, clients, onCreateShipment, allShipments, articles, tariffs, coverageZones, onClose, isAdmin }) {
     const [step, setStep] = useState(1); // 1=subir y leer, 2=revisar, 3=hecho
     const [hojas, setHojas] = useState([]);
     const [leyendo, setLeyendo] = useState(false);
@@ -58,6 +102,8 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
     const [resultado, setResultado] = useState(null);
     const [hojaAmpliada, setHojaAmpliada] = useState(null);
     const [textoVisible, setTextoVisible] = useState(null);
+    // Hoja cuyo destinatario enseña ahora la lista de fichas.
+    const [buscandoDestino, setBuscandoDestino] = useState(null);
     const colaRef = useRef(Promise.resolve());
     // Sin saldo no tiene sentido seguir llamando a la IA hoja por hoja: el resto
     // de la importación va directa al lector gratuito.
@@ -174,6 +220,16 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
 
     const editarCampo = (id, campo, valor) => actualizarHoja(id, h => ({ campos: { ...h.campos, [campo]: valor } }));
     const quitarHoja = (id) => setHojas(prev => prev.filter(h => h.id !== id));
+    // Elegir una ficha pisa lo leído del papel con lo de la ficha; lo que la
+    // ficha no tenga (sin teléfono, p. ej.) se queda como lo leyó la IA.
+    const elegirDestino = (id, ficha) => {
+        actualizarHoja(id, h => {
+            const campos = { ...h.campos };
+            for (const [k, v] of Object.entries(ficha.campos)) if (v || k === 'coordenadas') campos[k] = v;
+            return { campos, correccion: null };
+        });
+        setBuscandoDestino(null);
+    };
 
     const hojasRevisadas = useMemo(() => hojas.map(h => {
         const c = h.campos;
@@ -249,6 +305,8 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                         destinationZip: (c.cp || '').trim(),
                         destinationCity: (c.poblacion || '').trim(),
                         destinationPhone: (c.telefono || '').trim(),
+                        // Sólo si se eligió la ficha del destinatario: el papel no trae GPS.
+                        destinationCoordinates: c.coordenadas || '',
                         origin: `${client.zip || ''} ${client.city || ''}, ES`.trim(),
                         destination: `${c.cp || ''} ${c.poblacion || ''}, ES`.trim(),
                         date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
@@ -430,7 +488,32 @@ export default function ImportarAlbaranesAgencia({ client, onCreateShipment, all
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                                             {campo(h, 'remitente', 'Remitente (quien entrega)', { ancho: 'col-span-2', placeholder: client?.name || '' })}
                                             {campo(h, 'expedicion', 'Expedición / Ref.', { ancho: 'col-span-2' })}
-                                            {campo(h, 'destinatario', 'Destinatario', { ancho: 'col-span-2' })}
+                                            <div className="relative col-span-2 flex flex-col gap-0.5">
+                                                <span className="text-[10px] font-bold uppercase text-slate-500">Destinatario</span>
+                                                <input type="text" className={inputCls} placeholder="Escribe para buscar en tus clientes"
+                                                    aria-label="Destinatario"
+                                                    value={h.campos.destinatario ?? ''}
+                                                    onFocus={() => setBuscandoDestino(h.id)}
+                                                    onBlur={() => setBuscandoDestino(b => (b === h.id ? null : b))}
+                                                    onKeyDown={(e) => { if (e.key === 'Escape') setBuscandoDestino(null); }}
+                                                    onChange={(e) => { editarCampo(h.id, 'destinatario', e.target.value); setBuscandoDestino(h.id); }} />
+                                                {buscandoDestino === h.id && (() => {
+                                                    const fichas = fichasQueCasan(clients, h.campos.destinatario);
+                                                    return fichas.length > 0 && (
+                                                        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-20 max-h-48 overflow-y-auto">
+                                                            {fichas.map(f => (
+                                                                // onMouseDown: el blur del input cerraría la lista antes del click.
+                                                                <button key={f.id} type="button"
+                                                                    onMouseDown={(e) => { e.preventDefault(); elegirDestino(h.id, f); }}
+                                                                    className="w-full text-left px-3 py-1.5 hover:bg-emerald-50 border-b border-slate-50 last:border-0">
+                                                                    <div className="text-xs font-bold text-slate-800">{f.sede && <span className="text-blue-500 text-[10px]">📍 </span>}{f.nombre}</div>
+                                                                    <div className="text-[10px] text-slate-500 truncate">{[f.campos.direccion, f.campos.poblacion].filter(Boolean).join(' · ')}</div>
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    );
+                                                })()}
+                                            </div>
                                             {campo(h, 'direccion', 'Dirección', { ancho: 'col-span-2' })}
                                             {campo(h, 'poblacion', 'Población')}
                                             {campo(h, 'cp', 'C.P.')}
