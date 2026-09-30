@@ -75,9 +75,19 @@ describe('baremoDelPunto', () => {
         expect(baremoDelPunto('Antequera', '29200', { coverageZones }).source).toBe('Lista Personalizada (Ajustes): Antequera 29200');
     });
 
-    it('una tarifa por zona con baremo explícito manda; sin baremo sólo aporta la zona', () => {
+    it('el baremo de una tarifa por zona no tapa a Zonas B1/B2 ni al listado maestro; la zona se apunta igual', () => {
         const conBaremo = [{ id: 'z3', match: 'Cabra', baremo: 2 }];
-        expect(baremoDelPunto('Cabra', '14940', { tariffs: conBaremo })).toMatchObject({ baremo: 2, tariffId: 'z3' });
+        expect(baremoDelPunto('Cabra', '14940', { tariffs: conBaremo })).toMatchObject({ baremo: 1, tariffId: 'z3' });
+
+        // Santa Cruz pasada a B1 en Ajustes con una "Zona Santa Cruz" vieja en B2 (30/09/2026)
+        const zonaVieja = [{ id: 'z4', match: 'Santa Cruz', zipPrefix: '14820', baremo: 2 }];
+        const ajustes = [{ name: 'Santa Cruz', zip: '14820', baremo: 1 }];
+        expect(baremoDelPunto('Santa Cruz', '14820', { tariffs: zonaVieja, coverageZones: ajustes }))
+            .toMatchObject({ baremo: 1, tariffId: 'z4', source: 'Lista Personalizada (Ajustes): Santa Cruz 14820' });
+
+        // Un pueblo que sólo está en la tarifa por zona sí coge su baremo
+        const soloEnTarifa = [{ id: 'z5', match: 'Santaella', baremo: 2 }];
+        expect(baremoDelPunto('Santaella', '14546', { tariffs: soloEnTarifa })).toMatchObject({ baremo: 2, tariffId: 'z5', fueraDeBaremo: false });
 
         const sinBaremo = [{ id: 'z2', zipPrefix: '415' }];
         expect(baremoDelPunto('Casariche', '41580', { tariffs: sinBaremo })).toMatchObject({ baremo: 2, tariffId: 'z2' });
@@ -184,6 +194,25 @@ describe('precioUnitarioArticulo', () => {
 
     it('cliente por kilos: el artículo va a 0, el porte sale del peso', () => {
         expect(precioUnitarioArticulo(BLT_5, { baremo: 2, porKilos: true, cliente: { customRatesB2: { blt5: '30' } } })).toBe(0);
+    });
+});
+
+describe('precio de entrega del destinatario (Entregas aquí)', () => {
+    const sacyr = { id: 'sacyr', name: 'SACYR', deliveryRates: { blt5: '30' }, customRates: { blt5: '16' } };
+
+    it('a quien le manda algo se le cobra el precio de entrega, tenga la tarifa especial que tenga y en los dos baremos', () => {
+        const remitente = { id: 'r1', customRates: { blt5: '12' }, customRatesB2: { blt5: '14' } };
+        expect(precioUnitarioArticulo(BLT_5, { cliente: remitente, destinatario: sacyr })).toBe(30);
+        expect(precioUnitarioArticulo(BLT_5, { baremo: 2, cliente: remitente, destinatario: sacyr })).toBe(30);
+        expect(precioUnitarioArticulo(BLT_5, { cliente: null, destinatario: sacyr })).toBe(30);
+    });
+
+    it('no vale si paga una agencia, si paga el propio destinatario, en un artículo sin precio de entrega ni por kilos', () => {
+        expect(precioUnitarioArticulo(BLT_5, { cliente: { id: 'mrw', isAgency: true }, destinatario: sacyr })).toBe(18);
+        expect(precioUnitarioArticulo(BLT_5, { cliente: sacyr, destinatario: sacyr })).toBe(16);
+        expect(precioUnitarioArticulo({ id: 'otro', price: '9' }, { destinatario: sacyr })).toBe(9);
+        expect(precioUnitarioArticulo(BLT_5, { destinatario: { id: 'x', deliveryRates: { blt5: '' } } })).toBe(18);
+        expect(precioUnitarioArticulo(BLT_5, { destinatario: sacyr, porKilos: true })).toBe(0);
     });
 });
 

@@ -43,7 +43,9 @@ export const BAREMO_1_PUEBLOS = [
     { name: "Palenciana", zip: "14914", baremo: 1 },
     { name: "Priego de Córdoba", zip: "14800", baremo: 1 },
     { name: "Puente Genil", zip: "14500", baremo: 1 },
-    { name: "Rute", zip: "14960", baremo: 1 }
+    { name: "Rute", zip: "14960", baremo: 1 },
+    // Estaba en Baremo 2 hasta el 30/09/2026, cuando Miguel la pasó a B1.
+    { name: "Santa Cruz", zip: "14820", baremo: 1 }
 ];
 
 export const BAREMO_2_PUEBLOS = [
@@ -56,8 +58,7 @@ export const BAREMO_2_PUEBLOS = [
     { name: "Humilladero", zip: "29531", baremo: 2 },
     { name: "Jauja", zip: "14911", baremo: 2 },
     { name: "La Roda de Andalucía", zip: "41590", baremo: 2 },
-    { name: "Mollina", zip: "29532", baremo: 2 },
-    { name: "Santa Cruz", zip: "14820", baremo: 2 }
+    { name: "Mollina", zip: "29532", baremo: 2 }
 ];
 
 export const ALL_BAREMO_PUEBLOS = [...BAREMO_1_PUEBLOS, ...BAREMO_2_PUEBLOS];

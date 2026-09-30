@@ -854,13 +854,14 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
 
         // Solo el que PAGA determina si va por kilos. La cuenta del precio es la de
         // utils/precioArticulo.js, la misma que usa la ficha del albarán al editar.
-        const { articulos, cambiaron } = repreciarArticulos(selectedArticles, { baremo, tariffId, cliente: client, porKilos: !!weightClientData });
+        const destinatario = resolveBillingClient(formData.destinationName, formData._destParentClientId);
+        const { articulos, cambiaron } = repreciarArticulos(selectedArticles, { baremo, tariffId, cliente: client, destinatario, porKilos: !!weightClientData });
         if (cambiaron) {
             console.log("💰 [Precios] Actualizando precios de artículos por cambio de zona:", articulos);
             setSelectedArticles(articulos);
             setFormData(prev => ({ ...prev, amount: importeSegunArticulos(prev, articulos) }));
         }
-    }, [formData.porteType, formData.clientName, formData.payerName, formData._payerParentClientId, formData.destinationName, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip, tariffs, coverageZones, selectedArticles]);
+    }, [formData.porteType, formData.clientName, formData.payerName, formData._payerParentClientId, formData.destinationName, formData._destParentClientId, formData.originCity, formData.originZip, formData.destinationCity, formData.destinationZip, tariffs, coverageZones, selectedArticles]);
 
     // Si cambia quién paga (Pagado ↔ Debido, otro remitente, otro destinatario)
     // con el reembolso ya tecleado, la comisión se rehace con la ficha del nuevo
@@ -896,7 +897,8 @@ export default function CreateShipmentModal({ isOpen, onClose, onSave, drivers =
 
         // Solo el que PAGA determina si va por kilos. La cuenta del precio es la de
         // utils/precioArticulo.js, la misma que usa la ficha del albarán al editar.
-        const unitPrice = precioUnitarioArticulo(article, { baremo, tariffId, cliente: client, porKilos: !!weightClientData });
+        const destinatario = resolveBillingClient(formData.destinationName, formData._destParentClientId);
+        const unitPrice = precioUnitarioArticulo(article, { baremo, tariffId, cliente: client, destinatario, porKilos: !!weightClientData });
 
         const cantidad = parseInt(quantity) || 1;
         contadorArticulosRef.current += 1;

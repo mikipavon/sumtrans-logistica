@@ -166,7 +166,8 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         const pt = formData.porteType || 'Pagado';
         const payingClientName = pt === 'Pagado' ? formData.client : formData.destinationName;
         const client = findBillingClient(payingClientName);
-        const price = precioUnitarioArticulo(article, { baremo, tariffId, cliente: client, porKilos: !!weightClientData });
+        const destinatario = findBillingClient(formData.destinationName);
+        const price = precioUnitarioArticulo(article, { baremo, tariffId, cliente: client, destinatario, porKilos: !!weightClientData });
 
         const newItem = {
             ...article,
@@ -222,7 +223,8 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
         const payingClientName = pt === 'Pagado' ? formData.client : formData.destinationName;
         const client = findBillingClient(payingClientName);
         const { baremo, tariffId } = baremoActual();
-        const { articulos, cambiaron } = repreciarArticulos(selectedArticles, { baremo, tariffId, cliente: client, porKilos: !!weightClientData });
+        const destinatario = findBillingClient(formData.destinationName);
+        const { articulos, cambiaron } = repreciarArticulos(selectedArticles, { baremo, tariffId, cliente: client, destinatario, porKilos: !!weightClientData });
         if (cambiaron) {
             setSelectedArticles(articulos);
             setFormData(prev => ({ ...prev, amount: calcularImporteTotal(articulos) }));

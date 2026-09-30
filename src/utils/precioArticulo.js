@@ -67,17 +67,21 @@ export function pueblosQueCasan(city, zip, lista) {
 /**
  * Baremo (1 ó 2) de un punto del envío.
  *
- * Orden de búsqueda, el mismo que tenía el alta:
- *   1. Tarifas por zona (`tariffs`): si la zona trae baremo explícito, manda.
- *      Si no lo trae, se apunta la zona (para los precios por zona del
- *      artículo) y se sigue buscando en las listas.
- *   2. Lista personalizada de Ajustes (`coverageZones`).
- *   3. Listado maestro de pueblos (data/baremos.js).
+ * Orden de búsqueda:
+ *   1. Lista personalizada de Ajustes (`coverageZones`, botón Zonas B1/B2).
+ *   2. Listado maestro de pueblos (data/baremos.js).
+ *   3. Tarifas por zona (`tariffs`, las Zonas Especiales Personalizadas): si
+ *      el pueblo no está en ninguna lista y la zona trae baremo, vale ese.
  *   4. Sin coincidencia: fuera de baremo. De supuesto, C.P. de Córdoba (14xxx)
  *      es Baremo 1 y cualquier otro pueblo Baremo 2. Sin pueblo ni C.P. →
  *      Baremo 1 y no está fuera (el formulario aún está vacío).
  *
- * En las listas (2 y 3) casan las filas de `pueblosQueCasan`. Si hay varias y
+ * Hasta el 30/09/2026 la tarifa por zona iba la primera y su baremo tapaba a
+ * Ajustes: Miguel pasó Santa Cruz de B2 a B1 en Zonas B1/B2 y el alta seguía
+ * dando B2. El baremo es cosa de Zonas B1/B2; la zona especial se sigue
+ * apuntando (`tariffId`) para los precios por zona de los artículos.
+ *
+ * En las listas (1 y 2) casan las filas de `pueblosQueCasan`. Si hay varias y
  * no se ponen de acuerdo (el mismo pueblo repetido en las dos columnas de
  * Ajustes) gana Baremo 2, que es lo mismo que hace "AUTO-CORREGIR BAREMOS".
  * La etiqueta (`source`) dice qué fila decidió, para poder encontrarla.
@@ -96,50 +100,33 @@ export function baremoDelPunto(city, zip, { tariffs = null, coverageZones = [] }
     if (!cleanCity && !cleanZip) return { baremo: 1, tariffId: null, source: 'General', fueraDeBaremo: false };
 
     const normCity = normalizarPoblacion(cleanCity);
-    let tariffId = null;
-    let baremo = 1;
-    let source = 'General';
-    let fueraDeBaremo = false;
-
+    let zona = null;
     if (tariffs) {
         const porNombre = tariffs.find(t => t.match && normCity && normalizarPoblacion(t.match) === normCity);
         const porCp = tariffs.find(t => t.zipPrefix && cleanZip && cleanZip.startsWith(String(t.zipPrefix).trim()));
-        const zona = porNombre || porCp;
-        if (zona) {
-            tariffId = zona.id;
-            if (zona.baremo) {
-                baremo = Number(zona.baremo);
-                source = 'Tarifa Especial';
-            }
-        }
+        zona = porNombre || porCp || null;
+    }
+    const tariffId = zona ? zona.id : null;
+
+    const decide = (filas) => filas.find(p => Number(p.baremo) === 2) || filas[0] || null;
+    const etiqueta = (p) => `${p.name || ''} ${p.zip || ''}`.trim();
+    const personalizada = decide(pueblosQueCasan(cleanCity, cleanZip, coverageZones));
+    if (personalizada) {
+        return { baremo: Number(personalizada.baremo), tariffId, source: `Lista Personalizada (Ajustes): ${etiqueta(personalizada)}`, fueraDeBaremo: false };
+    }
+    const maestra = decide(pueblosQueCasan(cleanCity, cleanZip, ALL_BAREMO_PUEBLOS));
+    if (maestra) {
+        return { baremo: Number(maestra.baremo), tariffId, source: `Listado Maestro (Sistema): ${etiqueta(maestra)}`, fueraDeBaremo: false };
+    }
+    if (zona && [1, 2].includes(Number(zona.baremo))) {
+        return { baremo: Number(zona.baremo), tariffId, source: 'Tarifa Especial', fueraDeBaremo: false };
     }
 
-    if (!tariffId || baremo === 1) {
-        const decide = (filas) => filas.find(p => Number(p.baremo) === 2) || filas[0] || null;
-        const etiqueta = (p) => `${p.name || ''} ${p.zip || ''}`.trim();
-        const personalizada = decide(pueblosQueCasan(cleanCity, cleanZip, coverageZones));
-        const maestra = decide(pueblosQueCasan(cleanCity, cleanZip, ALL_BAREMO_PUEBLOS));
-        if (personalizada) {
-            baremo = Number(personalizada.baremo);
-            source = `Lista Personalizada (Ajustes): ${etiqueta(personalizada)}`;
-        } else if (maestra) {
-            baremo = Number(maestra.baremo);
-            source = `Listado Maestro (Sistema): ${etiqueta(maestra)}`;
-        } else {
-            if (cleanZip.startsWith('14')) {
-                baremo = 1;
-                source = 'C.P. Córdoba (14xxx)';
-            } else {
-                baremo = 2;
-                source = 'Fuera de Córdoba (B2)';
-            }
-            // Una zona con tarifa (aunque no traiga baremo) tiene sus precios
-            // por zona en los artículos: ese pueblo sí está tarifado.
-            fueraDeBaremo = !tariffId;
-        }
-    }
-
-    return { baremo, tariffId, source, fueraDeBaremo };
+    // Una zona con tarifa (aunque no traiga baremo) tiene sus precios por zona
+    // en los artículos: ese pueblo sí está tarifado.
+    const fueraDeBaremo = !tariffId;
+    if (cleanZip.startsWith('14')) return { baremo: 1, tariffId, source: 'C.P. Córdoba (14xxx)', fueraDeBaremo };
+    return { baremo: 2, tariffId, source: 'Fuera de Córdoba (B2)', fueraDeBaremo };
 }
 
 /**
@@ -178,6 +165,12 @@ export function conMinimoFueraDeBaremo(importeDelPorte, fueraDeBaremo) {
  *
  * De más concreto a más general, igual que en el alta:
  *   - Cliente "Por Kilos": el porte sale del peso, el artículo va a 0.
+ *   - Precio de entrega del destinatario (`destinatario`): la columna
+ *     "Entregas aquí" (`deliveryRates`) de la ficha a la que va el envío. Es
+ *     para un cliente apartado (Sacyr, en Puente Genil pero lejos): a quien le
+ *     mande algo se le cobra ese precio, tenga la tarifa especial que tenga
+ *     (Miguel, 30/09/2026). No vale si paga una agencia ni si paga la propia
+ *     ficha del destinatario, que tiene su tarifa de siempre.
  *   - Tarifa especial del que paga para ESE baremo: la columna B2 de su ficha
  *     en Baremo 2, la columna normal en Baremo 1. Cada columna vale sólo en su
  *     baremo: hasta el 21/9/2026 la normal valía también en B2 cuando la B2
@@ -188,11 +181,17 @@ export function conMinimoFueraDeBaremo(importeDelPorte, fueraDeBaremo) {
  *   - Baremo 2: precio B2 del artículo.
  *   - Precio base del artículo.
  */
-export function precioUnitarioArticulo(articulo, { baremo = 1, tariffId = null, cliente = null, porKilos = false } = {}) {
+export function precioUnitarioArticulo(articulo, { baremo = 1, tariffId = null, cliente = null, destinatario = null, porKilos = false } = {}) {
     if (!articulo) return 0;
     if (porKilos) return 0;
 
     const id = articulo.id;
+    const pagaElDestinatario = !!(cliente && destinatario && String(cliente.id) === String(destinatario.id));
+    if (destinatario && !cliente?.isAgency && !pagaElDestinatario) {
+        const deEntrega = importe(destinatario.deliveryRates?.[id]);
+        if (deEntrega !== null) return deEntrega;
+    }
+
     const especial = baremo === 2
         ? importe(cliente?.customRatesB2?.[id])
         : importe(cliente?.customRates?.[id]);
