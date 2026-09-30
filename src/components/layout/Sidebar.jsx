@@ -1,4 +1,4 @@
-import { LayoutDashboard, Truck, Package, Settings, LogOut, Menu, Users, Map as MapIcon, Database, Tag, FileText, AlertTriangle, UserCheck, Wallet, Calculator, Fuel, Bell, Wrench } from 'lucide-react';
+import { LayoutDashboard, Truck, Package, Settings, LogOut, Menu, Users, Map as MapIcon, Database, Tag, FileText, AlertTriangle, UserCheck, Wallet, Calculator, Fuel, Bell, Wrench, StickyNote } from 'lucide-react';
 import { useState, useRef } from 'react';
 
 export default function Sidebar({ onLogout, currentView, onNavigate, pendingClientsCount = 0, pendingIncidentsCount = 0, irregularCount = 0, onSecretUnlock }) {
@@ -48,6 +48,7 @@ export default function Sidebar({ onLogout, currentView, onNavigate, pendingClie
         {
             title: 'Sistema',
             items: [
+                { id: 'notas', icon: StickyNote, label: 'Notas y Contraseñas' },
                 { id: 'settings', icon: Settings, label: 'Configuración' },
             ]
         }

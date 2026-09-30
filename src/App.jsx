@@ -37,6 +37,7 @@ const ClientDashboard = cargarPantalla(() => import('./pages/client/ClientDashbo
 const Incidents = cargarPantalla(() => import('./pages/Incidents'))
 const ClientValidation = cargarPantalla(() => import('./pages/ClientValidation'))
 const PendingCollections = cargarPantalla(() => import('./pages/PendingCollections'))
+const Notas = cargarPantalla(() => import('./pages/Notas'))
 const NotificationCenter = cargarPantalla(() => import('./pages/NotificationCenter'))
 
 import Shipment from './models/Shipment';
@@ -5244,6 +5245,7 @@ function App() {
       {currentView === 'incidents' && <Incidents shipments={visibleShipments} onUpdateStatus={handleShipmentStatusChange} onResolve={handleResolveIncident} onPark={handleParkIncident} onReply={handleIncidentReply} onUpdateShipment={handleUpdateShipment} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} articles={articles} tariffs={tariffs} coverageZones={coverageZones} familyOrder={familyOrder} driverNamePreference={driverNamePreference} />}
       {currentView === 'notifications' && <NotificationCenter shipments={visibleShipments} drivers={drivers} clients={visibleClients} onUpdateShipment={handleUpdateShipment} articles={articles} tariffs={tariffs} defaultCodFee={defaultCodFee} familyOrder={familyOrder} coverageZones={coverageZones} />}
       {currentView === 'clientValidation' && <ClientValidation clients={clients} shipments={shipments} onValidateClient={handleValidateClient} onUpdateClient={handleUpdateClient} onDeleteClients={handleDeleteClients} onGrantAccessToExisting={handleDarAccesoAFichaExistente} onVincularFichaPendiente={handleVincularFichaPendiente} articles={articles} tariffs={tariffs} allPoblaciones={allPoblaciones} />}
+      {currentView === 'notas' && <Notas />}
       </Suspense>
       {currentView === 'settings' && (
         <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in duration-500">
