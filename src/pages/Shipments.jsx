@@ -1376,13 +1376,16 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                         </div>
                         <div className="p-6 space-y-4">
                             <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Fecha Inicio (Opcional)</label>
-                                <input 
+                                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Fecha Inicio (Obligatoria)</label>
+                                <input
                                     type="date"
                                     value={exportModal.startDate}
                                     onChange={(e) => setExportModal(prev => ({ ...prev, startDate: e.target.value }))}
-                                    className="w-full text-sm border-2 border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 focus:outline-none font-semibold text-slate-700"
+                                    className={`w-full text-sm border-2 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 focus:outline-none font-semibold text-slate-700 ${!exportModal.startDate && !(exportModal.specificId || '').trim() ? 'border-red-300' : 'border-slate-200'}`}
                                 />
+                                {!exportModal.startDate && !(exportModal.specificId || '').trim() && (
+                                    <p className="text-[11px] font-semibold text-red-600">Pon la fecha de inicio para poder facturar.</p>
+                                )}
                             </div>
                             <div className="space-y-2">
                                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Fecha Fin (Opcional)</label>
@@ -1417,7 +1420,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                     onChange={(e) => setExportModal(prev => ({ ...prev, specificId: e.target.value.toUpperCase() }))}
                                     className="w-full text-sm border-2 border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-orange-500 focus:outline-none font-bold text-slate-700 placeholder:font-normal placeholder:text-slate-400"
                                 />
-                                <p className="text-[9px] text-slate-400">Si rellenas este campo, se facturará SOLO este albarán, sea del cliente que sea (ignora los demás filtros)</p>
+                                <p className="text-[9px] text-slate-400">Si rellenas este campo, se facturará SOLO este albarán, sea del cliente que sea (ignora los demás filtros y no hace falta fecha)</p>
                             </div>
                         </div>
                         <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
@@ -1730,7 +1733,10 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                     };
                                     executeExport();
                                 }}
-                                className="flex-[2] py-3 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                                // Sin fecha de inicio se facturaba todo lo cargado de golpe.
+                                // El albarán suelto no la necesita: ignora los demás filtros.
+                                disabled={!exportModal.startDate && !(exportModal.specificId || '').trim()}
+                                className="flex-[2] py-3 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-emerald-600 disabled:active:scale-100"
                             >
                                 <FileText size={16} />
                                 Facturar
