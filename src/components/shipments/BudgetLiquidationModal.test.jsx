@@ -257,3 +257,110 @@ describe('BudgetLiquidationModal · meses anteriores sin cerrar', () => {
         expect(screen.queryByText(/RC-1/)).toBeNull();
     });
 });
+
+// ── Marcar varios clientes: imprimirlos y cerrarlos de un golpe (01/10/2026) ──
+describe('BudgetLiquidationModal · clientes seleccionados', () => {
+    const fichas = [
+        { id: 1, name: 'TALLERES LOPERA', billingType: 'Presupuesto' },
+        { id: 2, name: 'RECTICOR', billingType: 'Presupuesto' },
+        { id: 3, name: 'JUAN ALBA', billingType: 'Presupuesto' },
+    ];
+    const albaran = (id, cliente, importe) => ({
+        id, type: 'Entrega', client: cliente, billingType: 'Presupuesto', porteType: 'Pagado',
+        amount: `€${importe}.00`, customAmount: importe, status: 'Entregado', createdAt: '2026-09-10T09:00:00.000Z',
+    });
+    const envios = [albaran('HAB-1', 'TALLERES LOPERA', 10), albaran('HAB-2', 'RECTICOR', 20), albaran('HAB-3', 'JUAN ALBA', 30)];
+
+    const montarCon = (props = {}) => {
+        const onCreateShipment = vi.fn().mockResolvedValue(true);
+        const onUpdateMultipleShipments = vi.fn().mockResolvedValue(true);
+        render(
+            <BudgetLiquidationModal
+                isOpen onClose={vi.fn()} clients={fichas} drivers={[{ id: 7, name: 'Paco' }]} shipments={envios}
+                onCreateShipment={onCreateShipment} onUpdateMultipleShipments={onUpdateMultipleShipments} {...props}
+            />
+        );
+        elegirMes('2026-09');
+        return { onCreateShipment, onUpdateMultipleShipments };
+    };
+    const marcar = (nombre) => fireEvent.click(screen.getByRole('checkbox', { name: `Seleccionar ${nombre}` }));
+
+    it('sin nada marcado los dos botones están apagados', () => {
+        montarCon();
+        expect(screen.getByRole('button', { name: /Imprimir seleccionados/ })).toBeDisabled();
+        expect(screen.getByRole('button', { name: /Cerrar seleccionados/ })).toBeDisabled();
+    });
+
+    it('imprime en una sola ventana los marcados, cada uno en su hoja', () => {
+        const escrito = [];
+        vi.spyOn(window, 'open').mockReturnValue({ document: { write: (h) => escrito.push(h), close: () => {} } });
+        montarCon();
+        marcar('TALLERES LOPERA');
+        marcar('JUAN ALBA');
+        fireEvent.click(screen.getByRole('button', { name: 'Imprimir seleccionados (2)' }));
+        expect(window.open).toHaveBeenCalledTimes(1);
+        const doc = new DOMParser().parseFromString(escrito[0], 'text/html');
+        const nombres = Array.from(doc.querySelectorAll('.hoja .client-box')).map(n => n.textContent.trim());
+        expect(nombres.sort()).toEqual(['JUAN ALBA', 'TALLERES LOPERA']);
+        window.open.mockRestore();
+    });
+
+    it('«Seleccionar todos» marca sólo lo que deja ver el buscador', () => {
+        montarCon();
+        fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'recti' } });
+        fireEvent.click(screen.getByRole('checkbox', { name: 'Seleccionar todos' }));
+        expect(screen.getByRole('button', { name: 'Imprimir seleccionados (1)' })).toBeEnabled();
+    });
+
+    it('cierra todos los marcados al conductor elegido, con un recibo distinto por cliente', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        const { onCreateShipment, onUpdateMultipleShipments } = montarCon();
+        marcar('TALLERES LOPERA');
+        marcar('RECTICOR');
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '7' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar seleccionados (2)' }));
+        await vi.waitFor(() => expect(window.alert).toHaveBeenCalled());
+
+        expect(window.confirm).toHaveBeenCalledTimes(1);
+        expect(window.confirm.mock.calls[0][0]).toMatch(/2 clientes por €30\.00.*Paco/);
+        const recibos = onCreateShipment.mock.calls.map(c => c[0]);
+        expect(recibos.map(r => r.client).sort()).toEqual(['RECTICOR', 'TALLERES LOPERA']);
+        expect(recibos.every(r => r.type === 'Recibo' && r.assignedDriverId === '7')).toBe(true);
+        expect(new Set(recibos.map(r => r.id)).size).toBe(2);
+        // Cada albarán queda enganchado al recibo de su cliente.
+        onUpdateMultipleShipments.mock.calls.forEach(([cambios], i) => {
+            expect(cambios).toHaveLength(1);
+            expect(cambios[0].updates.linkedReceiptId).toBe(recibos[i].id);
+        });
+        expect(window.alert.mock.calls[0][0]).toMatch(/Cerrados: 2 de 2/);
+        window.confirm.mockRestore();
+        window.alert.mockRestore();
+    });
+
+    it('sin conductor no cierra nada', () => {
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        const { onCreateShipment } = montarCon();
+        marcar('RECTICOR');
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar seleccionados (1)' }));
+        expect(window.alert.mock.calls[0][0]).toMatch(/selecciona un repartidor/);
+        expect(onCreateShipment).not.toHaveBeenCalled();
+        window.alert.mockRestore();
+    });
+
+    it('si un recibo se queda sin marcar sus albaranes, se para y no sigue con el siguiente', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        const { onCreateShipment } = montarCon({ onUpdateMultipleShipments: vi.fn().mockResolvedValue(false) });
+        marcar('TALLERES LOPERA');
+        marcar('RECTICOR');
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '7' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar seleccionados (2)' }));
+        await vi.waitFor(() => expect(window.alert).toHaveBeenCalled());
+        expect(onCreateShipment).toHaveBeenCalledTimes(1);
+        expect(window.alert.mock.calls[0][0]).toMatch(/Cerrados: 0 de 2/);
+        expect(window.alert.mock.calls[0][0]).toMatch(/se ha parado/);
+        window.confirm.mockRestore();
+        window.alert.mockRestore();
+    });
+});
