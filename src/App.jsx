@@ -53,6 +53,8 @@ import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre, hayAutoLoginPendiente } from './utils/ventanaPadre';
 import { CLAVE_HORARIO_REPARTO, HORARIO_REPARTO_POR_DEFECTO, normalizarHorarioReparto } from './utils/turnos';
 import { getIrregularReasons, fichaDelDestinatario, textoDelPorte, porteDelEnvio } from './utils/shipmentUtils';
+import { leerTrabajoFact, apuntarTrabajoFact, continuarTrabajoFact, descartarTrabajoFact, deshacerFacturacion } from './utils/marcarFacturados';
+import BarraFact from './components/BarraFact';
 import {
   fusionarConocimiento,
   claveAprendizaje,
@@ -3710,6 +3712,101 @@ function App() {
     return true;
   }
 
+  // ── La exportación a Factusol pone el FACT sin perder el hilo ──
+  //
+  // Antes se marcaba albarán por albarán en memoria DESPUÉS de descargar el
+  // Excel: 2.000 albaranes eran 13 minutos sin aviso, y una recarga de la página
+  // a medias dejaba el resto en el Excel pero sin etiqueta (01/10/2026). Ahora
+  // la lista de lo que falta se apunta en el navegador antes de descargar, se
+  // marca por tandas con una barra a la vista, y si la app se recarga sigue por
+  // donde iba al volver a entrar (ver utils/marcarFacturados.js).
+  const [estadoFact, setEstadoFact] = useState(null);
+  const factEnMarchaRef = useRef(false);
+
+  const seguirConElFact = async () => {
+    if (factEnMarchaRef.current) return;
+    const trabajo = leerTrabajoFact();
+    if (!trabajo) return;
+    factEnMarchaRef.current = true;
+    setEstadoFact({ hechos: trabajo.total - trabajo.pendientes.length, total: trabajo.total, faltan: [], enMarcha: true });
+    try {
+      const fin = await continuarTrabajoFact(supabase, {
+        alAvanzar: ({ hechos, total }) => setEstadoFact({ hechos, total, faltan: [], enMarcha: true }),
+        alMarcar: (ids, momento) => {
+          const marcados = new Set(ids);
+          setShipments(prev => prev.map(s => marcados.has(s.id) ? { ...s, exportedAt: momento } : s));
+        },
+      });
+      setEstadoFact({ hechos: fin.hechos, total: fin.total, faltan: fin.faltan, enMarcha: false });
+      if (fin.faltan.length === 0) {
+        setTimeout(() => setEstadoFact(prev => (prev && !prev.enMarcha && prev.faltan.length === 0) ? null : prev), 6000);
+      }
+    } finally {
+      factEnMarchaRef.current = false;
+    }
+  };
+
+  // Lo llama Envíos ANTES de descargar el Excel: cuando el Excel baja, la lista
+  // ya está apuntada. Devuelve false si hay otra tanda sin terminar.
+  const handleMarcarFacturados = (ids) => {
+    if (factEnMarchaRef.current || leerTrabajoFact()) return false;
+    if (!apuntarTrabajoFact(ids)) return true;
+    seguirConElFact();
+    return true;
+  };
+
+  const handleDescartarFact = () => {
+    if (estadoFact?.modo === 'quitar') { setEstadoFact(null); return; }
+    if (!window.confirm('Los albaranes que faltan se quedarán en el Excel pero sin la etiqueta FACT.\n\n¿Dejarlo así?')) return;
+    descartarTrabajoFact();
+    setEstadoFact(null);
+  };
+
+  // Deshacer la última facturación: quita el FACT a todo lo marcado con esa
+  // fecha-hora, leyendo de la base de datos. Si la tanda de esa misma
+  // exportación aún estaba a medias, se descarta: lo que no se marcó no hay
+  // que desmarcarlo. Devuelve false si hay otra tanda en marcha.
+  const handleDeshacerFact = async (momento) => {
+    if (factEnMarchaRef.current) return false;
+    const trabajo = leerTrabajoFact();
+    if (trabajo && trabajo.momento !== momento) return false;
+    if (trabajo) descartarTrabajoFact();
+    factEnMarchaRef.current = true;
+    setEstadoFact({ modo: 'quitar', momento, hechos: 0, total: 0, faltan: [], enMarcha: true });
+    try {
+      const fin = await deshacerFacturacion(supabase, momento, {
+        alAvanzar: ({ hechos, total }) => setEstadoFact({ modo: 'quitar', momento, hechos, total, faltan: [], enMarcha: true }),
+        alDesmarcar: (ids) => {
+          const limpiados = new Set(ids);
+          setShipments(prev => prev.map(s => limpiados.has(s.id) ? { ...s, exportedAt: null } : s));
+        },
+      });
+      setEstadoFact({ modo: 'quitar', momento, hechos: fin.hechos, total: fin.total, faltan: fin.faltan, enMarcha: false });
+      if (fin.faltan.length === 0) {
+        setTimeout(() => setEstadoFact(prev => (prev && !prev.enMarcha && prev.faltan.length === 0) ? null : prev), 6000);
+      }
+    } catch (e) {
+      console.error('[FACT] No se ha podido deshacer la facturación:', e);
+      setEstadoFact(null);
+      alert('No se ha podido leer la base de datos para deshacer la facturación. Comprueba la conexión y vuelve a intentarlo.');
+    } finally {
+      factEnMarchaRef.current = false;
+    }
+    return true;
+  };
+
+  // Al entrar la oficina: si quedó una tanda a medias (recarga, pestaña cerrada,
+  // corte de luz), se sigue sola en cuanto la sesión está lista.
+  useEffect(() => {
+    if (userRole !== 'admin' || !leerTrabajoFact()) return;
+    let cancelado = false;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!cancelado && data?.session) seguirConElFact();
+    }).catch(() => {});
+    return () => { cancelado = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userRole]);
+
   const handleShipmentStatusChange = async (shipmentId, newStatus, deliveryCoordinates = null, comment = null, photo = null, proof = null, extraData = {}, pendingUploads = {}) => {
     // 1. Encontrar el envío original en el estado local (usando REF para evitar cierres obsoletos)
     const s = shipmentsRef.current.find(item => item.id === shipmentId);
@@ -5207,6 +5304,7 @@ function App() {
           llega el trozo de la que se acaba de abrir. Los modales y la pantalla de
           Configuración quedan fuera a propósito — no son diferidos y así no
           desaparecen si se está cargando otra cosa. */}
+      <BarraFact estado={estadoFact} onReintentar={estadoFact?.modo === 'quitar' ? () => handleDeshacerFact(estadoFact.momento) : seguirConElFact} onDescartar={handleDescartarFact} />
       <Suspense fallback={<PantallaCargando />}>
                 {currentView === 'dashboard' && (
                     <div className="animate-in fade-in duration-500">
@@ -5214,7 +5312,7 @@ function App() {
                     </div>
                 )}
       {currentView === 'pending-collections' && <PendingCollections shipments={visibleShipments} drivers={drivers} clients={visibleClients} onAssignDriver={handleAssignDriver} onReassignCollection={handleReassignPendingCollection} onReassignCollections={handleReassignPendingCollections} onUpdateShipment={handleUpdateShipment} onCreateShipment={handleAddShipment} articles={articles} isGhostModeUnlocked={isGhostModeUnlocked} driverNamePreference={driverNamePreference} />}
-      {currentView === 'shipments' && <Shipments shipments={visibleShipments} allShipments={shipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} onAutorizarConContrasena={autorizarBorrado} routes={routes} />}
+      {currentView === 'shipments' && <Shipments shipments={visibleShipments} allShipments={shipments} drivers={drivers} clients={visibleClients} allPoblaciones={allPoblaciones} tariffs={tariffs} onAssignDriver={handleAssignDriver} onCreateShipment={handleAddShipment} onAddClient={handleAddClient} onUpdateClient={handleUpdateClient} onUpdateShipment={handleUpdateShipment} onUpdateMultipleShipments={handleUpdateMultipleShipments} onMarcarFacturados={handleMarcarFacturados} onDeshacerFacturacion={handleDeshacerFact} factOcupado={!!estadoFact} onDeleteShipment={handleDeleteShipment} onDeleteMultipleShipments={handleDeleteMultipleShipments} articles={articles} defaultCodFee={defaultCodFee} familyOrder={familyOrder} isGhostModeUnlocked={isGhostModeUnlocked} coverageZones={coverageZones} initialStatusFilter={shipmentStatusFilter} onClearStatusFilter={() => setShipmentStatusFilter(null)} driverNamePreference={driverNamePreference} onAutorizarConContrasena={autorizarBorrado} routes={routes} />}
       {currentView === 'fleet' && <Fleet vehicles={vehicles} drivers={drivers} onAddVehicle={handleAddVehicle} onUpdateVehicle={handleUpdateVehicle} onDeleteVehicle={handleDeleteVehicle} />}
       {currentView === 'maintenance-history' && <MaintenanceHistory vehicles={vehicles} onUpdateVehicle={handleUpdateVehicle} onNavigateToFleet={() => setCurrentView('fleet')} />}
       {currentView === 'fuel' && <FuelManagement fuelLogs={fuelLogs} onAddFuelLog={handleAddFuelLog} drivers={drivers} shipments={visibleShipments} />}

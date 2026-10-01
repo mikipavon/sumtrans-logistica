@@ -22,6 +22,7 @@ import * as XLSX from 'xlsx';
 import { pendienteEnAsignar, textoDeDias } from '../utils/pendienteEnAsignar';
 import { ALL_BAREMO_PUEBLOS } from '../data/baremos';
 import { usePorTandas } from '../hooks/usePorTandas';
+import { facturacionesRecientes, DIAS_DE_FACTURACIONES } from '../utils/marcarFacturados';
 import PieDeTandas from '../components/PieDeTandas';
 const { utils, writeFile } = XLSX;
 
@@ -32,7 +33,7 @@ const FILTROS_PENDIENTE_DE = {
     pend_cliente: (p) => p?.tipo === 'cliente',
 };
 
-export default function Shipments({ shipments, allShipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, onUpdateClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both', onAutorizarConContrasena, routes = [] }) {
+export default function Shipments({ shipments, allShipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, onUpdateClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, onMarcarFacturados, onDeshacerFacturacion, factOcupado = false, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both', onAutorizarConContrasena, routes = [] }) {
     const getDriverDisplayName = (driver) => {
         if (!driver) return '';
         const name = driver.name || '';
@@ -121,6 +122,24 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
         if (!window.confirm(`¿Quitar el FACT de ${shipment.id} (facturado el ${fecha})?\n\nÚsalo sólo si se facturó por error. Si es de pago en mano, el porte vuelve a la cuenta pendiente del transportista.`)) return;
         if (onAutorizarConContrasena && !(await onAutorizarConContrasena(`Vas a quitar el FACT de ${shipment.id}.`, { textoBoton: 'Quitar FACT' }))) return;
         await onUpdateShipment(shipment.id, { ...shipment, exportedAt: null });
+    };
+
+    // Deshacer una facturación entera de los últimos días: cada exportación es
+    // un grupo con su fecha-hora, con Modo Fantasma o sin él (se mira todo lo
+    // cargado). Pide la Contraseña SUM como el FACT suelto; el desmarcado lo
+    // hace la app leyendo la base de datos, con la barra de abajo a la derecha.
+    const factRecientes = useMemo(() => exportModal.isOpen ? facturacionesRecientes(allShipments || shipments) : [], [allShipments, shipments, exportModal.isOpen]);
+    const fechaDeFacturacion = (momento) => new Date(momento).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+    const deshacerFacturacion = async ({ momento, ids }) => {
+        if (!onDeshacerFacturacion) return;
+        const cuando = fechaDeFacturacion(momento);
+        const n = ids.length;
+        if (!window.confirm(`¿Quitar el FACT a los ${n} albaranes facturados el ${cuando}?\n\nVolverán a salir al facturar. Si alguno es de pago en mano, su porte vuelve a la cuenta pendiente del transportista.\n\nEl Excel que bajó ya está en Factusol: bórralo allí si hace falta.`)) return;
+        if (onAutorizarConContrasena && !(await onAutorizarConContrasena(`Vas a quitar el FACT de ${n} albaranes (facturación del ${cuando}).`, { textoBoton: 'Deshacer facturación' }))) return;
+        setExportModal(prev => ({ ...prev, isOpen: false }));
+        if ((await onDeshacerFacturacion(momento)) === false) {
+            alert('Todavía se está poniendo el FACT de la exportación anterior. Espera a que termine la barra y vuelve a intentarlo.');
+        }
     };
 
     // Lo que dice la etiqueta PRESP al pasar el ratón: en qué recibo se cerró y
@@ -1422,9 +1441,34 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                 />
                                 <p className="text-[9px] text-slate-400">Si rellenas este campo, se facturará SOLO este albarán, sea del cliente que sea (ignora los demás filtros y no hace falta fecha)</p>
                             </div>
+
+                            {/* Volver atrás: quitar el FACT a una exportación entera de los últimos días */}
+                            {factRecientes.length > 0 && onDeshacerFacturacion && (
+                                <div className="p-3 bg-rose-50 rounded-xl border border-rose-100 space-y-2">
+                                    <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Facturaciones de los últimos {DIAS_DE_FACTURACIONES} días</span>
+                                    <ul className="space-y-1.5 max-h-40 overflow-y-auto">
+                                        {factRecientes.map(f => (
+                                            <li key={f.momento} className="flex items-center justify-between gap-3">
+                                                <span className="text-xs font-semibold text-slate-700">
+                                                    {fechaDeFacturacion(f.momento)} · {f.ids.length} {f.ids.length === 1 ? 'albarán' : 'albaranes'}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => deshacerFacturacion(f)}
+                                                    disabled={factOcupado}
+                                                    title="Quita el FACT a todos los albaranes de esa exportación, como si no se hubiera facturado"
+                                                    className="shrink-0 py-1.5 px-3 text-xs font-bold text-rose-700 bg-white border border-rose-200 rounded-lg hover:bg-rose-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    Deshacer
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
                         </div>
                         <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
-                            <button 
+                            <button
                                 onClick={() => setExportModal(prev => ({ ...prev, isOpen: false }))}
                                 className="flex-1 py-3 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
                             >
@@ -1709,25 +1753,24 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                         const wsAlb = wbAlb.addWorksheet('ALB');
                                         applyTableStyle(wsAlb, albHeaders, albRows);
                                         const bufAlb = await wbAlb.xlsx.writeBuffer();
-                                        saveAs(new Blob([bufAlb], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'ALB.xlsx');
 
                                         const wbLal = new ExcelJS.Workbook();
                                         const wsLal = wbLal.addWorksheet('LAL');
                                         applyTableStyle(wsLal, lalHeaders, lalRows);
                                         const bufLal = await wbLal.xlsx.writeBuffer();
-                                        saveAs(new Blob([bufLal], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'LAL.xlsx');
-                                        
-                                        // Marcar albaranes como exportados
-                                        if (onUpdateShipment) {
-                                            const exportTimestamp = new Date().toISOString();
-                                            for (const s of shipmentsToExport) {
-                                                try {
-                                                    await onUpdateShipment(s.id, { ...s, exportedAt: exportTimestamp });
-                                                } catch (err) {
-                                                    console.error(`Error marcando ${s.id} como exportado:`, err);
-                                                }
-                                            }
+
+                                        // La lista de lo que hay que marcar se apunta ANTES de
+                                        // descargar: si la página se recarga con el Excel ya
+                                        // bajado, la app sigue poniendo el FACT al volver a entrar.
+                                        // La barra de avance sale abajo a la derecha.
+                                        if (onMarcarFacturados && onMarcarFacturados(shipmentsToExport.map(s => s.id)) === false) {
+                                            alert('Todavía se está poniendo el FACT de la exportación anterior. Espera a que termine la barra y vuelve a pulsar Facturar.');
+                                            return;
                                         }
+
+                                        const tipoExcel = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+                                        saveAs(new Blob([bufAlb], { type: tipoExcel }), 'ALB.xlsx');
+                                        saveAs(new Blob([bufLal], { type: tipoExcel }), 'LAL.xlsx');
 
                                         setExportModal(prev => ({ ...prev, isOpen: false }));
                                     };
@@ -1735,11 +1778,11 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                 }}
                                 // Sin fecha de inicio se facturaba todo lo cargado de golpe.
                                 // El albarán suelto no la necesita: ignora los demás filtros.
-                                disabled={!exportModal.startDate && !(exportModal.specificId || '').trim()}
+                                disabled={factOcupado || (!exportModal.startDate && !(exportModal.specificId || '').trim())}
                                 className="flex-[2] py-3 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-emerald-600 disabled:active:scale-100"
                             >
                                 <FileText size={16} />
-                                Facturar
+                                {factOcupado ? 'Poniendo el FACT…' : 'Facturar'}
                             </button>
                         </div>
                     </div>
