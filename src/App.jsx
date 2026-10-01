@@ -53,6 +53,7 @@ import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre, hayAutoLoginPendiente } from './utils/ventanaPadre';
 import { CLAVE_HORARIO_REPARTO, HORARIO_REPARTO_POR_DEFECTO, normalizarHorarioReparto } from './utils/turnos';
 import { getIrregularReasons, fichaDelDestinatario, textoDelPorte, porteDelEnvio } from './utils/shipmentUtils';
+import { enviosConCandado } from './utils/modoFantasma';
 import { leerTrabajoFact, apuntarTrabajoFact, continuarTrabajoFact, descartarTrabajoFact, deshacerFacturacion } from './utils/marcarFacturados';
 import BarraFact from './components/BarraFact';
 import {
@@ -1056,19 +1057,6 @@ function App() {
     }
   }, [shipments, orphanStartDate, orphanEndDate]);
 
-  // --- PERFORMANCE: CLIENTS CACHE MAP ---
-  const clientsMap = useMemo(() => {
-    const map = new Map();
-    const normalize = (s) => String(s || '').toLowerCase().trim();
-    (clients || []).forEach(c => {
-      const nameNorm = normalize(c.name);
-      const legalNorm = normalize(c.legalName);
-      if (nameNorm) map.set(nameNorm, c);
-      if (legalNorm) map.set(legalNorm, c);
-    });
-    return map;
-  }, [clients]);
-
   // Si el usuario es admin y el candado está echado, los clientes y envíos habituales dejan de existir de cara a la app
   const visibleClients = useMemo(() => {
     if (userRole === 'admin' && !isGhostModeUnlocked) {
@@ -1081,29 +1069,13 @@ function App() {
   }, [clients, userRole, isGhostModeUnlocked]);
 
 
+  // Se decide por la ficha actual de quien paga, buscada igual que en la
+  // exportación a Factusol (enlace por id, otros nombres, sin tildes). Ver
+  // utils/modoFantasma.js.
   const visibleShipments = useMemo(() => {
-    if (userRole === 'admin' && !isGhostModeUnlocked) {
-      const normalize = (val) => String(val || '').toLowerCase().trim();
-      
-      return shipments.filter(s => {
-        const esPagado = s.porteType !== 'Debido';
-
-        if (esPagado) {
-          // Priorizar la ficha actual del cliente (puede haber cambiado su tipo de cobro)
-          const remitente = clientsMap.get(normalize(s.client));
-          const billingType = normalize(remitente ? remitente.billingType : (s.billingType || ''));
-          if (billingType.includes('habitual') || billingType.includes('presupuesto')) return false;
-        } else {
-          const destinatario = clientsMap.get(normalize(s.destinationName || s.client));
-          const billingType = normalize(destinatario ? destinatario.billingType : (s.destinationBillingType || s.billingType || ''));
-          if (billingType.includes('habitual') || billingType.includes('presupuesto')) return false;
-        }
-
-        return true;
-      });
-    }
+    if (userRole === 'admin' && !isGhostModeUnlocked) return enviosConCandado(shipments, clients);
     return shipments;
-  }, [shipments, clientsMap, userRole, isGhostModeUnlocked]);
+  }, [shipments, clients, userRole, isGhostModeUnlocked]);
 
 
 

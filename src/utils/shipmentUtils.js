@@ -316,6 +316,34 @@ export const nombresDelCliente = (cliente) => {
 const mismoId = (a, b) => a !== null && a !== undefined && String(a) !== '' &&
                           b !== null && b !== undefined && String(a) === String(b);
 
+// Las fichas indexadas por id y por cada uno de sus nombres, una vez por lista.
+// Buscar con find por cada albarán (4.000 × 1.000 comparaciones) es lo que hacía
+// lento Cobros Pendientes (29/09/2026); el Modo Fantasma pasa por aquí con todos
+// los albaranes cargados. La app nunca toca una ficha por dentro —siempre crea un
+// array nuevo—, y de eso depende que el índice no se quede viejo.
+const indicesDeFichas = new WeakMap();
+const indiceDeFichas = (clients) => {
+    if (!Array.isArray(clients)) return { porId: new Map(), porNombre: new Map() };
+    let indice = indicesDeFichas.get(clients);
+    if (indice) return indice;
+    indice = { porId: new Map(), porNombre: new Map() };
+    for (const c of clients) {
+        if (!c) continue;
+        const id = c.id === null || c.id === undefined ? '' : String(c.id);
+        if (id && !indice.porId.has(id)) indice.porId.set(id, c);
+        for (const nombre of nombresDelCliente(c)) {
+            if (!indice.porNombre.has(nombre)) indice.porNombre.set(nombre, c);
+        }
+    }
+    indicesDeFichas.set(clients, indice);
+    return indice;
+};
+
+const fichaPorId = (clients, id) => {
+    if (id === null || id === undefined || String(id) === '') return null;
+    return indiceDeFichas(clients).porId.get(String(id)) || null;
+};
+
 /**
  * NUESTRA ficha del destinatario de este envío, si la base de datos lo ha
  * emparejado (fase 21: `destinatarioId` y, si es una sede, `destinatarioSedeId`).
@@ -327,7 +355,7 @@ const mismoId = (a, b) => a !== null && a !== undefined && String(a) !== '' &&
  */
 export const fichaDelDestinatario = (shipment, clients = []) => {
     if (!shipment) return null;
-    const client = (clients || []).find(c => c && mismoId(shipment.destinatarioId, c.id));
+    const client = fichaPorId(clients, shipment.destinatarioId);
     if (!client) return null;
     const branch = Array.isArray(client.branches) && shipment.destinatarioSedeId !== null && shipment.destinatarioSedeId !== undefined
         ? client.branches.find(b => b && mismoId(b.id, shipment.destinatarioSedeId)) || null
@@ -371,22 +399,21 @@ export const nombreDestinatarioEnRuta = (shipment, clients = []) => {
  */
 export const fichaDelPagador = (shipment, clients = []) => {
     if (!shipment) return null;
-    const lista = (clients || []).filter(Boolean);
 
     let nombre;
     if (quienPagaElPorte(shipment) === 'Destinatario') {
-        const enlazada = fichaDelDestinatario(shipment, lista);
+        const enlazada = fichaDelDestinatario(shipment, clients);
         if (enlazada) return enlazada.client;
         nombre = shipment.destinationName || shipment.destination;
     } else {
-        const porId = lista.find(c => mismoId(shipment.clientId, c.id));
+        const porId = fichaPorId(clients, shipment.clientId);
         if (porId) return porId;
         nombre = shipment.client;
     }
 
     const buscado = normalizarNombre(nombre);
     if (!buscado) return null;
-    return lista.find(c => nombresDelCliente(c).includes(buscado)) || null;
+    return indiceDeFichas(clients).porNombre.get(buscado) || null;
 };
 
 /**
