@@ -10,7 +10,7 @@ import { uploadProof } from '../../utils/storage';
 import { compressImage } from '../../utils/imageCompression';
 import CameraCaptureModal from '../CameraCaptureModal';
 import CityAutocomplete from '../CityAutocomplete';
-import { getPackagesCount, recogidaDelEnvio, observacionesVisibles, observacionesParaEditar, llevaMarcaDeCobroPendiente, precioDeLaFicha } from '../../utils/shipmentUtils';
+import { getPackagesCount, recogidaDelEnvio, observacionesVisibles, observacionesParaEditar, llevaMarcaDeCobroPendiente, precioDeLaFicha, direccionCompleta } from '../../utils/shipmentUtils';
 
 
 import { Trash2, Plus } from 'lucide-react';
@@ -511,6 +511,13 @@ export default function ShipmentDetailsModal({ isOpen, onClose, shipment, onUpda
                     // Si el usuario activó borrar la foto
                     finalFormData.merchandisePhoto = null;
                 }
+
+                // El texto completo de cada punta es lo que pinta la lista de Envíos:
+                // se rehace con lo que queda en la ficha para que no se quede el de antes.
+                const origenCompleto = direccionCompleta(finalFormData.originAddress, finalFormData.originZip, finalFormData.originCity);
+                if (origenCompleto) finalFormData.origin = origenCompleto;
+                const destinoCompleto = direccionCompleta(finalFormData.destinationAddress, finalFormData.destinationZip, finalFormData.destinationCity);
+                if (destinoCompleto) finalFormData.destination = destinoCompleto;
 
                 await onUpdate(shipment.id, finalFormData);
                 // El `shipment` que nos pasan es la foto de cuando se abrió la ficha

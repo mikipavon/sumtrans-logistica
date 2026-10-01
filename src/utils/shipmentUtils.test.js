@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { poblacionYCalle, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, porteDelEnvio, textoDelPorte, precioDeLaFicha, camposDelPorte, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador, getPackagesCount, recogidaDelEnvio } from './shipmentUtils';
+import { poblacionYCalle, direccionCompleta, puedeAsignarloEsteConductor, estaEnElRepartoDe, yaLeSaleAlConductor, loEntregoElConductor, intervinoConductor, quienPagaElPorte, lineasDeDineroDelJustificante, papelDelClienteEnElEnvio, envioEsDelCliente, clientePagaElPorte, nombresDelCliente, getIrregularReasons, vieneDelPortal, importeParaMostrar, porteDelEnvio, textoDelPorte, precioDeLaFicha, camposDelPorte, fichaDelDestinatario, nombreDestinatarioEnRuta, fichaDelPagador, getPackagesCount, recogidaDelEnvio } from './shipmentUtils';
 
 // Ids reales de conductores en el escenario que motivó el cambio:
 // Paco crea el albarán y se lo asigna por error a Miguel; Miguel lo devuelve
@@ -714,5 +714,22 @@ describe('recogidaDelEnvio', () => {
     it('escaneado antes de guardarse la hora: dice quién pero no inventa cuándo', () => {
         expect(recogidaDelEnvio({ createdBy: 'Administrador', pickedUpBy: 'Cond. Paco' }))
             .toEqual({ quien: 'Cond. Paco', cuando: null });
+    });
+});
+
+describe('direccionCompleta', () => {
+    it('rehace la punta con los campos sueltos, como en el alta (HAB-820)', () => {
+        const origen = direccionCompleta('CTRA. CORDOBA-MALAGA, 438', '14530', 'MONTEMAYOR');
+        expect(origen).toBe('CTRA. CORDOBA-MALAGA, 438, 14530 MONTEMAYOR');
+        expect(poblacionYCalle(origen, 'MONTEMAYOR')).toEqual({ ciudad: 'MONTEMAYOR', calle: 'CTRA. CORDOBA-MALAGA, 438' });
+    });
+
+    it('sin calle no rehace nada: se deja lo que hubiera', () => {
+        expect(direccionCompleta('', '14013', 'CORDOBA')).toBeNull();
+        expect(direccionCompleta(undefined, '', '')).toBeNull();
+    });
+
+    it('sin código postal no deja huecos', () => {
+        expect(direccionCompleta('AVDA.TORRECILLA Nº5', '', 'CORDOBA')).toBe('AVDA.TORRECILLA Nº5, CORDOBA');
     });
 });

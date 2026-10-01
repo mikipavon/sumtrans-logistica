@@ -618,3 +618,21 @@ export const poblacionYCalle = (direccion, poblacion) => {
     if (ciudad === calle) calle = '';
     return { ciudad, calle };
 };
+
+/**
+ * Rehace el texto completo de una punta ("Calle, CP Población") con los campos
+ * sueltos, igual que al dar de alta.
+ *
+ * HAB-820, 30/09/2026: la oficina cambió las tornas en la ficha (remitente por
+ * destinatario). La ficha guardó calle, población y C.P. nuevos, pero el texto
+ * origin/destination se quedó con el de antes, y la lista de Envíos, que pinta
+ * ese texto, mezclaba la población nueva con la calle de la otra punta.
+ * Sin calle devuelve null: no hay de dónde rehacerlo y se deja lo que hubiera
+ * (albaranes importados, recogidas a «Almacén Central»).
+ */
+export const direccionCompleta = (calle, cp, poblacion) => {
+    const via = String(calle || '').trim();
+    if (!via) return null;
+    const pueblo = [cp, poblacion].map(t => String(t || '').trim()).filter(Boolean).join(' ');
+    return [via, pueblo].filter(Boolean).join(', ');
+};
