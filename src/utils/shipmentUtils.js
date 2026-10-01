@@ -1,3 +1,5 @@
+import { leerOtrosNombres } from './otrosNombres';
+
 export const getPackagesCount = (shipment) => {
     if (!shipment) return 1;
     
@@ -335,6 +337,17 @@ const indiceDeFichas = (clients) => {
             if (!indice.porNombre.has(nombre)) indice.porNombre.set(nombre, c);
         }
     }
+    // Los otros nombres apuntados en la ficha (otrosNombres.js) van en una
+    // segunda vuelta: el nombre propio de una ficha manda sobre el apodo de
+    // otra. El filtro por tipo de Envíos ya los miraba y el Excel no, así que un
+    // cliente escrito con su otro nombre salía por un tipo en pantalla y por
+    // otro en la exportación (01/10/2026).
+    for (const c of clients) {
+        if (!c) continue;
+        for (const nombre of leerOtrosNombres(c).map(normalizarNombre)) {
+            if (nombre && !indice.porNombre.has(nombre)) indice.porNombre.set(nombre, c);
+        }
+    }
     indicesDeFichas.set(clients, indice);
     return indice;
 };
@@ -391,8 +404,8 @@ export const nombreDestinatarioEnRuta = (shipment, clients = []) => {
  * Primero por enlace, que es lo que no falla: en un porte debido, la ficha del
  * destinatario (destinatarioId, fase 21); en un pagado, la del remitente
  * (clientId, que sólo escribe el portal). Sin enlace, por nombre —comercial,
- * fiscal o de sede, sin tildes ni mayúsculas—, que es como se buscaba hasta
- * ahora en la exportación de facturas.
+ * fiscal, de sede u otro nombre apuntado en la ficha, sin tildes ni
+ * mayúsculas—, que es como se buscaba hasta ahora en la exportación de facturas.
  *
  * Sin el enlace, un debido que el portal mandó a "AGRO VELASCO" y que la oficina
  * tiene como "Agro Velasco S.L." se facturaba a un cliente que no existe.

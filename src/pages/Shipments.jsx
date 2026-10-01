@@ -1504,7 +1504,13 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
 
                                         const getBillingType = (s) => {
                                             const cInfo = getClientInfo(s);
-                                            const type = cInfo.billingType || s.billingType || 'Clientes Habituales';
+                                            // Sin ficha vale lo grabado en el albarán, pero del lado
+                                            // de quien PAGA. En un porte debido, billingType es el tipo
+                                            // del REMITENTE: un debido de un cliente de facturación a
+                                            // un habitual sin ficha salía en el Excel a nombre del
+                                            // destinatario y sin código (HAB-170 y HAB-172, 01/10/2026).
+                                            const delAlbaran = quienPagaElPorte(s) === 'Destinatario' ? s.destinationBillingType : s.billingType;
+                                            const type = cInfo.billingType || delAlbaran || 'Clientes Habituales';
                                             return String(type).trim();
                                         };
 
