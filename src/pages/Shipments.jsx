@@ -32,7 +32,7 @@ const FILTROS_PENDIENTE_DE = {
     pend_cliente: (p) => p?.tipo === 'cliente',
 };
 
-export default function Shipments({ shipments, allShipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, onUpdateClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both', onAutorizarConContrasena, routes = [] }) {
+export default function Shipments({ shipments, allShipments, drivers, clients, allPoblaciones, onAssignDriver, onCreateShipment, onAddClient, onUpdateClient, tariffs, onUpdateShipment, onUpdateMultipleShipments, onMarcarFacturados, factOcupado = false, articles, defaultCodFee, onDeleteShipment, onDeleteMultipleShipments, familyOrder, coverageZones, isGhostModeUnlocked, initialStatusFilter, onClearStatusFilter, driverNamePreference = 'both', onAutorizarConContrasena, routes = [] }) {
     const getDriverDisplayName = (driver) => {
         if (!driver) return '';
         const name = driver.name || '';
@@ -1424,7 +1424,7 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                             </div>
                         </div>
                         <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-2">
-                            <button 
+                            <button
                                 onClick={() => setExportModal(prev => ({ ...prev, isOpen: false }))}
                                 className="flex-1 py-3 text-sm font-bold text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
                             >
@@ -1709,25 +1709,24 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                         const wsAlb = wbAlb.addWorksheet('ALB');
                                         applyTableStyle(wsAlb, albHeaders, albRows);
                                         const bufAlb = await wbAlb.xlsx.writeBuffer();
-                                        saveAs(new Blob([bufAlb], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'ALB.xlsx');
 
                                         const wbLal = new ExcelJS.Workbook();
                                         const wsLal = wbLal.addWorksheet('LAL');
                                         applyTableStyle(wsLal, lalHeaders, lalRows);
                                         const bufLal = await wbLal.xlsx.writeBuffer();
-                                        saveAs(new Blob([bufLal], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'LAL.xlsx');
-                                        
-                                        // Marcar albaranes como exportados
-                                        if (onUpdateShipment) {
-                                            const exportTimestamp = new Date().toISOString();
-                                            for (const s of shipmentsToExport) {
-                                                try {
-                                                    await onUpdateShipment(s.id, { ...s, exportedAt: exportTimestamp });
-                                                } catch (err) {
-                                                    console.error(`Error marcando ${s.id} como exportado:`, err);
-                                                }
-                                            }
+
+                                        // La lista de lo que hay que marcar se apunta ANTES de
+                                        // descargar: si la página se recarga con el Excel ya
+                                        // bajado, la app sigue poniendo el FACT al volver a entrar.
+                                        // La barra de avance sale abajo a la derecha.
+                                        if (onMarcarFacturados && onMarcarFacturados(shipmentsToExport.map(s => s.id)) === false) {
+                                            alert('Todavía se está poniendo el FACT de la exportación anterior. Espera a que termine la barra y vuelve a pulsar Facturar.');
+                                            return;
                                         }
+
+                                        const tipoExcel = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+                                        saveAs(new Blob([bufAlb], { type: tipoExcel }), 'ALB.xlsx');
+                                        saveAs(new Blob([bufLal], { type: tipoExcel }), 'LAL.xlsx');
 
                                         setExportModal(prev => ({ ...prev, isOpen: false }));
                                     };
@@ -1735,11 +1734,11 @@ export default function Shipments({ shipments, allShipments, drivers, clients, a
                                 }}
                                 // Sin fecha de inicio se facturaba todo lo cargado de golpe.
                                 // El albarán suelto no la necesita: ignora los demás filtros.
-                                disabled={!exportModal.startDate && !(exportModal.specificId || '').trim()}
+                                disabled={factOcupado || (!exportModal.startDate && !(exportModal.specificId || '').trim())}
                                 className="flex-[2] py-3 text-sm font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-emerald-600 disabled:active:scale-100"
                             >
                                 <FileText size={16} />
-                                Facturar
+                                {factOcupado ? 'Poniendo el FACT…' : 'Facturar'}
                             </button>
                         </div>
                     </div>
