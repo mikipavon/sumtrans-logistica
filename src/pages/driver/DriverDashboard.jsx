@@ -27,6 +27,7 @@ import IncidentModal from '../../components/delivery/IncidentModal';
 import ShipmentDetailsModal from '../../components/shipments/ShipmentDetailsModal';
 import Shipment from '../../models/Shipment';
 import { calculateDailyAccount, parseAmount, isToday, isCashClient } from '../../utils/accountLogic';
+import { useCobrosDelDia, claveCobrosEnLaNube } from '../../hooks/useCobrosDelDia';
 import { generateCashReportPDF } from '../../utils/cashReportPdf';
 import { printShipmentTicket } from '../../utils/printShipment';
 import { printSimplifiedInvoice } from '../../utils/printSimplifiedInvoice';
@@ -2352,55 +2353,13 @@ function DriverDashboardContent({ onLogout, allShipments, currentDriverId, onAss
     const tObj = new Date();
     const todayStr = `${tObj.getFullYear()}-${String(tObj.getMonth() + 1).padStart(2, '0')}-${String(tObj.getDate()).padStart(2, '0')}`;
 
-    // Persist Collected Collections daily
-    const [collectedCollections, setCollectedCollections] = useState(() => {
-        const key = `drv_collections_${currentDriverId}_${todayStr}`;
-        const saved = localStorage.getItem(key);
-        return saved ? JSON.parse(saved) : [];
+    // Los cobros apuntados hoy (de ellos sale la Cuenta). La lista es una sola,
+    // se apunte desde el aparato que sea: ver hooks/useCobrosDelDia.js.
+    const [collectedCollections, setCollectedCollections] = useCobrosDelDia({
+        conductorId: currentDriverId,
+        dia: todayStr,
+        cobrosEnLaNube: currentDriver?.[claveCobrosEnLaNube(todayStr)],
     });
-
-    // SYNC ROBUSTO: al arrancar, fusionar localStorage + Supabase (unión por ID)
-    // Así Chrome y Edge siempre ven los mismos cobros aunque cada uno tenga datos distintos
-    useEffect(() => {
-        if (!currentDriverId) return;
-        const key = `drv_collections_${currentDriverId}_${todayStr}`;
-        supabase.from('drivers').select('data').eq('id', currentDriverId).single().then(({ data: drvRow }) => {
-            const cloud = drvRow?.data?.[`collectedCollections_${todayStr}`] || [];
-            const local = (() => { try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; } })();
-            // Fusionar: todas las entradas únicas de ambas fuentes (por id)
-            const merged = [...cloud];
-            local.forEach(item => {
-                if (item?.id && !merged.find(c => c.id === item.id)) merged.push(item);
-            });
-            if (merged.length !== local.length || merged.some(m => !local.find(c => c.id === m.id))) {
-                console.log('[Cobros] Fusionado cloud(' + cloud.length + ') + local(' + local.length + ') = ' + merged.length);
-                setCollectedCollections(merged);
-                try { localStorage.setItem(key, JSON.stringify(merged)); } catch (_) {}
-                // Subir la versión fusionada a Supabase
-                if (drvRow?.data) {
-                    const updatedData = { ...drvRow.data, [`collectedCollections_${todayStr}`]: merged };
-                    Promise.resolve(supabase.from('drivers').update({ data: updatedData }).eq('id', currentDriverId)).catch(() => {});
-                }
-            }
-        });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentDriverId, todayStr]);
-
-    // Guardar en localStorage Y Supabase cada vez que cambian los cobros
-    useEffect(() => {
-        const key = `drv_collections_${currentDriverId}_${todayStr}`;
-        try { localStorage.setItem(key, JSON.stringify(collectedCollections)); } catch (e) {
-            console.warn("No se pudo guardar la colección localmente por límite de cuota iOS", e);
-        }
-        if (!currentDriverId) return;
-        supabase.from('drivers').select('data').eq('id', currentDriverId).single().then(({ data: drvRow }) => {
-            if (!drvRow) return;
-            const updatedData = { ...drvRow.data, [`collectedCollections_${todayStr}`]: collectedCollections };
-            Promise.resolve(supabase.from('drivers').update({ data: updatedData }).eq('id', currentDriverId))
-                .then(() => console.log('[Cobros] Guardado en Supabase:', collectedCollections.length, 'entradas'))
-                .catch(err => console.warn('[Cobros] Error sync Supabase:', err.message));
-        });
-    }, [collectedCollections, currentDriverId, todayStr]);
 
     const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
     const [isIncidentModalOpen, setIsIncidentModalOpen] = useState(false);
