@@ -69,6 +69,20 @@ describe('Ingresos por cliente: las cinco opciones del desplegable', () => {
         expect(pie[3]).toBe('€131,00');
     });
 
+    it('el recibo del cierre de presupuestos no suma: sus albaranes ya contaron', () => {
+        const recibo = albaran({
+            id: 'RC-567035', type: 'Recibo', client: 'TALLERES LOPERA', clientId: 2,
+            destinationName: 'TALLERES LOPERA', destination: 'Cobro de Presupuesto',
+            amount: '35.00', customAmount: 35, status: 'Pendiente de asignar',
+            observations: 'Cobro mensual presupuestos acumulados (Septiembre de 2026). Incluye 5 envíos.'
+        });
+        abrir({ shipments: [...envios, recibo] });
+        elegir('presupuestos');
+        const { filas, pie } = leerTabla();
+        expect(filas).toContainEqual(['TALLERES LOPERA', '5', '€35,00']);
+        expect(pie[3]).toBe('€131,00');
+    });
+
     it('Facturación: lo que Pérez manda a Lopera es de Pérez', () => {
         abrir();
         elegir('facturacion');

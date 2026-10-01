@@ -13,6 +13,7 @@ import {
 } from '../utils/ingresosDelPanel';
 import { coincideEnCampos } from '../utils/busqueda';
 import { cajasPorDia, claveDelDia } from '../utils/cajasDelPanel';
+import { esReciboDePresupuesto } from '../utils/reciboDeDeuda';
 
 const formatoEuros = (n) => `€${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -111,6 +112,9 @@ export default function Dashboard({ onSync, isSyncing, shipments = [], clients =
         }
 
         const filtered = shipments.filter(s => {
+            // El recibo del cierre de presupuestos es el cobro de albaranes que
+            // ya contaron el día que se hicieron: sumarlo sería contarlos dos veces.
+            if (esReciboDePresupuesto(s)) return false;
             const sDate = parseShipmentDate(s);
             if (!sDate || isNaN(sDate.getTime())) return false;
             return sDate >= start && sDate <= today;
