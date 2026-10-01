@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { prefijoDeCliente, siguienteNumeroDeCliente, numeroQueLeFalta, planDeNumeracion } from './numeracionCliente';
+import { prefijoDeCliente, siguienteNumeroDeCliente, numeroQueLeFalta, planDeNumeracion, numeroAlCambiarDeCobro } from './numeracionCliente';
 
 describe('prefijoDeCliente', () => {
     it('cada forma de cobro tiene su serie', () => {
@@ -100,5 +100,28 @@ describe('planDeNumeracion', () => {
 
     it('sin nadie a quien repasar, no hay plan', () => {
         expect(planDeNumeracion([], [{ clientNumber: 'CH-1' }])).toEqual([]);
+    });
+});
+
+describe('numeroAlCambiarDeCobro', () => {
+    it('al pasar de Clientes Habituales a Facturación el CH- se vacía para que le toque número de facturación', () => {
+        expect(numeroAlCambiarDeCobro('CH-834', 'Facturación')).toBe('');
+        expect(numeroQueLeFalta({ clientNumber: '', billingType: 'Facturación' }, [{ clientNumber: 1 }, { clientNumber: '2' }, { clientNumber: 'CH-3' }])).toBe('3');
+    });
+
+    it('vale en los dos sentidos y entre todas las series', () => {
+        expect(numeroAlCambiarDeCobro(528, 'Clientes Habituales')).toBe('');
+        expect(numeroAlCambiarDeCobro('P-7', 'Facturación')).toBe('');
+        expect(numeroAlCambiarDeCobro('CH-12', 'Presupuesto')).toBe('');
+    });
+
+    it('si el número ya es de la serie del cobro elegido no se toca', () => {
+        expect(numeroAlCambiarDeCobro('CH-834', 'Clientes Habituales')).toBe('CH-834');
+        expect(numeroAlCambiarDeCobro('528', 'Facturación')).toBe('528');
+    });
+
+    it('la letra de delegación y lo escrito a mano se respetan', () => {
+        expect(numeroAlCambiarDeCobro('12A', 'Clientes Habituales')).toBe('12A');
+        expect(numeroAlCambiarDeCobro('', 'Facturación')).toBe('');
     });
 });
