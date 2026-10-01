@@ -6,7 +6,10 @@
     <meta name="description" content="Plataforma de gestión logística de Sumtrans: control de envíos, rutas, conductores y clientes en tiempo real." />
     <meta name="author" content="Miguel Ángel Pavón Maíz" />
     <link rel="icon" type="image/jpeg" href="/logo-sum.jpg" />
-    <link rel="manifest" href="/manifest.json" />
+    <!-- use-credentials: el navegador pide el manifiesto SIN cookies si no se le dice lo
+         contrario. Cuando Vercel tiene puesto su control de seguridad, esa petición
+         recibe un 403 y Chrome dice «Esta aplicación no se puede instalar». -->
+    <link rel="manifest" href="/manifest.json" crossorigin="use-credentials" />
     <meta name="theme-color" content="#2563eb" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
