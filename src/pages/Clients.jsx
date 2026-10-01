@@ -235,6 +235,18 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
     };
 
     const handleExportToFactusol = async () => {
+        // A Factusol sólo van las fichas de Facturación, la misma regla que al
+        // facturar albaranes por fechas: las de pago en mano y las de Presupuesto
+        // no se facturan allí.
+        const clientesDeFacturacion = clients.filter(c => {
+            const tipo = String(c.billingType || c.tipoFacturacion || '').toLowerCase();
+            return tipo.includes('factur') && !tipo.includes('presupuesto');
+        });
+        if (clientesDeFacturacion.length === 0) {
+            alert('No hay ningún cliente de Facturación que exportar.');
+            return;
+        }
+
         const ExcelJS = (await import('exceljs')).default;
         const { saveAs } = await import('file-saver');
 
@@ -282,7 +294,7 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
         const clientsToExportMap = new Map();
 
         // Primera pasada: Añadir clientes principales (sin sufijo de letra)
-        clients.forEach(client => {
+        clientesDeFacturacion.forEach(client => {
             const rawClientNumber = client.clientNumber || '';
             const matchSuffix = String(rawClientNumber).match(/^(.*?\d)[-_ ]?[a-zA-Z]{1,2}$/);
             
@@ -292,7 +304,7 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
         });
 
         // Segunda pasada: Rellenar con delegaciones si falta el cliente principal
-        clients.forEach(client => {
+        clientesDeFacturacion.forEach(client => {
             const rawClientNumber = client.clientNumber || '';
             const matchSuffix = String(rawClientNumber).match(/^(.*?\d)[-_ ]?[a-zA-Z]{1,2}$/);
             
@@ -306,14 +318,19 @@ export default function Clients({ clients, allClients, shipments, allPoblaciones
         });
 
         // Añadir también aquellos que no tienen clientNumber
-        const clientsWithoutNumber = clients.filter(c => !c.clientNumber);
+        const clientsWithoutNumber = clientesDeFacturacion.filter(c => !c.clientNumber);
         
-        const clientsToExport = [...Array.from(clientsToExportMap.values()), ...clientsWithoutNumber];
+        // Por número, y contando los números como números: el 3 antes que el 516.
+        const clientsToExport = [...Array.from(clientsToExportMap.values()), ...clientsWithoutNumber]
+            .sort((a, b) => ordenCastellano.compare(String(a.clientNumber || ''), String(b.clientNumber || '')));
 
         // Add data rows with alternating colors
         clientsToExport.forEach((client, index) => {
             const row = ws.addRow({
-                'Código': client.clientNumber || client.id || '',
+                // El número que reparte la aplicación se guarda como texto y el que
+                // vino de Factusol como número: sin esto el primero sale a la
+                // izquierda, como texto, y Excel no lo ordena con los demás.
+                'Código': /^[0-9]+$/.test(String(client.clientNumber || '').trim()) ? Number(client.clientNumber) : (client.clientNumber || client.id || ''),
                 'Código para contabilidad': '',
                 'NIF': client.cif || '',
                 'Nombre fiscal': client.legalName || client.name || '',

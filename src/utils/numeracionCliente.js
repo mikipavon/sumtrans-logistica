@@ -75,3 +75,27 @@ export const planDeNumeracion = (candidatas, cartera) => {
     });
     return plan;
 };
+
+// ── Cambiar el Tipo de Cobro cambia de serie ──
+//
+// Una ficha de Clientes Habituales que pasa a Facturación se quedaba con su
+// CH-834 y así salía en el Excel de Factusol. Al cambiar el cobro, el número de
+// la serie vieja se vacía y la casilla vuelve a "Auto": al guardar le toca el
+// primer hueco libre de la serie nueva.
+//
+// Sólo se vacía lo que se reconoce como número de serie (CH-12, P-7, 528). Un
+// número con letra de delegación (12A) o escrito a mano de otra forma se deja
+// como está: ése lo ha puesto alguien a propósito.
+const serieDelNumero = (numero) => {
+    const str = String(numero || '').trim();
+    if (/^CH-[0-9]+$/.test(str)) return 'CH-';
+    if (/^P-[0-9]+$/.test(str)) return 'P-';
+    if (/^[0-9]+$/.test(str)) return '';
+    return null;
+};
+
+export const numeroAlCambiarDeCobro = (numeroActual, tipoNuevo) => {
+    const serie = serieDelNumero(numeroActual);
+    if (serie === null || serie === prefijoDeCliente(tipoNuevo)) return numeroActual;
+    return '';
+};

@@ -16,6 +16,7 @@ import { calcularComisionReembolso, COMISION_FIJA, COMISION_PORCENTAJE } from '.
 import { coincideEnCampos } from '../../utils/busqueda';
 import { pueblosQueCasan } from '../../utils/precioArticulo';
 import { ALL_BAREMO_PUEBLOS } from '../../data/baremos';
+import { numeroAlCambiarDeCobro } from '../../utils/numeracionCliente';
 
 const TABS = [
     { id: 'general', label: 'General', icon: FileCode },
@@ -675,7 +676,14 @@ export default function CreateClientModal({ isOpen, onClose, onSave, articles, t
                                             {['Facturación', 'Clientes Habituales', 'Presupuesto'].map(v => (
                                                 <label key={v} className="flex items-center gap-2 cursor-pointer">
                                                     <input type="radio" name="billingType" value={v}
-                                                        checked={formData.billingType === v} onChange={e => set('billingType', e.target.value)}
+                                                        checked={formData.billingType === v}
+                                                        onChange={e => {
+                                                            // El número va con la serie del cobro: al cambiar de serie se
+                                                            // vacía y al guardar se le da el siguiente libre de la nueva.
+                                                            const tipo = e.target.value;
+                                                            setFormData(prev => ({ ...prev, billingType: tipo, clientNumber: numeroAlCambiarDeCobro(prev.clientNumber, tipo) }));
+                                                            setClientNumberError('');
+                                                        }}
                                                         className="text-blue-600 focus:ring-blue-500" />
                                                     <span className="text-sm font-medium text-slate-700">{v}</span>
                                                 </label>
