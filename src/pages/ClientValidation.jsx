@@ -671,10 +671,17 @@ export default function ClientValidation({ clients, shipments = [], onValidateCl
             setSelectedIds(prev => prev.filter(id => id !== solicitud.id));
 
             const cuantos = hecho.envios ?? envios.length;
+            // Los de porte Debido que han cogido la tarifa de la ficha.
+            const euros = (n) => `${Number(n).toFixed(2).replace('.', ',')} €`;
+            const reprecios = hecho.reprecios || [];
+            const precios = reprecios.length === 0 ? '' :
+                `\n\nA porte debido paga esta ficha, así que ${reprecios.length === 1 ? 'se ha puesto su tarifa en' : 'se ha puesto su tarifa en estos albaranes'}:\n` +
+                reprecios.map(r => `   • ${r.id}: ${euros(r.antes)} → ${euros(r.ahora)}`).join('\n');
             alert(
                 `✅ «${solicitud.name}» ya es «${ficha.name}»${ficha.clientNumber ? ` (nº ${ficha.clientNumber})` : ''}.\n\n` +
                 (plan.otroNombre ? `Se le ha apuntado el nombre del albarán en «Otros nombres». ` : '') +
                 (cuantos === 0 ? 'Ningún albarán cargado apuntaba a la solicitud.' : cuantos === 1 ? '1 albarán apunta ya a esa ficha.' : `${cuantos} albaranes apuntan ya a esa ficha.`) +
+                precios +
                 `\n\nLa solicitud se ha borrado.`
             );
         } finally {

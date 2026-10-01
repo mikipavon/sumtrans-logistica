@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planDeVinculo, enviosQueSeVinculan, enlaceDelEnvio, explicarElVinculo } from './vincularFichaPendiente';
+import { planDeVinculo, enviosQueSeVinculan, enlaceDelEnvio, explicarElVinculo, precioAlVincular } from './vincularFichaPendiente';
 
 // La ficha que creó el conductor al entregar: el nombre tal cual venía en el
 // albarán, la calle y el GPS.
@@ -130,6 +130,55 @@ describe('enlaceDelEnvio', () => {
             destinatarioEmparejadoPor: 'vinculo',
         });
         expect(enlaceDelEnvio(ficha, { sedeId: null }).destinatarioSedeId).toBeNull();
+    });
+});
+
+// SUM-3200 (01/10/2026): Ibermangueras crea en su portal un envío a Velasco a
+// porte debido. El portal no ve la ficha de Velasco y sale a catálogo; al
+// vincular el destinatario, el albarán coge la tarifa de quien paga.
+describe('precioAlVincular', () => {
+    const BLT_1 = { id: 'blt1', name: 'BLT_1', price: '6.00', priceB2: '9.00' };
+    const velasco = { id: 40, name: 'AGRO INDUSTRIAS VELASCO', customRates: { blt1: '5.00' } };
+    const envio = {
+        id: 'SUM-3200', porteType: 'Debido',
+        originCity: 'Córdoba', originZip: '14013', destinationCity: 'Puente Genil', destinationZip: '14500',
+        articles: [{ ...BLT_1, quantity: 2, unitPrice: 6, totalPrice: 12 }],
+        amount: '12.00', customAmount: 12, codAmount: 0, codCommission: 0,
+    };
+
+    it('a porte debido pone la tarifa especial de la ficha vinculada', () => {
+        const campos = precioAlVincular(envio, velasco);
+        expect(campos).toMatchObject({ amount: '€10.00', customAmount: 10, codCommission: 0 });
+        expect(campos.articles[0]).toMatchObject({ unitPrice: 5, totalPrice: 10 });
+    });
+
+    it('rehace también la comisión del reembolso con la ficha que paga', () => {
+        const conReembolso = { ...envio, hasCod: true, codAmount: 100, codCommission: 3, amount: '15.00', customAmount: 15 };
+        const ficha = { ...velasco, codFeeMode: 'porcentaje', codFeePercent: 2, codFeeMin: 4 };
+        expect(precioAlVincular(conReembolso, ficha, { comisionPorDefecto: 3 })).toMatchObject({ customAmount: 14, codCommission: 4 });
+        // Sin tarifa de reembolso propia, la general: la comisión no cambia.
+        expect(precioAlVincular(conReembolso, velasco, { comisionPorDefecto: 3 })).toMatchObject({ customAmount: 13, codCommission: 3 });
+    });
+
+    it('no toca nada si la ficha no cambia el precio', () => {
+        expect(precioAlVincular(envio, { id: 41, name: 'SIN TARIFA' })).toBeNull();
+    });
+
+    it('a porte pagado la ficha vinculada no paga: el precio se queda', () => {
+        expect(precioAlVincular({ ...envio, porteType: 'Pagado' }, velasco)).toBeNull();
+    });
+
+    it('no toca lo cobrado, lo facturado ni lo cerrado en presupuesto', () => {
+        expect(precioAlVincular({ ...envio, portePaid: true }, velasco)).toBeNull();
+        expect(precioAlVincular({ ...envio, exportedAt: '2026-10-01T10:00:00Z' }, velasco)).toBeNull();
+        expect(precioAlVincular({ ...envio, budgetLiquidated: true }, velasco)).toBeNull();
+    });
+
+    it('no adivina: sin artículos, sin población o con ficha por kilos se queda como está', () => {
+        expect(precioAlVincular({ ...envio, articles: [] }, velasco)).toBeNull();
+        expect(precioAlVincular({ ...envio, destinationCity: '', destinationZip: '' }, velasco)).toBeNull();
+        expect(precioAlVincular(envio, { ...velasco, tariffType: 'Por Kilos' })).toBeNull();
+        expect(precioAlVincular(envio, null)).toBeNull();
     });
 });
 

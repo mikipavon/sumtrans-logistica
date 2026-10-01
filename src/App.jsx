@@ -47,12 +47,12 @@ import { conTopeDeTiempo, errorDeServidorSiLoEs } from './utils/topeDeTiempo';
 import { resolveOwnerAgencyId, getClientsOwnedBy } from './utils/agencyOwnership';
 import { emailDeAcceso, tieneAccesoAlPortal, accesosAdicionales, accesosQueSeQuitan, fichaSinContrasenas, sinEspaciosALosLados } from './utils/clientAccess';
 import { planDeAcceso } from './utils/accesoFichaExistente';
-import { planDeVinculo, enviosQueSeVinculan, enlaceDelEnvio } from './utils/vincularFichaPendiente';
+import { planDeVinculo, enviosQueSeVinculan, enlaceDelEnvio, precioAlVincular } from './utils/vincularFichaPendiente';
 import { buscarFichaPorNombre, crearColaDeAltas, huecosQueRellena, normalizarNombreCliente } from './utils/altaClientes';
 import { establecerContextoDeError } from './utils/errorLog';
 import { avisarAlPadre, hayAutoLoginPendiente } from './utils/ventanaPadre';
 import { CLAVE_HORARIO_REPARTO, HORARIO_REPARTO_POR_DEFECTO, normalizarHorarioReparto } from './utils/turnos';
-import { getIrregularReasons, fichaDelDestinatario, textoDelPorte } from './utils/shipmentUtils';
+import { getIrregularReasons, fichaDelDestinatario, textoDelPorte, porteDelEnvio } from './utils/shipmentUtils';
 import {
   fusionarConocimiento,
   claveAprendizaje,
@@ -4740,13 +4740,17 @@ function App() {
     }
 
     const envios = enviosQueSeVinculan(solicitud, shipmentsRef.current);
+    const reprecios = [];
     try {
       if (Object.keys(plan.cambios).length > 0) {
         await handleUpdateClient(ficha.id, plan.cambios);
       }
       const enlace = enlaceDelEnvio(ficha, plan);
       for (const envio of envios) {
-        await handleUpdateShipment(envio.id, enlace);
+        // A porte Debido paga esta ficha: el albarán coge su tarifa.
+        const precio = precioAlVincular(envio, ficha, { tariffs, coverageZones, comisionPorDefecto: defaultCodFee });
+        await handleUpdateShipment(envio.id, { ...enlace, ...(precio || {}) });
+        if (precio) reprecios.push({ id: envio.id, antes: porteDelEnvio(envio), ahora: precio.customAmount });
       }
       await handleDeleteClients([solicitud.id]);
     } catch (e) {
@@ -4755,7 +4759,7 @@ function App() {
       return false;
     }
 
-    return { envios: envios.length, otroNombre: plan.otroNombre };
+    return { envios: envios.length, otroNombre: plan.otroNombre, reprecios };
   };
 
   // --- NUEVOS ESTADOS PARA COPIA DE SEGURIDAD (Movid@s tras TODAS las declaraciones de estado) ---

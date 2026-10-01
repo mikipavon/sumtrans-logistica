@@ -453,9 +453,23 @@ export default function ClientDashboard({
             destinationCity: newDestinationCity,
             destinationZip: newDestinationZip,
         }, { tariffs, coverageZones });
+        // La tarifa especial es de quien paga. A porte Debido paga el destinatario:
+        // la suya si la oficina la ve en sus fichas (el cliente sólo ve la propia)
+        // y, si no, el catálogo. Hasta el 01/10/2026 se valoraba siempre con la
+        // ficha del que crea el envío, y un Debido de Ibermangueras a Velasco
+        // salía a la tarifa especial de Ibermangueras (SUM-3200). Si el
+        // destinatario se vincula luego en Validar Clientes, el albarán coge su
+        // tarifa (ver precioAlVincular en utils/vincularFichaPendiente.js).
+        const nombreDestino = normalizarTexto(newDestinationName || '');
+        const fichaDestinatario = nombreDestino
+            ? (allClients || []).find(c =>
+                normalizarTexto(c.name || '') === nombreDestino ||
+                normalizarTexto(c.legalName || '') === nombreDestino) || null
+            : null;
+        const fichaQuePagaElPorte = porteType === 'Debido' ? fichaDestinatario : client;
         const { articles: articulosDelEnvio, total: totalArticulos } = valorarLineas(
             lineas, availableArticles,
-            (articulo) => precioUnitarioArticulo(articulo, { baremo, tariffId, cliente: client })
+            (articulo) => precioUnitarioArticulo(articulo, { baremo, tariffId, cliente: fichaQuePagaElPorte, destinatario: fichaDestinatario })
         );
         // Población fuera de los baremos: el porte no baja de 12 € (22/09/2026).
         const totalPrice = conMinimoFueraDeBaremo(totalArticulos, fueraDeBaremo);
@@ -469,12 +483,6 @@ export default function ClientDashboard({
         // La tarifa de reembolso de la ficha es para lo que paga este cliente. A
         // porte Debido paga el destinatario: la suya si la oficina la ve en sus
         // fichas (el cliente sólo ve la propia) y, si no, la general de Ajustes.
-        const nombreDestino = normalizarTexto(newDestinationName || '');
-        const fichaDestinatario = nombreDestino
-            ? (allClients || []).find(c =>
-                normalizarTexto(c.name || '') === nombreDestino ||
-                normalizarTexto(c.legalName || '') === nombreDestino) || null
-            : null;
         const codFee = calcularComisionReembolso(
             fichaQuePagaElReembolso(porteType, client, fichaDestinatario), amountNum, defaultCodFee
         );

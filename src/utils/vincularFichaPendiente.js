@@ -28,6 +28,9 @@
 import { normalizarNombreCliente } from './altaClientes';
 import { leerReceptores, juntarReceptores } from './receptoresHabituales';
 import { nombresDeLaMadre, conOtroNombre } from './otrosNombres';
+import { baremoDelEnvio, repreciarArticulos, conMinimoFueraDeBaremo } from './precioArticulo';
+import { calcularComisionReembolso } from './comisionReembolso';
+import { quienPagaElPorte, camposDelPorte } from './shipmentUtils';
 
 const vacio = (valor) => String(valor ?? '').trim() === '';
 
@@ -140,6 +143,40 @@ export const enlaceDelEnvio = (ficha, plan) => ({
     destinatarioSedeId: plan?.sedeId ?? null,
     destinatarioEmparejadoPor: 'vinculo',
 });
+
+// ── El precio del albarán que paga la ficha recién vinculada ──
+//
+// A porte Debido paga el destinatario. Si cuando nació el albarán no se sabía
+// qué ficha era (el cliente lo creó en su portal, que no ve las fichas de los
+// demás, y salió a precio de catálogo), al vincularlo ya se sabe: se le pone
+// la tarifa de esa ficha y su comisión de reembolso (Miguel, 01/10/2026).
+//
+// No se toca lo que ya tiene el dinero cerrado: porte cobrado, facturado o
+// cerrado en presupuesto. Tampoco si la ficha va por kilos (el porte sale del
+// peso y eso lo valora la oficina en el albarán) ni si no hay artículos o
+// población con que hacer la cuenta.
+//
+// Devuelve los campos a escribir en el albarán, o null si el precio no cambia.
+export function precioAlVincular(envio, ficha, { tariffs = [], coverageZones = [], comisionPorDefecto = 3 } = {}) {
+    if (!envio || !ficha) return null;
+    if (quienPagaElPorte(envio) !== 'Destinatario') return null;
+    if (envio.portePaid || envio.exportedAt || envio.budgetLiquidated) return null;
+    if (ficha.tariffType === 'Por Kilos') return null;
+    if (!Array.isArray(envio.articles) || envio.articles.length === 0) return null;
+    if (vacio(envio.destinationCity) && vacio(envio.destinationZip)) return null;
+
+    const { baremo, tariffId, fueraDeBaremo } = baremoDelEnvio(envio, { tariffs, coverageZones });
+    const { articulos, cambiaron } = repreciarArticulos(envio.articles, { baremo, tariffId, cliente: ficha, destinatario: ficha });
+
+    const comisionAntes = Number(envio.codCommission) || 0;
+    const comision = calcularComisionReembolso(ficha, envio.codAmount, comisionPorDefecto);
+    if (!cambiaron && Math.abs(comision - comisionAntes) < 0.005) return null;
+
+    const porte = conMinimoFueraDeBaremo(articulos.reduce((suma, a) => suma + a.totalPrice, 0), fueraDeBaremo);
+    if (porte <= 0) return null;
+
+    return { articles: articulos, codCommission: comision, ...camposDelPorte(porte + comision) };
+}
 
 const NOMBRES = {
     coordinates: 'el GPS',
