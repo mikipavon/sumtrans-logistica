@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { generateDeliveryPDFBlob } from '../../utils/deliveryPdf';
-import { printBudgetSummary } from '../../utils/printBudgetSummary';
+import { printBudgetSummary, printBudgetSummaries } from '../../utils/printBudgetSummary';
 import { porteDelEnvio } from '../../utils/shipmentUtils';
 import { mesDelPresupuesto } from '../../utils/reciboDeDeuda';
 import { albaranesPorCerrar } from '../../utils/cierreDePresupuestos';
@@ -37,8 +37,17 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
             setSelectedMonth(mesPorDefectoDelCierre());
             setBusqueda('');
             setAltoAlBuscar(null);
+            setSeleccionados(new Set());
         }
     }, [isOpen]);
+    // Clientes marcados para imprimir o cerrar de un golpe. Cada pestaña marca
+    // con su clave (cliente o recibo), así que no se mezclan.
+    const [seleccionados, setSeleccionados] = useState(() => new Set());
+    const alternarSeleccion = (clave) => setSeleccionados(prev => {
+        const next = new Set(prev);
+        if (next.has(clave)) next.delete(clave); else next.add(clave);
+        return next;
+    });
     const [selectedDriverId, setSelectedDriverId] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [viewTab, setViewTab] = useState('pending'); // 'pending' | 'liquidated'
@@ -63,6 +72,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
 
             if (!dataByClient.has(clave)) {
                 dataByClient.set(clave, {
+                    clave: `p:${clave}`,
                     clientId: clientId,
                     clientName: clientName,
                     shipments: [],
@@ -118,6 +128,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                 : groupShipments.reduce((sum, s) => sum + porteDelEnvio(s), 0);
 
             return {
+                clave: `l:${receiptId}`,
                 receiptId,
                 // El recibo lleva el nombre de quien paga; en un porte debido el
                 // `client` del albarán es el remitente.
@@ -165,6 +176,84 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
         printBudgetSummary(clientData, selectedMonth, statusInfo);
     };
 
+    const estadoDelCobro = (data) => ({
+        driverName: data.driverName,
+        isCollected: data.isCollected,
+        liquidatedAt: data.liquidatedAt,
+    });
+
+    // La selección cuenta sobre toda la pestaña, aunque el buscador esconda
+    // alguno de los marcados; «Seleccionar todos» marca sólo lo que se ve.
+    const enPendientes = viewTab === 'pending';
+    const todosDeLaPestana = enPendientes ? budgetData : liquidatedData;
+    const aLaVista = enPendientes ? pendientesALaVista : liquidadosALaVista;
+    const marcados = todosDeLaPestana.filter(d => seleccionados.has(d.clave));
+    const todosALaVistaMarcados = aLaVista.length > 0 && aLaVista.every(d => seleccionados.has(d.clave));
+    const alternarTodos = () => setSeleccionados(prev => {
+        const next = new Set(prev);
+        aLaVista.forEach(d => (todosALaVistaMarcados ? next.delete(d.clave) : next.add(d.clave)));
+        return next;
+    });
+    const handlePrintSelected = () => {
+        printBudgetSummaries(
+            marcados.map(d => ({ clientData: d, status: enPendientes ? null : estadoDelCobro(d) })),
+            selectedMonth
+        );
+    };
+    const casilla = (data) => (
+        <input
+            type="checkbox"
+            className="w-5 h-5 shrink-0 accent-indigo-600 cursor-pointer"
+            checked={seleccionados.has(data.clave)}
+            onChange={() => alternarSeleccion(data.clave)}
+            aria-label={`Seleccionar ${data.clientName}`}
+        />
+    );
+
+    // Cierra un cliente: crea su recibo de cobro y marca sus albaranes. No
+    // pregunta ni avisa, para servir igual a un cierre suelto que a una tanda.
+    // Devuelve 'ok', 'sin-recibo' (no se ha tocado nada) o 'sin-marcar' (el
+    // recibo existe pero los albaranes no han quedado liquidados).
+    const cerrarCliente = async (clientData, newShipmentId) => {
+        const dummyShipment = {
+            id: newShipmentId,
+            type: 'Recibo',
+            client: clientData.clientName,
+            clientId: clientData.clientId,
+            originName: clientData.clientName,
+            destinationName: clientData.clientName,
+            destination: 'Cobro de Presupuesto',
+            amount: clientData.totalAmount.toFixed(2),
+            customAmount: clientData.totalAmount,
+            billingType: 'Clientes Habituales', // CRÍTICO: Esto hace que se le pida el dinero al conductor
+            porteType: 'Pagado',
+            paymentStatus: 'Pending',
+            portePaid: false,
+            hasCod: false,
+            codAmount: 0,
+            assignedDriverId: selectedDriverId,
+            status: 'Pendiente de asignar',
+            observations: `Cobro mensual presupuestos acumulados (${clientData.periodo || selectedMonth}). Incluye ${clientData.shipments.length} envíos.`,
+        };
+
+        const created = await onCreateShipment(dummyShipment);
+        if (!created) return 'sin-recibo';
+
+        // La fecha es la que enseña la etiqueta PRESP de la lista de Envíos.
+        const cerradoEl = new Date().toISOString();
+        const updatesArray = clientData.shipments.map(s => ({
+            id: s.id,
+            updates: { budgetLiquidated: true, linkedReceiptId: newShipmentId, budgetLiquidatedAt: cerradoEl }
+        }));
+
+        const updated = await onUpdateMultipleShipments(updatesArray);
+        return updated ? 'ok' : 'sin-marcar';
+    };
+
+    // Seis cifras del reloj; en una tanda se suma la posición para que dos
+    // recibos seguidos no salgan con el mismo número.
+    const numeroDeRecibo = (posicion = 0) => `RC-${(Date.now() + posicion).toString().slice(-6)}`;
+
     const handleLiquidate = async (clientData) => {
         if (!selectedDriverId) {
             alert('Por favor, selecciona un repartidor al que asignar el cobro.');
@@ -178,47 +267,10 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
         setIsProcessing(true);
 
         try {
-            // 1. Crear el envío ficticio (Recibo)
-            const newShipmentId = `RC-${Date.now().toString().slice(-6)}`;
-            
-            const dummyShipment = {
-                id: newShipmentId,
-                type: 'Recibo',
-                client: clientData.clientName,
-                clientId: clientData.clientId,
-                originName: clientData.clientName,
-                destinationName: clientData.clientName,
-                destination: 'Cobro de Presupuesto',
-                amount: clientData.totalAmount.toFixed(2),
-                customAmount: clientData.totalAmount,
-                billingType: 'Clientes Habituales', // CRÍTICO: Esto hace que se le pida el dinero al conductor
-                porteType: 'Pagado',
-                paymentStatus: 'Pending',
-                portePaid: false,
-                hasCod: false,
-                codAmount: 0,
-                assignedDriverId: selectedDriverId,
-                status: 'Pendiente de asignar',
-                observations: `Cobro mensual presupuestos acumulados (${clientData.periodo || selectedMonth}). Incluye ${clientData.shipments.length} envíos.`,
-            };
-
-            const created = await onCreateShipment(dummyShipment);
-            if (!created) {
+            const resultado = await cerrarCliente(clientData, numeroDeRecibo());
+            if (resultado === 'sin-recibo') {
                 alert('No se pudo crear el recibo de cobro.');
-                setIsProcessing(false);
-                return;
-            }
-
-            // 2. Marcar los albaranes como liquidados usando actualización múltiple.
-            // La fecha es la que enseña la etiqueta PRESP de la lista de Envíos.
-            const cerradoEl = new Date().toISOString();
-            const updatesArray = clientData.shipments.map(s => ({
-                id: s.id,
-                updates: { budgetLiquidated: true, linkedReceiptId: newShipmentId, budgetLiquidatedAt: cerradoEl }
-            }));
-
-            const updated = await onUpdateMultipleShipments(updatesArray);
-            if (!updated) {
+            } else if (resultado === 'sin-marcar') {
                 alert('Atención: El recibo se creó pero hubo un error al marcar los albaranes antiguos. Contacta a soporte.');
             } else {
                 alert(`¡Mes cerrado con éxito para ${clientData.clientName}!\nEl conductor ahora lo tiene en sus cobros pendientes.`);
@@ -229,6 +281,52 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
         } finally {
             setIsProcessing(false);
         }
+    };
+
+    // Todos los marcados al mismo conductor, uno detrás de otro. Si un recibo
+    // se queda sin sus albaranes marcados se para ahí: seguir sería amontonar
+    // cierres a medias.
+    const handleLiquidateSelected = async () => {
+        if (marcados.length === 0) return;
+        if (!selectedDriverId) {
+            alert('Por favor, selecciona un repartidor al que asignar el cobro.');
+            return;
+        }
+        const conductor = (drivers || []).find(d => String(d.id) === String(selectedDriverId))?.name || 'el conductor elegido';
+        const total = marcados.reduce((sum, d) => sum + d.totalAmount, 0);
+        const lista = marcados.map(d => `· ${d.clientName}: €${d.totalAmount.toFixed(2)}`).join('\n');
+        if (!window.confirm(`¿Cerrar ${marcados.length} ${marcados.length === 1 ? 'cliente' : 'clientes'} por €${total.toFixed(2)} y asignar el cobro a ${conductor}?\n\n${lista}`)) {
+            return;
+        }
+
+        setIsProcessing(true);
+        const cerrados = [];
+        const sinRecibo = [];
+        let aMedias = null;
+        try {
+            for (let i = 0; i < marcados.length; i++) {
+                const clientData = marcados[i];
+                const resultado = await cerrarCliente(clientData, numeroDeRecibo(i));
+                if (resultado === 'ok') cerrados.push(clientData);
+                else if (resultado === 'sin-recibo') sinRecibo.push(clientData);
+                else { aMedias = clientData; break; }
+            }
+        } catch (error) {
+            console.error('Error al liquidar presupuestos:', error);
+            alert('Ha ocurrido un error inesperado y el cierre se ha parado. Revisa la lista antes de repetirlo.');
+        } finally {
+            setIsProcessing(false);
+            setSeleccionados(prev => {
+                const next = new Set(prev);
+                cerrados.forEach(d => next.delete(d.clave));
+                return next;
+            });
+        }
+
+        const lineas = [`Cerrados: ${cerrados.length} de ${marcados.length}. ${conductor} ya los tiene en sus cobros pendientes.`];
+        if (sinRecibo.length > 0) lineas.push(`No se pudo crear el recibo de: ${sinRecibo.map(d => d.clientName).join(', ')}. Siguen pendientes.`);
+        if (aMedias) lineas.push(`Atención: el recibo de ${aMedias.clientName} se creó pero hubo un error al marcar sus albaranes. El cierre se ha parado ahí; contacta a soporte.`);
+        alert(lineas.join('\n\n'));
     };
 
     const handleExportExcel = (clientData) => {
@@ -427,6 +525,42 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                     </label>
                 )}
 
+                {aLaVista.length > 0 && (
+                    <div className="px-6 py-3 border-b border-slate-100 bg-white flex items-center justify-between gap-3 flex-wrap">
+                        <label className="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="w-5 h-5 accent-indigo-600 cursor-pointer"
+                                checked={todosALaVistaMarcados}
+                                onChange={alternarTodos}
+                            />
+                            Seleccionar todos
+                        </label>
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                                onClick={handlePrintSelected}
+                                disabled={marcados.length === 0}
+                                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-lg transition-colors flex items-center gap-2"
+                                title="Imprimir de un golpe el detalle de los clientes marcados, cada uno en su hoja"
+                            >
+                                <Printer size={18} />
+                                Imprimir seleccionados{marcados.length > 0 ? ` (${marcados.length})` : ''}
+                            </button>
+                            {enPendientes && (
+                                <button
+                                    onClick={handleLiquidateSelected}
+                                    disabled={marcados.length === 0 || isProcessing}
+                                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-bold rounded-lg transition-colors flex items-center gap-2"
+                                    title="Cerrar el mes de los clientes marcados y asignar todos los cobros al conductor elegido arriba"
+                                >
+                                    <CheckCircle size={18} />
+                                    {isProcessing ? 'Cerrando...' : `Cerrar seleccionados${marcados.length > 0 ? ` (${marcados.length})` : ''}`}
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 bg-slate-50">
                     {viewTab === 'pending' ? (
@@ -440,10 +574,12 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                             </div>
                         ) : pendientesALaVista.length === 0 ? sinCoincidencias : (
                             <div className="space-y-4">
-                                {pendientesALaVista.map((data, idx) => (
-                                    <div key={idx} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
+                                {pendientesALaVista.map((data) => (
+                                    <div key={data.clave} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
                                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                            <div>
+                                            <div className="flex items-center gap-3">
+                                              {casilla(data)}
+                                              <div>
                                                 <h3 className="text-lg font-bold text-slate-800">{data.clientName}</h3>
                                                 <div className="flex items-center gap-3 mt-1">
                                                     <span className="text-xs font-bold px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md">Presupuesto</span>
@@ -452,6 +588,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                                                         <span className="text-xs font-bold px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md">{data.periodo}</span>
                                                     )}
                                                 </div>
+                                              </div>
                                             </div>
                                             <div className="flex flex-col md:flex-row items-center gap-4">
                                                 <div className="text-right">
@@ -509,7 +646,9 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                                 {liquidadosALaVista.map((data) => (
                                     <div key={data.receiptId} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
                                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                            <div>
+                                            <div className="flex items-center gap-3">
+                                              {casilla(data)}
+                                              <div>
                                                 <h3 className="text-lg font-bold text-slate-800">{data.clientName}</h3>
                                                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                                                     <span className="text-xs font-bold px-2 py-0.5 bg-amber-100 text-amber-700 rounded-md">Presupuesto</span>
@@ -526,6 +665,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                                                 <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
                                                     <User size={12} /> Asignado a: <span className="font-semibold text-slate-500">{data.driverName}</span>
                                                 </p>
+                                              </div>
                                             </div>
                                             <div className="flex flex-col md:flex-row items-center gap-4">
                                                 <div className="text-right">
@@ -534,11 +674,7 @@ export default function BudgetLiquidationModal({ isOpen, onClose, shipments, cli
                                                 </div>
                                                 <div className="flex items-center gap-2 w-full md:w-auto">
                                                     <button
-                                                        onClick={() => handlePrintBudget(data, {
-                                                            driverName: data.driverName,
-                                                            isCollected: data.isCollected,
-                                                            liquidatedAt: data.liquidatedAt,
-                                                        })}
+                                                        onClick={() => handlePrintBudget(data, estadoDelCobro(data))}
                                                         className="px-4 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-600 text-sm font-bold rounded-lg transition-colors flex items-center justify-center gap-2 border border-slate-200"
                                                         title="Imprimir detalle para el cliente"
                                                     >

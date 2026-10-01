@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { htmlDelDetalleDeEnvios } from './printBudgetSummary';
+import { htmlDelDetalleDeEnvios, htmlDeVariosDetalles } from './printBudgetSummary';
 
 // JUAN ALBA, de Presupuesto, recibe a porte debido de AGROCIRILO y además manda
 // lo suyo a porte pagado: la hoja tiene que decir de dónde viene cada envío.
@@ -87,5 +87,18 @@ describe('htmlDelDetalleDeEnvios', () => {
         expect(filas[0][5].textContent).toBe('7.00 €');
         expect(filas[1][5].textContent).toBe('10.00 €');
         expect(doc.querySelector('.total-value').textContent).toBe('17.00 €');
+    });
+});
+
+describe('htmlDeVariosDetalles', () => {
+    it('saca una hoja por cliente, cada una con su total, y un solo pie', () => {
+        const otro = { clientName: 'RECTICOR', shipments: [{ id: 'HAB-9', client: 'RECTICOR', destinationName: 'OTRO', amount: '5' }] };
+        const doc = new DOMParser().parseFromString(
+            htmlDeVariosDetalles([{ clientData: juanAlba }, { clientData: otro }], '2026-09'), 'text/html');
+        const hojas = Array.from(doc.querySelectorAll('.hoja'));
+        expect(hojas.map(h => h.querySelector('.client-box').textContent.trim())).toEqual(['JUAN ALBA', 'RECTICOR']);
+        expect(hojas.map(h => h.querySelector('.total-value').textContent)).toEqual(['17.00 €', '5.00 €']);
+        expect(doc.querySelectorAll('.footer')).toHaveLength(1);
+        expect(doc.title).toBe('Detalle de envíos - 2 clientes - Septiembre de 2026');
     });
 });
