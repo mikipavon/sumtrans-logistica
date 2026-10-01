@@ -98,6 +98,31 @@ describe('Exportar a Factusol — la lista se entrega antes de descargar', () =>
         expect(window.alert).not.toHaveBeenCalled();
     });
 
+    // HAB-170 (01/10/2026): BOX 77, de facturación, manda a porte debido a Taller
+    // Navarro, habitual y sin ficha con ese nombre. El Excel miraba el tipo del
+    // remitente y lo sacaba a nombre del destinatario, sin código de cliente.
+    it('a porte debido sin ficha del destinatario decide por el tipo del destinatario, no por el del remitente', async () => {
+        const marcar = vi.fn(() => true);
+        const debido = (id, extra) => envio(id, { client: 'BOX 77 S.L.', porteType: 'Debido', ...extra });
+        const cartera = [
+            { id: 1, name: 'BOX 77 S.L.', billingType: 'Facturación', clientNumber: '77' },
+            { id: 2, name: 'Talleres Lopera', billingType: 'Facturación', clientNumber: '90' },
+            { id: 3, name: 'Bar Pepe', billingType: 'Clientes Habituales', clientNumber: 'CH-4', otrosNombres: ['El bar de la plaza'] },
+        ];
+        montar([
+            debido('HAB-170', { destinationName: 'Taller Navarro', destinationBillingType: 'Clientes Habituales' }),
+            debido('HAB-172', { destinationName: 'Damve pigroup' }),
+            debido('HAB-173', { destinationName: 'El bar de la plaza', destinationBillingType: 'Facturación' }),
+            debido('SUM-800', { destinationName: 'TALLERES LOPERA', destinationBillingType: 'Clientes Habituales' }),
+            debido('SUM-801', { destinationName: 'Sin ficha pero de factura', destinationBillingType: 'Facturación' }),
+        ], marcar, false, { clients: cartera });
+
+        facturarDesde('2026-09-01');
+
+        await waitFor(() => expect(marcar).toHaveBeenCalledTimes(1));
+        expect([...marcar.mock.calls[0][0]].sort()).toEqual(['SUM-800', 'SUM-801']);
+    });
+
     it('si la app sigue con la tanda anterior, no descarga y lo dice', async () => {
         const marcar = vi.fn(() => false);
         montar([envio('SUM-3015')], marcar);

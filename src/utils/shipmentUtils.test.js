@@ -629,6 +629,14 @@ describe('fichaDelPagador', () => {
         expect(fichaDelPagador({ porteType: 'Debido', destinationName: 'Agro Velasco · almacén' }, cartera)).toBe(agroVelasco);
     });
 
+    it('también por los otros nombres apuntados en la ficha, sin quitarle el sitio al nombre propio de otra', () => {
+        const navarro = { id: 303, name: 'Talleres Navarro e Hijos', otrosNombres: ['Taller Navarro', 'Ibermangueras'] };
+        const conApodos = [navarro, ...cartera];
+        expect(fichaDelPagador({ porteType: 'Debido', destinationName: 'TALLER NAVARRO' }, conApodos)).toBe(navarro);
+        expect(fichaDelPagador({ porteType: 'Pagado', client: 'taller navarro' }, conApodos)).toBe(navarro);
+        expect(fichaDelPagador({ porteType: 'Pagado', client: 'Ibermangueras' }, conApodos)).toBe(ibermangueras);
+    });
+
     it('en un debido, si el enlace apunta a una ficha que no está, cae al nombre', () => {
         const envio = { porteType: 'Debido', destinationName: 'Ibermangueras', destinatarioId: 999 };
         expect(fichaDelPagador(envio, cartera)).toBe(ibermangueras);
