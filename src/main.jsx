@@ -6,6 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import AvisoVersionNueva from './components/AvisoVersionNueva.jsx'
 import { registrarError, engancharErroresGlobales } from './utils/errorLog'
 import { esRuidoDeSesion } from './utils/ruidoDeSesion'
+import { recargarConFreno } from './utils/cargarPantalla'
 
 // --- EMERGENCY GLOBAL ERROR HANDLER ---
 //
@@ -59,9 +60,10 @@ window.onunhandledrejection = (event) => {
 // En producción Vite pre-carga los ficheros que necesita cada pantalla. Si uno no
 // baja (justo después de un despliegue el trozo antiguo ya no existe), en vez de
 // dejar caer el error se recarga la página y el navegador coge la versión nueva.
+// Una vez, no en bucle: si se acaba de recargar y sigue fallando, se deja caer el
+// error y sale el aviso de «Volver a abrir» (ver recargarConFreno).
 window.addEventListener('vite:preloadError', (event) => {
-  event.preventDefault();
-  window.location.reload();
+  if (recargarConFreno()) event.preventDefault();
 });
 
 // Se engancha DESPUÉS de los de arriba para no sustituirlos: la pantalla roja se

@@ -22,6 +22,31 @@ export function esFalloDeCargaDeModulo(error) {
   return /dynamically imported module|Importing a module script failed|Loading chunk|Loading CSS chunk|error loading dynamically imported module/i.test(texto)
 }
 
+/**
+ * Recarga la página, pero no dos veces seguidas.
+ *
+ * La marca de arriba se borra en cuanto baja bien cualquier pantalla, así que no
+ * frena el caso de que unas bajen y otra no: la app recargaba, volvía a fallar y
+ * volvía a recargar. Al repartidor le parpadeaba el móvil y Vercel, viendo tantas
+ * peticiones seguidas, le ponía delante su «Estamos verificando tu navegador»
+ * (01/10/2026, tras tres despliegues en media hora). Aquí se apunta la hora de la
+ * última recarga y no se repite hasta pasado un rato; mientras, el fallo sigue su
+ * curso y sale el aviso con el botón de «Volver a abrir».
+ */
+const CLAVE_HORA_RECARGA = 'pantalla-recargada-a-las'
+const ESPERA_ENTRE_RECARGAS_MS = 60000
+
+export function recargarConFreno({ almacen = globalThis.sessionStorage, ventana = globalThis.window, ahora = Date.now() } = {}) {
+  if (!ventana?.location) return false
+  let ultima = 0
+  try { ultima = Number(almacen?.getItem(CLAVE_HORA_RECARGA)) || 0 } catch { /* sin almacenamiento */ }
+  if (ultima && ahora - ultima < ESPERA_ENTRE_RECARGAS_MS) return false
+  // Sin almacenamiento no hay forma de saber si ya se recargó: mejor el aviso que el bucle.
+  try { almacen.setItem(CLAVE_HORA_RECARGA, String(ahora)) } catch { return false }
+  ventana.location.reload()
+  return true
+}
+
 export async function importarConReintento(importar, { esperaMs = 1500, reintentos = 1, recargar = true, almacen = globalThis.sessionStorage, ventana = globalThis.window } = {}) {
   let ultimoError
   for (let intento = 0; intento <= reintentos; intento++) {
@@ -38,9 +63,8 @@ export async function importarConReintento(importar, { esperaMs = 1500, reintent
 
   let yaRecargada = false
   try { yaRecargada = almacen?.getItem(CLAVE_RECARGA) === '1' } catch { /* sin almacenamiento */ }
-  if (recargar && !yaRecargada && ventana?.location) {
+  if (recargar && !yaRecargada && recargarConFreno({ almacen, ventana })) {
     try { almacen?.setItem(CLAVE_RECARGA, '1') } catch { /* sin almacenamiento */ }
-    ventana.location.reload()
     // La página se va a recargar: devolvemos una promesa que no resuelve nunca para
     // que React se quede en el "cargando" en vez de pintar el error un instante.
     return new Promise(() => {})

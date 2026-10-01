@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { importarConReintento, esFalloDeCargaDeModulo } from './cargarPantalla'
+import { importarConReintento, esFalloDeCargaDeModulo, recargarConFreno } from './cargarPantalla'
 
 const falloDeRed = () => new TypeError('Failed to fetch dynamically imported module: http://localhost:5173/src/pages/ClientValidation.jsx')
 
@@ -19,6 +19,25 @@ describe('esFalloDeCargaDeModulo', () => {
   })
   it('no confunde un error normal de programa', () => {
     expect(esFalloDeCargaDeModulo(new TypeError('x is not a function'))).toBe(false)
+  })
+})
+
+describe('recargarConFreno', () => {
+  it('recarga la primera vez y no repite hasta pasado un minuto', () => {
+    const almacen = almacenFalso()
+    const ventana = { location: { reload: vi.fn() } }
+    expect(recargarConFreno({ almacen, ventana, ahora: 1000000 })).toBe(true)
+    expect(recargarConFreno({ almacen, ventana, ahora: 1005000 })).toBe(false)
+    expect(ventana.location.reload).toHaveBeenCalledTimes(1)
+    expect(recargarConFreno({ almacen, ventana, ahora: 1061000 })).toBe(true)
+    expect(ventana.location.reload).toHaveBeenCalledTimes(2)
+  })
+
+  it('sin almacenamiento no recarga: no podría saber si ya lo hizo', () => {
+    const ventana = { location: { reload: vi.fn() } }
+    const almacen = { getItem: () => { throw new Error('bloqueado') }, setItem: () => { throw new Error('bloqueado') } }
+    expect(recargarConFreno({ almacen, ventana })).toBe(false)
+    expect(ventana.location.reload).not.toHaveBeenCalled()
   })
 })
 
@@ -57,6 +76,21 @@ describe('importarConReintento', () => {
     almacen.setItem('pantalla-recargada', '1')
     await importarConReintento(vi.fn().mockResolvedValue({}), { esperaMs: 0, almacen, ventana })
     expect(almacen.getItem('pantalla-recargada')).toBe(null)
+  })
+
+  it('si unas pantallas bajan y otra no, no recarga en bucle', async () => {
+    const almacen = almacenFalso()
+    const ventana = { location: { reload: vi.fn() } }
+    const falla = vi.fn().mockRejectedValue(falloDeRed())
+
+    importarConReintento(falla, { esperaMs: 0, almacen, ventana })
+    await new Promise(r => setTimeout(r, 20))
+    expect(ventana.location.reload).toHaveBeenCalledTimes(1)
+
+    // Tras la recarga otra pantalla baja bien (borra la marca) y la de antes sigue fallando.
+    await importarConReintento(vi.fn().mockResolvedValue({}), { esperaMs: 0, almacen, ventana })
+    await expect(importarConReintento(falla, { esperaMs: 0, almacen, ventana })).rejects.toThrow(/dynamically imported module/)
+    expect(ventana.location.reload).toHaveBeenCalledTimes(1)
   })
 
   it('no reintenta ni recarga si el error es de programa', async () => {
