@@ -12,6 +12,8 @@
 // se pisa nada que otro aparato haya cambiado, y da igual que la app lo tenga
 // cargado o no (sólo carga 90 días).
 
+import { fetchAllRows } from './fetchAllRows';
+
 export const CLAVE_TRABAJO_FACT = 'sum_fact_pendiente';
 
 // Albaranes que se leen y se guardan a la vez. Uno a uno eran 13 minutos.
@@ -109,6 +111,76 @@ export const continuarTrabajoFact = async (supabase, { alAvanzar, alMarcar } = {
         trabajo = { momento, total, pendientes: [...faltan, ...cola] };
         guardarTrabajoFact(trabajo);
         if (alMarcar && marcados.length > 0) alMarcar(marcados, momento);
+        avisar();
+    }
+
+    return { hechos: total - faltan.length, total, faltan };
+};
+
+// ── Deshacer una facturación reciente ──
+//
+// Todos los albaranes de una misma exportación llevan la misma fecha-hora en
+// exportedAt, así que cada "movimiento" es un grupo con su fecha. El 01/10/2026
+// salieron tres seguidos (3.143 a las 17:00, 376 repetidos a las 17:52 y uno
+// suelto a las 18:09): se enseñan los de los últimos dos días, el más reciente
+// arriba, y cada uno se deshace por separado.
+
+export const DIAS_DE_FACTURACIONES = 2;
+
+/** Las facturaciones de los últimos días entre lo cargado: [{ momento, ids }], la más reciente primero. */
+export const facturacionesRecientes = (shipments, { dias = DIAS_DE_FACTURACIONES, ahora = Date.now() } = {}) => {
+    const desde = ahora - dias * 24 * 60 * 60 * 1000;
+    const grupos = new Map();
+    for (const s of shipments || []) {
+        const momento = s?.exportedAt;
+        if (!momento || new Date(momento).getTime() < desde) continue;
+        if (!grupos.has(momento)) grupos.set(momento, []);
+        grupos.get(momento).push(s.id);
+    }
+    return [...grupos.entries()]
+        .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+        .map(([momento, ids]) => ({ momento, ids }));
+};
+
+/**
+ * Quita el FACT a todo lo facturado en `momento`, leyendo de la base de datos
+ * (no de lo cargado) para no dejarse ninguno. `alAvanzar({ hechos, total })`
+ * tras cada tanda; `alDesmarcar(ids)` con los que se acaban de limpiar.
+ * Devuelve { hechos, total, faltan: [ids] }.
+ */
+export const deshacerFacturacion = async (supabase, momento, { alAvanzar, alDesmarcar } = {}) => {
+    const { data, error } = await fetchAllRows(
+        () => supabase.from('shipments').select('id,data').eq('data->>exportedAt', momento).order('id'),
+        { label: 'deshacer facturación' }
+    );
+    if (error) throw error;
+
+    const cola = [...(data || [])];
+    const total = cola.length;
+    const faltan = [];
+    const avisar = () => alAvanzar && alAvanzar({ hechos: total - cola.length - faltan.length, total });
+    avisar();
+
+    while (cola.length > 0) {
+        const tanda = cola.splice(0, TANDA);
+        const limpiados = (await Promise.all(tanda.map(async (fila) => {
+            try {
+                const { exportedAt: _quitado, ...resto } = fila.data || {};
+                const { data: ok, error: e } = await supabase
+                    .from('shipments')
+                    .update({ data: { ...resto, exportedAt: null } })
+                    .eq('id', fila.id)
+                    .select('id');
+                if (e || !ok || ok.length === 0) return null;
+                return fila.id;
+            } catch {
+                return null;
+            }
+        }))).filter(Boolean);
+
+        const hechosAhora = new Set(limpiados);
+        faltan.push(...tanda.map(f => f.id).filter(id => !hechosAhora.has(id)));
+        if (alDesmarcar && limpiados.length > 0) alDesmarcar(limpiados);
         avisar();
     }
 

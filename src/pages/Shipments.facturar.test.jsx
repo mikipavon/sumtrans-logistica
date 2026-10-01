@@ -7,7 +7,7 @@
 // retoma si se recarga (ver utils/marcarFacturados.test.js).
 
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Shipments from './Shipments';
 
 vi.mock('../components/shipments/CreateShipmentModal', () => ({ default: () => null }));
@@ -38,7 +38,7 @@ const envio = (id, extra = {}) => ({
     ...extra,
 });
 
-const montar = (shipments, onMarcarFacturados, factOcupado = false) => render(
+const montar = (shipments, onMarcarFacturados, factOcupado = false, extra = {}) => render(
     <Shipments
         shipments={shipments}
         allShipments={shipments}
@@ -60,6 +60,7 @@ const montar = (shipments, onMarcarFacturados, factOcupado = false) => render(
         factOcupado={factOcupado}
         onDeleteShipment={() => {}}
         onDeleteMultipleShipments={() => {}}
+        {...extra}
     />
 );
 
@@ -113,5 +114,65 @@ describe('Exportar a Factusol — la lista se entrega antes de descargar', () =>
 
         const ventana = abrirVentana();
         expect(within(ventana).getByText('Poniendo el FACT…').closest('button')).toBeDisabled();
+    });
+});
+
+// Volver atrás: el 01/10/2026 salieron tres Excel seguidos (el grande, los 376
+// repetidos y uno suelto) y había que poder deshacer el de en medio.
+describe('Exportar a Factusol — deshacer una facturación de los últimos días', () => {
+    const ANTES = '2026-10-01T15:00:00.000Z';
+    const DESPUES = '2026-10-01T15:52:00.000Z';
+    const SUELTO = '2026-10-01T16:09:00.000Z';
+    const facturados = () => [
+        envio('SUM-3154', { exportedAt: SUELTO }),
+        envio('SUM-3015', { exportedAt: DESPUES }),
+        envio('SUM-3013', { exportedAt: DESPUES }),
+        envio('SUM-3010', { exportedAt: ANTES }),
+        envio('SUM-2000', { exportedAt: '2026-09-20T10:00:00.000Z' }),
+        envio('SUM-3009'),
+    ];
+
+    beforeEach(() => {
+        vi.useFakeTimers({ now: new Date('2026-10-01T17:00:00.000Z'), toFake: ['Date'] });
+        vi.spyOn(window, 'alert').mockImplementation(() => {}).mockClear();
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it('lista cada facturación con su fecha y cuántos albaranes, y deshace la elegida tras confirmar y la contraseña', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const contrasena = vi.fn(async () => true);
+        const deshacer = vi.fn(async () => true);
+        montar(facturados(), vi.fn(), false, { onDeshacerFacturacion: deshacer, onAutorizarConContrasena: contrasena });
+
+        const ventana = abrirVentana();
+        const filas = within(ventana).getAllByText('Deshacer').map(b => b.closest('li').textContent);
+        expect(filas).toHaveLength(3); // la de hace once días no sale
+        expect(filas[0]).toContain('1 albarán');
+        expect(filas[1]).toContain('2 albaranes');
+        expect(filas[2]).toContain('1 albarán');
+        fireEvent.click(within(ventana).getAllByText('Deshacer')[1]);
+
+        await waitFor(() => expect(deshacer).toHaveBeenCalledWith(DESPUES));
+        expect(window.confirm.mock.calls[0][0]).toContain('2 albaranes');
+        expect(contrasena).toHaveBeenCalledTimes(1);
+        expect(screen.queryByText('Exportar a Factusol')).toBeNull();
+    });
+
+    it('sin la contraseña no deshace nada', async () => {
+        vi.spyOn(window, 'confirm').mockReturnValue(true);
+        const deshacer = vi.fn(async () => true);
+        montar(facturados(), vi.fn(), false, { onDeshacerFacturacion: deshacer, onAutorizarConContrasena: async () => false });
+
+        fireEvent.click(within(abrirVentana()).getAllByText('Deshacer')[0]);
+
+        await waitFor(() => expect(window.confirm).toHaveBeenCalled());
+        expect(deshacer).not.toHaveBeenCalled();
+        expect(screen.getByText('Exportar a Factusol')).toBeInTheDocument();
+    });
+
+    it('sin nada facturado en los últimos días no sale el bloque', () => {
+        montar([envio('SUM-3009'), envio('SUM-2000', { exportedAt: '2026-09-20T10:00:00.000Z' })], vi.fn(), false, { onDeshacerFacturacion: vi.fn() });
+
+        expect(within(abrirVentana()).queryByText('Deshacer')).toBeNull();
     });
 });

@@ -5,16 +5,25 @@
 // (01/10/2026). La lista se apunta en el navegador y se va tachando.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { CLAVE_TRABAJO_FACT, leerTrabajoFact, apuntarTrabajoFact, continuarTrabajoFact, descartarTrabajoFact } from './marcarFacturados';
+import { CLAVE_TRABAJO_FACT, leerTrabajoFact, apuntarTrabajoFact, continuarTrabajoFact, descartarTrabajoFact, facturacionesRecientes, deshacerFacturacion } from './marcarFacturados';
 
-// Una base de datos de mentira con lo justo: leer por lista de ids y guardar
-// una fila. `fallan` son los albaranes cuyo guardado no llega.
+// Una base de datos de mentira con lo justo: leer por lista de ids, leer por
+// fecha de facturación (paginado) y guardar una fila. `fallan` son los
+// albaranes cuyo guardado no llega.
 const baseDeDatos = (filas, { fallan = [] } = {}) => {
     const guardados = [];
     const supabase = {
         from: () => ({
             select: () => ({
                 in: async (_col, ids) => ({ data: ids.filter(id => filas[id]).map(id => ({ id, data: filas[id] })), error: null }),
+                eq: (_col, momento) => ({
+                    order: () => ({
+                        range: async (desde, hasta) => ({
+                            data: Object.keys(filas).sort().filter(id => filas[id].exportedAt === momento).slice(desde, hasta + 1).map(id => ({ id, data: filas[id] })),
+                            error: null,
+                        }),
+                    }),
+                }),
             }),
             update: (cambio) => ({
                 eq: (_col, id) => ({
@@ -113,5 +122,59 @@ describe('El FACT de lo exportado a Factusol', () => {
         await continuarTrabajoFact(baseDeDatos(filas).supabase, { alMarcar });
 
         expect(alMarcar).toHaveBeenCalledWith(['SUM-3000', 'SUM-3001'], MOMENTO);
+    });
+});
+
+// El 01/10/2026 salieron tres Excel seguidos: 3.143 albaranes a las 17:00, 376
+// repetidos a las 17:52 y uno suelto a las 18:09. Cada grupo se deshace aparte.
+describe('Deshacer una facturación reciente', () => {
+    const ANTES = '2026-10-01T15:00:00.000Z';
+    const DESPUES = '2026-10-01T15:52:00.000Z';
+    const SUELTO = '2026-10-01T16:09:00.000Z';
+    const AHORA = new Date('2026-10-01T17:00:00.000Z').getTime();
+
+    it('lista las facturaciones de los últimos dos días, la más reciente primero', () => {
+        const cargados = [
+            { id: 'SUM-3015', exportedAt: DESPUES },
+            { id: 'SUM-3013', exportedAt: ANTES },
+            { id: 'SUM-3010' },
+            { id: 'SUM-3009', exportedAt: DESPUES },
+            { id: 'SUM-3154', exportedAt: SUELTO },
+            { id: 'SUM-2000', exportedAt: '2026-09-28T10:00:00.000Z' }, // hace tres días: fuera
+        ];
+        expect(facturacionesRecientes(cargados, { ahora: AHORA })).toEqual([
+            { momento: SUELTO, ids: ['SUM-3154'] },
+            { momento: DESPUES, ids: ['SUM-3015', 'SUM-3009'] },
+            { momento: ANTES, ids: ['SUM-3013'] },
+        ]);
+        expect(facturacionesRecientes([{ id: 'SUM-1' }])).toEqual([]);
+        expect(facturacionesRecientes(undefined)).toEqual([]);
+    });
+
+    it('quita el FACT a los de esa fecha leyendo de la base de datos, y deja en paz al resto', async () => {
+        const filas = albaranes(30);
+        Object.values(filas).forEach((f, i) => { f.exportedAt = i < 25 ? DESPUES : ANTES; });
+        const { supabase, guardados } = baseDeDatos(filas);
+        const avances = [];
+        const alDesmarcar = vi.fn();
+
+        const fin = await deshacerFacturacion(supabase, DESPUES, { alAvanzar: a => avances.push(a.hechos), alDesmarcar });
+
+        expect(fin).toEqual({ hechos: 25, total: 25, faltan: [] });
+        expect(guardados).toHaveLength(25);
+        expect(filas['SUM-3000']).toEqual({ client: 'DISFER', amount: 7, exportedAt: null });
+        expect(filas['SUM-3029'].exportedAt).toBe(ANTES);
+        expect(avances).toEqual([0, 20, 25]);
+        expect(alDesmarcar.mock.calls.flatMap(c => c[0])).toHaveLength(25);
+    });
+
+    it('lo que no se puede guardar se devuelve para reintentar', async () => {
+        const filas = albaranes(3);
+        Object.values(filas).forEach(f => { f.exportedAt = DESPUES; });
+
+        const fin = await deshacerFacturacion(baseDeDatos(filas, { fallan: ['SUM-3001'] }).supabase, DESPUES);
+
+        expect(fin).toEqual({ hechos: 2, total: 3, faltan: ['SUM-3001'] });
+        expect(filas['SUM-3001'].exportedAt).toBe(DESPUES);
     });
 });
