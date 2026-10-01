@@ -18,7 +18,10 @@
 //   · Resto del origen  → red, y si falla, caché.
 
 const CACHE_SHELL = 'sumtrans-shell-v2';
-const CACHE_ASSETS = 'sumtrans-assets-v1';
+// v2 (01/10/2026): la v1 podía tener guardada la página de inicio con nombre de hoja
+// de estilos o de trozo de JavaScript (ver esUnAssetDeVerdad). Al cambiar el nombre,
+// la activación borra la caché vieja entera y el móvil afectado se cura solo.
+const CACHE_ASSETS = 'sumtrans-assets-v2';
 const CACHES_VIVAS = [CACHE_SHELL, CACHE_ASSETS];
 
 const SHELL = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/icon-512.png'];
@@ -56,6 +59,20 @@ const podarAssets = async (cache) => {
 };
 
 /**
+ * Un asset que llega como HTML no es el asset: es la página de inicio.
+ *
+ * Vercel contesta con index.html y un 200 a cualquier ruta que no exista (el rewrite
+ * de vercel.json, que hace falta para las rutas de la app). Justo después de un
+ * despliegue, si el móvil pide un fichero de /assets/ que ese servidor todavía no
+ * tiene —o que ya no tiene—, recibe la página de inicio con pinta de respuesta buena.
+ * Guardada en la caché se quedaba para siempre: la app abría sin estilos, o se paraba
+ * en la pantalla cuyo trozo era en realidad HTML, y recargar no arreglaba nada porque
+ * se servía de la caché (Javito, 01/10/2026, tras tres despliegues en media hora).
+ */
+const esUnAssetDeVerdad = (respuesta) =>
+  !(respuesta.headers.get('content-type') || '').includes('text/html');
+
+/**
  * Caché primero: se responde con lo guardado y solo se va a la red si no está.
  * Solo se guardan respuestas correctas y del propio origen — una respuesta a medias
  * o un 404 cacheado dejaría la app rota hasta el siguiente despliegue.
@@ -69,9 +86,13 @@ const desdeCacheODeRed = async (request) => {
   // determina el contenido— y en cambio hace que un cambio de cabecera tire la
   // entrada a la basura y mande a la red justo cuando no hay red.
   const guardado = await cache.match(request, { ignoreVary: true });
-  if (guardado) return guardado;
+  if (guardado && esUnAssetDeVerdad(guardado)) return guardado;
+  if (guardado) await cache.delete(request, { ignoreVary: true });
 
   const respuesta = await fetch(request);
+  // Mejor un error de red que la página de inicio haciendo de hoja de estilos: con el
+  // error la app reintenta y recarga; con el HTML se queda rota sin enterarse.
+  if (respuesta && respuesta.ok && !esUnAssetDeVerdad(respuesta)) return Response.error();
   if (respuesta && respuesta.ok && respuesta.type === 'basic') {
     await cache.put(request, respuesta.clone());
     podarAssets(cache).catch(() => {});
@@ -94,8 +115,12 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_SHELL).then((cache) => cache.put('/index.html', copy)).catch(() => {});
+          // Sólo la página buena: la de «verificando tu navegador» de Vercel llega con
+          // un 403 y, guardada, sería lo que abriría el repartidor sin cobertura.
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_SHELL).then((cache) => cache.put('/index.html', copy)).catch(() => {});
+          }
           return response;
         })
         // Mismo motivo que en los assets: sin `ignoreVary`, el respaldo depende de que
